@@ -1,0 +1,139 @@
+{
+  "name": "ensembl-go",
+  "version": "1.0.0",
+  "description": "Local genome browser and alignment viewer",
+  "homepage": "https://www.ensembl.org",
+  "main": "main.js",
+  "scripts": {
+    "start": "node ./node_modules/electron/cli.js .",
+    "build:backend": "node ./scripts/build-backend.js",
+    "build:frontend": "npm --prefix ../frontend run build",
+    "check:backend-prereqs": "node ./scripts/check-backend-prereqs.js",
+    "check:electron-runtime": "node ./scripts/check-electron-runtime.js --strict",
+    "prepare:mafft": "node ./scripts/prepare-mafft-bundle.js",
+    "verify:linux-backend": "node ./scripts/verify-linux-backend.js",
+    "prebuild": "npm run prebuild:mac",
+    "prebuild:mac": "npm run check:backend-prereqs -- --target darwin && npm run prepare:mafft -- --target darwin && npm run build:backend -- --target darwin && npm run build:frontend",
+    "prebuild:win": "npm run check:backend-prereqs -- --target win32 && npm run prepare:mafft -- --target win32 && npm run build:backend -- --target win32 && npm run build:frontend",
+    "prebuild:linux": "npm run check:backend-prereqs -- --target linux && npm run prepare:mafft -- --target linux && npm run build:backend -- --target linux && npm run build:frontend",
+    "build": "node ./node_modules/electron-builder/cli.js",
+    "dist": "npm run dist:mac:release",
+    "dist:mac:release": "node ./scripts/check-macos-release-prereqs.js && npm run check:electron-runtime && node ./scripts/clean-branding-artifacts.js && npm run prebuild:mac && node ./node_modules/electron-builder/cli.js --mac dmg zip",
+    "dist:mac:unsigned": "node ./scripts/clean-branding-artifacts.js && npm run prebuild:mac && CSC_IDENTITY_AUTO_DISCOVERY=false node ./node_modules/electron-builder/cli.js --mac dmg zip",
+    "dist:win": "npm run check:electron-runtime && npm run prebuild:win && node ./node_modules/electron-builder/cli.js --win nsis zip",
+    "dist:win:dir": "npm run prebuild:win && node ./node_modules/electron-builder/cli.js --win dir",
+    "dist:linux": "npm run check:electron-runtime && npm run prebuild:linux && npm run verify:linux-backend && node ./node_modules/electron-builder/cli.js --linux AppImage deb",
+    "dist:linux:dir": "npm run prebuild:linux && npm run verify:linux-backend && node ./node_modules/electron-builder/cli.js --linux dir"
+  },
+  "build": {
+    "appId": "com.ensembl.go",
+    "productName": "Ensembl Go",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "gatekeeperAssess": false,
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "extraResources": [
+        {
+          "from": "dist_backend/ensembl_go_backend",
+          "to": "backend_dist/ensembl_go_backend"
+        },
+        {
+          "from": "build/mafft_bin",
+          "to": "backend_dist/mafft_bin"
+        }
+      ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "signtoolOptions": {
+        "publisherName": "Ensembl"
+      },
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "extraResources": [
+        {
+          "from": "build_backend/windows/backend_source",
+          "to": "backend_source"
+        }
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Science",
+      "maintainer": "Ensembl <helpdesk@ensembl.org>",
+      "synopsis": "Local genome browser and alignment viewer",
+      "description": "Browse locally downloaded genome assemblies, compare them with pairwise and multiple alignments, and inspect structural variation.",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "Ensembl Go"
+        }
+      },
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "extraResources": [
+        {
+          "from": "dist_backend/ensembl_go_backend",
+          "to": "backend_dist/ensembl_go_backend"
+        },
+        {
+          "from": "build/mafft_bin",
+          "to": "backend_dist/mafft_bin"
+        }
+      ]
+    },
+    "deb": {
+      "artifactName": "${name}_${version}_${arch}.${ext}",
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libsecret-1-0"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Ensembl Go",
+      "uninstallDisplayName": "Ensembl Go",
+      "deleteAppDataOnUninstall": false
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist"
+      }
+    ],
+    "extraResources": []
+  },
+  "keywords": [],
+  "author": "Ensembl",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  }
+}

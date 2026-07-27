@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "fixture": {
+    "name": "pair-light-all-tracks",
+    "zoomThresholdSpans": [50000000, 500000, 2000, 120]
+  },
+  "theme": "light",
+  "compact": false,
+  "show_bigwig": true,
+  "show_bigbed": true,
+  "windows": [
+    { "slot": "top", "chrom": "chr7", "start": 2000, "end": 2120, "chrom_length": 159345973, "label": "Target", "color": "#f59e0b" },
+    { "slot": "reference", "chrom": "7", "start": 1000, "end": 1120, "chrom_length": 159345973, "label": "Reference", "color": "#38bdf8" }
+  ],
+  "alignments": [
+    { "panel": "upper", "id": "a1", "ref_start": 1000, "ref_end": 1040, "tgt_start": 2000, "tgt_end": 2040, "strand": "+", "kind": "alignment" },
+    { "panel": "upper", "id": "a2", "ref_start": 1045, "ref_end": 1090, "tgt_start": 2095, "tgt_end": 2050, "strand": "-", "kind": "inversion" },
+    { "panel": "upper", "id": "a3", "ref_start": 1095, "ref_end": 1120, "tgt_start": 2098, "tgt_end": 2120, "strand": "+", "kind": "alignment" }
+  ],
+  "variants": [
+    { "panel": "upper", "name": "sv-del-1", "kind": "deletion", "chrom": "7", "start": 1040, "end": 1045, "target_start": 2040, "target_end": 2050, "ref_length": 5, "alt_length": 10, "metadata": { "source": "fixture" } },
+    { "panel": "upper", "name": "sv-inv-1", "kind": "inversion", "chrom": "7", "start": 1045, "end": 1090, "target_start": 2050, "target_end": 2095, "ref_length": 45, "alt_length": 45, "metadata": { "source": "fixture" } }
+  ],
+  "transcripts": [
+    { "slot": "reference", "id": "ENST_FIX_REF", "label": "REF1", "start": 1008, "end": 1108, "strand": "+", "biotype": "protein_coding", "exons": [{ "start": 1008, "end": 1024 }, { "start": 1084, "end": 1108 }] },
+    { "slot": "top", "id": "ENST_FIX_TGT", "label": "TGT1", "start": 2006, "end": 2110, "strand": "-", "biotype": "protein_coding", "exons": [{ "start": 2006, "end": 2028 }, { "start": 2082, "end": 2110 }] }
+  ],
+  "sequences": [
+    { "slot": "reference", "start": 1000, "sequence": "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT" },
+    { "slot": "top", "start": 2000, "sequence": "TGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA" }
+  ],
+  "signal_tracks": [
+    { "slot": "reference", "id": "bw-ref", "label": "Reference signal", "bins": [{ "start": 1000, "end": 1040, "value": 2.5 }, { "start": 1040, "end": 1080, "value": 8.0 }, { "start": 1080, "end": 1120, "value": 4.0 }] },
+    { "slot": "top", "id": "bw-top", "label": "Target signal", "bins": [{ "start": 2000, "end": 2040, "value": 5.0 }, { "start": 2040, "end": 2080, "value": 1.0 }, { "start": 2080, "end": 2120, "value": 7.5 }] }
+  ],
+  "interval_tracks": [
+    { "slot": "reference", "id": "bb-ref", "label": "Reference intervals", "features": [{ "id": "ref-i1", "start": 1020, "end": 1055, "label": "Enhancer", "metadata": { "score": 950 } }] },
+    { "slot": "top", "id": "bb-top", "label": "Target intervals", "features": [{ "id": "top-i1", "start": 2070, "end": 2100, "label": "Conserved", "metadata": { "score": 840 } }] }
+  ]
+}

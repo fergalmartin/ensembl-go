@@ -1,0 +1,74 @@
+# Ensembl Go
+#
+# These rules mirror the exclusions in scripts/archive_github_snapshot.sh, which
+# defines what belongs in a distributable source snapshot. Keep the two in step:
+# if something is added here, consider whether the snapshot should skip it too.
+
+# --- OS and editor noise ---
+.DS_Store
+*~
+*.bak
+*_bak
+*.swp
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+
+# --- Node ---
+node_modules/
+*.log
+npm-debug.log*
+.vite/
+.vite-temp/
+coverage/
+
+# --- Build output (all regenerable) ---
+frontend/dist/
+electron/dist/
+electron/dist_backend/
+electron/build_backend/
+electron/build_log*.txt
+# Staged MAFFT bundle, rebuilt by `npm run prepare:mafft`. Everything else under
+# electron/build/ (icons, entitlements) is source and must stay tracked.
+electron/build/mafft_bin/
+
+# --- Runtime state ---
+backend/cache/
+backend/output_dir/
+backend/local_data/
+backend/debug_backend.txt
+
+# --- Sample genomes: build input, too large for git ---
+# build-backend.js passes backend/data/ to PyInstaller, so these ship inside the
+# packaged app, but the FASTA/GFF3 files are ~310 MB and do not belong in history.
+# The classification JSONs in the same directory ARE tracked: the backend reads
+# them as shipped fallback artifacts (see backend/project_classifier.py and
+# backend/taxonomy_classifier.py), and they are only a couple of megabytes.
+backend/data/*.fa
+backend/data/*.fai
+backend/data/*.gff3
+backend/data/*.gz
+
+# --- Experimental Rust/WASM renderer ---
+# The Cargo project and its prebuilt pkg/ output stay tracked; only the build
+# directory is ignored, at roughly 790 MB.
+frontend/rust/*/target/
+
+# --- Snapshots, vendored clones, scratch ---
+exports/
+temp_repos/
+ensembl_local_github_*/
+
+# --- Local tooling config ---
+# Personal settings. A shared .claude/settings.json, if added, should be tracked.
+.claude/settings.local.json

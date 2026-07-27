@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/* Additional global styles */
+html,
+body {
+    height: 100%;
+    margin: 0;
+}
+
+/* Hide scrollbar while keeping scroll functionality */
+.hide-scrollbar::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+.hide-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+/* Pill drag-pan container: hide native scrollbar in all browsers */
+.pills-drag-scroll::-webkit-scrollbar {
+    display: none;
+}
+
+.pills-drag-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overflow-x: scroll;
+    cursor: grab;
+}
+
+.pills-drag-scroll:active {
+    cursor: grabbing;
+}
+
+/* Themed scrollbars for app/browser containers */
+.themed-scrollbar {
+    scrollbar-width: thin;
+}
+
+.themed-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.themed-scrollbar::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+.themed-scrollbar.themed-scrollbar-light {
+    scrollbar-color: rgba(107, 114, 128, 0.75) rgba(229, 231, 235, 0.9);
+}
+
+.themed-scrollbar.themed-scrollbar-light::-webkit-scrollbar-track {
+    background: rgba(229, 231, 235, 0.9);
+    border-radius: 8px;
+}
+
+.themed-scrollbar.themed-scrollbar-light::-webkit-scrollbar-thumb {
+    background: rgba(107, 114, 128, 0.75);
+    border-radius: 8px;
+    border: 2px solid rgba(229, 231, 235, 0.9);
+}
+
+.themed-scrollbar.themed-scrollbar-light::-webkit-scrollbar-thumb:hover {
+    background: rgba(75, 85, 99, 0.82);
+}
+
+.themed-scrollbar.themed-scrollbar-dark {
+    scrollbar-color: rgba(148, 163, 184, 0.6) rgba(30, 41, 56, 0.9);
+}
+
+.themed-scrollbar.themed-scrollbar-dark::-webkit-scrollbar-track {
+    background: rgba(30, 41, 56, 0.9);
+    border-radius: 8px;
+}
+
+.themed-scrollbar.themed-scrollbar-dark::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.6);
+    border-radius: 8px;
+    border: 2px solid rgba(30, 41, 56, 0.9);
+}
+
+.themed-scrollbar.themed-scrollbar-dark::-webkit-scrollbar-thumb:hover {
+    background: rgba(165, 180, 252, 0.66);
+}
+
+/* Hide browser spinner controls for numeric inputs where we use plain typing */
+.no-number-spin {
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+.no-number-spin::-webkit-outer-spin-button,
+.no-number-spin::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}

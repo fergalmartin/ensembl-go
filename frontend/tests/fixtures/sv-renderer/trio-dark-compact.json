@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "fixture": {
+    "name": "trio-dark-compact-all-tracks",
+    "zoomThresholdSpans": [50000000, 500000, 2000, 250]
+  },
+  "theme": "dark",
+  "compact": true,
+  "show_bigwig": true,
+  "show_bigbed": true,
+  "windows": [
+    { "slot": "top", "chrom": "chr2", "start": 200000, "end": 200250, "chrom_length": 242193529, "label": "Top genome", "color": "#f59e0b" },
+    { "slot": "reference", "chrom": "2", "start": 100000, "end": 100250, "chrom_length": 242193529, "label": "Anchor genome", "color": "#38bdf8" },
+    { "slot": "bottom", "chrom": "chr2", "start": 300000, "end": 300250, "chrom_length": 242193529, "label": "Bottom genome", "color": "#a78bfa" }
+  ],
+  "alignments": [
+    { "panel": "upper", "id": "up-1", "ref_start": 100000, "ref_end": 100100, "tgt_start": 200000, "tgt_end": 200100, "strand": "+", "kind": "alignment" },
+    { "panel": "upper", "id": "up-2", "ref_start": 100115, "ref_end": 100250, "tgt_start": 200240, "tgt_end": 200105, "strand": "-", "kind": "inversion" },
+    { "panel": "lower", "id": "low-1", "ref_start": 100000, "ref_end": 100125, "tgt_start": 300000, "tgt_end": 300125, "strand": "+", "kind": "alignment" },
+    { "panel": "lower", "id": "low-2", "ref_start": 100140, "ref_end": 100250, "tgt_start": 300140, "tgt_end": 300250, "strand": "+", "kind": "alignment" }
+  ],
+  "variants": [
+    { "panel": "upper", "name": "upper-inversion", "kind": "inversion", "chrom": "2", "start": 100115, "end": 100250, "target_start": 200105, "target_end": 200240, "ref_length": 135, "alt_length": 135, "metadata": { "source": "fixture" } },
+    { "panel": "lower", "name": "lower-deletion", "kind": "deletion", "chrom": "2", "start": 100125, "end": 100140, "target_start": 300125, "target_end": 300140, "ref_length": 15, "alt_length": 0, "metadata": { "source": "fixture" } }
+  ],
+  "transcripts": [
+    { "slot": "top", "id": "TOP_TX", "label": "TOP", "start": 200015, "end": 200230, "strand": "+", "biotype": "protein_coding", "exons": [{ "start": 200015, "end": 200060 }, { "start": 200190, "end": 200230 }] },
+    { "slot": "reference", "id": "REF_TX", "label": "REF", "start": 100010, "end": 100235, "strand": "+", "biotype": "protein_coding", "exons": [{ "start": 100010, "end": 100070 }, { "start": 100200, "end": 100235 }] },
+    { "slot": "bottom", "id": "BOTTOM_TX", "label": "BOTTOM", "start": 300020, "end": 300225, "strand": "-", "biotype": "lncRNA", "exons": [{ "start": 300020, "end": 300080 }, { "start": 300185, "end": 300225 }] }
+  ],
+  "sequences": [],
+  "signal_tracks": [
+    { "slot": "top", "id": "bw-top", "label": "Top depth", "bins": [{ "start": 200000, "end": 200125, "value": 4 }, { "start": 200125, "end": 200250, "value": 9 }] },
+    { "slot": "reference", "id": "bw-ref", "label": "Anchor depth", "bins": [{ "start": 100000, "end": 100125, "value": 6 }, { "start": 100125, "end": 100250, "value": 3 }] },
+    { "slot": "bottom", "id": "bw-bottom", "label": "Bottom depth", "bins": [{ "start": 300000, "end": 300125, "value": 2 }, { "start": 300125, "end": 300250, "value": 8 }] }
+  ],
+  "interval_tracks": [
+    { "slot": "top", "id": "bb-top", "label": "Top annotations", "features": [{ "id": "top-1", "start": 200030, "end": 200085, "label": "Peak", "metadata": { "type": "peak" } }] },
+    { "slot": "reference", "id": "bb-ref", "label": "Anchor annotations", "features": [{ "id": "ref-1", "start": 100080, "end": 100155, "label": "Regulatory", "metadata": { "type": "regulatory" } }] },
+    { "slot": "bottom", "id": "bb-bottom", "label": "Bottom annotations", "features": [{ "id": "bottom-1", "start": 300155, "end": 300215, "label": "Repeat", "metadata": { "type": "repeat" } }] }
+  ]
+}

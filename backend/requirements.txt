@@ -1,0 +1,8 @@
+-c constraints.txt
+fastapi
+uvicorn
+pydantic
+pysam
+biopython
+requests
+pyBigWig

@@ -1,0 +1,19 @@
+{
+  "home": "icon_home.svg",
+  "species_selector": "icon_species_selector.svg",
+  "genome_browser": "icon_genome_browser.svg",
+  "track_manager": "icon_track_manager.svg",
+  "feature_explorer": "icon_feature_explorer.svg",
+  "alignment": "icon_alignment.svg",
+  "neighbourhood": "icon_neighbourhood.svg",
+  "structural_variation": "icon_structural_variation.svg",
+  "homology": "icon_homology.svg",
+  "stats": "icon_stats.svg",
+  "download": "icon_download.svg",
+  "configuration": "icon_configuration.svg",
+  "help": "icon_help.svg",
+  "power": "icon_power.svg",
+  "reset": "icon_reset.svg",
+  "theme_toggle_dark": "icon_theme_toggle_dark.svg",
+  "theme_toggle_light": "icon_theme_toggle_light.svg"
+}
