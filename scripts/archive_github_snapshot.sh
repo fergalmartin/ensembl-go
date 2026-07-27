@@ -93,9 +93,18 @@ do
   copy_if_exists "$rel_path"
 done
 
+# backend/data holds two different kinds of thing. The FASTA/GFF3 sample genomes are
+# hundreds of megabytes and are excluded, but project_classification.json and
+# taxonomy_classification.json in the same directory are shipped fallback artifacts the
+# backend reads at runtime (see backend/project_classifier.py and
+# backend/taxonomy_classifier.py), so they must stay. Excluding the whole directory,
+# as this did previously, silently dropped them from every snapshot.
 sync_subtree "backend" \
   "cache/" \
-  "data/" \
+  "/data/*.fa" \
+  "/data/*.fai" \
+  "/data/*.gff3" \
+  "/data/*.gz" \
   "test_data/" \
   "fixtures/" \
   "output_dir/" \
@@ -113,13 +122,6 @@ sync_subtree "frontend" \
   "local_data/" \
   "test_crash.cjs" \
   "test_frontend.py" \
-  "/*.js/" \
-  "/-name/" \
-  "/-r/" \
-  "/cp/" \
-  "/echo/" \
-  "/find/" \
-  "/Copied. Contents:/" \
   "/rust/" \
   "/scripts/test-sv-rust.js" \
   "/src/components/sv-rust/" \
