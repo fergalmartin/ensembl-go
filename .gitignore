@@ -48,12 +48,13 @@ backend/output_dir/
 backend/local_data/
 backend/debug_backend.txt
 
-# --- Sample genomes: build input, too large for git ---
-# build-backend.js passes backend/data/ to PyInstaller, so these ship inside the
-# packaged app, but the FASTA/GFF3 files are ~310 MB and do not belong in history.
-# The classification JSONs in the same directory ARE tracked: the backend reads
-# them as shipped fallback artifacts (see backend/project_classifier.py and
-# backend/taxonomy_classifier.py), and they are only a couple of megabytes.
+# --- Genome data does not belong in backend/data ---
+# The application ships no sample genomes: users download assemblies through the
+# download view or supply their own. backend/data holds only the classification
+# artifacts that decide species grouping, which ARE tracked (a couple of megabytes,
+# read at run time by backend/project_classifier.py and backend/taxonomy_classifier.py).
+# These patterns are a guard, so a stray FASTA or GFF3 left in that directory during
+# development cannot be committed or bundled by build-backend.js.
 backend/data/*.fa
 backend/data/*.fai
 backend/data/*.gff3

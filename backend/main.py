@@ -322,11 +322,6 @@ else:
     # Running from source
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-DEFAULT_REF_FASTA = BASE_PATH / "data" / "GRCh38.chr14.fa"
-DEFAULT_REF_GFF = BASE_PATH / "data" / "GRCh38.chr14.gff3"
-DEFAULT_TARGET_FASTA = BASE_PATH / "data" / "CHM13.chr14.fa"
-DEFAULT_TARGET_GFF = BASE_PATH / "data" / "CHM13.chr14.gff3"
-
 # Initialize Download Manager
 def _resolve_species_json_path() -> Path:
     env_path = os.environ.get("ENSEMBL_LOCAL_SPECIES_JSON")
@@ -335,15 +330,15 @@ def _resolve_species_json_path() -> Path:
         if p.exists():
             return p
 
+    # Distributions do not bundle a species catalogue; it is downloaded from Ensembl on
+    # first run (see DownloadManager.ensure_catalog_available). These paths only serve
+    # development and offline use, where a catalogue can be placed in the repository or
+    # pointed at with ENSEMBL_LOCAL_SPECIES_JSON.
     candidates = [
         BASE_PATH / "cluster_test_data" / "species.new_ftp_structure.json",
         BASE_PATH / "cluster_test_data" / "species.json",
         PROJECT_ROOT / "cluster_test_data" / "species.new_ftp_structure.json",
         PROJECT_ROOT / "cluster_test_data" / "species.json",
-        PROJECT_ROOT.parent / "cluster_test_data" / "species.new_ftp_structure.json",
-        PROJECT_ROOT.parent / "cluster_test_data" / "species.json",
-        PROJECT_ROOT.parent / "antigravity_pangenome_mapping" / "cluster_test_data" / "species.new_ftp_structure.json",
-        PROJECT_ROOT.parent / "antigravity_pangenome_mapping" / "cluster_test_data" / "species.json",
     ]
     for p in candidates:
         if p.exists():
@@ -5531,17 +5526,6 @@ async def load_custom_config(request: LoadConfigRequest):
         return merged
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load config: {e}")
-
-
-@app.get("/api/config/test-data")
-async def get_test_data_paths():
-    """Return the bundled chr14 test data paths."""
-    return {
-        "ref_fasta": str(DEFAULT_REF_FASTA),
-        "ref_gff": str(DEFAULT_REF_GFF),
-        "target_fasta": str(DEFAULT_TARGET_FASTA),
-        "target_gff": str(DEFAULT_TARGET_GFF),
-    }
 
 
 @app.post("/api/cache/clear")
@@ -11665,7 +11649,18 @@ async def browse_bigwig(
     return await run_in_threadpool(_query)
 
 
-SV_TEST_DATA_DIR = Path("/Users/fergal/Desktop/test/sv_view_data")
+# Local fixtures used while developing the structural-variation view. Distributions leave
+# ENSEMBL_GO_SV_TEST_DATA_DIR unset, in which case the built-in datasets below are not
+# offered at all; real datasets are registered through the SV view instead (see
+# docs/STRUCTURAL_VARIATION.md). Point the variable at a directory of .bigChain.bb and
+# mapping TSVs to re-enable them.
+_SV_TEST_DATA_DIR_SETTING = os.environ.get("ENSEMBL_GO_SV_TEST_DATA_DIR", "").strip()
+SV_BUILTIN_DATASETS_ENABLED = bool(_SV_TEST_DATA_DIR_SETTING)
+SV_TEST_DATA_DIR = (
+    Path(_SV_TEST_DATA_DIR_SETTING).expanduser()
+    if _SV_TEST_DATA_DIR_SETTING
+    else Path("sv_view_data")
+)
 SV_ALIGNMENT_REGISTRY_FILENAME = "sv_alignment_registry.json"
 SV_ALIGNMENT_SCAN_DIRNAME = "sv_alignments"
 SV_DATASETS = {
@@ -12270,11 +12265,12 @@ def _list_sv_datasets(output_dir: Any = "") -> Tuple[List[Dict[str, Any]], List[
 
     datasets: List[Dict[str, Any]] = []
     seen_ids: Set[str] = set()
-    for raw in SV_DATASETS.values():
-        dataset = _normalize_sv_dataset(raw, source="builtin")
-        if dataset and dataset["id"] not in seen_ids:
-            seen_ids.add(dataset["id"])
-            datasets.append(dataset)
+    if SV_BUILTIN_DATASETS_ENABLED:
+        for raw in SV_DATASETS.values():
+            dataset = _normalize_sv_dataset(raw, source="builtin")
+            if dataset and dataset["id"] not in seen_ids:
+                seen_ids.add(dataset["id"])
+                datasets.append(dataset)
 
     for dataset in _load_sv_alignment_registry_from_path(_sv_registry_store_path(output_dir)):
         if dataset["id"] in seen_ids:

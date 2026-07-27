@@ -29,5 +29,6 @@
     "globals": "^16.5.0",
     "tailwindcss": "^4.1.18",
     "vite": "^7.2.4"
-  }
+  },
+  "license": "Apache-2.0"
 }

@@ -243,7 +243,6 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
     const isLight = theme === 'light'
     const [saving, setSaving] = useState(false)
     const [clearingCache, setClearingCache] = useState(false)
-    const [loadingTestData, setLoadingTestData] = useState(false)
     const [statusMessage, setStatusMessage] = useState(null)
     const [isIndexing, setIsIndexing] = useState(false)
     const [configPath, setConfigPath] = useState('')
@@ -539,31 +538,6 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
 
     const handleBrowseSave = () => {
         openWebBrowser('SAVE_DIRECTORY', 'directory')
-    }
-
-    const handleLoadTestData = async () => {
-        setLoadingTestData(true)
-        try {
-            const res = await fetch(`${API_BASE}/api/config/test-data`)
-            if (res.ok) {
-                const data = await res.json()
-                onConfigChange((prevConfig) => {
-                    const base = prevConfig || config
-                    return {
-                        ...base,
-                        ref_fasta: data.ref_fasta,
-                        ref_gff: data.ref_gff,
-                        target_fasta: data.target_fasta,
-                        target_gff: data.target_gff,
-                    }
-                })
-                showStatus('Test data paths loaded (Chr14 GRCh38 ↔ CHM13)')
-            }
-        } catch (e) {
-            showStatus(`Error: ${e.message}`, true)
-        } finally {
-            setLoadingTestData(false)
-        }
     }
 
     const handleGenerateIndexes = async () => {

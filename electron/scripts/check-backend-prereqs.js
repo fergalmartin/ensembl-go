@@ -22,38 +22,30 @@ const REQUIRED_MODULES = [
   'PyInstaller',
 ];
 
-function resolveSpeciesJsonPath() {
-  const override = process.env.ENSEMBL_LOCAL_SPECIES_JSON;
-  if (override && pathExists(override)) {
-    return override;
-  }
-
-  const candidates = [
-    path.join(PROJECT_DIR, 'cluster_test_data', 'species.new_ftp_structure.json'),
-    path.join(PROJECT_DIR, 'cluster_test_data', 'species.json'),
-    path.join(PROJECT_DIR, '..', 'cluster_test_data', 'species.new_ftp_structure.json'),
-    path.join(PROJECT_DIR, '..', 'cluster_test_data', 'species.json'),
-    path.join(PROJECT_DIR, '..', 'antigravity_pangenome_mapping', 'cluster_test_data', 'species.new_ftp_structure.json'),
-    path.join(PROJECT_DIR, '..', 'antigravity_pangenome_mapping', 'cluster_test_data', 'species.json'),
-  ];
-
-  return candidates.find((candidate) => pathExists(candidate)) || '';
-}
-
 const targetPlatform = getTargetPlatformFromArgv();
 const requirementsPath = path.join(PROJECT_DIR, 'backend', 'requirements-build.txt');
 
+// The classification artifacts decide how downloadable species are grouped, so a build
+// without them produces an application that mis-groups a large share of the catalogue.
+const classificationArtifacts = [
+  path.join(PROJECT_DIR, 'backend', 'data', 'taxonomy_classification.json'),
+  path.join(PROJECT_DIR, 'backend', 'data', 'project_classification.json'),
+];
+for (const artifactPath of classificationArtifacts) {
+  if (!pathExists(artifactPath)) {
+    fail(
+      `Missing classification artifact: ${artifactPath}\n` +
+        'Regenerate it with the generators in backend/scripts/ before packaging. See the ' +
+        '"Species grouping artifacts" section of electron/RELEASE.md.'
+    );
+  }
+}
+
 if (targetPlatform === 'win32') {
-  const speciesJsonPath = resolveSpeciesJsonPath();
   if (!pathExists(path.join(PROJECT_DIR, 'backend', 'requirements.txt'))) {
     fail('backend/requirements.txt is missing. Windows WSL packaging needs it for runtime setup instructions.');
   }
   log('Windows target selected; native backend build prerequisites are skipped because the backend runs inside WSL.');
-  if (speciesJsonPath) {
-    log(`Using species catalogue: ${speciesJsonPath}`);
-  } else {
-    log('No species catalogue found; build-backend will generate an empty bundled species catalogue.');
-  }
   process.exit(0);
 }
 

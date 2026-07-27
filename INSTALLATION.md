@@ -51,6 +51,12 @@ safe to re-run; an existing virtual environment is reused rather than rebuilt. A
 `--with-packaging` to also install PyInstaller, which is needed to build a
 distributable package but not to run the application.
 
+When run interactively it also offers to refresh the species grouping data, which
+decides how species are grouped in the download view. Saying no is fine — the copy in
+the checkout works, it just may not cover species Ensembl has added recently.
+Refreshing downloads about 76 MB from NCBI. Use `--with-grouping` or `--no-grouping`
+to answer in advance, which is also what non-interactive runs need.
+
 To do the same by hand instead:
 
 ```bash

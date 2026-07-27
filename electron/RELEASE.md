@@ -31,6 +31,7 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 npm --prefix frontend audit --omit=dev
 npm --prefix electron audit --omit=dev
+python3 backend/scripts/check_classification_coverage.py
 ```
 
 Expected notes:
@@ -39,6 +40,51 @@ Expected notes:
   backlog item, not a release blocker.
 - Frontend lint may report warnings; packaging should stop only on lint errors.
 - The backend dependency set is constrained by `backend/constraints.txt`.
+
+### Species grouping artifacts
+
+The download view groups species (Mammals, Insects, Plants and so on) using
+`backend/data/taxonomy_classification.json`, which maps each catalogue taxid to its
+NCBI lineage. That artifact does most of the work: with it, every species in the
+catalogue it was generated against lands in a real group, and without it the name
+heuristic leaves roughly a third of them in "Other".
+
+The artifact is generated at build time, but the species catalogue is downloaded at
+run time and Ensembl keeps adding to it, so coverage decays. Species the artifact does
+not cover fall back to the heuristic.
+
+**The distribution builds handle this themselves.** `dist:mac:release`, `dist:win` and
+`dist:linux` all run `npm run refresh:classification` before packaging, so a release
+cannot ship a stale artifact by accident. That step:
+
+1. downloads the current species catalogue (small) and measures coverage;
+2. stops there if coverage is within 1%, which costs about a second;
+3. otherwise downloads the NCBI taxdump (~76 MB), regenerates the artifact, and
+   refreshes `project_classification.json` too.
+
+To run it by hand, or to see where things stand without building:
+
+```bash
+npm --prefix electron run refresh:classification          # refresh if needed
+python backend/scripts/check_classification_coverage.py   # report only, changes nothing
+```
+
+Useful arguments, passed through the npm script after `--`:
+
+```bash
+npm --prefix electron run refresh:classification -- --force
+npm --prefix electron run refresh:classification -- --max-uncovered-percent 0.5
+```
+
+The taxdump is cached under `backend/cache/build/`. NCBI rebuilds it daily, so the
+cache only helps for repeated builds on the same day; it is safe to delete.
+
+The underlying generators, `backend/scripts/generate_taxonomy_classification.py` and
+`generate_project_classification.py`, can still be run directly if you need to point at
+a specific catalogue or taxdump. Both take `--audit-only` to report without writing.
+
+`check-backend-prereqs.js` additionally fails the build if either artifact is missing,
+since a package without them mis-groups a large share of the catalogue.
 
 ### Reading the npm audit output
 

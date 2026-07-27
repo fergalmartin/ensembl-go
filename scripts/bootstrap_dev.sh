@@ -4,6 +4,11 @@
 #
 #   ./scripts/bootstrap_dev.sh                  # runtime dependencies
 #   ./scripts/bootstrap_dev.sh --with-packaging # also PyInstaller, for building packages
+#   ./scripts/bootstrap_dev.sh --with-grouping  # also refresh species grouping data
+#   ./scripts/bootstrap_dev.sh --no-grouping    # never ask about grouping data
+#
+# Without --with-grouping or --no-grouping this asks about the grouping data when run
+# interactively, and skips it otherwise.
 #
 # Safe to re-run: an existing virtual environment is reused rather than recreated.
 set -euo pipefail
@@ -11,17 +16,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$ROOT_DIR/.venv"
 WITH_PACKAGING=0
+# unset = ask when interactive, skip otherwise
+WITH_GROUPING=""
 
 for arg in "$@"; do
   case "$arg" in
     --with-packaging) WITH_PACKAGING=1 ;;
+    --with-grouping) WITH_GROUPING=1 ;;
+    --no-grouping) WITH_GROUPING=0 ;;
     -h|--help)
-      sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
       echo "Unknown option: $arg" >&2
-      echo "Usage: $0 [--with-packaging]" >&2
+      echo "Usage: $0 [--with-packaging] [--with-grouping|--no-grouping]" >&2
       exit 1
       ;;
   esac
@@ -98,6 +107,42 @@ if [[ -f "$ELECTRON_INSTALL_JS" ]]; then
   else
     note "Could not fetch the Electron runtime now; it will download on first launch."
   fi
+fi
+
+# --- Species grouping data ---------------------------------------------------
+
+# The download view groups species using an NCBI lineage artifact in backend/data. The
+# checked-in copy works, but decays as Ensembl adds species; refreshing needs a ~76 MB
+# NCBI taxdump download. Only ask when someone is actually watching.
+if [[ -z "$WITH_GROUPING" ]]; then
+  if [[ -t 0 ]]; then
+    echo
+    echo "The download view groups species (Mammals, Insects, Plants and so on) using"
+    echo "NCBI taxonomy data. The copy in this checkout may be out of date, which leaves"
+    echo "newer species ungrouped. Refreshing it downloads about 76 MB from NCBI and"
+    echo "takes roughly 20 seconds. It is only needed for accurate grouping."
+    echo
+    read -r -p "Refresh the species grouping data now? [y/N] " reply
+    case "$reply" in
+      y|Y|yes|YES) WITH_GROUPING=1 ;;
+      *) WITH_GROUPING=0 ;;
+    esac
+  else
+    WITH_GROUPING=0
+  fi
+fi
+
+if [[ "$WITH_GROUPING" -eq 1 ]]; then
+  step "Refreshing species grouping data"
+  if "$VENV_PYTHON" "$ROOT_DIR/backend/scripts/refresh_classification_artifacts.py"; then
+    note "Species grouping data is up to date."
+  else
+    note "Could not refresh the grouping data. The checked-in copy is still in place,"
+    note "so the application works; newer species may be grouped less accurately."
+  fi
+else
+  note "Skipping the species grouping refresh; using the copy in this checkout."
+  note "Refresh it later with: python backend/scripts/refresh_classification_artifacts.py"
 fi
 
 # --- Optional tools ----------------------------------------------------------

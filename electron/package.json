@@ -18,12 +18,13 @@
     "prebuild:linux": "npm run check:backend-prereqs -- --target linux && npm run prepare:mafft -- --target linux && npm run build:backend -- --target linux && npm run build:frontend",
     "build": "node ./node_modules/electron-builder/cli.js",
     "dist": "npm run dist:mac:release",
-    "dist:mac:release": "node ./scripts/check-macos-release-prereqs.js && npm run check:electron-runtime && node ./scripts/clean-branding-artifacts.js && npm run prebuild:mac && node ./node_modules/electron-builder/cli.js --mac dmg zip",
+    "dist:mac:release": "node ./scripts/check-macos-release-prereqs.js && npm run check:electron-runtime && npm run refresh:classification && node ./scripts/clean-branding-artifacts.js && npm run prebuild:mac && node ./node_modules/electron-builder/cli.js --mac dmg zip",
     "dist:mac:unsigned": "node ./scripts/clean-branding-artifacts.js && npm run prebuild:mac && CSC_IDENTITY_AUTO_DISCOVERY=false node ./node_modules/electron-builder/cli.js --mac dmg zip",
-    "dist:win": "npm run check:electron-runtime && npm run prebuild:win && node ./node_modules/electron-builder/cli.js --win nsis zip",
+    "dist:win": "npm run check:electron-runtime && npm run refresh:classification && npm run prebuild:win && node ./node_modules/electron-builder/cli.js --win nsis zip",
     "dist:win:dir": "npm run prebuild:win && node ./node_modules/electron-builder/cli.js --win dir",
-    "dist:linux": "npm run check:electron-runtime && npm run prebuild:linux && npm run verify:linux-backend && node ./node_modules/electron-builder/cli.js --linux AppImage deb",
-    "dist:linux:dir": "npm run prebuild:linux && npm run verify:linux-backend && node ./node_modules/electron-builder/cli.js --linux dir"
+    "dist:linux": "npm run check:electron-runtime && npm run refresh:classification && npm run prebuild:linux && npm run verify:linux-backend && node ./node_modules/electron-builder/cli.js --linux AppImage deb",
+    "dist:linux:dir": "npm run prebuild:linux && npm run verify:linux-backend && node ./node_modules/electron-builder/cli.js --linux dir",
+    "refresh:classification": "node ./scripts/refresh-classification.js"
   },
   "build": {
     "appId": "com.ensembl.go",
@@ -131,7 +132,7 @@
   },
   "keywords": [],
   "author": "Ensembl",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "devDependencies": {
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3"

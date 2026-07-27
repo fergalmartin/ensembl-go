@@ -15,48 +15,6 @@ const {
   runCommand,
 } = require('./utils');
 
-function resolveSpeciesJsonPath() {
-  const override = process.env.ENSEMBL_LOCAL_SPECIES_JSON;
-  if (override && pathExists(override)) {
-    return path.resolve(override);
-  }
-
-  const candidates = [
-    path.join(PROJECT_DIR, 'cluster_test_data', 'species.new_ftp_structure.json'),
-    path.join(PROJECT_DIR, 'cluster_test_data', 'species.json'),
-    path.join(PROJECT_DIR, '..', 'cluster_test_data', 'species.new_ftp_structure.json'),
-    path.join(PROJECT_DIR, '..', 'cluster_test_data', 'species.json'),
-    path.join(PROJECT_DIR, '..', 'antigravity_pangenome_mapping', 'cluster_test_data', 'species.new_ftp_structure.json'),
-    path.join(PROJECT_DIR, '..', 'antigravity_pangenome_mapping', 'cluster_test_data', 'species.json'),
-  ];
-
-  for (const candidate of candidates) {
-    if (pathExists(candidate)) {
-      return path.resolve(candidate);
-    }
-  }
-  return '';
-}
-
-function ensureBundledSpeciesJsonPath() {
-  const resolved = resolveSpeciesJsonPath();
-  if (resolved) {
-    return resolved;
-  }
-
-  const generatedDir = path.join(ELECTRON_DIR, 'build_backend', 'generated');
-  const placeholderPath = path.join(generatedDir, 'species.new_ftp_structure.json');
-  const placeholderPayload = {
-    last_updated: '',
-    species: {},
-  };
-
-  fs.mkdirSync(generatedDir, { recursive: true });
-  fs.writeFileSync(placeholderPath, `${JSON.stringify(placeholderPayload, null, 2)}\n`, 'utf8');
-  log(`No species catalogue found; using generated empty catalogue: ${placeholderPath}`);
-  return placeholderPath;
-}
-
 function shouldCopyBackendPath(sourcePath) {
   const base = path.basename(sourcePath);
   if (base === '__pycache__' || base === '.pytest_cache' || base === 'cache') {
@@ -68,21 +26,18 @@ function shouldCopyBackendPath(sourcePath) {
   return true;
 }
 
-function stageWindowsBackendSource(speciesJsonPath) {
+function stageWindowsBackendSource() {
   const bundleRoot = path.join(ELECTRON_DIR, 'build_backend', 'windows', 'backend_source');
   const backendSourceDir = path.join(PROJECT_DIR, 'backend');
   const targetBackendDir = path.join(bundleRoot, 'backend');
-  const targetSpeciesDir = path.join(bundleRoot, 'cluster_test_data');
 
   emptyDir(bundleRoot);
   copyRecursive(backendSourceDir, targetBackendDir, { filter: shouldCopyBackendPath });
-  fs.mkdirSync(targetSpeciesDir, { recursive: true });
-  fs.copyFileSync(speciesJsonPath, path.join(targetSpeciesDir, path.basename(speciesJsonPath)));
 
   log(`Staged WSL backend source bundle: ${bundleRoot}`);
 }
 
-function buildNativeBackend(speciesJsonPath) {
+function buildNativeBackend() {
   const { command, args } = resolvePythonCommand();
   const pyInstallerDataSeparator = process.platform === 'win32' ? ';' : ':';
   const backendDataPath = path.join(PROJECT_DIR, 'backend', 'data');
@@ -114,31 +69,34 @@ function buildNativeBackend(speciesJsonPath) {
     specOutputDir,
     '--hidden-import',
     'pyBigWig',
-    '--add-data',
-    `${speciesJsonPath}${pyInstallerDataSeparator}cluster_test_data`,
     backendEntry,
   ];
 
+  // backend/data carries the taxonomy and project classification artifacts, which decide
+  // how downloadable species are grouped. No species catalogue is bundled: it is fetched
+  // from Ensembl on first run.
   if (pathExists(backendDataPath)) {
     pyInstallerArgs.splice(
-      pyInstallerArgs.length - 3,
+      pyInstallerArgs.length - 1,
       0,
       '--add-data',
       `${backendDataPath}${pyInstallerDataSeparator}data`
     );
   } else {
-    log('No backend/data directory found; building without bundled sample genomes.');
+    fail(
+      `backend/data is missing: ${backendDataPath}\n` +
+        'It holds the taxonomy and project classification artifacts. Without them the ' +
+        'download view falls back to name heuristics and mis-groups many species.'
+    );
   }
 
-  log(`Using species catalogue: ${speciesJsonPath}`);
   runCommand(command, pyInstallerArgs, { cwd: ELECTRON_DIR });
 }
 
 const targetPlatform = getTargetPlatformFromArgv();
-const speciesJsonPath = ensureBundledSpeciesJsonPath();
 
 if (targetPlatform === 'win32') {
-  stageWindowsBackendSource(speciesJsonPath);
+  stageWindowsBackendSource();
 } else {
-  buildNativeBackend(speciesJsonPath);
+  buildNativeBackend();
 }

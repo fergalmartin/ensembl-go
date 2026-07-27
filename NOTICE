@@ -1,0 +1,34 @@
+Ensembl Go
+Copyright [2026] EMBL-European Bioinformatics Institute
+
+This product includes software developed at
+EMBL-European Bioinformatics Institute (https://www.ebi.ac.uk/).
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+--------------------------------------------------------------------------------
+
+This application bundles or depends on third-party software distributed under
+its own terms, including:
+
+  - Electron and Chromium (MIT and BSD-style licences)
+  - Python packages listed in backend/requirements.txt, including FastAPI,
+    uvicorn, pydantic, pysam, Biopython, requests and pyBigWig
+  - JavaScript packages listed in frontend/package.json, including React, D3
+    and Lit
+  - MAFFT, when bundled into a packaged build (BSD licence; see the LICENSE
+    file placed alongside the bundled binaries)
+
+Species and assembly metadata is retrieved from Ensembl
+(https://ftp.ebi.ac.uk/pub/ensemblorganisms/) and taxonomy data is derived from
+the NCBI Taxonomy database.

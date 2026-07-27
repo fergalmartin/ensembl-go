@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -389,7 +390,12 @@ def main() -> int:
     )
     parser.add_argument("--region", required=True, help="Reference region, e.g. 1:1000000-1005000")
     parser.add_argument("--bigchain", default="", help="Path to .bigChain.bb file")
-    parser.add_argument("--data-dir", default="/Users/fergal/Desktop/test/sv_view_data", help="Directory with .bigChain.bb and mapping TSVs")
+    parser.add_argument(
+        "--data-dir",
+        default=os.environ.get("ENSEMBL_GO_SV_TEST_DATA_DIR", ""),
+        help="Directory with .bigChain.bb and mapping TSVs "
+             "(defaults to $ENSEMBL_GO_SV_TEST_DATA_DIR)",
+    )
     parser.add_argument("--reference-map", default="", help="Reference mapping TSV (*.hal_mapping.tsv)")
     parser.add_argument("--target-map", default="", help="Target mapping TSV (*.hal_mapping.tsv)")
     parser.add_argument("--target-chrom", default="", help="Optional target chromosome token (defaults to same token as reference)")
