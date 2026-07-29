@@ -1,7 +1,17 @@
 import { useState, useEffect, useRef } from 'react'
 import { API_BASE } from '../backendRuntime'
 
-export default function FileBrowserModal({ isOpen, onClose, onSelect, initialPath, mode = 'file', theme, extensions = [] }) {
+export default function FileBrowserModal({
+    isOpen,
+    onClose,
+    onSelect,
+    initialPath,
+    mode = 'file',
+    theme,
+    extensions = [],
+    defaultFileName = '',
+    footerContent = null,
+}) {
     const [currentPath, setCurrentPath] = useState(initialPath || '.')
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(false)
@@ -9,6 +19,7 @@ export default function FileBrowserModal({ isOpen, onClose, onSelect, initialPat
     const [selectedItem, setSelectedItem] = useState(null) // For directory selection or single file highlight
     const [showAll, setShowAll] = useState(false)
     const [activeExtensions, setActiveExtensions] = useState([])
+    const [saveFileName, setSaveFileName] = useState(defaultFileName)
 
     // New Folder State
     const [isCreatingFolder, setIsCreatingFolder] = useState(false)
@@ -29,6 +40,7 @@ export default function FileBrowserModal({ isOpen, onClose, onSelect, initialPat
         if (isOpen) {
             const startPath = initialPath || '.'
             setCurrentPath(startPath)
+            setSaveFileName(defaultFileName)
             fetchItems(startPath)
             // Reset filters: activeExtensions = all extensions passed, showAll = false (unless no extensions)
             if (extensions && extensions.length > 0) {
@@ -79,19 +91,29 @@ export default function FileBrowserModal({ isOpen, onClose, onSelect, initialPat
             setSelectedItem(null)
         } else {
             // It's a file
-            if (mode === 'file') {
+            if (mode === 'file' || mode === 'file-or-directory') {
                 setSelectedItem(item)
-                onSelect(item.path)
+                onSelect(item.path, { kind: 'file' })
                 onClose()
+            } else if (mode === 'save') {
+                setSelectedItem(item)
+                setSaveFileName(item.name)
             }
         }
     }
 
-    const handleSelectCurrentDir = () => {
-        if (mode === 'directory') {
-            onSelect(currentPath)
-            onClose()
-        }
+    const handleSelectDirectory = (path) => {
+        if (mode !== 'directory' && mode !== 'file-or-directory') return
+        onSelect(path, { kind: 'directory' })
+        onClose()
+    }
+
+    const handleSaveFile = () => {
+        const filename = String(saveFileName || '').trim()
+        if (!filename) return
+        const separator = currentPath.endsWith('/') ? '' : '/'
+        onSelect(`${currentPath}${separator}${filename}`, { kind: 'file' })
+        onClose()
     }
 
     const handleCreateFolder = async () => {
@@ -135,7 +157,13 @@ export default function FileBrowserModal({ isOpen, onClose, onSelect, initialPat
                 {/* Header */}
                 <div className={`p-4 border-b ${borderColor} flex justify-between items-center`}>
                     <h3 className={`text-lg font-semibold ${textColor}`}>
-                        {mode === 'directory' ? 'Select Directory' : 'Select File'}
+                        {mode === 'directory'
+                            ? 'Select Directory'
+                            : mode === 'file-or-directory'
+                                ? 'Select File or Directory'
+                                : mode === 'save'
+                                    ? 'Save File'
+                                    : 'Select File'}
                     </h3>
                     <button onClick={onClose} className={`p-1 rounded-md ${hoverBg} transition-colors`}>
                         <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -219,6 +247,21 @@ export default function FileBrowserModal({ isOpen, onClose, onSelect, initialPat
                                                     {(item.size / 1024).toFixed(1)} KB
                                                 </div>
                                             )}
+                                            {mode === 'file-or-directory' && item.is_dir && item.name !== '..' ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={(event) => {
+                                                        event.stopPropagation()
+                                                        handleSelectDirectory(item.path)
+                                                    }}
+                                                    className={`shrink-0 px-2.5 py-1 rounded text-xs font-medium transition-colors ${isLight
+                                                        ? 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                                                        : 'bg-blue-900/30 text-blue-300 hover:bg-blue-900/50'
+                                                        }`}
+                                                >
+                                                    Select
+                                                </button>
+                                            ) : null}
                                         </div>
                                     )
                                 })}
@@ -269,8 +312,29 @@ export default function FileBrowserModal({ isOpen, onClose, onSelect, initialPat
                         </div>
                     )}
 
+                    {footerContent ? (
+                        <div className={`px-4 py-3 border-t ${borderColor}`}>
+                            {footerContent}
+                        </div>
+                    ) : null}
+
                     {/* Action buttons row */}
-                    <div className={`px-4 py-3 flex items-center justify-end gap-3 ${extensions && extensions.length > 0 ? `border-t ${borderColor}` : ''}`}>
+                    <div className={`px-4 py-3 flex items-center justify-end gap-3 ${(extensions && extensions.length > 0) || footerContent ? `border-t ${borderColor}` : ''}`}>
+                        {mode === 'save' && !isCreatingFolder ? (
+                            <input
+                                type="text"
+                                value={saveFileName}
+                                onChange={(event) => setSaveFileName(event.target.value)}
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Enter') handleSaveFile()
+                                }}
+                                placeholder="Filename"
+                                className={`mr-auto min-w-0 flex-1 max-w-sm px-3 py-2 rounded-lg text-sm border focus:outline-none focus:ring-2 ${isLight
+                                    ? 'bg-white border-gray-300 text-gray-900 focus:ring-blue-500/40'
+                                    : 'bg-gray-800 border-gray-600 text-gray-100 focus:ring-blue-500/40'
+                                    }`}
+                            />
+                        ) : null}
                         {isCreatingFolder ? (
                             <div className="flex items-center gap-2 mr-auto animate-in fade-in slide-in-from-right-4 duration-200">
                                 <input
@@ -321,12 +385,21 @@ export default function FileBrowserModal({ isOpen, onClose, onSelect, initialPat
                         >
                             Cancel
                         </button>
-                        {mode === 'directory' && (
+                        {(mode === 'directory' || mode === 'file-or-directory') && (
                             <button
-                                onClick={handleSelectCurrentDir}
+                                onClick={() => handleSelectDirectory(currentPath)}
                                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600 hover:bg-blue-700`}
                             >
-                                Select Current Directory
+                                {mode === 'file-or-directory' ? 'Use This Directory' : 'Select Current Directory'}
+                            </button>
+                        )}
+                        {mode === 'save' && (
+                            <button
+                                onClick={handleSaveFile}
+                                disabled={!String(saveFileName || '').trim()}
+                                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                            >
+                                Save
                             </button>
                         )}
                     </div>

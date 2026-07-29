@@ -14,6 +14,21 @@ function uniqueTokens(values) {
   return out
 }
 
+function collectAssemblyIdentityAliases(record) {
+  if (!record) return []
+  const weakTokens = new Set(uniqueTokens([
+    record.provider,
+    record.species_key,
+    record.display_name,
+    record.common_name,
+    record.scientific_name,
+  ]))
+  return (record.aliases || []).filter((value) => {
+    const token = normalizeSvCatalogToken(value)
+    return Boolean(token && !weakTokens.has(token))
+  })
+}
+
 export function speciesGenomeKey(species) {
   if (!species) return ''
   return String(
@@ -55,7 +70,7 @@ export function collectSpeciesAssemblyTokens(species) {
     species.gca,
     species.accession,
     species.assembly_name,
-    ...(species.aliases || []),
+    ...collectAssemblyIdentityAliases(species),
     ...(species.equivalent_accessions || []),
   ]
   return uniqueTokens(values)
@@ -90,7 +105,7 @@ export function collectCatalogAssemblyTokens(genome) {
     genome.gca,
     genome.accession,
     genome.assembly_name,
-    ...(genome.aliases || []),
+    ...collectAssemblyIdentityAliases(genome),
     ...(genome.equivalent_accessions || []),
   ]
   return uniqueTokens(values)
@@ -118,15 +133,67 @@ export function resolveCatalogGenomeForSpecies(catalog, species) {
   return genomes.find((genome) => catalogGenomeMatchesSpecies(genome, species)) || null
 }
 
-export function findSvAlignment(catalog, anchorSpecies, targetSpecies, options = {}) {
-  if (!anchorSpecies || !targetSpecies) return null
+export function getSvAlignmentsForPair(catalog, anchorSpecies, targetSpecies, options = {}) {
+  if (!anchorSpecies || !targetSpecies) return []
   const requireSupported = Boolean(options.requireSupported)
   const alignments = Array.isArray(catalog?.alignments) ? catalog.alignments : []
-  return alignments.find((alignment) => {
+  return alignments.filter((alignment) => {
     if (requireSupported && !alignment?.supported) return false
     return catalogGenomeMatchesSpecies(alignment.reference_genome, anchorSpecies)
       && catalogGenomeMatchesSpecies(alignment.target_genome, targetSpecies)
-  }) || null
+  })
+}
+
+export function findSvAlignment(catalog, anchorSpecies, targetSpecies, options = {}) {
+  const preferredId = String(options.preferredAlignmentId || '')
+  const matches = getSvAlignmentsForPair(catalog, anchorSpecies, targetSpecies, options)
+  if (preferredId) {
+    const preferred = matches.find((alignment) => String(alignment?.id || '') === preferredId)
+    if (preferred) return preferred
+  }
+  return matches[0] || null
+}
+
+// Alignments between the same two assemblies, whichever way round they run. The
+// backend supplies pair_id for records that came from a config; the fallback keeps
+// scanned and legacy records grouped too.
+function svPairKey(alignment) {
+  const declared = String(alignment?.pair_id || '')
+  if (declared) return declared
+  return [
+    normalizeSvCatalogToken(getSvGenomeAccessionToken(alignment?.reference_genome)),
+    normalizeSvCatalogToken(getSvGenomeAccessionToken(alignment?.target_genome)),
+  ].sort().join('__')
+}
+
+function getSvGenomeAccessionToken(genome) {
+  return genome?.accession || genome?.assembly || genome?.gca || genome?.assembly_name || ''
+}
+
+export function buildSvPairIndex(catalog) {
+  const alignments = Array.isArray(catalog?.alignments) ? catalog.alignments : []
+  const pairs = new Map()
+  const genomeIdsByPair = new Map()
+  for (const alignment of alignments) {
+    const key = svPairKey(alignment)
+    if (!key) continue
+    if (!pairs.has(key)) {
+      pairs.set(key, { id: key, genomes: [], alignments: [] })
+      genomeIdsByPair.set(key, new Set())
+    }
+    const pair = pairs.get(key)
+    const seenGenomes = genomeIdsByPair.get(key)
+    pair.alignments.push(alignment)
+    for (const genome of [alignment?.reference_genome, alignment?.target_genome]) {
+      // Identity, not `id`: catalog genomes always carry one, but records reaching
+      // here from a scan or a hand-written config may not.
+      const identity = String(genome?.id || '') || normalizeSvCatalogToken(getSvGenomeAccessionToken(genome))
+      if (!identity || seenGenomes.has(identity)) continue
+      seenGenomes.add(identity)
+      pair.genomes.push(genome)
+    }
+  }
+  return Array.from(pairs.values())
 }
 
 export function getOutgoingSvAlignments(catalog, anchorSpecies, options = {}) {
@@ -207,6 +274,76 @@ export function buildAvailableSvAlignmentRows(catalog, activeSpecies = [], inact
       canDownloadTarget: supported && target.isDownloadable,
     }
   })
+}
+
+/** Suffix a genome option with why it can or cannot be used.
+ *
+ * The three states a dropdown entry can be in:
+ * - `selected`  already in the top bar; pick it and it is used straight away.
+ * - `add`       downloaded, but not in the top bar; picking it adds it there.
+ * - `missing`   no local data, so nothing can be drawn for it. Listed but not
+ *               selectable, because seeing why a config's genome cannot be used is
+ *               more useful than the genome silently not appearing at all.
+ */
+export function formatSvGenomeOptionLabel(option) {
+  const suffixes = []
+  if (option?.state === 'add') suffixes.push('add')
+  if (option?.state === 'missing') suffixes.push(option?.genome?.downloadable ? 'not downloaded' : 'missing')
+  if (option?.supported === false) suffixes.push('missing files')
+  return suffixes.length ? `${option.label} (${suffixes.join(', ')})` : String(option?.label || '')
+}
+
+/** Build the option list for a genome dropdown.
+ *
+ * Genomes arriving from a loaded config are included even when they are not in the
+ * top bar -- otherwise loading a config appears to do nothing, because the view can
+ * only offer what is already selected.
+ */
+export function buildSvGenomeOptions(genomes, knownSpecies, selectedKeys, activeKeys, options = {}) {
+  // The caller supplies the key scheme. The SV view keys selection on
+  // getGenomeKey, which is not the same string speciesGenomeKey produces, and an
+  // option keyed one way against a selection set keyed the other never matches.
+  const keyForSpecies = options.keyForSpecies || speciesGenomeKey
+  const labelForSpecies = options.labelForSpecies || getSvGenomeDisplayName
+  const labelForGenome = options.labelForGenome || getSvGenomeDisplayName
+  const selected = selectedKeys instanceof Set ? selectedKeys : new Set(selectedKeys || [])
+  const active = activeKeys instanceof Set ? activeKeys : new Set(activeKeys || [])
+  const out = []
+  const seen = new Set()
+
+  for (const genome of genomes || []) {
+    const identity = String(genome?.id || '') || normalizeSvCatalogToken(getSvGenomeAccessionToken(genome))
+    if (!identity || seen.has(identity)) continue
+    seen.add(identity)
+    const species = (knownSpecies || []).find((item) => catalogGenomeMatchesSpecies(genome, item))
+      || genome?.local_species
+      || null
+    const speciesKey = species ? String(keyForSpecies(species) || '') : ''
+    const state = species && selected.has(speciesKey)
+      ? 'selected'
+      : ((species || genome?.local) ? 'add' : 'missing')
+    out.push({
+      value: species ? `species:${speciesKey}` : `catalog:${identity}`,
+      label: species ? labelForSpecies(species) : labelForGenome(genome),
+      species,
+      genome,
+      speciesKey,
+      state,
+      isSelected: state === 'selected',
+      isActive: Boolean(speciesKey && active.has(speciesKey)),
+      disabled: state === 'missing',
+    })
+  }
+
+  return out.sort(compareSvGenomeOptions)
+}
+
+export function compareSvGenomeOptions(left, right) {
+  const rank = { selected: 0, add: 1, missing: 2 }
+  const leftRank = rank[left?.state] ?? 3
+  const rightRank = rank[right?.state] ?? 3
+  if (leftRank !== rightRank) return leftRank - rightRank
+  return String(left?.label || '').localeCompare(String(right?.label || ''))
 }
 
 export function getSvGenomeDisplayName(genome) {

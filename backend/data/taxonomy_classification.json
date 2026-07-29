@@ -1777,10 +1777,10 @@
   "metadata": {
     "generated_at": "2026-07-27T15:09:55Z",
     "generator": "backend/scripts/generate_taxonomy_classification.py",
-    "source_catalog": "/Users/fergal/Desktop/ensembl_local/backend/cache/build/species.new_ftp_structure.json",
+    "source_catalog": "species.new_ftp_structure.json",
     "source_catalog_fingerprint": "157b9c8359c5db3b179d63a2328e941787a86b10",
     "source_catalog_last_updated": "2026-07-16T12:03:38.571603",
-    "source_taxdump": "/Users/fergal/Desktop/ensembl_local/backend/cache/build/taxdump.tar.gz"
+    "source_taxdump": "taxdump.tar.gz"
   },
   "schema_version": 1,
   "taxids": {

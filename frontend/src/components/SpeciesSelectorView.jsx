@@ -4,6 +4,8 @@ import FileBrowserModal from './FileBrowserModal'
 import AppButtonIcon from './AppButtonIcon'
 import ScreenshotExportModal from './ScreenshotExportModal'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
+import ValidationReportPanel from './ValidationReportPanel'
+import ProgressGlyph from './ProgressGlyph'
 import { API_BASE } from '../backendRuntime'
 import {
     buildDefaultScreenshotName,
@@ -21,16 +23,50 @@ import {
     normalizeGenomeSourceDatabase,
 } from '../utils/genomeIdentity'
 import { datasetReleaseDownloadMetadata } from '../utils/downloadMetadata'
+import {
+    getCurrentGenomeAnalysis,
+    genomeAnalysisKind,
+    isAnalysableGenomeFileType,
+    withGenomeAnalysis,
+    withoutGenomeAnalysis,
+} from '../utils/genomeAnalysis'
+import {
+    batchProgress,
+    findDuplicateManualGenome,
+    manualGenomeLabel,
+    manualProgressText,
+    mergeManualGenomePlaylistMemberships,
+} from '../utils/manualGenomeConfig'
+import {
+    GENOME_FILE_EDITOR_TYPES,
+    MANUAL_GENOME_FILE_EDITOR_TYPES,
+    canonicalBundleFiles,
+    localFileTypeLabel,
+    orderBundleFileTypes,
+} from '../utils/genomeFileTypes'
+import {
+    bundleMissingFileReport,
+    bundlePreviewModel,
+    buildGenomeBundle,
+    registrationBadgeLabel,
+    registrationBadgeTooltip,
+} from '../utils/genomeBundle'
+import GenomeBundlePreviewModal from './GenomeBundlePreviewModal'
 
 const FASTA_EXTENSIONS = ['.fa', '.fna', '.fasta', '.fa.gz', '.fna.gz', '.fasta.gz', '.fa.bgz', '.fna.bgz', '.fasta.bgz']
-const GFF3_EXTENSIONS = ['.gff3', '.gff3.gz', '.gff3.bgz']
+// GFF3 loads directly; GFF and GTF are accepted too but must be converted into
+// canonical GFF3 on import, which the backend enforces.
+const GFF3_EXTENSIONS = [
+    '.gff3', '.gff3.gz', '.gff3.bgz',
+    '.gff', '.gff.gz', '.gff.bgz',
+    '.gtf', '.gtf.gz', '.gtf.bgz',
+]
+const CONVERSION_REQUIRED_EXTENSIONS = ['.gtf', '.gtf.gz', '.gtf.bgz', '.gff2', '.gff2.gz']
 const HOMOLOGY_EXTENSIONS = ['.tsv', '.tsv.gz']
 const LOCAL_PAGE_SIZE = 10
 const PLAYLIST_ALL_ID = '__all__'
 const SELECTOR_PENDING_GENOMES_STORAGE_KEY = 'ensembl_selector_pending_genomes'
 const SELECTOR_REFRESH_EVENT = 'ensembl:selector-refresh'
-const GENOME_FILE_EDITOR_TYPES = ['fasta', 'gff3', 'homology', 'cdna', 'protein', 'xref', 'gff3_index', 'gtf_index', 'cdna_index', 'protein_index']
-
 const todayIsoDate = () => new Date().toISOString().slice(0, 10)
 const defaultCustomAnnotationLabel = () => `custom ${todayIsoDate()}`
 
@@ -54,11 +90,26 @@ const writePendingSelectorGenomeIds = (ids) => {
     }
 }
 
-const localFileTypeLabel = (type) => (type === 'protein_index' ? 'PROT_INDEX' : String(type || '').toUpperCase())
-
 const IconChevron = ({ open, size = 14 }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }} aria-hidden="true">
         <polyline points="6 9 12 15 18 9" />
+    </svg>
+)
+
+const AddGenomeGlyph = ({ size = 16, style = undefined, opacity = 1 }) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        aria-hidden="true"
+        style={style}
+        opacity={opacity}
+    >
+        <path d="M12 5v14M5 12h14" />
     </svg>
 )
 
@@ -80,10 +131,34 @@ const FILE_EDIT_EXTENSIONS = {
     protein_index: ['.fai', '.gzi'],
 }
 
-function GenomeFileEditor({ item, effectiveFiles, isLight, confirmDeleteFile, setConfirmDeleteFile, onDeleteFile, onBrowse, onSavePath }) {
+function GenomeFileEditor({
+    item,
+    effectiveFiles,
+    isLight,
+    theme,
+    confirmDeleteFile,
+    setConfirmDeleteFile,
+    onDeleteFile,
+    onBrowse,
+    onSavePath,
+    analysisByType = {},
+    onAnalyse,
+}) {
     const genomeKey = itemKey(item)
+    // A hand-added genome only ever has the three base types, but one registered
+    // from a bundle can carry the full download set — show whatever it actually
+    // has rather than silently hiding files it came with.
+    const fileTypes = React.useMemo(() => {
+        if (!item.is_manual) return GENOME_FILE_EDITOR_TYPES
+        const extras = Object.keys(effectiveFiles || {}).filter((type) => (
+            !MANUAL_GENOME_FILE_EDITOR_TYPES.includes(type) && effectiveFiles[type]
+        ))
+        return [...MANUAL_GENOME_FILE_EDITOR_TYPES, ...orderBundleFileTypes(extras)]
+    }, [item.is_manual, effectiveFiles])
 
     const [editPaths, setEditPaths] = React.useState(() => ({ ...effectiveFiles }))
+    const [openAnalysisTypes, setOpenAnalysisTypes] = React.useState({})
+    const [pendingAnalysisTypes, setPendingAnalysisTypes] = React.useState({})
     React.useEffect(() => { setEditPaths({ ...effectiveFiles }) }, [effectiveFiles])
 
     const inputBg = isLight
@@ -98,110 +173,189 @@ function GenomeFileEditor({ item, effectiveFiles, isLight, confirmDeleteFile, se
     const rowHover = isLight ? 'hover:bg-gray-50' : 'hover:bg-gray-700/30'
     const rowText = isLight ? 'text-gray-700' : 'text-gray-300'
     const pathText = isLight ? 'text-gray-500' : 'text-gray-400'
+    const gridTemplateColumns = '132px 150px minmax(180px,1fr) 190px'
 
     const handleBlur = (type, value) => {
         const prev = effectiveFiles[type] || ''
         if (value !== prev) onSavePath(type, value)
-        // Restore end-visible scroll after blur
     }
 
     return (
         <div className={`rounded-lg border overflow-hidden ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800/60 border-gray-700'}`}>
-            <div className={`grid items-center gap-2 px-3 py-2 border-b text-[10px] font-bold uppercase tracking-widest ${isLight ? 'bg-gray-50 border-gray-200 text-gray-500' : 'bg-gray-750 border-gray-700 text-gray-400'}`} style={{ gridTemplateColumns: '132px 150px minmax(180px,1fr) 78px' }}>
+            <div className={`grid items-center gap-2 px-3 py-2 border-b text-[10px] font-bold uppercase tracking-widest ${isLight ? 'bg-gray-50 border-gray-200 text-gray-500' : 'bg-gray-750 border-gray-700 text-gray-400'}`} style={{ gridTemplateColumns }}>
                 <span>Type</span>
                 <span>File</span>
                 <span>Path</span>
                 <span className="text-right">Actions</span>
             </div>
             <div className={`divide-y ${isLight ? 'divide-gray-100' : 'divide-gray-700/60'}`}>
-                {GENOME_FILE_EDITOR_TYPES.map((type) => {
+                {fileTypes.map((type) => {
                     const path = effectiveFiles[type] || ''
                     const editPath = editPaths[type] ?? path
                     const isConfirmingDelete = confirmDeleteFile?.fileType === type && confirmDeleteFile?.path === path && itemKey(confirmDeleteFile?.item) === genomeKey
-                    const typeLabel = localFileTypeLabel(type)
+                    const typeLabel = localFileTypeLabel(type, item.is_manual)
                     const filename = basenameFromPath(editPath || path)
+                    const analysis = analysisByType[type] || null
+                    const locallyBusy = Boolean(pendingAnalysisTypes[type])
+                    const analysisBusy = locallyBusy || analysis?.status === 'queued' || analysis?.status === 'running'
+                    const hasAnalysis = analysis?.status === 'success' && analysis?.report
+                    const analysisOpen = Boolean(openAnalysisTypes[type])
+                    const canAnalyse = isAnalysableGenomeFileType(type) && Boolean(path)
+                    const analysisProgress = Math.max(0, Math.min(100, Number(analysis?.progress || 0)))
+                    const displayedAnalysis = analysis || (locallyBusy
+                        ? {
+                            status: 'queued',
+                            progress: 0,
+                            message: 'Starting analysis',
+                            report: null,
+                            error: null,
+                        }
+                        : null)
+
+                    const handleAnalyseClick = async () => {
+                        if (hasAnalysis && !analysisOpen) {
+                            setOpenAnalysisTypes((prev) => ({ ...prev, [type]: true }))
+                            return
+                        }
+                        setOpenAnalysisTypes((prev) => ({ ...prev, [type]: true }))
+                        if (analysisBusy) return
+                        setPendingAnalysisTypes((prev) => ({ ...prev, [type]: true }))
+                        try {
+                            await onAnalyse?.(type)
+                        } finally {
+                            setPendingAnalysisTypes((prev) => ({ ...prev, [type]: false }))
+                        }
+                    }
 
                     return (
-                        <div
-                            key={type}
-                            className={`grid items-center gap-2 px-3 py-1.5 text-xs ${rowHover}`}
-                            style={{ gridTemplateColumns: '132px 150px minmax(180px,1fr) 78px' }}
-                        >
-                            <span className={`min-w-0 truncate font-semibold ${rowText}`} title={typeLabel}>
-                                {typeLabel}
-                            </span>
-                            <span className={`min-w-0 truncate font-mono ${pathText}`} title={filename || `No ${typeLabel} file`}>
-                                {filename || '-'}
-                            </span>
-                            <div className="min-w-0">
-                                <input
-                                    type="text"
-                                    value={editPath}
-                                    placeholder={`No ${typeLabel} file`}
-                                    onChange={(e) => setEditPaths((prev) => ({ ...prev, [type]: e.target.value }))}
-                                    onFocus={(e) => { e.target.scrollLeft = 0 }}
-                                    onBlur={(e) => {
-                                        handleBlur(type, e.target.value)
-                                        requestAnimationFrame(() => {
-                                            if (e.target) e.target.scrollLeft = e.target.scrollWidth
-                                        })
-                                    }}
-                                    onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
-                                    ref={(el) => { if (el && document.activeElement !== el) el.scrollLeft = el.scrollWidth }}
-                                    className={`w-full min-w-0 px-2 py-1 rounded border text-xs font-mono transition-colors focus:outline-none focus:ring-1 ${inputBg}`}
-                                />
+                        <React.Fragment key={type}>
+                            <div
+                                className={`grid items-center gap-2 px-3 py-1.5 text-xs ${rowHover}`}
+                                style={{ gridTemplateColumns }}
+                            >
+                                <span className={`min-w-0 truncate font-semibold ${rowText}`} title={typeLabel}>
+                                    {typeLabel}
+                                </span>
+                                <span className={`min-w-0 truncate font-mono ${pathText}`} title={filename || `No ${typeLabel} file`}>
+                                    {filename || '-'}
+                                </span>
+                                <div className="min-w-0">
+                                    <input
+                                        type="text"
+                                        value={editPath}
+                                        placeholder={`No ${typeLabel} file`}
+                                        onChange={(e) => setEditPaths((prev) => ({ ...prev, [type]: e.target.value }))}
+                                        onFocus={(e) => { e.target.scrollLeft = 0 }}
+                                        onBlur={(e) => {
+                                            handleBlur(type, e.target.value)
+                                            requestAnimationFrame(() => {
+                                                if (e.target) e.target.scrollLeft = e.target.scrollWidth
+                                            })
+                                        }}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
+                                        ref={(el) => { if (el && document.activeElement !== el) el.scrollLeft = el.scrollWidth }}
+                                        className={`w-full min-w-0 px-2 py-1 rounded border text-xs font-mono transition-colors focus:outline-none focus:ring-1 ${inputBg}`}
+                                    />
+                                </div>
+                                <div className="flex items-center gap-1 justify-end">
+                                    {isAnalysableGenomeFileType(type) && (
+                                        <button
+                                            type="button"
+                                            onClick={handleAnalyseClick}
+                                            disabled={!canAnalyse || analysisBusy}
+                                            aria-busy={analysisBusy}
+                                            className={`h-7 px-2 rounded text-[10px] font-semibold transition-colors border inline-flex items-center gap-1.5 ${analysisBusy
+                                                ? (isLight
+                                                    ? 'bg-blue-100 text-blue-800 border-blue-300 cursor-wait'
+                                                    : 'bg-blue-900/50 text-blue-200 border-blue-600 cursor-wait')
+                                                : canAnalyse
+                                                ? (isLight
+                                                    ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                                                    : 'bg-blue-900/30 text-blue-300 border-blue-700/40 hover:bg-blue-900/50')
+                                                : (isLight
+                                                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-default'
+                                                    : 'bg-gray-800 text-gray-500 border-gray-700 cursor-default')
+                                                }`}
+                                            title={hasAnalysis
+                                                ? (analysisOpen ? `Reanalyse the ${typeLabel} file` : 'Show the saved analysis')
+                                                : `Analyse the ${typeLabel} file`}
+                                        >
+                                            {analysisBusy ? (
+                                                <span
+                                                    className="w-3 h-3 shrink-0 rounded-full border-2 border-current border-t-transparent animate-spin"
+                                                    aria-hidden="true"
+                                                />
+                                            ) : null}
+                                            <span aria-live="polite">
+                                                {analysisBusy
+                                                ? (analysisProgress > 0 ? `Analysing ${Math.round(analysisProgress)}%` : 'Analysing…')
+                                                : (hasAnalysis ? (analysisOpen ? 'Reanalyse' : 'View analysis') : (analysis?.status === 'failed' ? 'Retry analysis' : 'Analyse'))}
+                                            </span>
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => onBrowse(type)}
+                                        className={`w-7 h-7 rounded text-xs transition-colors inline-flex items-center justify-center ${browseBtn}`}
+                                        title={`Browse for ${typeLabel} file`}
+                                    >
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                                        </svg>
+                                    </button>
+                                    {isConfirmingDelete ? (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => onDeleteFile(confirmDeleteFile)}
+                                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isLight ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-red-900/40 text-red-400 hover:bg-red-900/60'}`}
+                                            >
+                                                Delete
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setConfirmDeleteFile(null)}
+                                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-700'}`}
+                                            >
+                                                Cancel
+                                            </button>
+                                        </>
+                                    ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => path && setConfirmDeleteFile({ path, fileType: type, item })}
+                                                disabled={!path}
+                                                className={`p-1 rounded transition-colors ${path ? deleteBtn : 'opacity-20 cursor-default'}`}
+                                                title={path ? `Delete ${typeLabel} file` : `No ${typeLabel} file to delete`}
+                                            >
+                                                <IconTrash size={13} />
+                                            </button>
+                                    )}
+                                </div>
                             </div>
-                            <div className="flex items-center gap-1 justify-end">
-                                <button
-                                    type="button"
-                                    onClick={() => onBrowse(type)}
-                                    className={`w-7 h-7 rounded text-xs transition-colors inline-flex items-center justify-center ${browseBtn}`}
-                                    title={`Browse for ${typeLabel} file`}
-                                >
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                                    </svg>
-                                </button>
-                                {isConfirmingDelete ? (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={() => onDeleteFile(confirmDeleteFile)}
-                                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isLight ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-red-900/40 text-red-400 hover:bg-red-900/60'}`}
-                                        >
-                                            Delete
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setConfirmDeleteFile(null)}
-                                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-700'}`}
-                                        >
-                                            Cancel
-                                        </button>
-                                    </>
-                                ) : (
-                                        <button
-                                            type="button"
-                                            onClick={() => path && setConfirmDeleteFile({ path, fileType: type, item })}
-                                            disabled={!path}
-                                            className={`p-1 rounded transition-colors ${path ? deleteBtn : 'opacity-20 cursor-default'}`}
-                                            title={path ? `Delete ${typeLabel} file` : `No ${typeLabel} file to delete`}
-                                        >
-                                            <IconTrash size={13} />
-                                        </button>
-                                )}
-                            </div>
-                        </div>
+                            {analysisOpen && displayedAnalysis ? (
+                                <div className={`px-3 py-3 ${isLight ? 'bg-blue-50/30' : 'bg-blue-950/10'}`}>
+                                    <ValidationReportPanel
+                                        kind={genomeAnalysisKind(type)}
+                                        theme={theme}
+                                        status={displayedAnalysis.status}
+                                        progress={displayedAnalysis.progress}
+                                        stage={displayedAnalysis.stage}
+                                        message={displayedAnalysis.message}
+                                        counters={displayedAnalysis.counters}
+                                        report={displayedAnalysis.report}
+                                        error={displayedAnalysis.error}
+                                        analysedAt={displayedAnalysis.analysed_at}
+                                        onClose={() => setOpenAnalysisTypes((prev) => ({ ...prev, [type]: false }))}
+                                    />
+                                </div>
+                            ) : null}
+                        </React.Fragment>
                     )
                 })}
             </div>
         </div>
     )
-}
-
-const hasAnySuffix = (value, suffixes) => {
-    const lower = (value || '').toLowerCase()
-    return suffixes.some((suffix) => lower.endsWith(suffix))
 }
 
 const basenameFromPath = (value = '') => {
@@ -221,6 +375,8 @@ const dirnameFromPath = (value = '') => {
     return trimmed.slice(0, idx)
 }
 
+const DEFAULT_BUNDLE_FILENAME = 'ensembl-go-genomes.json'
+
 const joinPath = (base, child) => {
     if (!base) return child
     if (!child) return base
@@ -228,7 +384,10 @@ const joinPath = (base, child) => {
     return `${base.replace(/\/+$/, '')}/${child}`
 }
 
-const stripGffSuffix = (filename = '') => filename.replace(/\.gff3(\.gz)?$/i, '')
+// Strips any annotation extension, so a GTF does not derive an index named
+// `<name>.gtf.gz.gff3.index.db`.
+const stripGffSuffix = (filename = '') =>
+    filename.replace(/\.(?:ensembl\.)?(?:gff3|gff|gtf|gff2)(\.(?:gz|bgz))?$/i, '')
 
 const deriveIndexPathFromGff = (gffPath = '', fallbackDir = '') => {
     if (!gffPath) return ''
@@ -236,6 +395,18 @@ const deriveIndexPathFromGff = (gffPath = '', fallbackDir = '') => {
     const prefix = stripGffSuffix(file) || 'genome'
     const dir = dirnameFromPath(gffPath) || fallbackDir || '.'
     return joinPath(dir, `${prefix}.gff3.index.db`)
+}
+
+const manualIndexFilename = (genomeLabel = '', assemblyLabel = '', annotationPath = '') => {
+    const labelStem = [genomeLabel, assemblyLabel]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .join('_')
+        .replace(/\s+/g, '_')
+        .replace(/[^A-Za-z0-9._-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+    const annotationStem = stripGffSuffix(basenameFromPath(annotationPath)) || 'genome'
+    return `${labelStem || annotationStem}.gff3.index.db`
 }
 
 const titleCaseWords = (value = '') =>
@@ -349,6 +520,7 @@ const normalizeGenomePlaylists = (playlists) => {
             description: String(rawPlaylist?.description || '').trim(),
             genomes,
             system: Boolean(rawPlaylist?.system),
+            hidden: Boolean(rawPlaylist?.hidden),
         })
     }
     return normalized
@@ -669,70 +841,7 @@ function PlaylistEditorModal({ isOpen, theme, playlist, availableAssembliesByKey
     )
 }
 
-const detectGenomeFiles = (items) => {
-    const matches = { fasta: [], gff3: [], homology: [] }
-    for (const item of items || []) {
-        if (!item || item.is_dir) continue
-        if (hasAnySuffix(item.name, FASTA_EXTENSIONS)) {
-            matches.fasta.push(item.path)
-        } else if (hasAnySuffix(item.name, GFF3_EXTENSIONS)) {
-            matches.gff3.push(item.path)
-        } else if (hasAnySuffix(item.name, HOMOLOGY_EXTENSIONS)) {
-            matches.homology.push(item.path)
-        }
-    }
-
-    const warnings = []
-    const autodetected = { fasta: '', gff3: '', homology: '' }
-
-    for (const field of Object.keys(matches)) {
-        if (matches[field].length === 1) {
-            autodetected[field] = matches[field][0]
-        } else if (matches[field].length > 1) {
-            warnings.push(`Multiple ${field.toUpperCase()} files found. Choose ${field.toUpperCase()} manually.`)
-        }
-    }
-
-    return { autodetected, warnings }
-}
-
-const deriveSpeciesMeta = ({ directory, gff3, fasta }) => {
-    const candidatePath = gff3 || fasta || directory || ''
-    const normalizedPath = String(candidatePath || '').replace(/\\/g, '/')
-    const pathParts = normalizedPath.split('/').filter(Boolean)
-    const localDataIdx = pathParts.lastIndexOf('local_data')
-
-    let speciesKey = ''
-    let assembly = ''
-
-    if (localDataIdx >= 0 && pathParts.length > localDataIdx + 2) {
-        speciesKey = pathParts[localDataIdx + 1]
-        assembly = pathParts[localDataIdx + 2]
-    }
-
-    const gffPrefix = stripGffSuffix(basenameFromPath(gff3 || ''))
-    const dirBase = basenameFromPath(directory || dirnameFromPath(candidatePath))
-
-    if (!assembly) {
-        assembly = gffPrefix || dirBase || 'manual_assembly'
-    }
-    if (!speciesKey) {
-        speciesKey = toSpeciesKey(formatSpeciesNameFromKey(dirBase) || assembly || 'manual_species') || 'manual_species'
-    }
-
-    const gca = /^GC[AF]_/i.test(assembly || '') ? assembly : ''
-
-    return {
-        species_key: speciesKey,
-        assembly,
-        assembly_name: assembly,
-        scientific_name: formatSpeciesNameFromKey(speciesKey) || 'Manual Species',
-        common_name: '',
-        gca,
-    }
-}
-
-function ManualPathRow({ label, value, onBrowse, placeholder, isLight }) {
+function ManualPathRow({ label, value, onBrowse, placeholder, isLight, onValidate, validating, hint }) {
     return (
         <div>
             <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
@@ -749,6 +858,19 @@ function ManualPathRow({ label, value, onBrowse, placeholder, isLight }) {
                         : 'bg-gray-900 border-gray-600 text-gray-200 placeholder-gray-500'
                         }`}
                 />
+                {onValidate ? (
+                    <button
+                        type="button"
+                        onClick={onValidate}
+                        disabled={!value || validating}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${isLight
+                            ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200'
+                            : 'bg-blue-900/30 text-blue-300 hover:bg-blue-900/50 border border-blue-700/40 disabled:bg-gray-800 disabled:text-gray-500 disabled:border-gray-700'
+                            }`}
+                    >
+                        {validating ? 'Analysing…' : 'Analyse'}
+                    </button>
+                ) : null}
                 <button
                     type="button"
                     onClick={onBrowse}
@@ -760,6 +882,9 @@ function ManualPathRow({ label, value, onBrowse, placeholder, isLight }) {
                     Browse
                 </button>
             </div>
+            {hint ? (
+                <p className={`mt-1 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>{hint}</p>
+            ) : null}
         </div>
     )
 }
@@ -771,11 +896,18 @@ function CustomAnnotationModal({
     label,
     path,
     importing,
+    validation,
+    idMode,
+    idPrefix,
     onLabelChange,
     onPathChange,
     onBrowse,
     onCancel,
     onImport,
+    onValidate,
+    onCloseValidation,
+    onIdModeChange,
+    onIdPrefixChange,
 }) {
     if (!isOpen || !item) return null
     const isLight = theme === 'light'
@@ -786,7 +918,20 @@ function CustomAnnotationModal({
     const secondaryBtn = isLight
         ? 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300'
         : 'bg-gray-700 text-gray-200 hover:bg-gray-600 border border-gray-500'
-    const canImport = Boolean(String(path || '').trim()) && Boolean(String(label || '').trim()) && !importing
+
+    const trimmedPath = String(path || '').trim()
+    const lowerPath = trimmedPath.toLowerCase()
+    // GTF cannot be indexed directly, so conversion is not optional for it.
+    const requiresConversion = CONVERSION_REQUIRED_EXTENSIONS.some((ext) => lowerPath.endsWith(ext))
+    const report = validation?.status === 'success' ? validation.report : null
+    const generationRecommended = Boolean(report?.identifiers?.generation_recommended)
+    const validating = validation?.status === 'queued' || validation?.status === 'running'
+    const prefixValid = idMode !== 'generate' || /^[A-Za-z][A-Za-z0-9]{2,9}$/.test(String(idPrefix || '').trim())
+
+    const canImport = Boolean(trimmedPath)
+        && Boolean(String(label || '').trim())
+        && prefixValid
+        && !importing
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
@@ -825,7 +970,7 @@ function CustomAnnotationModal({
                     </div>
                     <div>
                         <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                            GFF3 file
+                            Annotation file
                         </label>
                         <div className="flex items-center gap-2">
                             <input
@@ -842,8 +987,106 @@ function CustomAnnotationModal({
                             >
                                 Browse
                             </button>
+                            <button
+                                type="button"
+                                onClick={onValidate}
+                                disabled={!trimmedPath || validating}
+                                className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${isLight
+                                    ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200'
+                                    : 'bg-blue-900/30 text-blue-300 hover:bg-blue-900/50 border border-blue-700/40 disabled:bg-gray-800 disabled:text-gray-500 disabled:border-gray-700'
+                                    }`}
+                            >
+                                {validating ? 'Analysing…' : 'Analyse'}
+                            </button>
+                        </div>
+                        <p className={`mt-1 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                            GFF3, GFF or GTF. Output from StringTie, Scallop, BRAKER, AUGUSTUS,
+                            Tiberius, Helixer, egapx and similar tools is converted into Ensembl-style
+                            GFF3 on import.
+                        </p>
+                    </div>
+
+                    {requiresConversion ? (
+                        <div className={`rounded-lg px-3 py-2 text-xs ${isLight
+                            ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                            : 'bg-blue-900/20 text-blue-300 border border-blue-800/40'
+                            }`}>
+                            GTF cannot be indexed directly, so this file will be converted into
+                            canonical GFF3. The original is kept alongside it.
+                        </div>
+                    ) : null}
+
+                    <div>
+                        <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                            Identifiers
+                        </label>
+                        <div className="space-y-1.5">
+                            <label className={`flex items-start gap-2 text-xs ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
+                                <input
+                                    type="radio"
+                                    name="custom-annotation-id-mode"
+                                    checked={idMode !== 'generate'}
+                                    onChange={() => onIdModeChange('keep')}
+                                    className="mt-0.5"
+                                />
+                                <span>
+                                    Use the identifiers in the file
+                                    {generationRecommended ? (
+                                        <span className={isLight ? ' text-amber-700' : ' text-amber-400'}>
+                                            {' '}— not possible for this file
+                                        </span>
+                                    ) : null}
+                                </span>
+                            </label>
+                            <label className={`flex items-start gap-2 text-xs ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
+                                <input
+                                    type="radio"
+                                    name="custom-annotation-id-mode"
+                                    checked={idMode === 'generate'}
+                                    onChange={() => onIdModeChange('generate')}
+                                    className="mt-0.5"
+                                />
+                                <span>Generate Ensembl-style identifiers</span>
+                            </label>
+                            {idMode === 'generate' ? (
+                                <div className="pl-6 space-y-1">
+                                    <input
+                                        type="text"
+                                        value={idPrefix || ''}
+                                        onChange={(event) => onIdPrefixChange(event.target.value.toUpperCase())}
+                                        placeholder="ENSXYZ"
+                                        className={`w-40 px-3 py-1.5 rounded-lg text-xs border font-mono ${inputClass}`}
+                                    />
+                                    <p className={`text-xs ${prefixValid
+                                        ? (isLight ? 'text-gray-500' : 'text-gray-400')
+                                        : (isLight ? 'text-red-600' : 'text-red-400')
+                                        }`}>
+                                        {prefixValid
+                                            ? `Produces ${(idPrefix || 'ENSXYZ')}G00000000001, ${(idPrefix || 'ENSXYZ')}T00000000001, …`
+                                            : '3-10 characters, starting with a letter (letters and digits only).'}
+                                    </p>
+                                </div>
+                            ) : null}
                         </div>
                     </div>
+
+                    {validation ? (
+                        <div className="max-h-96 overflow-y-auto">
+                            <ValidationReportPanel
+                                kind="annotation"
+                                theme={theme}
+                                status={validation.status}
+                                progress={validation.progress}
+                                stage={validation.stage}
+                                message={validation.message}
+                                counters={validation.counters}
+                                report={validation.report}
+                                error={validation.error}
+                                analysedAt={validation.analysed_at}
+                                onClose={onCloseValidation}
+                            />
+                        </div>
+                    ) : null}
                 </div>
                 <div className={`px-5 py-4 border-t flex justify-end gap-2 ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-900/30'}`}>
                     <button
@@ -914,8 +1157,10 @@ export default function SpeciesSelectorView({
     const [selectorPlaylistId, setSelectorPlaylistId] = useState(PLAYLIST_ALL_ID)
     const [downloadingMissingKeys, setDownloadingMissingKeys] = useState(new Set())
 
-    const [manualOpen, setManualOpen] = useState(false)
-    const [manualDirectory, setManualDirectory] = useState(config.output_dir || '.')
+    // Expanded by default: the add form and the JSON controls are the panel's
+    // whole point, and hiding them behind a chevron made them hard to find.
+    const [manualOpen, setManualOpen] = useState(true)
+    const [manualBrowseDirectory, setManualBrowseDirectory] = useState('')
     const [manualSpeciesLabel, setManualSpeciesLabel] = useState('')
     const [manualAssemblyLabel, setManualAssemblyLabel] = useState('')
     const [manualGca, setManualGca] = useState('')
@@ -923,12 +1168,34 @@ export default function SpeciesSelectorView({
     const [manualGff3, setManualGff3] = useState('')
     const [manualHomology, setManualHomology] = useState('')
     const [manualIndexPath, setManualIndexPath] = useState('')
-    const [manualWarnings, setManualWarnings] = useState([])
-    const [detectingDirectory, setDetectingDirectory] = useState(false)
+    const [selectLoadedManualGenomes, setSelectLoadedManualGenomes] = useState(true)
+    // Reviewing before importing is opt-in — the common case is "just load it".
+    const [reviewBeforeImport, setReviewBeforeImport] = useState(false)
+    const [bundlePreview, setBundlePreview] = useState(null)
+    const [bundleExportPath, setBundleExportPath] = useState('')
+    const [bundleExportConflict, setBundleExportConflict] = useState(null)
+    // Once the user edits or browses, stop replacing the path with the default.
+    const bundleExportPathTouchedRef = useRef(false)
+    const [manualOperation, setManualOperation] = useState({
+        status: 'idle',
+        kind: '',
+        progress: 0,
+        stage: '',
+        message: '',
+        counters: {},
+        summary: null,
+    })
+    const manualSuccessTimerRef = useRef(null)
     const [customAnnotationTarget, setCustomAnnotationTarget] = useState(null)
     const [customAnnotationLabel, setCustomAnnotationLabel] = useState(defaultCustomAnnotationLabel())
     const [customAnnotationPath, setCustomAnnotationPath] = useState('')
     const [importingCustomAnnotation, setImportingCustomAnnotation] = useState(false)
+    const [customAnnotationIdMode, setCustomAnnotationIdMode] = useState('keep')
+    const [customAnnotationIdPrefix, setCustomAnnotationIdPrefix] = useState('')
+
+    // Validation reports are keyed by slot ('genome' | 'annotation') so the
+    // manual panel and the custom-annotation dialog can each show their own.
+    const [validation, setValidation] = useState({})
 
     const [modalOpen, setModalOpen] = useState(false)
     const [modalMode, setModalMode] = useState('file')
@@ -938,6 +1205,151 @@ export default function SpeciesSelectorView({
         setStatusMessage({ text: msg, isError })
         setTimeout(() => setStatusMessage(null), 3500)
     }
+
+    const runValidation = useCallback(async (slot, kind, body) => {
+        const targetContext = {
+            path: String(body?.fasta_path || body?.annotation_path || '').trim(),
+            fasta_path: kind === 'annotation' ? String(body?.fasta_path || '').trim() : '',
+        }
+        setValidation((prev) => ({
+            ...prev,
+            [slot]: {
+                kind,
+                status: 'queued',
+                progress: 0,
+                stage: 'queued',
+                message: 'Queued for analysis',
+                counters: {},
+                report: null,
+                error: null,
+                ...targetContext,
+            },
+        }))
+        try {
+            const endpoint = kind === 'genome'
+                ? `${API_BASE}/api/custom/validate-genome`
+                : `${API_BASE}/api/custom/validate-annotation`
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            })
+            const started = await res.json()
+            if (!res.ok) throw new Error(started?.detail || 'Failed to start analysis')
+
+            // Poll until the scan finishes; large assemblies report progress.
+            for (;;) {
+                await new Promise((resolve) => setTimeout(resolve, 300))
+                const poll = await fetch(`${API_BASE}/api/custom/validation/${started.task_id}`)
+                const payload = await poll.json()
+                if (!poll.ok) throw new Error(payload?.detail || 'Analysis lookup failed')
+
+                setValidation((prev) => ({
+                    ...prev,
+                    [slot]: {
+                        kind,
+                        status: payload.status,
+                        progress: payload.progress,
+                        stage: payload.stage,
+                        message: payload.message,
+                        counters: payload.counters || {},
+                        report: payload.report,
+                        error: payload.error,
+                        analysed_at: payload.completed_at || '',
+                        ...targetContext,
+                    },
+                }))
+                if (payload.status === 'success' || payload.status === 'failed') return payload
+            }
+        } catch (error) {
+            setValidation((prev) => ({
+                ...prev,
+                [slot]: {
+                    kind,
+                    status: 'failed',
+                    progress: 0,
+                    report: null,
+                    error: error?.message || 'Analysis failed',
+                    ...targetContext,
+                },
+            }))
+            return null
+        }
+    }, [])
+
+    // Converts an annotation into canonical GFF3 when the indexer cannot read it
+    // as-is, and returns the path that should actually be indexed.
+    const prepareAnnotation = useCallback(async (annotationPath, fastaPath, onProgress = null) => {
+        const res = await fetch(`${API_BASE}/api/custom/prepare-annotation`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                annotation_path: annotationPath,
+                fasta_path: fastaPath || null,
+            }),
+        })
+        const started = await res.json()
+        if (!res.ok) throw new Error(started?.detail || 'Failed to prepare the annotation')
+
+        for (;;) {
+            await new Promise((resolve) => setTimeout(resolve, 300))
+            const poll = await fetch(`${API_BASE}/api/custom/conversion/${started.task_id}`)
+            const payload = await poll.json()
+            if (!poll.ok) throw new Error(payload?.detail || 'Preparation lookup failed')
+            onProgress?.({
+                status: payload.status,
+                progress: Number(payload.progress || 0),
+                stage: payload.stage || '',
+                message: payload.message || '',
+                counters: payload.counters || {},
+            })
+            if (payload.status === 'failed') {
+                throw new Error(payload.error || 'Failed to prepare the annotation')
+            }
+            if (payload.status === 'success') return payload.report || {}
+        }
+    }, [])
+
+    const resetManualForm = useCallback(() => {
+        setManualSpeciesLabel('')
+        setManualAssemblyLabel('')
+        setManualGca('')
+        setManualFasta('')
+        setManualGff3('')
+        setManualHomology('')
+        setManualIndexPath('')
+        setManualBrowseDirectory('')
+        setValidation((prev) => {
+            const next = { ...prev }
+            delete next.genome
+            delete next.annotation
+            return next
+        })
+    }, [])
+
+    useEffect(() => () => {
+        if (manualSuccessTimerRef.current) {
+            window.clearTimeout(manualSuccessTimerRef.current)
+        }
+    }, [])
+
+    const closeValidation = useCallback((slot) => {
+        setValidation((prev) => {
+            const next = { ...prev }
+            delete next[slot]
+            return next
+        })
+    }, [])
+
+    // When an audit finds identifiers that cannot be carried over, preselect
+    // generation so the user is not left to discover the block at import time.
+    const customAnnotationValidation = validation.customAnnotation
+    useEffect(() => {
+        if (customAnnotationValidation?.status !== 'success') return
+        if (customAnnotationValidation.report?.identifiers?.generation_recommended) {
+            setCustomAnnotationIdMode('generate')
+        }
+    }, [customAnnotationValidation])
 
     const fetchAssemblies = useCallback(async () => {
         if (!config.output_dir) {
@@ -977,7 +1389,7 @@ export default function SpeciesSelectorView({
             const indexPathHint = item?.files?.index || ''
             const outputDirHint = indexPathHint
                 ? dirnameFromPath(indexPathHint)
-                : (item?.is_manual ? (dirnameFromPath(gff3Path) || manualDirectory || config.output_dir) : config.output_dir)
+                : (item?.is_manual ? (dirnameFromPath(gff3Path) || manualBrowseDirectory || config.working_dir || config.output_dir) : config.output_dir)
 
             const res = await fetch(`${API_BASE}/api/index/generate-for-genome`, {
                 method: 'POST',
@@ -1062,7 +1474,7 @@ export default function SpeciesSelectorView({
 	                return next
 	            })
 	        }
-    }, [config.output_dir, fetchAssemblies, manualDirectory])
+    }, [config.output_dir, config.working_dir, fetchAssemblies, manualBrowseDirectory])
 
     useEffect(() => {
         fetchAssemblies()
@@ -1207,6 +1619,68 @@ export default function SpeciesSelectorView({
         return { ...(item.files || {}), ...overrides }
     }, [config.genome_file_overrides])
 
+    const analysisSlotForFile = useCallback((item, fileType) => (
+        `genome-file:${itemKey(item)}:${fileType}`
+    ), [])
+
+    const getFileAnalysisByType = useCallback((item, files) => {
+        const key = itemKey(item)
+        const result = {}
+        for (const fileType of ['fasta', 'gff3']) {
+            const live = validation[analysisSlotForFile(item, fileType)]
+            const liveMatches = live
+                && String(live.path || '').trim() === String(files?.[fileType] || '').trim()
+                && (
+                    fileType !== 'gff3'
+                    || String(live.fasta_path || '').trim() === String(files?.fasta || '').trim()
+                )
+            if (liveMatches) {
+                result[fileType] = live
+                continue
+            }
+            const cached = getCurrentGenomeAnalysis(
+                config.genome_analysis_reports,
+                key,
+                fileType,
+                files,
+            )
+            if (cached) {
+                result[fileType] = {
+                    ...cached,
+                    status: 'success',
+                    progress: 100,
+                    error: null,
+                }
+            }
+        }
+        return result
+    }, [analysisSlotForFile, config.genome_analysis_reports, validation])
+
+    const analyseGenomeFile = useCallback(async (item, fileType, files) => {
+        const kind = genomeAnalysisKind(fileType)
+        const path = String(files?.[fileType] || '').trim()
+        if (!kind || !path) return
+        const body = kind === 'genome'
+            ? { fasta_path: path }
+            : {
+                annotation_path: path,
+                fasta_path: String(files?.fasta || '').trim() || null,
+            }
+        const result = await runValidation(analysisSlotForFile(item, fileType), kind, body)
+        if (result?.status !== 'success' || !result.report) return
+        onConfigChange((prev) => ({
+            ...prev,
+            genome_analysis_reports: withGenomeAnalysis(
+                prev.genome_analysis_reports,
+                itemKey(item),
+                fileType,
+                files,
+                result.report,
+                result.completed_at || new Date().toISOString(),
+            ),
+        }))
+    }, [analysisSlotForFile, onConfigChange, runValidation])
+
     // Persist a file path override into config (or clear it when path is empty)
     const saveFileOverride = useCallback((item, fileType, newPath) => {
         const key = itemKey(item)
@@ -1218,8 +1692,25 @@ export default function SpeciesSelectorView({
             if (!trimmed) delete nextEntry[fileType]
             const nextOverrides = { ...prevOverrides, [key]: nextEntry }
             if (Object.keys(nextEntry).length === 0) delete nextOverrides[key]
-            return { ...prev, genome_file_overrides: nextOverrides }
+            let nextAnalyses = prev.genome_analysis_reports || {}
+            if (fileType === 'fasta') {
+                nextAnalyses = withoutGenomeAnalysis(nextAnalyses, key, 'fasta')
+                nextAnalyses = withoutGenomeAnalysis(nextAnalyses, key, 'gff3')
+            } else if (fileType === 'gff3') {
+                nextAnalyses = withoutGenomeAnalysis(nextAnalyses, key, 'gff3')
+            }
+            return {
+                ...prev,
+                genome_file_overrides: nextOverrides,
+                genome_analysis_reports: nextAnalyses,
+            }
         })
+        if (fileType === 'fasta') {
+            closeValidation(analysisSlotForFile(item, 'fasta'))
+            closeValidation(analysisSlotForFile(item, 'gff3'))
+        } else if (fileType === 'gff3') {
+            closeValidation(analysisSlotForFile(item, 'gff3'))
+        }
         // gff3 change: clear stale index override then trigger a fresh rebuild
         if (fileType === 'gff3') {
             onConfigChange((prev) => {
@@ -1243,7 +1734,7 @@ export default function SpeciesSelectorView({
             const currentFiles = { ...(item.files || {}), ...((config.genome_file_overrides?.[key]) || {}) }
             persistBuiltIndex({ ...item, files: currentFiles }, trimmed)
         }
-    }, [config.genome_file_overrides, onConfigChange, persistBuiltIndex, ensureIndexForGenome])
+    }, [analysisSlotForFile, closeValidation, config.genome_file_overrides, onConfigChange, persistBuiltIndex, ensureIndexForGenome])
 
     // Delete a single file on disk then clear any config override for that type
     const handleDeleteSingleFile = useCallback(async ({ path, fileType, item }) => {
@@ -1725,6 +2216,11 @@ export default function SpeciesSelectorView({
         const updates = {
             manual_species: nextManual,
             active_species: nextActive,
+            genome_analysis_reports: withoutGenomeAnalysis(
+                withoutGenomeAnalysis(config.genome_analysis_reports, key, 'fasta'),
+                key,
+                'gff3',
+            ),
         }
 
         if (item.files?.gff3) {
@@ -1768,11 +2264,19 @@ export default function SpeciesSelectorView({
 
                 const key = itemKey(item)
                 const activeSpecies = config.active_species || []
+                const nextAnalyses = withoutGenomeAnalysis(
+                    withoutGenomeAnalysis(config.genome_analysis_reports, key, 'fasta'),
+                    key,
+                    'gff3',
+                )
                 if (activeSpecies.some((s) => itemKey(s) === key)) {
                     onConfigChange({
                         ...config,
                         active_species: activeSpecies.filter((s) => itemKey(s) !== key),
+                        genome_analysis_reports: nextAnalyses,
                     })
+                } else if (nextAnalyses !== config.genome_analysis_reports) {
+                    onConfigChange({ ...config, genome_analysis_reports: nextAnalyses })
                 }
 
                 fetchAssemblies()
@@ -1910,20 +2414,34 @@ export default function SpeciesSelectorView({
         setCustomAnnotationTarget(null)
         setCustomAnnotationLabel(defaultCustomAnnotationLabel())
         setCustomAnnotationPath('')
-    }, [importingCustomAnnotation])
+        setCustomAnnotationIdMode('keep')
+        setCustomAnnotationIdPrefix('')
+        closeValidation('customAnnotation')
+    }, [importingCustomAnnotation, closeValidation])
 
     const importCustomAnnotation = useCallback(async () => {
         const target = customAnnotationTarget
         const gff3Path = String(customAnnotationPath || '').trim()
         const label = String(customAnnotationLabel || '').trim() || defaultCustomAnnotationLabel()
         if (!target || !gff3Path) {
-            showStatus('Choose a GFF3 file to import.', true)
+            showStatus('Choose an annotation file to import.', true)
             return
         }
         if (!config.output_dir) {
             showStatus('Set an Output Directory in Configuration first.', true)
             return
         }
+
+        // Convert whenever the format needs it, whenever the identifiers have to
+        // be regenerated, or whenever validation found something to repair.
+        const lowerPath = gff3Path.toLowerCase()
+        const requiresConversion = CONVERSION_REQUIRED_EXTENSIONS.some((ext) => lowerPath.endsWith(ext))
+        const report = validation.customAnnotation?.status === 'success'
+            ? validation.customAnnotation.report
+            : null
+        const inferenceNeeded = Object.keys(report?.conversion_preview?.inference || {}).length > 0
+        const generate = customAnnotationIdMode === 'generate'
+        const convert = requiresConversion || generate || inferenceNeeded
 
         setImportingCustomAnnotation(true)
         try {
@@ -1937,6 +2455,10 @@ export default function SpeciesSelectorView({
                     assembly: getAssemblyAccession(target),
                     gff3_path: gff3Path,
                     label,
+                    convert,
+                    id_mode: customAnnotationIdMode,
+                    id_prefix: customAnnotationIdPrefix,
+                    fasta_path: getEffectiveFiles(target)?.fasta || '',
                 }),
             })
             const data = await res.json().catch(() => ({}))
@@ -1947,13 +2469,36 @@ export default function SpeciesSelectorView({
             setCustomAnnotationTarget(null)
             setCustomAnnotationLabel(defaultCustomAnnotationLabel())
             setCustomAnnotationPath('')
-            showStatus(`Imported annotation dataset: ${data?.dataset_release_label || label}`)
+            setCustomAnnotationIdMode('keep')
+            setCustomAnnotationIdPrefix('')
+            closeValidation('customAnnotation')
+
+            const conversion = data?.conversion
+            if (conversion?.converted) {
+                showStatus(
+                    `Imported and converted: ${conversion.gene_count} genes, `
+                    + `${conversion.transcript_count} transcripts from ${String(conversion.dialect || '').toUpperCase()}`,
+                )
+            } else {
+                showStatus(`Imported annotation dataset: ${data?.dataset_release_label || label}`)
+            }
         } catch (error) {
             showStatus(error?.message || 'Failed to import custom annotation', true)
         } finally {
             setImportingCustomAnnotation(false)
         }
-    }, [config.output_dir, customAnnotationLabel, customAnnotationPath, customAnnotationTarget, fetchAssemblies])
+    }, [
+        config.output_dir,
+        customAnnotationLabel,
+        customAnnotationPath,
+        customAnnotationTarget,
+        customAnnotationIdMode,
+        customAnnotationIdPrefix,
+        validation,
+        fetchAssemblies,
+        closeValidation,
+        getEffectiveFiles,
+    ])
 
     const makeDatasetDefault = useCallback(async (item, instance, expandedRowKey = '') => {
         const releaseKey = String(instance?.dataset_release_key || '').trim()
@@ -2088,21 +2633,31 @@ export default function SpeciesSelectorView({
     }
 
     const modalInitialPath = useMemo(() => {
-        if (modalTarget === 'manual_directory') {
-            return manualDirectory || config.output_dir || '.'
+        const manualBrowseStart = manualBrowseDirectory || config.working_dir || '.'
+        if (modalTarget === 'manual_config_load') {
+            return config.working_dir || '.'
+        }
+        if (modalTarget === 'bundle_export_path') {
+            return bundleExportPath ? dirnameFromPath(bundleExportPath) : (config.working_dir || '.')
         }
         if (modalTarget === 'manual_fasta') {
-            return dirnameFromPath(manualFasta || manualDirectory || config.output_dir || '.')
+            return manualFasta ? dirnameFromPath(manualFasta) : manualBrowseStart
         }
         if (modalTarget === 'manual_gff3') {
-            return dirnameFromPath(manualGff3 || manualDirectory || config.output_dir || '.')
+            return manualGff3 ? dirnameFromPath(manualGff3) : manualBrowseStart
         }
         if (modalTarget === 'manual_homology') {
-            return dirnameFromPath(manualHomology || manualDirectory || config.output_dir || '.')
+            return manualHomology ? dirnameFromPath(manualHomology) : manualBrowseStart
+        }
+        if (modalTarget === 'manual_index') {
+            return manualIndexPath
+                ? dirnameFromPath(manualIndexPath)
+                : (dirnameFromPath(manualGff3) || manualBrowseStart)
         }
         if (modalTarget === 'custom_annotation_gff3') {
             const targetFiles = customAnnotationTarget ? getEffectiveFiles(customAnnotationTarget) : {}
-            return dirnameFromPath(customAnnotationPath || targetFiles?.gff3 || config.output_dir || '.')
+            const currentPath = customAnnotationPath || targetFiles?.gff3 || targetFiles?.fasta
+            return currentPath ? dirnameFromPath(currentPath) : (config.working_dir || '.')
         }
         if (modalTarget?.startsWith('genome_edit:') && fileBrowserEditTarget) {
             const { fileType, item } = fileBrowserEditTarget
@@ -2110,10 +2665,11 @@ export default function SpeciesSelectorView({
             const currentPath = effectiveFiles?.[fileType]
             return currentPath ? dirnameFromPath(currentPath) : (config.output_dir || '.')
         }
-        return config.output_dir || '.'
-    }, [modalTarget, manualDirectory, manualFasta, manualGff3, manualHomology, customAnnotationPath, customAnnotationTarget, config.output_dir, fileBrowserEditTarget, getEffectiveFiles])
+        return config.working_dir || '.'
+    }, [modalTarget, manualBrowseDirectory, manualFasta, manualGff3, manualHomology, manualIndexPath, bundleExportPath, customAnnotationPath, customAnnotationTarget, config.output_dir, config.working_dir, fileBrowserEditTarget, getEffectiveFiles])
 
     const modalExtensions = useMemo(() => {
+        if (modalTarget === 'manual_config_load' || modalTarget === 'bundle_export_path') return ['.json']
         if (modalTarget === 'manual_fasta') return FASTA_EXTENSIONS
         if (modalTarget === 'manual_gff3') return GFF3_EXTENSIONS
         if (modalTarget === 'manual_homology') return HOMOLOGY_EXTENSIONS
@@ -2127,66 +2683,40 @@ export default function SpeciesSelectorView({
         return []
     }, [modalTarget])
 
-    const autodetectDirectory = useCallback(async (directoryPath) => {
-        if (!directoryPath) return
-        setDetectingDirectory(true)
-        try {
-            const res = await fetch(`${API_BASE}/api/files/list?path=${encodeURIComponent(directoryPath)}`)
-            if (!res.ok) {
-                const err = await res.json()
-                throw new Error(err.detail || 'Failed to list directory')
-            }
-
-            const data = await res.json()
-            const resolvedDir = data.current_path || directoryPath
-            const { autodetected, warnings } = detectGenomeFiles(data.items || [])
-            const derivedMeta = deriveSpeciesMeta({
-                directory: resolvedDir,
-                gff3: autodetected.gff3 || '',
-                fasta: autodetected.fasta || '',
-            })
-
-            setManualDirectory(resolvedDir)
-            setManualSpeciesLabel(derivedMeta.scientific_name || '')
-            setManualAssemblyLabel(derivedMeta.assembly_name || derivedMeta.assembly || '')
-            setManualGca(derivedMeta.gca || '')
-            setManualWarnings(warnings)
-            setManualFasta(autodetected.fasta || '')
-            setManualGff3(autodetected.gff3 || '')
-            setManualHomology(autodetected.homology || '')
-            if (autodetected.gff3) {
-                setManualIndexPath(deriveIndexPathFromGff(autodetected.gff3, resolvedDir))
-            } else {
-                setManualIndexPath('')
-            }
-
-            if (warnings.length > 0) showStatus('Directory loaded with warnings. Review unresolved file paths.', true)
-            else showStatus('Directory loaded and genome files detected.')
-        } catch (e) {
-            setManualWarnings([e.message || 'Failed to scan directory'])
-            showStatus(`Directory scan failed: ${e.message}`, true)
-        } finally {
-            setDetectingDirectory(false)
-        }
-    }, [])
-
-    const handleModalSelect = (path) => {
-        if (modalTarget === 'manual_directory') {
-            autodetectDirectory(path)
+    const handleModalSelect = (path, selection = {}) => {
+        if (modalTarget === 'manual_config_load') {
+            void loadGenomeBundle(path)
+        } else if (modalTarget === 'bundle_export_path') {
+            // Browsing only fills the box; the Export button does the writing.
+            bundleExportPathTouchedRef.current = true
+            setBundleExportConflict(null)
+            setBundleExportPath(path)
         } else if (modalTarget === 'manual_fasta') {
             setManualFasta(path)
-            setManualDirectory(dirnameFromPath(path))
-            setManualWarnings((prev) => prev.filter((msg) => !msg.includes('FASTA')))
+            setManualBrowseDirectory(dirnameFromPath(path))
+            closeValidation('genome')
+            closeValidation('annotation')
         } else if (modalTarget === 'manual_gff3') {
             const nextDir = dirnameFromPath(path)
             setManualGff3(path)
-            setManualDirectory(nextDir)
-            setManualIndexPath(deriveIndexPathFromGff(path, nextDir))
-            setManualWarnings((prev) => prev.filter((msg) => !msg.includes('GFF3')))
+            setManualBrowseDirectory(nextDir)
+            setManualIndexPath(joinPath(
+                nextDir,
+                manualIndexFilename(manualSpeciesLabel, manualAssemblyLabel, path),
+            ))
+            closeValidation('annotation')
         } else if (modalTarget === 'manual_homology') {
             setManualHomology(path)
-            setManualDirectory(dirnameFromPath(path))
-            setManualWarnings((prev) => prev.filter((msg) => !msg.includes('TSV')))
+            setManualBrowseDirectory(dirnameFromPath(path))
+        } else if (modalTarget === 'manual_index') {
+            const isDirectory = selection.kind === 'directory'
+            const suggestedFilename = manualIndexFilename(
+                manualSpeciesLabel,
+                manualAssemblyLabel,
+                manualGff3,
+            )
+            setManualIndexPath(isDirectory ? joinPath(path, suggestedFilename) : path)
+            setManualBrowseDirectory(isDirectory ? path : dirnameFromPath(path))
         } else if (modalTarget === 'custom_annotation_gff3') {
             setCustomAnnotationPath(path)
         } else if (modalTarget?.startsWith('genome_edit:') && fileBrowserEditTarget) {
@@ -2197,70 +2727,575 @@ export default function SpeciesSelectorView({
         setModalOpen(false)
     }
 
-    const addManualGenome = () => {
-        const speciesLabel = (manualSpeciesLabel || '').trim()
-        const assemblyLabel = (manualAssemblyLabel || '').trim()
-        const gcaLabel = (manualGca || '').trim()
+    // Build a selector record from a bundle entry (or the manual add form).
+    //
+    // The declared provider is preserved rather than forced to 'manual', so a
+    // genome exported from a downloaded set and re-registered from local files
+    // reads as what it actually is. It also makes the genome key collide
+    // correctly with the same genome downloaded later — allAssemblies already
+    // prefers the download-managed record on a key clash.
+    const buildManualGenomeRecord = (entry, annotationPath = '') => {
+        const speciesLabel = String(entry?.species || '').trim()
+        const assemblyLabel = String(entry?.assembly || '').trim()
+        const assemblyName = String(entry?.assembly_name || '').trim() || assemblyLabel
+        const accession = String(entry?.accession || '').trim()
+        const provider = String(entry?.provider || '').trim() || 'manual'
+        const isHandAdded = provider.toLowerCase() === 'manual'
+        const files = canonicalBundleFiles(entry?.files)
+        const preparedAnnotation = annotationPath || files.gff3 || ''
 
-        if (!speciesLabel || !assemblyLabel) {
-            showStatus('Species and assembly labels are required.', true)
-            return
+        const resolvedFiles = { ...files }
+        if (preparedAnnotation) {
+            resolvedFiles.gff3 = preparedAnnotation
+            if (!resolvedFiles.index) resolvedFiles.index = deriveIndexPathFromGff(preparedAnnotation)
+        } else {
+            delete resolvedFiles.gff3
+            delete resolvedFiles.index
         }
+        const release = entry?.dataset_release || {}
 
-        if (!manualFasta || !manualGff3) {
-            showStatus('Manual genome requires both FASTA and GFF3 paths.', true)
-            return
-        }
-
-        const speciesKey = toSpeciesKey(speciesLabel) || 'manual_species'
-        const assemblyCode = gcaLabel || assemblyLabel
-
-        const manualItem = {
-            species_key: speciesKey,
-            assembly: assemblyCode,
-            assembly_name: assemblyLabel,
+        return normalizeGenomeRecord({
+            species_key: String(entry?.species_key || '').trim() || toSpeciesKey(speciesLabel) || 'manual_species',
+            // Accession first, as before: it is what the genome key is built
+            // from, so changing the precedence would rekey existing genomes.
+            assembly: accession || assemblyLabel,
+            assembly_name: assemblyName,
             scientific_name: speciesLabel,
-            common_name: '',
-            provider: 'manual',
-            source_database: 'Manual',
-            gca: gcaLabel,
+            common_name: String(entry?.common_name || '').trim(),
+            display_name: String(entry?.display_name || '').trim(),
+            display_name_reason: String(entry?.display_name_reason || '').trim(),
+            provider,
+            source_database: String(entry?.source_database || '').trim() || (isHandAdded ? 'Manual' : provider),
+            gca: accession,
+            equivalent_accessions: Array.isArray(entry?.equivalent_accessions) ? entry.equivalent_accessions : [],
+            dataset_release_key: String(release.key || '').trim(),
+            dataset_release_source: String(release.source || '').trim(),
+            dataset_release_date: String(release.date || '').trim(),
+            dataset_release_label: String(release.label || '').trim(),
+            dataset_release_short_label: String(release.short_label || '').trim(),
+            // Registered from local files rather than managed by the downloader.
             is_manual: true,
-            types: ['fasta', 'gff3', ...(manualHomology ? ['homology'] : [])],
-            files: {
-                fasta: manualFasta,
-                gff3: manualGff3,
-                homology: manualHomology || '',
-                index: '',
-            },
-        }
-        const normalizedManualItem = normalizeGenomeRecord(manualItem)
+            types: Object.keys(resolvedFiles).filter((type) => resolvedFiles[type]),
+            has_annotation: Boolean(preparedAnnotation),
+            files: resolvedFiles,
+            missing_files: Array.isArray(entry?.missing_files) ? entry.missing_files : [],
+        })
+    }
 
-        const key = itemKey(normalizedManualItem)
-
+    const mergeManualGenomeRecords = (
+        records,
+        {
+            retainFormAnalyses = false,
+            sourceAnnotation = '',
+            selectRecords = true,
+            playlistAssignments = [],
+        } = {},
+    ) => {
+        if (!records.length && !playlistAssignments.length) return
         const nextManual = [...(config.manual_species || [])]
-        const manualIndex = nextManual.findIndex((entry) => itemKey(entry) === key)
-        if (manualIndex >= 0) nextManual[manualIndex] = normalizedManualItem
-        else nextManual.push(normalizedManualItem)
-
         const nextActive = [...(config.active_species || [])]
-        const activeIndex = nextActive.findIndex((entry) => itemKey(entry) === key)
-        if (activeIndex >= 0) nextActive[activeIndex] = normalizedManualItem
-        else nextActive.push(normalizedManualItem)
+        for (const record of records) {
+            const key = itemKey(record)
+            const manualIndex = nextManual.findIndex((entry) => itemKey(entry) === key)
+            if (manualIndex >= 0) nextManual[manualIndex] = record
+            else nextManual.push(record)
+            if (selectRecords) {
+                const activeIndex = nextActive.findIndex((entry) => itemKey(entry) === key)
+                if (activeIndex >= 0) nextActive[activeIndex] = record
+                else nextActive.push(record)
+            }
+        }
 
         const updates = {
             manual_species: nextManual,
             active_species: nextActive,
         }
-
-        if ((config.active_species || []).length === 0 && !config.ref_gff && normalizedManualItem.files?.gff3) {
-            updates.ref_fasta = normalizedManualItem.files.fasta || ''
-            updates.ref_gff = normalizedManualItem.files.gff3 || ''
-            updates.ref_index = normalizedManualItem.files.index || ''
-            updates.homologies_file = normalizedManualItem.files.homology || ''
+        if (playlistAssignments.length) {
+            updates.genome_playlists = mergeManualGenomePlaylistMemberships(
+                normalizeGenomePlaylists(config.genome_playlists || []),
+                playlistAssignments,
+                {
+                    createPlaylistId: buildPlaylistId,
+                    snapshotGenome: snapshotGenomeForPlaylist,
+                    genomesMatch: genomeKeysMatch,
+                },
+            )
+        }
+        if (retainFormAnalyses && records.length === 1) {
+            const record = records[0]
+            const key = itemKey(record)
+            let nextAnalyses = config.genome_analysis_reports || {}
+            if (validation.genome?.status === 'success' && validation.genome.report) {
+                nextAnalyses = withGenomeAnalysis(
+                    nextAnalyses,
+                    key,
+                    'fasta',
+                    record.files,
+                    validation.genome.report,
+                    validation.genome.analysed_at || new Date().toISOString(),
+                )
+            }
+            if (
+                record.files.gff3 === sourceAnnotation
+                && validation.annotation?.status === 'success'
+                && validation.annotation.report
+            ) {
+                nextAnalyses = withGenomeAnalysis(
+                    nextAnalyses,
+                    key,
+                    'gff3',
+                    record.files,
+                    validation.annotation.report,
+                    validation.annotation.analysed_at || new Date().toISOString(),
+                )
+            }
+            updates.genome_analysis_reports = nextAnalyses
         }
 
-        onConfigChange({ ...config, ...updates })
-        showStatus(`Manual genome added: ${normalizedManualItem.scientific_name} (${normalizedManualItem.assembly_name})`)
+        const first = records[0]
+        if (
+            selectRecords
+            && (config.active_species || []).length === 0
+            && !config.ref_gff
+            && first?.files?.fasta
+        ) {
+            updates.ref_fasta = first.files.fasta || ''
+            updates.ref_gff = first.files.gff3 || ''
+            updates.ref_index = first.files.index || ''
+            updates.homologies_file = first.files.homology || ''
+        }
+        onConfigChange({
+            ...config,
+            ...updates,
+            ...(selectRecords && records.length > 1
+                ? { __manual_batch_added_keys: records.map((record) => itemKey(record)) }
+                : {}),
+        })
+    }
+
+    // Read a bundle and either import it straight away or hand it to the review
+    // modal. Reviewing is opt-in, so the default path is one click from the file
+    // browser to a finished import.
+    const loadGenomeBundle = async (path) => {
+        setManualOperation({
+            status: 'processing',
+            kind: 'batch',
+            progress: 0,
+            stage: 'reading_config',
+            message: 'Reading genome configuration',
+            counters: {},
+            summary: null,
+        })
+        try {
+            const response = await fetch(`${API_BASE}/api/custom/genome-config/read`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            })
+            const payload = await response.json().catch(() => null)
+            if (!response.ok) throw new Error(payload?.detail || 'Could not read genome configuration')
+            if (!payload?.ok) {
+                const reason = payload?.diagnostics?.find((item) => item.severity === 'error')?.message
+                throw new Error(reason || 'The genome configuration is not valid')
+            }
+
+            if (reviewBeforeImport) {
+                setBundlePreview({ payload, model: bundlePreviewModel(payload) })
+                setManualOperation({
+                    status: 'idle',
+                    kind: '',
+                    progress: 0,
+                    stage: '',
+                    message: '',
+                    counters: {},
+                    summary: null,
+                })
+                return
+            }
+            await importGenomeBundle(payload)
+        } catch (error) {
+            const message = error?.message || 'Could not import genome configuration'
+            setManualOperation({
+                status: 'error',
+                kind: 'batch',
+                progress: 0,
+                stage: 'error',
+                message,
+                counters: {},
+                summary: null,
+            })
+            showStatus(message, true)
+        }
+    }
+
+    const importGenomeBundle = async (payload, indexes = null) => {
+        const wanted = indexes ? new Set(indexes) : null
+        setManualOperation({
+            status: 'processing',
+            kind: 'batch',
+            progress: 0,
+            stage: 'registering',
+            message: 'Registering genomes',
+            counters: {},
+            summary: null,
+        })
+        try {
+            const entries = (Array.isArray(payload.entries) ? payload.entries : [])
+                .filter((entry) => !wanted || wanted.has(entry?.index))
+            const total = entries.length
+            const accepted = [
+                ...(assemblies || []),
+                ...(config.manual_species || []),
+                ...(config.active_species || []),
+            ]
+            const records = []
+            const playlistAssignments = []
+            const summary = { added: [], skipped: [], failed: [] }
+
+            for (let position = 0; position < entries.length; position += 1) {
+                const entry = entries[position]
+                const genome = entry?.genome || {}
+                const label = manualGenomeLabel(genome)
+                const prefix = `Genome ${position + 1} of ${total}:`
+                if (!entry?.valid) {
+                    const reason = entry?.diagnostics?.find((item) => item.severity === 'error')?.message || 'Invalid entry'
+                    summary.failed.push({ label, reason })
+                    setManualOperation((prev) => ({
+                        ...prev,
+                        progress: batchProgress(position + 1, 0, total),
+                        message: `${prefix} skipped invalid entry`,
+                    }))
+                    continue
+                }
+
+                const duplicate = findDuplicateManualGenome(genome, accepted)
+                if (duplicate) {
+                    if (genome.playlists?.length) {
+                        playlistAssignments.push({
+                            genome: duplicate,
+                            playlists: genome.playlists,
+                        })
+                    }
+                    summary.skipped.push({
+                        label,
+                        reason: `Duplicate of ${manualGenomeLabel(duplicate)}`,
+                    })
+                    setManualOperation((prev) => ({
+                        ...prev,
+                        progress: batchProgress(position + 1, 0, total),
+                        message: `${prefix} duplicate skipped`,
+                    }))
+                    continue
+                }
+                // Reserve the identity before preparation so later entries in
+                // the same file are classified as duplicates.
+                accepted.push(genome)
+
+                try {
+                    let annotationPath = genome.files?.gff3 || ''
+                    if (annotationPath) {
+                        const prepared = await prepareAnnotation(
+                            annotationPath,
+                            genome.files?.fasta,
+                            (progress) => {
+                                setManualOperation((prev) => ({
+                                    ...prev,
+                                    status: 'processing',
+                                    kind: 'batch',
+                                    progress: batchProgress(position, progress.progress, total),
+                                    stage: progress.stage,
+                                    message: `${prefix} ${progress.message || 'Preparing annotation'}`,
+                                    counters: progress.counters,
+                                }))
+                            },
+                        )
+                        annotationPath = prepared.annotation_path || annotationPath
+                    } else {
+                        setManualOperation((prev) => ({
+                            ...prev,
+                            progress: batchProgress(position, 95, total),
+                            stage: 'registering',
+                            message: `${prefix} Registering sequence-only genome`,
+                            counters: {},
+                        }))
+                    }
+                    const record = buildManualGenomeRecord(genome, annotationPath)
+                    records.push(record)
+                    if (genome.playlists?.length) {
+                        playlistAssignments.push({
+                            genome: record,
+                            playlists: genome.playlists,
+                        })
+                    }
+                    accepted.push(record)
+                    summary.added.push({ label: manualGenomeLabel(record) })
+                } catch (error) {
+                    summary.failed.push({
+                        label,
+                        reason: error?.message || 'Annotation preparation failed',
+                    })
+                }
+                setManualOperation((prev) => ({
+                    ...prev,
+                    progress: batchProgress(position + 1, 0, total),
+                    stage: 'batch',
+                    message: `${prefix} complete`,
+                    counters: {},
+                }))
+            }
+
+            mergeManualGenomeRecords(records, {
+                selectRecords: selectLoadedManualGenomes,
+                playlistAssignments,
+            })
+            summary.missingFiles = bundleMissingFileReport(payload, { indexes })
+            const message = `Added ${summary.added.length}; skipped ${summary.skipped.length}; failed ${summary.failed.length}.`
+            setManualOperation({
+                status: 'idle',
+                kind: 'batch',
+                progress: 100,
+                stage: 'complete',
+                message,
+                counters: {},
+                summary,
+            })
+            showStatus(message, summary.added.length === 0 && summary.failed.length > 0)
+        } catch (error) {
+            const message = error?.message || 'Could not import genome configuration'
+            setManualOperation({
+                status: 'error',
+                kind: 'batch',
+                progress: 0,
+                stage: 'error',
+                message,
+                counters: {},
+                summary: null,
+            })
+            showStatus(message, true)
+        }
+    }
+
+    // Playlists a bundle may legitimately describe — the two session-tracking
+    // playlists are app bookkeeping and never belong in an export.
+    const exportablePlaylists = useMemo(() => (config.genome_playlists || []).filter((playlist) => {
+        const id = String(playlist?.id || '').trim()
+        const name = String(playlist?.name || '').trim().toLowerCase()
+        return (
+            !playlist?.hidden
+            && !playlist?.system
+            && id !== '__previous_session__'
+            && id !== '__next_previous_session__'
+            && name !== 'previous session'
+            && name !== 'next previous session'
+        )
+    }), [config.genome_playlists])
+
+    // The export set is whatever is currently selected. Applying a playlist
+    // populates the selection, so "export this playlist" needs no separate
+    // control — choose the playlist, then export.
+    //
+    // This reads activeSpeciesList, not config.active_species: the table's
+    // checkboxes are driven by the former, which prefers the selectedSpeciesList
+    // prop. Reading the config directly let the two diverge, so the button could
+    // sit disabled while rows showed as ticked.
+    const exportSelectionEntries = useMemo(() => (
+        (activeSpeciesList || []).map((genome) => {
+            // Downloaded genomes carry their real file map on the live scan
+            // record, not on the selection snapshot.
+            const live = resolveLocalPlaylistGenome(genome) || genome
+            const playlists = exportablePlaylists
+                .filter((playlist) => (
+                    (playlist.genomes || []).some((member) => genomeKeysMatch(member, genome))
+                ))
+                .map((playlist) => playlist.name)
+            return { genome: live, files: getEffectiveFiles(live), playlists }
+        })
+    ), [activeSpeciesList, exportablePlaylists, resolveLocalPlaylistGenome, getEffectiveFiles])
+
+    const exportSelectionCount = exportSelectionEntries.length
+
+    // Offer a usable destination up front rather than an empty box.
+    useEffect(() => {
+        if (bundleExportPathTouchedRef.current) return
+        const directory = config.working_dir || config.output_dir
+        if (!directory) return
+        setBundleExportPath(joinPath(directory, DEFAULT_BUNDLE_FILENAME))
+    }, [config.working_dir, config.output_dir])
+
+    // mode: 'create' refuses to touch an existing file (the backend answers 409),
+    // so the user gets a choice rather than a silent overwrite.
+    const exportGenomeBundle = async (mode = 'create') => {
+        const destination = String(bundleExportPath || '').trim()
+        if (!destination) return
+        // Be forgiving about a hand-typed path; the backend requires .json.
+        const path = /\.[^/\\.]+$/.test(destination) ? destination : `${destination}.json`
+
+        const { genomes, playlists, skipped } = buildGenomeBundle(
+            exportSelectionEntries,
+            { playlists: exportablePlaylists },
+        )
+        if (!genomes.length) {
+            showStatus('None of the selected genomes have files that can be exported.', true)
+            return
+        }
+        setBundleExportConflict(null)
+        setManualOperation({
+            status: 'processing',
+            kind: 'export',
+            progress: 20,
+            stage: 'exporting',
+            message: mode === 'merge' ? 'Amending genome configuration' : 'Writing genome configuration',
+            counters: {},
+            summary: null,
+        })
+        try {
+            const response = await fetch(`${API_BASE}/api/custom/genome-config/save`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path, genomes, playlists, mode }),
+            })
+            const payload = await response.json().catch(() => null)
+            if (response.status === 409) {
+                setBundleExportConflict({ path, detail: payload?.detail || 'That file already exists.' })
+                setManualOperation({
+                    status: 'idle', kind: '', progress: 0,
+                    stage: '', message: '', counters: {}, summary: null,
+                })
+                return
+            }
+            if (!response.ok) throw new Error(payload?.detail || 'Could not save genome configuration')
+            const skippedNote = skipped.length
+                ? ` Skipped ${skipped.length}: ${skipped.map((item) => `${item.label} (${item.reason})`).join('; ')}.`
+                : ''
+            const message = payload.mode === 'merge'
+                ? `Amended ${payload.path}: ${payload.added} added, ${payload.updated} updated, ${payload.count} in the file.${skippedNote}`
+                : `Exported ${payload.count} genome${payload.count === 1 ? '' : 's'} to ${payload.path}.${skippedNote}`
+            setManualOperation({
+                status: 'idle',
+                kind: 'export',
+                progress: 100,
+                stage: 'complete',
+                message,
+                counters: {},
+                summary: { exported: payload.count, path: payload.path },
+            })
+            showStatus(message)
+        } catch (error) {
+            const message = error?.message || 'Could not export genome configuration'
+            setManualOperation({
+                status: 'error',
+                kind: 'export',
+                progress: 0,
+                stage: 'error',
+                message,
+                counters: {},
+                summary: null,
+            })
+            showStatus(message, true)
+        }
+    }
+
+    const addManualGenome = async () => {
+        const speciesLabel = (manualSpeciesLabel || '').trim()
+        const assemblyLabel = (manualAssemblyLabel || '').trim()
+        const accession = (manualGca || '').trim()
+        if (!speciesLabel || !assemblyLabel) {
+            showStatus('Species and assembly labels are required.', true)
+            return
+        }
+        if (!manualFasta) {
+            showStatus('A genome requires a FASTA file.', true)
+            return
+        }
+
+        setManualOperation({
+            status: 'processing',
+            kind: 'single',
+            progress: manualGff3 ? 0 : 92,
+            stage: manualGff3 ? 'queued' : 'registering',
+            message: manualGff3 ? 'Queueing annotation preparation' : 'Registering sequence-only genome',
+            counters: {},
+            summary: null,
+        })
+        try {
+            let annotationPath = manualGff3
+            if (manualGff3) {
+                const prepared = await prepareAnnotation(manualGff3, manualFasta, (progress) => {
+                    setManualOperation((prev) => ({
+                        ...prev,
+                        status: 'processing',
+                        kind: 'single',
+                        progress: progress.progress,
+                        stage: progress.stage,
+                        message: progress.message || 'Preparing annotation',
+                        counters: progress.counters,
+                    }))
+                })
+                annotationPath = prepared.annotation_path || manualGff3
+            }
+
+            setManualOperation((prev) => ({
+                ...prev,
+                progress: Math.max(prev.progress, 99),
+                stage: 'registering',
+                message: 'Registering genome',
+            }))
+            const record = buildManualGenomeRecord({
+                species: speciesLabel,
+                assembly: assemblyLabel,
+                accession,
+                files: {
+                    fasta: manualFasta,
+                    gff3: manualGff3,
+                    homology: manualHomology,
+                    index: manualIndexPath,
+                },
+            }, annotationPath)
+            mergeManualGenomeRecords(
+                [record],
+                { retainFormAnalyses: true, sourceAnnotation: manualGff3 },
+            )
+
+            const annotationNote = record.files?.gff3
+                ? ''
+                : ' (sequence only — no annotation, so the gene track will be empty)'
+            showStatus(`Manual genome added: ${manualGenomeLabel(record)}${annotationNote}`)
+            setManualOperation({
+                status: 'success',
+                kind: 'single',
+                progress: 100,
+                stage: 'complete',
+                message: 'Added',
+                counters: {},
+                summary: null,
+            })
+            manualSuccessTimerRef.current = window.setTimeout(() => {
+                resetManualForm()
+                setManualOpen(false)
+                setManualOperation({
+                    status: 'idle',
+                    kind: '',
+                    progress: 0,
+                    stage: '',
+                    message: '',
+                    counters: {},
+                    summary: null,
+                })
+                manualSuccessTimerRef.current = null
+            }, 2000)
+        } catch (error) {
+            const message = error?.message || 'Failed to prepare the annotation'
+            setManualOperation({
+                status: 'error',
+                kind: 'single',
+                progress: 0,
+                stage: 'error',
+                message,
+                counters: {},
+                summary: null,
+            })
+            showStatus(message, true)
+        }
     }
 
     const isPlaylistView = selectedPlaylistId !== PLAYLIST_ALL_ID
@@ -2279,6 +3314,9 @@ export default function SpeciesSelectorView({
         : (selectedPlaylist?.name || 'All genomes')
 
     const thClass = `px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500 bg-gray-50' : 'text-gray-400 bg-gray-800'}`
+    const manualProcessing = manualOperation.status === 'processing'
+    const manualLocked = manualProcessing || manualOperation.status === 'success'
+    const manualStatusText = manualProgressText(manualOperation)
     const canCaptureRasterScreenshot = typeof window !== 'undefined' &&
         typeof window.electronAPI?.captureHtmlSnapshot === 'function'
     const screenshotTarget = useMemo(() => {
@@ -2391,6 +3429,59 @@ export default function SpeciesSelectorView({
                 mode={modalMode}
                 theme={theme}
                 extensions={modalExtensions}
+                defaultFileName={modalTarget === 'bundle_export_path' ? 'ensembl-go-genomes.json' : ''}
+                footerContent={modalTarget === 'manual_config_load' ? (
+                    <div className="space-y-2">
+                        <label
+                            className={`flex items-start gap-2 cursor-pointer ${isLight ? 'text-gray-700' : 'text-gray-200'}`}
+                            title="This will add all the loaded genomes to the selected genomes set in Genome Selector and the genome boxes near the top of the app."
+                        >
+                            <input
+                                type="checkbox"
+                                checked={selectLoadedManualGenomes}
+                                onChange={(event) => setSelectLoadedManualGenomes(event.target.checked)}
+                                className="mt-0.5 h-4 w-4 rounded border-gray-400 accent-[#0099ff]"
+                            />
+                            <span>
+                                <span className="block text-sm font-medium">Automatically add to selected genomes list</span>
+                                <span className={`block mt-0.5 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                    Adds them to the selected genomes set and the genome boxes at the top of the app.
+                                </span>
+                            </span>
+                        </label>
+                        <label
+                            className={`flex items-start gap-2 cursor-pointer ${isLight ? 'text-gray-700' : 'text-gray-200'}`}
+                            title="Show what the file contains and choose which genomes to import."
+                        >
+                            <input
+                                type="checkbox"
+                                checked={reviewBeforeImport}
+                                onChange={(event) => setReviewBeforeImport(event.target.checked)}
+                                className="mt-0.5 h-4 w-4 rounded border-gray-400 accent-[#0099ff]"
+                            />
+                            <span>
+                                <span className="block text-sm font-medium">Review genomes before importing</span>
+                                <span className={`block mt-0.5 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                    Show which genomes and files the file lists, and pick the ones to import.
+                                </span>
+                            </span>
+                        </label>
+                    </div>
+                ) : null}
+            />
+            <GenomeBundlePreviewModal
+                isOpen={Boolean(bundlePreview)}
+                theme={theme}
+                model={bundlePreview?.model}
+                busy={manualProcessing}
+                selectLoaded={selectLoadedManualGenomes}
+                onSelectLoadedChange={setSelectLoadedManualGenomes}
+                onClose={() => setBundlePreview(null)}
+                onImport={(indexes) => {
+                    const payload = bundlePreview?.payload
+                    setBundlePreview(null)
+                    if (payload) void importGenomeBundle(payload, indexes)
+                }}
             />
             <CustomAnnotationModal
                 isOpen={!!customAnnotationTarget}
@@ -2399,6 +3490,9 @@ export default function SpeciesSelectorView({
                 label={customAnnotationLabel}
                 path={customAnnotationPath}
                 importing={importingCustomAnnotation}
+                validation={validation.customAnnotation}
+                idMode={customAnnotationIdMode}
+                idPrefix={customAnnotationIdPrefix}
                 onLabelChange={setCustomAnnotationLabel}
                 onPathChange={setCustomAnnotationPath}
                 onBrowse={() => {
@@ -2408,6 +3502,13 @@ export default function SpeciesSelectorView({
                 }}
                 onCancel={closeCustomAnnotationModal}
                 onImport={importCustomAnnotation}
+                onValidate={() => runValidation('customAnnotation', 'annotation', {
+                    annotation_path: String(customAnnotationPath || '').trim(),
+                    fasta_path: getEffectiveFiles(customAnnotationTarget)?.fasta || null,
+                })}
+                onCloseValidation={() => closeValidation('customAnnotation')}
+                onIdModeChange={setCustomAnnotationIdMode}
+                onIdPrefixChange={setCustomAnnotationIdPrefix}
             />
             <PlaylistMembershipModal
                 isOpen={!!playlistMembershipTarget}
@@ -2431,12 +3532,14 @@ export default function SpeciesSelectorView({
                     ? 'bg-red-500/90 text-white border-red-400'
                     : 'bg-emerald-500/90 text-white border-emerald-400'
                     }`}>
-                    <div className="flex items-center gap-3">
+                    {/* The icon must not shrink and the text must be allowed to,
+                        or a long path overflows the box instead of wrapping. */}
+                    <div className="flex items-start gap-3">
                         {statusMessage.isError
-                            ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
-                            : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" strokeLinecap="round" strokeLinejoin="round" /><polyline points="22 4 12 14.01 9 11.01" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            ? <svg className="shrink-0 mt-0.5" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+                            : <svg className="shrink-0 mt-0.5" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" strokeLinecap="round" strokeLinejoin="round" /><polyline points="22 4 12 14.01 9 11.01" strokeLinecap="round" strokeLinejoin="round" /></svg>
                         }
-                        <span className="font-medium">{statusMessage.text}</span>
+                        <span className="min-w-0 font-medium break-words">{statusMessage.text}</span>
                     </div>
                 </div>
             )}
@@ -2642,45 +3745,141 @@ export default function SpeciesSelectorView({
             </div>
 
             <div className={`order-3 flex-none mt-6 rounded-xl border overflow-hidden ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}>
-                <button
-                    type="button"
-                    onClick={() => setManualOpen((prev) => !prev)}
-                    className={`w-full flex items-center justify-between px-6 py-4 text-left transition-colors ${isLight ? 'hover:bg-gray-50' : 'hover:bg-gray-750'}`}
-                >
-                    <div className={`flex items-center gap-2 text-base font-bold ${isLight ? 'text-gray-800' : 'text-gray-200'}`}>
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M8 2v12M2 8h12" />
-                        </svg>
-                        Manually add genomes
-                    </div>
-                    <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className={`transition-transform ${manualOpen ? 'rotate-180' : ''} ${isLight ? 'text-gray-400' : 'text-gray-500'}`}
+                <div className={`flex flex-wrap items-center gap-2 px-3 sm:px-6 py-3 ${isLight ? 'bg-white' : 'bg-gray-800'}`}>
+                    <button
+                        type="button"
+                        onClick={() => setManualOpen((prev) => !prev)}
+                        disabled={manualLocked}
+                        className={`min-w-0 flex-1 flex items-center justify-between py-1 text-left transition-colors disabled:cursor-not-allowed ${manualLocked ? 'opacity-60' : ''}`}
                     >
-                        <path d="M4 6l4 4 4-4" />
-                    </svg>
-                </button>
+                        <div className={`flex items-center gap-2 text-base font-bold ${isLight ? 'text-gray-800' : 'text-gray-200'}`}>
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M8 2v12M2 8h12" />
+                            </svg>
+                            Manually add genomes
+                        </div>
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className={`ml-2 transition-transform ${manualOpen ? 'rotate-180' : ''} ${isLight ? 'text-gray-400' : 'text-gray-500'}`}
+                        >
+                            <path d="M4 6l4 4 4-4" />
+                        </svg>
+                    </button>
+                    <div className={`h-6 w-px ${isLight ? 'bg-gray-200' : 'bg-gray-700'}`} />
+                    <button
+                        type="button"
+                        disabled={manualLocked}
+                        onClick={() => {
+                            setManualOpen(true)
+                            setModalTarget('manual_config_load')
+                            setModalMode('file')
+                            setModalOpen(true)
+                        }}
+                        className={`shrink-0 px-2.5 py-1.5 rounded text-xs font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isLight
+                            ? 'bg-gray-50 border-gray-300 text-gray-700 hover:bg-gray-100'
+                            : 'bg-gray-700 border-gray-600 text-gray-200 hover:bg-gray-600'
+                            }`}
+                    >
+                        Load JSON
+                    </button>
+                </div>
+
+                {/* The import report belongs next to the button that produced it,
+                    not at the far bottom of the section. */}
+                {manualOperation.kind === 'batch' && (manualProcessing || manualOperation.summary || manualOperation.status === 'error') ? (
+                    <div className={`mx-3 sm:mx-6 mb-3 rounded-lg border p-3 text-xs ${manualOperation.status === 'error'
+                        ? (isLight ? 'border-red-200 bg-red-50 text-red-800' : 'border-red-800/60 bg-red-900/20 text-red-200')
+                        : (isLight ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-blue-800/60 bg-blue-900/20 text-blue-100')
+                        }`}>
+                        <div className="flex items-start gap-3">
+                            {manualProcessing ? (
+                                <ProgressGlyph
+                                    size={14}
+                                    progress={Math.max(0, Math.min(1, manualOperation.progress / 100))}
+                                    renderGlyph={(props) => <AddGenomeGlyph {...props} />}
+                                />
+                            ) : null}
+                            <div className="min-w-0 flex-1" role="status" aria-live="polite">
+                                <div className="font-semibold break-words">{manualStatusText}</div>
+                                {manualProcessing ? (
+                                    <div className="mt-1 opacity-75">{Math.round(manualOperation.progress)}% overall</div>
+                                ) : null}
+                            </div>
+                            {!manualProcessing && manualOperation.summary ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setManualOperation({
+                                        status: 'idle', kind: '', progress: 0,
+                                        stage: '', message: '', counters: {}, summary: null,
+                                    })}
+                                    className="shrink-0 p-0.5 rounded opacity-60 hover:opacity-100"
+                                    aria-label="Dismiss import report"
+                                >
+                                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                        <path d="M15 5L5 15M5 5l10 10" strokeLinecap="round" />
+                                    </svg>
+                                </button>
+                            ) : null}
+                        </div>
+                        {manualOperation.summary ? (
+                            <div className="mt-3 grid grid-cols-3 gap-2">
+                                <div><span className="font-semibold">{manualOperation.summary.added?.length || 0}</span> added</div>
+                                <div><span className="font-semibold">{manualOperation.summary.skipped?.length || 0}</span> skipped</div>
+                                <div><span className="font-semibold">{manualOperation.summary.failed?.length || 0}</span> failed</div>
+                                {[...(manualOperation.summary.skipped || []), ...(manualOperation.summary.failed || [])].length ? (
+                                    <div className="col-span-3 mt-1 max-h-28 overflow-y-auto space-y-1">
+                                        {[...(manualOperation.summary.skipped || []), ...(manualOperation.summary.failed || [])].map((item, index) => (
+                                            <div key={`${item.label}-${index}`} className="opacity-80 break-words">
+                                                {item.label}: {item.reason}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : null}
+                                {/* A direct import skips the review matrix, so this is the
+                                    only place the user learns which paths did not resolve. */}
+                                {manualOperation.summary.missingFiles?.length ? (
+                                    <div className={`col-span-3 mt-2 pt-2 border-t ${isLight ? 'border-blue-200' : 'border-blue-800/60'}`}>
+                                        <div className="font-semibold">
+                                            {manualOperation.summary.missingFiles.length} file
+                                            {manualOperation.summary.missingFiles.length === 1 ? '' : 's'} not found
+                                        </div>
+                                        <div className="mt-1 max-h-28 overflow-y-auto space-y-1">
+                                            {manualOperation.summary.missingFiles.map((item, index) => (
+                                                <div key={`${item.label}-${item.fileType}-${index}`} className="opacity-80 break-all">
+                                                    {item.label} — {localFileTypeLabel(item.fileType, true)}: {item.path}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : null}
+                    </div>
+                ) : null}
 
                 {manualOpen && (
                     <div className={`px-6 pb-6 border-t ${isLight ? 'border-gray-100' : 'border-gray-700'}`}>
-                        <div className="pt-5 space-y-4">
+                        <fieldset
+                            disabled={manualLocked}
+                            className={`pt-5 space-y-4 transition-opacity ${manualLocked ? 'opacity-55' : ''}`}
+                        >
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <div>
                                     <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                        Species label *
+                                        Genome label *
                                     </label>
                                     <input
                                         type="text"
                                         value={manualSpeciesLabel}
                                         onChange={(e) => setManualSpeciesLabel(e.target.value)}
-                                        placeholder="e.g. Homo sapiens"
+                                        placeholder="e.g. Human reference"
                                         className={`w-full px-3 py-2 rounded-lg text-xs border ${isLight
                                             ? 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
                                             : 'bg-gray-900 border-gray-600 text-gray-200 placeholder-gray-500'
@@ -2719,68 +3918,61 @@ export default function SpeciesSelectorView({
                                 </div>
                             </div>
 
-                            <div>
-                                <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                    Genome directory (auto-detect)
-                                </label>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        type="text"
-                                        value={manualDirectory || ''}
-                                        readOnly
-                                        placeholder="/path/to/genome/files"
-                                        className={`flex-1 px-3 py-2 rounded-lg text-xs border font-mono ${isLight
-                                            ? 'bg-gray-50 border-gray-300 text-gray-800 placeholder-gray-400'
-                                            : 'bg-gray-900 border-gray-600 text-gray-200 placeholder-gray-500'
-                                            }`}
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => openManualBrowser('manual_directory', 'directory')}
-                                        className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${isLight
-                                            ? 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300'
-                                            : 'bg-gray-700 text-gray-200 hover:bg-gray-600 border border-gray-500'
-                                            }`}
-                                    >
-                                        Browse
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => autodetectDirectory(manualDirectory)}
-                                        disabled={!manualDirectory || detectingDirectory}
-                                        className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${isLight
-                                            ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200'
-                                            : 'bg-blue-900/30 text-blue-300 hover:bg-blue-900/50 border border-blue-700/40 disabled:bg-gray-800 disabled:text-gray-500 disabled:border-gray-700'
-                                            }`}
-                                    >
-                                        {detectingDirectory ? 'Scanning…' : 'Auto-detect'}
-                                    </button>
-                                </div>
-                            </div>
-
-                            {manualWarnings.length > 0 && (
-                                <div className={`rounded-lg px-3 py-2 text-xs ${isLight ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-amber-900/20 text-amber-300 border border-amber-800/40'}`}>
-                                    {manualWarnings.map((message, idx) => (
-                                        <div key={`${message}-${idx}`}>{message}</div>
-                                    ))}
-                                </div>
-                            )}
-
                             <ManualPathRow
-                                label="FASTA file"
+                                label="FASTA file *"
                                 value={manualFasta}
                                 onBrowse={() => openManualBrowser('manual_fasta', 'file')}
                                 placeholder="/path/to/genome.fa.gz"
                                 isLight={isLight}
+                                validating={validation.genome?.status === 'queued' || validation.genome?.status === 'running'}
+                                onValidate={() => runValidation('genome', 'genome', { fasta_path: manualFasta })}
                             />
 
+                            {validation.genome ? (
+                                <ValidationReportPanel
+                                    kind="genome"
+                                    theme={theme}
+                                    status={validation.genome.status}
+                                    progress={validation.genome.progress}
+                                    stage={validation.genome.stage}
+                                    message={validation.genome.message}
+                                    counters={validation.genome.counters}
+                                    report={validation.genome.report}
+                                    error={validation.genome.error}
+                                    analysedAt={validation.genome.analysed_at}
+                                    onClose={() => closeValidation('genome')}
+                                />
+                            ) : null}
+
                             <ManualPathRow
-                                label="GFF3 file"
+                                label="Annotation file (optional)"
                                 value={manualGff3}
                                 onBrowse={() => openManualBrowser('manual_gff3', 'file')}
                                 placeholder="/path/to/genes.gff3.gz"
                                 isLight={isLight}
+                                hint="GFF3, GFF or GTF. Without one the genome still opens; only the gene track is empty."
+                                validating={validation.annotation?.status === 'queued' || validation.annotation?.status === 'running'}
+                                onValidate={() => runValidation('annotation', 'annotation', {
+                                    annotation_path: manualGff3,
+                                    fasta_path: manualFasta || null,
+                                })}
                             />
+
+                            {validation.annotation ? (
+                                <ValidationReportPanel
+                                    kind="annotation"
+                                    theme={theme}
+                                    status={validation.annotation.status}
+                                    progress={validation.annotation.progress}
+                                    stage={validation.annotation.stage}
+                                    message={validation.annotation.message}
+                                    counters={validation.annotation.counters}
+                                    report={validation.annotation.report}
+                                    error={validation.annotation.error}
+                                    analysedAt={validation.annotation.analysed_at}
+                                    onClose={() => closeValidation('annotation')}
+                                />
+                            ) : null}
 
                             <ManualPathRow
                                 label="Homology TSV file (optional)"
@@ -2794,37 +3986,184 @@ export default function SpeciesSelectorView({
                                 <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
                                     Suggested index path
                                 </label>
-                                <input
-                                    type="text"
-                                    value={manualIndexPath || ''}
-                                    readOnly
-                                    placeholder="Will be set when GFF3 is selected"
-                                    className={`w-full px-3 py-2 rounded-lg text-xs border font-mono ${isLight
-                                        ? 'bg-gray-50 border-gray-300 text-gray-800 placeholder-gray-400'
-                                        : 'bg-gray-900 border-gray-600 text-gray-200 placeholder-gray-500'
-                                        }`}
-                                />
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="text"
+                                        value={manualIndexPath || ''}
+                                        readOnly
+                                        disabled={!manualGff3}
+                                        placeholder="Will be set when an annotation is selected"
+                                        className={`flex-1 px-3 py-2 rounded-lg text-xs border font-mono disabled:cursor-not-allowed ${!manualGff3
+                                            ? (isLight
+                                                ? 'bg-gray-100 border-gray-200 text-gray-400 placeholder-gray-400'
+                                                : 'bg-gray-800 border-gray-700 text-gray-500 placeholder-gray-500')
+                                            : (isLight
+                                                ? 'bg-gray-50 border-gray-300 text-gray-800 placeholder-gray-400'
+                                                : 'bg-gray-900 border-gray-600 text-gray-200 placeholder-gray-500')
+                                            }`}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => openManualBrowser('manual_index', 'file-or-directory')}
+                                        disabled={!manualGff3}
+                                        className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors disabled:cursor-not-allowed ${isLight
+                                            ? 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200'
+                                            : 'bg-gray-700 text-gray-200 border-gray-500 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:border-gray-700'
+                                            }`}
+                                    >
+                                        Browse
+                                    </button>
+                                </div>
                                 <p className={`mt-1 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                    Index filename uses the GFF3 basename with a `.gff3.index.db` suffix.
+                                    Choose a directory to keep the suggested filename, or select a specific index file.
                                 </p>
                             </div>
 
-                            <div className="flex justify-end">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
+                                <div
+                                    className={`min-h-5 flex-1 text-xs text-right ${manualOperation.status === 'error'
+                                        ? (isLight ? 'text-red-600' : 'text-red-300')
+                                        : (isLight ? 'text-gray-600' : 'text-gray-300')
+                                        }`}
+                                    role="status"
+                                    aria-live="polite"
+                                >
+                                    {manualOperation.kind === 'single' ? manualStatusText : ''}
+                                </div>
                                 <button
                                     type="button"
                                     onClick={addManualGenome}
-                                    disabled={!manualSpeciesLabel.trim() || !manualAssemblyLabel.trim() || !manualFasta || !manualGff3}
-                                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${isLight
+                                    disabled={
+                                        !manualSpeciesLabel.trim()
+                                        || !manualAssemblyLabel.trim()
+                                        || !manualFasta
+                                        || manualLocked
+                                    }
+                                    className={`min-w-[132px] inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${isLight
                                         ? 'bg-[#0099ff] text-white hover:bg-[#0088ee] disabled:bg-gray-300 disabled:cursor-not-allowed'
                                         : 'bg-blue-600 text-white hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed'
                                         }`}
                                 >
-                                    Add genome
+                                    {manualOperation.kind === 'single' && manualLocked ? (
+                                        <ProgressGlyph
+                                            size={14}
+                                            progress={Math.max(0, Math.min(1, manualOperation.progress / 100))}
+                                            renderGlyph={(props) => <AddGenomeGlyph {...props} />}
+                                        />
+                                    ) : null}
+                                    {manualOperation.kind === 'single' && manualOperation.status === 'success'
+                                        ? 'Added'
+                                        : manualOperation.kind === 'single' && manualProcessing
+                                            ? 'Adding…'
+                                            : 'Add genome'}
+                                </button>
+                            </div>
+                        </fieldset>
+                    </div>
+                )}
+
+                {/* Export lives outside the collapse gate: it acts on the current
+                    selection, not on the add form, so folding the form away must
+                    not hide it. */}
+                <div className={`px-6 py-5 border-t ${isLight ? 'border-gray-100' : 'border-gray-700'}`}>
+                    <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                        Export genome configuration
+                    </label>
+                    <p className={`mb-2 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                        Exports the details for all currently selected genomes
+                        {exportSelectionCount > 0 ? ` (${exportSelectionCount})` : ''}.
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="text"
+                            value={bundleExportPath}
+                            onChange={(event) => {
+                                bundleExportPathTouchedRef.current = true
+                                setBundleExportConflict(null)
+                                setBundleExportPath(event.target.value)
+                            }}
+                            placeholder="/path/to/genomes.json"
+                            className={`flex-1 px-3 py-2 rounded-lg text-xs border font-mono ${isLight
+                                ? 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
+                                : 'bg-gray-900 border-gray-600 text-gray-200 placeholder-gray-500'
+                                }`}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => openManualBrowser('bundle_export_path', 'save')}
+                            className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${isLight
+                                ? 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200'
+                                : 'bg-gray-700 text-gray-200 border-gray-500 hover:bg-gray-600'
+                                }`}
+                        >
+                            Browse
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => exportGenomeBundle('create')}
+                            disabled={!bundleExportPath.trim() || exportSelectionCount === 0 || manualProcessing}
+                            className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${isLight
+                                ? 'bg-[#0099ff] text-white hover:bg-[#0088ee] disabled:bg-gray-300 disabled:cursor-not-allowed'
+                                : 'bg-blue-600 text-white hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed'
+                                }`}
+                        >
+                            Export
+                        </button>
+                    </div>
+
+                    {bundleExportConflict ? (
+                        <div className={`mt-3 rounded-lg border px-3 py-2.5 text-xs ${isLight
+                            ? 'border-amber-300 bg-amber-50 text-amber-900'
+                            : 'border-amber-700/60 bg-amber-900/20 text-amber-100'
+                            }`}>
+                            <div className="font-semibold break-words">{bundleExportConflict.detail}</div>
+                            <p className="mt-1 opacity-80 break-all">{bundleExportConflict.path}</p>
+                            <p className="mt-1 opacity-80">
+                                Amending adds the selected genomes to the existing file, refreshing any
+                                that are already in it rather than duplicating them.
+                            </p>
+                            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => exportGenomeBundle('merge')}
+                                    className={`px-3 py-1.5 rounded text-xs font-semibold text-white transition-colors ${isLight ? 'bg-[#0099ff] hover:bg-[#0088ee]' : 'bg-blue-600 hover:bg-blue-500'}`}
+                                >
+                                    Amend file
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => exportGenomeBundle('overwrite')}
+                                    className={`px-3 py-1.5 rounded text-xs font-semibold border transition-colors ${isLight
+                                        ? 'bg-white border-amber-400 text-amber-800 hover:bg-amber-100'
+                                        : 'bg-transparent border-amber-600 text-amber-100 hover:bg-amber-900/40'
+                                        }`}
+                                >
+                                    Replace file
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBundleExportConflict(null)}
+                                    className="px-2 py-1.5 rounded text-xs font-medium opacity-70 hover:opacity-100"
+                                >
+                                    Cancel
                                 </button>
                             </div>
                         </div>
-                    </div>
-                )}
+                    ) : null}
+
+                    {manualOperation.kind === 'export' && manualOperation.message ? (
+                        <div
+                            className={`mt-3 rounded-lg border px-3 py-2 text-xs ${manualOperation.status === 'error'
+                                ? (isLight ? 'border-red-200 bg-red-50 text-red-800' : 'border-red-800/60 bg-red-900/20 text-red-200')
+                                : (isLight ? 'border-gray-200 bg-gray-50 text-gray-700' : 'border-gray-700 bg-gray-900/40 text-gray-300')
+                                }`}
+                            role="status"
+                            aria-live="polite"
+                        >
+                            <span className="break-words">{manualStatusText}</span>
+                        </div>
+                    ) : null}
+                </div>
             </div>
 
             <div className={`order-2 flex-none h-[560px] min-h-[560px] rounded-xl border overflow-hidden flex flex-col ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}>
@@ -2865,9 +4204,10 @@ export default function SpeciesSelectorView({
 	                                        const rowKey = String(item?.assembly_key || key || '').trim()
 	                                        const isMissing = Boolean(item?.is_missing)
 	                                        const isSelected = selectedGenomeKeys.has(key)
-		                                        const isPendingSelection = pendingSelectionKeys.has(key)
-		                                        const effectiveFiles = getEffectiveFiles(item)
-		                                        const filesExpanded = expandedRows.has(rowKey)
+			                                        const isPendingSelection = pendingSelectionKeys.has(key)
+			                                        const effectiveFiles = getEffectiveFiles(item)
+                                                    const fileAnalysisByType = getFileAnalysisByType(item, effectiveFiles)
+			                                        const filesExpanded = expandedRows.has(rowKey)
 	                                        const datasetInstances = (
 	                                            Array.isArray(item?.dataset_instances) && item.dataset_instances.length > 0
 	                                                ? item.dataset_instances
@@ -2921,10 +4261,23 @@ export default function SpeciesSelectorView({
                                                     <div className="font-medium leading-tight flex items-center gap-2">
                                                         <span>{item.scientific_name}</span>
                                                         {item.is_manual && (
-                                                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isLight ? 'bg-indigo-100 text-indigo-700' : 'bg-indigo-900/40 text-indigo-300'}`}>
-                                                                Manual
+                                                            <span
+                                                                className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isLight ? 'bg-indigo-100 text-indigo-700' : 'bg-indigo-900/40 text-indigo-300'}`}
+                                                                title={registrationBadgeTooltip(item)}
+                                                            >
+                                                                {registrationBadgeLabel(item)}
                                                             </span>
                                                         )}
+                                                        {item.is_manual && item.missing_files?.length ? (
+                                                            <span
+                                                                className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isLight ? 'bg-amber-100 text-amber-700' : 'bg-amber-900/30 text-amber-300'}`}
+                                                                title={item.missing_files
+                                                                    .map((entry) => `${entry.field}: ${entry.path}`)
+                                                                    .join('\n')}
+                                                            >
+                                                                {item.missing_files.length} missing
+                                                            </span>
+                                                        ) : null}
                                                         {item.retired_remote && !isMissing && (
                                                             <span
                                                                 className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isLight ? 'bg-amber-100 text-amber-700' : 'bg-amber-900/30 text-amber-300'}`}
@@ -3121,6 +4474,7 @@ export default function SpeciesSelectorView({
 	                                                <tr key={`${rowKey}-files`}>
                                                     <td colSpan={8} className={`px-6 py-3 border-b ${isLight ? 'bg-gray-50/80 border-gray-100' : 'bg-gray-900/30 border-gray-700/50'}`} onClick={(e) => e.stopPropagation()}>
                                                         <div className="space-y-4">
+                                                            {!item.is_manual && (
                                                             <div className={`rounded-lg border overflow-hidden ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800/60 border-gray-700'}`}>
                                                                 <div className={`px-3 py-2 border-b flex items-center justify-between gap-3 ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-750 border-gray-700'}`}>
                                                                     <div className="min-w-0">
@@ -3252,17 +4606,21 @@ export default function SpeciesSelectorView({
                                                                     </div>
                                                                 )}
                                                             </div>
+                                                            )}
                                                             <div className="space-y-2">
                                                                 <div className={`text-xs font-bold uppercase tracking-widest ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                                                    Default dataset file paths
+                                                                    {item.is_manual ? 'Genome files' : 'Default dataset file paths'}
                                                                 </div>
                                                                 <GenomeFileEditor
                                                                     item={item}
                                                                     effectiveFiles={effectiveFiles}
                                                                     isLight={isLight}
+                                                                    theme={theme}
                                                                     confirmDeleteFile={confirmDeleteFile}
                                                                     setConfirmDeleteFile={setConfirmDeleteFile}
                                                                     onDeleteFile={handleDeleteSingleFile}
+                                                                    analysisByType={fileAnalysisByType}
+                                                                    onAnalyse={(fileType) => analyseGenomeFile(item, fileType, effectiveFiles)}
                                                                     onBrowse={(fileType) => {
                                                                         setModalTarget(`genome_edit:${key}:${fileType}`)
                                                                         setModalMode('file')

@@ -669,7 +669,13 @@ class DownloadManagerMetadataTests(unittest.TestCase):
             species_json = root / "species.json"
             species_json.write_text(json.dumps({"species": {}}), encoding="utf-8")
             manager = DownloadManager(species_json, cache_dir=root / "cache")
-            with patch("download_manager.requests.get", side_effect=fake_get):
+            # A successful refresh goes on to refresh the species-name policy,
+            # which POSTs to the NCBI datasets API. Only requests.get is faked
+            # here, so leaving it live would make this test hit the network and
+            # hang. The policy refresh has its own coverage in
+            # test_species_name_policy.py; what matters here is the catalogue URL.
+            with patch("download_manager.requests.get", side_effect=fake_get), \
+                    patch.object(manager, "refresh_species_name_policy"):
                 manager.refresh_catalog(force=True)
 
         self.assertEqual(calls, [ENSEMBL_SPECIES_CATALOG_NEW_URL])
@@ -690,7 +696,8 @@ class DownloadManagerMetadataTests(unittest.TestCase):
             species_json = root / "species.json"
             species_json.write_text(json.dumps({"species": {}}), encoding="utf-8")
             manager = DownloadManager(species_json, cache_dir=root / "cache")
-            with patch("download_manager.requests.get", side_effect=fake_get):
+            with patch("download_manager.requests.get", side_effect=fake_get), \
+                    patch.object(manager, "refresh_species_name_policy"):
                 status = manager.refresh_catalog(force=True)
 
         self.assertEqual(calls, [ENSEMBL_SPECIES_CATALOG_NEW_URL, ENSEMBL_SPECIES_CATALOG_LEGACY_URL])
@@ -712,7 +719,8 @@ class DownloadManagerMetadataTests(unittest.TestCase):
             species_json = root / "species.json"
             species_json.write_text(json.dumps({"species": {}}), encoding="utf-8")
             manager = DownloadManager(species_json, cache_dir=root / "cache", catalog_source_url=override_url)
-            with patch("download_manager.requests.get", side_effect=fake_get):
+            with patch("download_manager.requests.get", side_effect=fake_get), \
+                    patch.object(manager, "refresh_species_name_policy"):
                 status = manager.refresh_catalog(force=True)
 
         self.assertEqual(calls, [override_url])

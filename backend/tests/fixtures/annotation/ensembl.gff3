@@ -1,0 +1,20 @@
+##gff-version 3
+#!genome-build Ensembl test
+# Ensembl style: `gene:` / `transcript:` ID prefixes, explicit biotypes,
+# Ensembl_canonical tag. This must keep parsing exactly as it does today.
+# Coding transcript: exons 1000-1399 + 2200-2600, CDS 1100-1399 + 2200-2499 (600 bp).
+chr1	ensembl	gene	1000	5000	.	+	.	ID=gene:ENSTEST00000000001;Name=FOO1;biotype=protein_coding;description=test gene one
+chr1	ensembl	mRNA	1000	2600	.	+	.	ID=transcript:ENSTEST00000000101;Parent=gene:ENSTEST00000000001;biotype=protein_coding;tag=Ensembl_canonical
+chr1	ensembl	exon	1000	1399	.	+	.	Parent=transcript:ENSTEST00000000101;rank=1
+chr1	ensembl	CDS	1100	1399	.	+	0	Parent=transcript:ENSTEST00000000101
+chr1	ensembl	exon	2200	2600	.	+	.	Parent=transcript:ENSTEST00000000101;rank=2
+chr1	ensembl	CDS	2200	2499	.	+	0	Parent=transcript:ENSTEST00000000101
+chr1	ensembl	mRNA	1000	2600	.	+	.	ID=transcript:ENSTEST00000000102;Parent=gene:ENSTEST00000000001;biotype=retained_intron
+chr1	ensembl	exon	1000	1399	.	+	.	Parent=transcript:ENSTEST00000000102;rank=1
+chr1	ensembl	exon	2200	2600	.	+	.	Parent=transcript:ENSTEST00000000102;rank=2
+chr1	ensembl	ncRNA_gene	8000	8600	.	-	.	ID=gene:ENSTEST00000000002;Name=LINC1;biotype=lncRNA
+chr1	ensembl	lnc_RNA	8000	8600	.	-	.	ID=transcript:ENSTEST00000000201;Parent=gene:ENSTEST00000000002;biotype=lncRNA;tag=Ensembl_canonical
+chr1	ensembl	exon	8000	8600	.	-	.	Parent=transcript:ENSTEST00000000201;rank=1
+chr1	ensembl	ncRNA_gene	9000	9080	.	+	.	ID=gene:ENSTEST00000000003;Name=MIR1;biotype=miRNA
+chr1	ensembl	miRNA	9000	9080	.	+	.	ID=transcript:ENSTEST00000000301;Parent=gene:ENSTEST00000000003;biotype=miRNA;tag=Ensembl_canonical
+chr1	ensembl	exon	9000	9080	.	+	.	Parent=transcript:ENSTEST00000000301;rank=1

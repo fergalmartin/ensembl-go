@@ -1,0 +1,15 @@
+##gff-version 3
+# AUGUSTUS --gff3=on. Gene/mRNA/exon/CDS present, no biotype, and the CDS rows
+# reuse one ID across blocks (a legal GFF3 discontinuous feature).
+# g1: CDS 1000-1399 (400) + 2200-2399 (200) = 600 bp.
+# g2: CDS rows only, exons must be derived.
+chr1	AUGUSTUS	gene	1000	2399	0.62	+	.	ID=g1
+chr1	AUGUSTUS	mRNA	1000	2399	0.62	+	.	ID=g1.t1;Parent=g1
+chr1	AUGUSTUS	exon	1000	1399	.	+	.	Parent=g1.t1
+chr1	AUGUSTUS	CDS	1000	1399	0.88	+	0	ID=g1.t1.cds;Parent=g1.t1
+chr1	AUGUSTUS	exon	2200	2399	.	+	.	Parent=g1.t1
+chr1	AUGUSTUS	CDS	2200	2399	0.91	+	2	ID=g1.t1.cds;Parent=g1.t1
+chr2	AUGUSTUS	gene	400	1200	0.44	-	.	ID=g2
+chr2	AUGUSTUS	mRNA	400	1200	0.44	-	.	ID=g2.t1;Parent=g2
+chr2	AUGUSTUS	CDS	400	600	0.71	-	0	ID=g2.t1.cds;Parent=g2.t1
+chr2	AUGUSTUS	CDS	1000	1200	0.71	-	0	ID=g2.t1.cds;Parent=g2.t1

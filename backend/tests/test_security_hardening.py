@@ -14,14 +14,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main  # noqa: E402
 from main import (  # noqa: E402
     DeleteSingleFileRequest,
+    MkdirRequest,
     SaveExportRequest,
     _validate_download_url,
     _validate_trackhub_data_url,
+    create_directory,
     delete_single_local_file,
+    find_transcript_fast,
     save_export_file,
 )
 from security_utils import (  # noqa: E402
     ensure_http_response_url_allowed,
+    get_with_validated_redirects,
     validate_backend_bind_host,
     validate_remote_download_url,
 )
@@ -142,6 +146,34 @@ class FilesystemHardeningTests(unittest.TestCase):
                 asyncio.run(save_export_file(request))
             self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_mkdir_creates_a_single_folder_in_an_existing_parent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "new folder"
+            result = asyncio.run(create_directory(MkdirRequest(path=str(target))))
+            self.assertEqual(result["status"], "created")
+            self.assertTrue(target.is_dir())
+
+            # Repeating the request is reported, not an error.
+            self.assertEqual(
+                asyncio.run(create_directory(MkdirRequest(path=str(target))))["status"],
+                "exists",
+            )
+
+    def test_mkdir_refuses_to_build_nested_trees(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nested = Path(tmpdir) / "missing" / "deep"
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(create_directory(MkdirRequest(path=str(nested))))
+            self.assertEqual(ctx.exception.status_code, 400)
+            self.assertFalse((Path(tmpdir) / "missing").exists())
+
+    def test_mkdir_rejects_traversal_and_relative_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for bad in [f"{tmpdir}/..", "relative/dir", ""]:
+                with self.assertRaises(HTTPException) as ctx:
+                    asyncio.run(create_directory(MkdirRequest(path=bad)))
+                self.assertEqual(ctx.exception.status_code, 400)
+
 
 class UrlHardeningTests(unittest.TestCase):
     def test_remote_download_url_allows_known_hosts_only(self):
@@ -199,3 +231,89 @@ class UrlHardeningTests(unittest.TestCase):
             _validate_trackhub_data_url("http://example.org/track.bw"),
             "https://example.org/track.bw",
         )
+
+
+class ValidatedRedirectTests(unittest.TestCase):
+    """A redirect hop must be validated before it is requested, not after."""
+
+    def _response(self, url, status=200, location=None):
+        # Deliberately has no ``is_redirect``: the response doubles used across
+        # this suite are plain stand-ins, so the helper must decide from the
+        # status and headers alone.
+        headers = {"location": location} if location else {}
+        return SimpleNamespace(
+            url=url,
+            status_code=status,
+            headers=headers,
+            close=lambda: None,
+        )
+
+    def test_disallowed_redirect_target_is_never_requested(self):
+        allowed = "https://ftp.ebi.ac.uk/pub/ensemblorganisms/species/file.fa.gz"
+        requested = []
+
+        def fake_get(url, **kwargs):
+            requested.append(url)
+            if url == allowed:
+                return self._response(url, status=302, location="https://127.0.0.1/file.fa.gz")
+            return self._response(url)
+
+        with patch("security_utils.requests.get", side_effect=fake_get):
+            with self.assertRaises(HTTPException):
+                get_with_validated_redirects(allowed, validate_remote_download_url, timeout=5)
+
+        # The loopback hop must never have been fetched.
+        self.assertEqual(requested, [allowed])
+
+    def test_allowed_redirect_chain_is_followed(self):
+        first = "https://ftp.ebi.ac.uk/pub/ensemblorganisms/a/file.fa.gz"
+        second = "https://ftp.ebi.ac.uk/pub/ensemblorganisms/b/file.fa.gz"
+        requested = []
+
+        def fake_get(url, **kwargs):
+            requested.append(url)
+            if url == first:
+                return self._response(url, status=302, location=second)
+            return self._response(url)
+
+        with patch("security_utils.requests.get", side_effect=fake_get):
+            response = get_with_validated_redirects(first, validate_remote_download_url, timeout=5)
+
+        self.assertEqual(requested, [first, second])
+        self.assertEqual(response.url, second)
+
+    def test_redirect_loop_is_bounded(self):
+        url = "https://ftp.ebi.ac.uk/pub/ensemblorganisms/species/file.fa.gz"
+
+        def fake_get(target, **kwargs):
+            return self._response(target, status=302, location=url)
+
+        with patch("security_utils.requests.get", side_effect=fake_get):
+            with self.assertRaises(HTTPException) as ctx:
+                get_with_validated_redirects(url, validate_remote_download_url, timeout=5)
+        self.assertEqual(ctx.exception.status_code, 502)
+
+
+class TranscriptLookupTests(unittest.TestCase):
+    def test_transcript_id_cannot_inject_a_grep_option(self):
+        """A leading-dash ID must be data, not a grep flag.
+
+        Without a "--" separator grep reads an argument like "--file=..." as an
+        option and takes its patterns from that file, turning a transcript
+        lookup into an arbitrary-file read primitive.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gff = Path(tmpdir) / "genes.gff3"
+            gff.write_text("chr1\t.\tmRNA\t1\t100\t.\t+\t.\tID=SECRET\n", encoding="utf-8")
+            patterns = Path(tmpdir) / "patterns.txt"
+            patterns.write_text("SECRET\n", encoding="utf-8")
+
+            self.assertIsNone(find_transcript_fast(str(gff), f"--file={patterns}"))
+
+    def test_transcript_id_is_matched_literally(self):
+        """Regex metacharacters in an ID match themselves, not any character."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gff = Path(tmpdir) / "genes.gff3"
+            gff.write_text("chr1\t.\tmRNA\t1\t100\t.\t+\t.\tID=GENEX1\n", encoding="utf-8")
+
+            self.assertIsNone(find_transcript_fast(str(gff), "GENE.1"))

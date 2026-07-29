@@ -909,6 +909,8 @@ function App() {
     active_species: [],
     next_previous_session_genomes: [],
     manual_species: [],
+    genome_file_overrides: {},
+    genome_analysis_reports: {},
     genome_playlists: [],
     selected_genome_playlist_id: '__all__',
     default_light_mode: false,
@@ -5536,8 +5538,13 @@ function App() {
     const rawConfigWithSystemPlaylists = typeof configUpdate === 'function'
       ? configUpdate(currentConfig)
       : configUpdate
-    const rawNextConfig = rawConfigWithSystemPlaylists
-    if (!rawNextConfig) return
+    if (!rawConfigWithSystemPlaylists) return
+    const manualBatchAddedKeys = new Set(
+      Array.isArray(rawConfigWithSystemPlaylists.__manual_batch_added_keys)
+        ? rawConfigWithSystemPlaylists.__manual_batch_added_keys
+        : []
+    )
+    const { __manual_batch_added_keys: _manualBatchAddedKeys, ...rawNextConfig } = rawConfigWithSystemPlaylists
 
     const previousActive = dedupeSpeciesList(currentConfig?.active_species)
     const previousKeys = new Set(previousActive.map((species) => speciesItemKey(species)))
@@ -5547,13 +5554,22 @@ function App() {
     suppressViewSyncRef.current = true
     try {
       const newlyAdded = nextActive.filter((species) => !previousKeys.has(speciesItemKey(species)))
-      if (newlyAdded.length > 0 && previousActive.length > 0) {
-        const newlyAddedKeys = new Set(newlyAdded.map((species) => speciesItemKey(species)))
-        nextActive = nextActive.filter((species) => !newlyAddedKeys.has(speciesItemKey(species)))
-        for (const species of newlyAdded) {
+      if (newlyAdded.length > 0 && (previousActive.length > 0 || manualBatchAddedKeys.size > 0)) {
+        // Preserve the current view. A manual batch with no previous selection
+        // activates its first genome and appends the rest as selected/inactive.
+        const additionsToKeepActive = previousActive.length === 0
+          ? newlyAdded.filter((species) => manualBatchAddedKeys.has(speciesItemKey(species))).slice(0, 1)
+          : []
+        const additionsToKeepActiveKeys = new Set(additionsToKeepActive.map((species) => speciesItemKey(species)))
+        const additionsToMakeInactive = newlyAdded.filter(
+          (species) => !additionsToKeepActiveKeys.has(speciesItemKey(species))
+        )
+        const inactiveAdditionKeys = new Set(additionsToMakeInactive.map((species) => speciesItemKey(species)))
+        nextActive = nextActive.filter((species) => !inactiveAdditionKeys.has(speciesItemKey(species)))
+        for (const species of additionsToMakeInactive) {
           nextInactive = appendUniqueSpecies(nextInactive, species)
         }
-        setInactiveSelectedSpecies(nextInactive)
+        if (additionsToMakeInactive.length > 0) setInactiveSelectedSpecies(nextInactive)
       }
 
       const nextFocus = buildFocusFromActive(nextActive, dualViewFocusRef.current)

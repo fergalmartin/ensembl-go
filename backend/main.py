@@ -23,7 +23,7 @@ import threading
 import uuid
 import queue
 from collections import Counter, OrderedDict
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from urllib.parse import urlparse, unquote, urlunparse
 import urllib.request
 import urllib.error
@@ -41,7 +41,6 @@ from pydantic import BaseModel
 import pysam
 from Bio.Seq import Seq
 import asyncio
-import requests
 
 try:
     import fcntl  # Unix/macOS cross-process file locking
@@ -103,8 +102,33 @@ from stats_utils import (
     save_stats_cache,
 )
 from trackhub_registry import list_tracks_for_genomes
+from annotation import (
+    IdentifierError,
+    build_annotation_report,
+    convert_annotation,
+    normalize_prefix as annotation_normalize_prefix,
+    prepare_annotation,
+    scan_fasta,
+    sniff_annotation,
+)
+from manual_genome_config import (
+    parse_manual_genome_config,
+    save_manual_genome_config,
+)
+from sv_config import (
+    CONFIG_VERSION_KEY as SV_CONFIG_VERSION_KEY,
+    config_to_datasets as sv_config_to_datasets,
+    config_to_document as sv_config_to_document,
+    derive_sequence_map as sv_derive_sequence_map,
+    has_errors as sv_config_has_errors,
+    locate_pointer_lines as sv_locate_pointer_lines,
+    merge_sv_config,
+    parse_sv_config,
+    remove_alignment as sv_remove_alignment,
+    serialize_sv_config,
+)
 from security_utils import (
-    ensure_http_response_url_allowed,
+    get_with_validated_redirects,
     normalize_trackhub_data_url,
     require_loopback_client,
     require_path_within,
@@ -201,6 +225,63 @@ def ensure_fasta_index(fasta_path: str, force_reindex: bool = False) -> str:
             logger.error(f"Failed to index FASTA {fasta_path}: {e}")
             raise
     return fasta_path
+
+
+class ThreadSafeFasta:
+    """Serialises access to a ``pysam.FastaFile``.
+
+    htslib keeps seek and block-decompression state on the handle, so two threads
+    fetching from the same ``FastaFile`` corrupt each other. htslib then reports
+    ``Failed to retrieve block. (Seeking in a compressed, .gzi unindexed, file?)``
+    and the fetch either raises or hands back the wrong bases — which surfaces as
+    a blank sequence track, or as runs of N and protein X in Feature Explorer.
+
+    Handles are cached per genome and every browse endpoint runs on a threadpool,
+    so sharing one unguarded handle is exactly the situation that triggers it.
+
+    A lock rather than one handle per thread: the ``.fai`` of a fragmented
+    assembly can hold hundreds of thousands of records, and a handle per worker
+    thread would multiply that resident cost.
+    """
+
+    __slots__ = ("_fasta", "_lock")
+
+    def __init__(self, fasta):
+        self._fasta = fasta
+        self._lock = threading.Lock()
+
+    def fetch(self, *args, **kwargs):
+        with self._lock:
+            return self._fasta.fetch(*args, **kwargs)
+
+    def get_reference_length(self, *args, **kwargs):
+        with self._lock:
+            return self._fasta.get_reference_length(*args, **kwargs)
+
+    @property
+    def references(self):
+        with self._lock:
+            return self._fasta.references
+
+    @property
+    def lengths(self):
+        with self._lock:
+            return self._fasta.lengths
+
+    def close(self):
+        with self._lock:
+            self._fasta.close()
+
+    def __getattr__(self, name):
+        # Anything not wrapped explicitly still reads under the lock.
+        with self._lock:
+            return getattr(self._fasta, name)
+
+
+def open_indexed_fasta(fasta_path: str, force_reindex: bool = False) -> ThreadSafeFasta:
+    """Index a FASTA if needed and open it for safe concurrent reads."""
+    indexed_path = ensure_fasta_index(fasta_path, force_reindex=force_reindex)
+    return ThreadSafeFasta(pysam.FastaFile(indexed_path))
 
 
 # Configuration
@@ -732,11 +813,13 @@ def find_transcript_fast(gff_path: str, transcript_id: str) -> Optional[SimpleTr
     search_id = transcript_id.replace("transcript:", "").replace("mapped_transcript:", "")
     
     log_progress(f"  Searching for {search_id} in {Path(gff_path).name}...")
-    
-    # Use grep to find matching lines
+
+    # Use grep to find matching lines. The ID is a literal, so -F matches it as a
+    # fixed string rather than a regex, and "--" keeps an ID that starts with "-"
+    # from being parsed as a grep option.
     try:
         result = subprocess.run(
-            ["grep", "-E", f"{search_id}", gff_path],
+            ["grep", "-F", "--", search_id, gff_path],
             capture_output=True, text=True, timeout=30
         )
     except subprocess.TimeoutExpired:
@@ -911,8 +994,8 @@ def find_transcript_in_index(db_path: str, transcript_id: str) -> Optional[Simpl
 class GenomeData:
     """Cached FASTA handles only - GFF3 is searched on demand."""
     def __init__(self):
-        self.ref_fasta: Optional[pysam.FastaFile] = None
-        self.target_fasta: Optional[pysam.FastaFile] = None
+        self.ref_fasta: Optional["ThreadSafeFasta"] = None
+        self.target_fasta: Optional["ThreadSafeFasta"] = None
         self.ref_fasta_path: Optional[str] = None
         self.target_fasta_path: Optional[str] = None
 
@@ -920,15 +1003,13 @@ class GenomeData:
         """Load FASTA files if not already loaded. Handles both plain and bgzipped (.gz) FASTA."""
         if self.ref_fasta_path != ref_fasta:
             log_progress(f"Loading reference FASTA: {Path(ref_fasta).name}")
-            indexed_ref = ensure_fasta_index(ref_fasta)
-            self.ref_fasta = pysam.FastaFile(indexed_ref)
+            self.ref_fasta = open_indexed_fasta(ref_fasta)
             self.ref_fasta_path = ref_fasta
             log_progress("  ✓ Reference FASTA loaded")
 
         if self.target_fasta_path != target_fasta:
             log_progress(f"Loading target FASTA: {Path(target_fasta).name}")
-            indexed_target = ensure_fasta_index(target_fasta)
-            self.target_fasta = pysam.FastaFile(indexed_target)
+            self.target_fasta = open_indexed_fasta(target_fasta)
             self.target_fasta_path = target_fasta
             log_progress("  ✓ Target FASTA loaded")
 
@@ -1164,6 +1245,18 @@ _index_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> {status, index_path, 
 _index_task_queue: "queue.Queue[Tuple[str, str, str]]" = queue.Queue()
 _index_worker_guard = threading.Lock()
 _index_worker_started = False
+
+# In-memory task registry for custom genome/annotation validation scans. These
+# read whole files, so they run on the same queued-worker pattern as indexing
+# rather than blocking a request.
+_validation_tasks_guard = threading.Lock()
+_validation_tasks: Dict[str, Dict[str, Any]] = {}
+_validation_task_queue: "queue.Queue[Tuple[str, Dict[str, Any]]]" = queue.Queue()
+_validation_worker_guard = threading.Lock()
+_validation_worker_started = False
+#: Completed validation results are small; keep a bounded history so the UI can
+#: re-open a report without re-scanning.
+_VALIDATION_TASK_LIMIT = 50
 
 _STATS_DEFAULT_SECTIONS = ["annotation", "structural", "homology", "assembly"]
 _STATS_ANNOTATION_DEPS = ("gff3", "index")
@@ -4610,8 +4703,13 @@ def _resolve_index_path(gff_path: str, output_dir: str, fallback_name: str) -> P
     If the GFF3 file lives inside the local_data directory tree
     (for example ``output_dir/local_data/<species>/<assembly>/`` or
     ``output_dir/local_data/ncbi/<species>/<assembly>/``), the index is placed
-    alongside it as ``<assembly>.gff3.index.db``. Otherwise the index is written
-    to ``output_dir/<fallback_name>`` for backwards compatibility.
+    alongside it as ``<assembly>.gff3.index.db``.
+
+    Otherwise the index is kept next to the annotation it was built from, which
+    is where users look for it and keeps a custom genome self-contained. Only
+    when that directory cannot be written to does it fall back to a managed
+    ``output_dir/indexes/`` folder — never to the bare output directory root,
+    where index files for unrelated genomes used to accumulate.
     """
     gff = Path(gff_path).resolve()
     local_root = Path(output_dir).resolve() / "local_data"
@@ -4622,7 +4720,30 @@ def _resolve_index_path(gff_path: str, output_dir: str, fallback_name: str) -> P
             return gff.parent / f"{assembly}.gff3.index.db"
     except ValueError:
         pass  # gff_path is not under local_data
-    return Path(output_dir) / fallback_name
+
+    if os.access(str(gff.parent), os.W_OK):
+        return gff.parent / fallback_name
+
+    managed = Path(output_dir) / "indexes"
+    try:
+        managed.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return Path(output_dir) / fallback_name
+    return managed / fallback_name
+
+
+#: Annotation extensions stripped when naming a derived index file, so a GTF
+#: does not produce `<name>.gtf.gz.gff3.index.db`.
+_ANNOTATION_SUFFIX_RE = re.compile(
+    r"\.(?:ensembl\.)?(gff3|gff|gtf|gff2)(\.(?:gz|bgz))?$", re.IGNORECASE
+)
+
+
+def _index_basename_for_annotation(gff_path: str) -> str:
+    """`braker.gtf.gz` -> `braker.gff3.index.db`."""
+    name = Path(gff_path).name
+    prefix = _ANNOTATION_SUFFIX_RE.sub("", name) or "genome"
+    return f"{prefix}.gff3.index.db"
 
 
 class SingleIndexRequest(BaseModel):
@@ -4680,9 +4801,7 @@ async def generate_index_for_genome(request: SingleIndexRequest):
     else:
         if not output_dir or not os.path.exists(output_dir):
             raise HTTPException(status_code=400, detail="Output directory not set or does not exist.")
-        gff_name = Path(request.gff_path).name
-        gff_prefix = re.sub(r"\.gff3(\.(?:gz|bgz))?$", "", gff_name, flags=re.IGNORECASE) or "genome"
-        fallback_name = f"{gff_prefix}.gff3.index.db"
+        fallback_name = _index_basename_for_annotation(request.gff_path)
         target_index = _resolve_index_path(request.gff_path, output_dir, fallback_name)
 
     normalized_target = _normalize_fs_path(str(target_index))
@@ -4727,6 +4846,397 @@ def index_task_status(task_id: str):
         "started_at": task.get("started_at"),
         "completed_at": task.get("completed_at"),
     }
+
+
+# ── Custom genome / annotation validation ───────────────────────────────────
+# These endpoints are read-only: they scan a user-supplied file and describe it.
+# Nothing here writes to the assembly, and nothing here feeds the browsing index,
+# which is still built by create_gff_index from the original file.
+
+class ValidateGenomeRequest(BaseModel):
+    fasta_path: str
+
+
+class ValidateAnnotationRequest(BaseModel):
+    annotation_path: str
+    fasta_path: Optional[str] = None
+
+
+def _resolve_user_file(path_value: str, label: str) -> Path:
+    """Resolve a user-supplied path and confirm it is a readable file."""
+    token = str(path_value or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="{0} path is required".format(label))
+    resolved = Path(token).expanduser()
+    try:
+        resolved = resolved.resolve()
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail="Invalid {0} path: {1}".format(label, exc))
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="{0} file not found: {1}".format(label, resolved))
+    if not os.access(str(resolved), os.R_OK):
+        raise HTTPException(status_code=403, detail="{0} file is not readable".format(label))
+    return resolved
+
+
+def _update_validation_task(task_id: str, **updates: Any) -> None:
+    with _validation_tasks_guard:
+        task = _validation_tasks.get(task_id)
+        if task is not None:
+            task.update(updates)
+
+
+def _trim_validation_tasks() -> None:
+    """Drop the oldest finished tasks once the registry grows past its limit."""
+    with _validation_tasks_guard:
+        if len(_validation_tasks) <= _VALIDATION_TASK_LIMIT:
+            return
+        finished = [
+            (task.get("completed_at") or "", task_id)
+            for task_id, task in _validation_tasks.items()
+            if task.get("status") in {"success", "failed"}
+        ]
+        finished.sort()
+        for _, task_id in finished[: len(_validation_tasks) - _VALIDATION_TASK_LIMIT]:
+            _validation_tasks.pop(task_id, None)
+
+
+def _run_validation_task(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    kind = str(payload.get("kind") or "")
+    if kind == "genome":
+        def _progress(read_bytes: int, total_bytes: int) -> None:
+            percent = (read_bytes / float(total_bytes) * 100.0) if total_bytes else 0.0
+            _update_validation_task(task_id, progress=round(min(percent, 99.9), 1))
+
+        report = scan_fasta(str(payload["fasta_path"]), progress_callback=_progress)
+        return report.as_dict()
+
+    if kind == "prepare":
+        def _prepare_progress(
+            stage: str,
+            progress: float,
+            message: str,
+            counters: Dict[str, int],
+        ) -> None:
+            _update_validation_task(
+                task_id,
+                stage=stage,
+                progress=round(max(0.0, min(float(progress), 99.9)), 1),
+                message=message,
+                counters=dict(counters or {}),
+            )
+
+        return prepare_annotation(
+            str(payload["annotation_path"]),
+            fasta_path=str(payload["fasta_path"]) if payload.get("fasta_path") else None,
+            id_mode=str(payload.get("id_mode") or "keep"),
+            id_prefix=str(payload.get("id_prefix") or ""),
+            progress_callback=_prepare_progress,
+        )
+
+    if kind == "conversion":
+        def _conversion_progress(
+            stage: str,
+            progress: float,
+            message: str,
+            counters: Dict[str, int],
+        ) -> None:
+            _update_validation_task(
+                task_id,
+                stage=stage,
+                progress=round(max(0.0, min(float(progress), 99.9)), 1),
+                message=message,
+                counters=dict(counters or {}),
+            )
+
+        result = convert_annotation(
+            str(payload["annotation_path"]),
+            str(payload["output_dir"]),
+            fasta_path=str(payload["fasta_path"]) if payload.get("fasta_path") else None,
+            id_mode=str(payload.get("id_mode") or "keep"),
+            id_prefix=str(payload.get("id_prefix") or ""),
+            compress=bool(payload.get("compress", True)),
+            progress_callback=_conversion_progress,
+        )
+        return result.as_dict()
+
+    def _annotation_progress(
+        stage: str,
+        progress: float,
+        message: str,
+        counters: Dict[str, int],
+    ) -> None:
+        _update_validation_task(
+            task_id,
+            stage=stage,
+            progress=round(max(0.0, min(float(progress), 99.9)), 1),
+            message=message,
+            counters=dict(counters or {}),
+        )
+
+    report = build_annotation_report(
+        str(payload["annotation_path"]),
+        fasta_path=str(payload["fasta_path"]) if payload.get("fasta_path") else None,
+        progress_callback=_annotation_progress,
+    )
+    return report.as_dict()
+
+
+def _validation_worker_loop() -> None:
+    while True:
+        task_id, payload = _validation_task_queue.get()
+        try:
+            _update_validation_task(
+                task_id,
+                status="running",
+                stage="starting",
+                message="Starting",
+                started_at=now_iso(),
+                error=None,
+            )
+            result = _run_validation_task(task_id, payload)
+            _update_validation_task(
+                task_id,
+                status="success",
+                report=result,
+                progress=100.0,
+                stage="complete",
+                message="Complete",
+                completed_at=now_iso(),
+                error=None,
+            )
+        except Exception as exc:
+            logger.error("Validation task %s failed: %s", task_id, exc)
+            _update_validation_task(
+                task_id, status="failed", error=str(exc), completed_at=now_iso()
+            )
+        finally:
+            _validation_task_queue.task_done()
+            _trim_validation_tasks()
+
+
+def _ensure_validation_worker_started() -> None:
+    global _validation_worker_started
+    with _validation_worker_guard:
+        if _validation_worker_started:
+            return
+        worker = threading.Thread(
+            target=_validation_worker_loop, name="validation-worker", daemon=True
+        )
+        worker.start()
+        _validation_worker_started = True
+
+
+def _queue_validation(kind: str, payload: Dict[str, Any], target: str) -> Dict[str, str]:
+    task_id = str(uuid.uuid4())
+    with _validation_tasks_guard:
+        _validation_tasks[task_id] = {
+            "status": "queued",
+            "kind": kind,
+            "target": target,
+            "progress": 0.0,
+            "stage": "queued",
+            "message": "Queued",
+            "counters": {},
+            "report": None,
+            "error": None,
+            "queued_at": now_iso(),
+        }
+    _ensure_validation_worker_started()
+    _validation_task_queue.put((task_id, dict(payload, kind=kind)))
+    return {"task_id": task_id, "status": "queued"}
+
+
+@app.post("/api/custom/validate-genome")
+async def validate_custom_genome(request: ValidateGenomeRequest):
+    """Scan a FASTA and report its sequence and base composition statistics."""
+    fasta_path = _resolve_user_file(request.fasta_path, "FASTA")
+    return _queue_validation("genome", {"fasta_path": str(fasta_path)}, str(fasta_path))
+
+
+@app.post("/api/custom/validate-annotation")
+async def validate_custom_annotation(request: ValidateAnnotationRequest):
+    """Parse an annotation file and report what can be modelled from it.
+
+    Accepts GFF3, GTF and AUGUSTUS-native output. Passing ``fasta_path`` enables
+    the sequence-region cross-checks, which is where most silent failures live.
+    """
+    annotation_path = _resolve_user_file(request.annotation_path, "Annotation")
+    payload: Dict[str, Any] = {"annotation_path": str(annotation_path)}
+    if request.fasta_path:
+        payload["fasta_path"] = str(_resolve_user_file(request.fasta_path, "FASTA"))
+    return _queue_validation("annotation", payload, str(annotation_path))
+
+
+@app.get("/api/custom/validation/{task_id}")
+def custom_validation_status(task_id: str):
+    """Poll a validation task; the report is included once the status is success."""
+    with _validation_tasks_guard:
+        task = _validation_tasks.get(task_id)
+        snapshot = dict(task) if task is not None else None
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Validation task not found")
+    return {
+        "task_id": task_id,
+        "status": snapshot.get("status"),
+        "kind": snapshot.get("kind"),
+        "target": snapshot.get("target"),
+        "progress": snapshot.get("progress"),
+        "stage": snapshot.get("stage"),
+        "message": snapshot.get("message"),
+        "counters": snapshot.get("counters") or {},
+        "report": snapshot.get("report"),
+        "error": snapshot.get("error"),
+        "queued_at": snapshot.get("queued_at"),
+        "started_at": snapshot.get("started_at"),
+        "completed_at": snapshot.get("completed_at"),
+    }
+
+
+class ConvertAnnotationRequest(BaseModel):
+    annotation_path: str
+    output_dir: str
+    fasta_path: Optional[str] = None
+    id_mode: str = "keep"
+    id_prefix: str = ""
+    compress: bool = True
+
+
+@app.post("/api/custom/convert-annotation")
+async def convert_custom_annotation(request: ConvertAnnotationRequest):
+    """Normalise an annotation into canonical GFF3 without registering it.
+
+    Used to preview a conversion, or to produce a file the user can inspect
+    before importing. The import path runs the same conversion internally.
+    """
+    annotation_path = _resolve_user_file(request.annotation_path, "Annotation")
+    output_dir = Path(str(request.output_dir or "").strip()).expanduser()
+    if not str(output_dir):
+        raise HTTPException(status_code=400, detail="output_dir is required")
+    try:
+        output_dir = output_dir.resolve()
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid output_dir: {exc}")
+    if output_dir.exists() and not output_dir.is_dir():
+        raise HTTPException(status_code=400, detail="output_dir is not a directory")
+
+    payload: Dict[str, Any] = {
+        "annotation_path": str(annotation_path),
+        "output_dir": str(output_dir),
+        "id_mode": request.id_mode or "keep",
+        "id_prefix": request.id_prefix or "",
+        "compress": bool(request.compress),
+    }
+    if request.fasta_path:
+        payload["fasta_path"] = str(_resolve_user_file(request.fasta_path, "FASTA"))
+
+    # Fail fast on a bad prefix rather than surfacing it as a task failure.
+    if (request.id_mode or "keep").strip().lower() == "generate":
+        try:
+            annotation_normalize_prefix(request.id_prefix or "")
+        except IdentifierError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    return _queue_validation("conversion", payload, str(annotation_path))
+
+
+@app.get("/api/custom/conversion/{task_id}")
+def custom_conversion_status(task_id: str):
+    """Poll a conversion task; alias of the validation poll for a clearer URL."""
+    return custom_validation_status(task_id)
+
+
+class PrepareAnnotationRequest(BaseModel):
+    annotation_path: str
+    fasta_path: Optional[str] = None
+    id_mode: str = "keep"
+    id_prefix: str = ""
+
+
+@app.post("/api/custom/prepare-annotation")
+async def prepare_custom_annotation(request: PrepareAnnotationRequest):
+    """Return the annotation path that should be indexed, converting if needed.
+
+    Called when a genome is added from local files. A GFF3 the existing indexer
+    already handles is passed straight through; anything that needs its gene
+    model rebuilt — GTF, CDS-only output, files with no gene rows — is converted
+    into canonical GFF3 next to the source first. Without this the indexer would
+    silently produce an empty gene track.
+    """
+    annotation_path = _resolve_user_file(request.annotation_path, "Annotation")
+    payload: Dict[str, Any] = {
+        "annotation_path": str(annotation_path),
+        "id_mode": request.id_mode or "keep",
+        "id_prefix": request.id_prefix or "",
+    }
+    if request.fasta_path:
+        payload["fasta_path"] = str(_resolve_user_file(request.fasta_path, "FASTA"))
+
+    if (request.id_mode or "keep").strip().lower() == "generate":
+        try:
+            annotation_normalize_prefix(request.id_prefix or "")
+        except IdentifierError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    return _queue_validation("prepare", payload, str(annotation_path))
+
+
+class ManualGenomeConfigReadRequest(BaseModel):
+    path: str
+
+
+class ManualGenomeConfigSaveRequest(BaseModel):
+    path: str
+    genomes: List[Dict[str, Any]]
+    playlists: Optional[List[Dict[str, Any]]] = None
+    # "create" refuses to touch an existing file so the UI can offer a choice.
+    mode: str = "create"
+
+
+@app.post("/api/custom/genome-config/read")
+async def read_manual_genome_config(request: ManualGenomeConfigReadRequest):
+    """Read and validate a portable genome bundle."""
+    source = validate_config_export_path(request.path)
+    try:
+        return await run_in_threadpool(parse_manual_genome_config, str(source))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/custom/genome-config/save")
+async def write_manual_genome_config(request: ManualGenomeConfigSaveRequest):
+    """Atomically save a set of registered genomes as a portable bundle."""
+    destination = validate_config_export_path(request.path)
+    try:
+        return await run_in_threadpool(
+            save_manual_genome_config,
+            str(destination),
+            request.genomes,
+            request.playlists,
+            request.mode,
+        )
+    except FileExistsError as exc:
+        # 409 so the UI can offer replace-or-amend instead of clobbering.
+        raise HTTPException(
+            status_code=409,
+            detail=f"{Path(str(exc)).name} already exists.",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not save configuration: {exc}",
+        ) from exc
+
+
+@app.get("/api/custom/sniff-annotation")
+def custom_sniff_annotation(path: str):
+    """Cheap format probe for the file picker — reads only the head of the file."""
+    annotation_path = _resolve_user_file(path, "Annotation")
+    return sniff_annotation(str(annotation_path)).as_dict()
 
 
 @app.post("/api/index/generate")
@@ -4814,9 +5324,14 @@ DEFAULT_CONFIG = {
     "show_fps_counter": False,
     "sv_hide_inactive_tracks": False,
     "enable_sv_rust_render_bar": False,
+    # Paths of SV alignment config files the user has attached. Persisted so a
+    # loaded config survives a restart rather than having to be re-opened.
+    "sv_config_paths": [],
     "active_species": [],
     "next_previous_session_genomes": [],
     "manual_species": [],
+    "genome_file_overrides": {},
+    "genome_analysis_reports": {},
     "genome_playlists": [],
     "selected_genome_playlist_id": "__all__",
     "genome_browser_colors": [
@@ -5413,6 +5928,8 @@ class ConfigUpdate(BaseModel):
     active_species: Optional[List[Dict[str, Any]]] = None
     next_previous_session_genomes: Optional[List[Dict[str, Any]]] = None
     manual_species: Optional[List[Dict[str, Any]]] = None
+    genome_file_overrides: Optional[Dict[str, Dict[str, Any]]] = None
+    genome_analysis_reports: Optional[Dict[str, Dict[str, Any]]] = None
     genome_playlists: Optional[List[Dict[str, Any]]] = None
     selected_genome_playlist_id: Optional[str] = None
     genome_browser_colors: Optional[List[str]] = None
@@ -5646,9 +6163,13 @@ async def list_files(path: str = "."):
             "current_path": str(target_path.absolute()),
             "items": items
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        # The detail is deliberately generic: the exception text carries
+        # filesystem paths, which should stay in the local log.
         logger.error(f"Error listing directory {path}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list directory")
 
 
 class MkdirRequest(BaseModel):
@@ -5657,17 +6178,38 @@ class MkdirRequest(BaseModel):
 
 @app.post("/api/files/mkdir")
 async def create_directory(request: MkdirRequest):
-    """Create a new directory."""
+    """Create one new directory inside a directory that already exists.
+
+    The file browser only ever creates a single folder inside the directory the
+    user is currently viewing, so the request is held to exactly that: an
+    existing parent plus one leaf name. Creating whole nested trees at an
+    arbitrary path is refused, which keeps this from being a general "write
+    anywhere on disk" primitive while leaving external drives and other
+    user-chosen locations usable.
+    """
+    raw = str(request.path or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="path must not be empty")
+
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        raise HTTPException(status_code=400, detail="path must be absolute")
+
+    leaf = sanitize_leaf_filename(candidate.name)
+    parent = candidate.parent.resolve()
+    if not parent.is_dir():
+        raise HTTPException(status_code=400, detail="Parent directory does not exist")
+
+    target = parent / leaf
+    if target.exists():
+        return {"status": "exists", "path": str(target)}
+
     try:
-        path = Path(request.path)
-        if path.exists():
-            return {"status": "exists", "path": str(path.absolute())}
-        
-        path.mkdir(parents=True, exist_ok=True)
-        return {"status": "created", "path": str(path.absolute())}
-    except Exception as e:
-        logger.error(f"Error creating directory {request.path}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        target.mkdir()
+    except OSError as exc:
+        logger.error("Error creating directory %s: %s", target, exc)
+        raise HTTPException(status_code=400, detail="Failed to create directory")
+    return {"status": "created", "path": str(target)}
 
 
 
@@ -5873,6 +6415,14 @@ class CustomAnnotationRequest(BaseModel):
     assembly: str
     gff3_path: str
     label: str = ""
+    #: Normalise the file into canonical Ensembl-style GFF3 before registering
+    #: it. Required for GTF and for any file whose gene model needs repair; the
+    #: original is copied alongside and kept as `source_path` in the manifest.
+    convert: bool = False
+    id_mode: str = "keep"
+    id_prefix: str = ""
+    #: Enables the sequence-region cross-checks during conversion.
+    fasta_path: str = ""
 
 
 class DatasetDefaultRequest(BaseModel):
@@ -5895,6 +6445,10 @@ FASTA_DOWNLOAD_SUFFIXES = (
     ".fasta.bgz",
 )
 GFF3_DOWNLOAD_SUFFIXES = (".gff3", ".gff", ".gff3.gz", ".gff.gz", ".gff3.bgz", ".gff.bgz")
+# Formats accepted when a user imports their own annotation. GTF is only usable
+# after conversion, which is enforced in import_custom_annotation.
+GTF_IMPORT_SUFFIXES = (".gtf", ".gtf.gz", ".gtf.bgz", ".gff2", ".gff2.gz")
+ANNOTATION_IMPORT_SUFFIXES = GFF3_DOWNLOAD_SUFFIXES + GTF_IMPORT_SUFFIXES
 CDNA_DOWNLOAD_SUFFIXES = (".fa", ".fa.gz", ".fa.bgz", ".fasta", ".fasta.gz", ".fasta.bgz")
 PROTEIN_DOWNLOAD_SUFFIXES = (".fa", ".fa.gz", ".fa.bgz", ".fasta", ".fasta.gz", ".fasta.bgz")
 ASSEMBLY_SCOPED_FILE_TYPES = {"fasta", "metadata"}
@@ -6411,9 +6965,25 @@ async def import_custom_annotation(request: CustomAnnotationRequest):
 
     source = Path(request.gff3_path).expanduser().resolve()
     if not source.is_file():
-        raise HTTPException(status_code=404, detail="Custom GFF3 file not found")
-    if not _has_any_suffix(source.name.lower(), GFF3_DOWNLOAD_SUFFIXES):
-        raise HTTPException(status_code=400, detail="Custom annotation must be a GFF3 file")
+        raise HTTPException(status_code=404, detail="Custom annotation file not found")
+    if not _has_any_suffix(source.name.lower(), ANNOTATION_IMPORT_SUFFIXES):
+        raise HTTPException(
+            status_code=400,
+            detail="Custom annotation must be a GFF3, GFF or GTF file",
+        )
+    needs_conversion = _has_any_suffix(source.name.lower(), GTF_IMPORT_SUFFIXES)
+    if needs_conversion and not request.convert:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "GTF cannot be indexed directly. Re-run this import with "
+                "conversion enabled to normalise it into GFF3 first."
+            ),
+        )
+
+    fasta_for_conversion = ""
+    if request.convert and request.fasta_path:
+        fasta_for_conversion = str(_resolve_user_file(request.fasta_path, "FASTA"))
 
     today = datetime.utcnow().date().isoformat()
     label = str(request.label or "").strip() or f"custom {today}"
@@ -6436,11 +7006,59 @@ async def import_custom_annotation(request: CustomAnnotationRequest):
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_filename = _sanitize_filename(_gca_prefixed_filename(source.name, request.assembly, "gff3"))
     dest = dest_dir / dest_filename
-    try:
-        if source.resolve() != dest.resolve():
-            shutil.copy2(source, dest)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to copy custom annotation: {exc}")
+    conversion_summary: Dict[str, Any] = {}
+
+    if request.convert:
+        # Normalise into canonical GFF3 and register that. The original is copied
+        # alongside untouched so the import is always traceable back to its input.
+        try:
+            conversion = await run_in_threadpool(
+                convert_annotation,
+                str(source),
+                str(dest_dir),
+                fasta_for_conversion or None,
+                request.id_mode or "keep",
+                request.id_prefix or "",
+            )
+        except IdentifierError as exc:
+            shutil.rmtree(dest_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            shutil.rmtree(dest_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=500, detail=f"Failed to convert custom annotation: {exc}"
+            )
+
+        dest = Path(conversion.output_path)
+        dest_filename = dest.name
+        original_copy = dest_dir / _sanitize_filename("source_" + source.name)
+        try:
+            if source.resolve() != original_copy.resolve():
+                shutil.copy2(source, original_copy)
+        except Exception:
+            # The converted file is what matters; keeping the original is a
+            # convenience, not a precondition for the import to succeed.
+            original_copy = None
+        conversion_summary = {
+            "converted": True,
+            "dialect": (conversion.report.dialect if conversion.report else ""),
+            "producer": (conversion.report.producer_guess if conversion.report else ""),
+            "gene_count": conversion.gene_count,
+            "transcript_count": conversion.transcript_count,
+            "exon_count": conversion.exon_count,
+            "coding_transcript_count": conversion.coding_transcript_count,
+            "id_mode": conversion.id_mode,
+            "id_prefix": conversion.id_prefix,
+            "id_map_path": conversion.id_map_path,
+            "original_path": str(original_copy) if original_copy else "",
+            "report": conversion.report.as_dict() if conversion.report else {},
+        }
+    else:
+        try:
+            if source.resolve() != dest.resolve():
+                shutil.copy2(source, dest)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to copy custom annotation: {exc}")
 
     now = datetime.utcnow().isoformat() + "Z"
     manifest.update({
@@ -6471,6 +7089,12 @@ async def import_custom_annotation(request: CustomAnnotationRequest):
         "created_at": now,
         "updated_at": now,
     }
+    if conversion_summary:
+        releases[release_key]["conversion"] = {
+            key: value
+            for key, value in conversion_summary.items()
+            if key != "report"
+        }
     _write_genome_manifest(asm_dir, manifest)
 
     refreshed = await list_local_assemblies(request.output_dir)
@@ -6499,6 +7123,7 @@ async def import_custom_annotation(request: CustomAnnotationRequest):
         "path": str(dest),
         "dataset": created,
         "assembly": assembly_record,
+        "conversion": conversion_summary,
     }
 
 
@@ -6918,9 +7543,12 @@ async def list_local_assemblies(output_dir: str):
         types = list(scanned.get("types") or [])
         files = dict(scanned.get("files") or {})
 
-        # Local assemblies must have a GFF3 to be usable in Genome Selector.
-        if not types or not files.get("gff3"):
+        # A genome is usable with a FASTA alone: the browser can show the
+        # sequence plus any BigWig/BigBed/VCF tracks the user attaches. An
+        # annotation adds the gene track but is not a precondition for browsing.
+        if not types or not (files.get("gff3") or files.get("fasta")):
             continue
+        has_annotation = bool(files.get("gff3"))
 
         gff_path = files.get("gff3") or ""
         if gff_path:
@@ -7041,6 +7669,7 @@ async def list_local_assemblies(output_dir: str):
             "equivalent_accessions": equivalent_accessions,
             "types": list(set(types)),
             "files": files,
+            "has_annotation": has_annotation,
             "assembly_files": scanned.get("assembly_files") or {},
             "assembly_types": scanned.get("assembly_types") or [],
             "assembly_key": assembly_key,
@@ -8580,6 +9209,21 @@ def _get_browse_db(genome: str) -> str:
     return db
 
 
+def _get_browse_db_optional(genome: str) -> str:
+    """Like :func:`_get_browse_db` but returns ``''`` when there is no annotation.
+
+    A genome may be loaded with a FASTA alone, in which case the sequence track
+    and any attached data tracks still work and only the gene track is empty.
+    Callers that can render without genes use this instead of 404ing.
+    """
+    try:
+        return _get_browse_db(genome)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            return ""
+        raise
+
+
 _fasta_cache = {}  # genome -> (config_path, pysam.FastaFile)
 
 
@@ -8607,13 +9251,12 @@ def _get_browse_fasta(genome: str):
         return cached[1]
 
     # ensure_fasta_index may return a decompressed path if the original was gzip (not bgzip)
-    indexed_path = ensure_fasta_index(fasta_path)
-    fasta = pysam.FastaFile(indexed_path)
+    fasta = open_indexed_fasta(fasta_path)
     _fasta_cache[cache_key] = (fasta_path, fasta)
     return fasta
 
 
-def _force_refresh_browse_fasta_index(genome: str, current_fasta: Optional[pysam.FastaFile] = None):
+def _force_refresh_browse_fasta_index(genome: str, current_fasta: Optional["ThreadSafeFasta"] = None):
     """Force FASTA re-index + handle refresh for a genome cache entry."""
     context = _resolve_browse_genome_context(genome)
     cache_key = str(context.get("cache_key") or str(genome or "").strip() or "reference")
@@ -8621,8 +9264,7 @@ def _force_refresh_browse_fasta_index(genome: str, current_fasta: Optional[pysam
     if not fasta_path or not os.path.exists(fasta_path):
         raise HTTPException(status_code=404, detail=f"FASTA not found for {genome} genome.")
 
-    indexed_path = ensure_fasta_index(fasta_path, force_reindex=True)
-    refreshed = pysam.FastaFile(indexed_path)
+    refreshed = open_indexed_fasta(fasta_path, force_reindex=True)
     _fasta_cache[cache_key] = (fasta_path, refreshed)
 
     try:
@@ -8639,19 +9281,23 @@ async def browse_regions(genome: str = "reference", min_length: int = 0):
     Includes featureless regions (gene_count=0) so the frontend can show them
     behind a disclosure control. min_length kept for API compatibility only.
     """
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+    # A genome loaded without an annotation still has regions: they come from
+    # the FASTA below. Only the gene counts are unavailable.
+    db_path = await run_in_threadpool(_get_browse_db_optional, genome)
 
     def _query():
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        c.execute("""
-            SELECT chrom, COUNT(*) as gene_count, MIN(start) as start, MAX(end) as end
-            FROM genes
-            GROUP BY chrom
-        """)
-        rows = c.fetchall()
-        conn.close()
+        rows = []
+        if db_path:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            c.execute("""
+                SELECT chrom, COUNT(*) as gene_count, MIN(start) as start, MAX(end) as end
+                FROM genes
+                GROUP BY chrom
+            """)
+            rows = c.fetchall()
+            conn.close()
         results_by_chrom: Dict[str, RegionInfo] = {}
         for r in rows:
             chrom = str(r["chrom"] or "").strip()
@@ -8691,6 +9337,13 @@ async def browse_regions(genome: str = "reference", min_length: int = 0):
             pass  # FASTA complement is best-effort
 
         results = list(results_by_chrom.values())
+        if not results and not db_path:
+            # Neither an annotation nor a readable FASTA: there is genuinely
+            # nothing configured for this genome.
+            raise HTTPException(
+                status_code=404,
+                detail=f"No annotation or FASTA is configured for the {genome} genome.",
+            )
 
         known_regions = [str(r.chrom or "").strip() for r in results if str(r.chrom or "").strip()]
         synonym_index = _build_genome_synonym_index(genome, known_regions)
@@ -8736,8 +9389,12 @@ async def browse_genes(
     """Fetch genes within a coordinate range."""
     if not chrom:
         raise HTTPException(status_code=400, detail="chrom parameter is required.")
-    
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+
+    # Genome-only load: no annotation means no genes, which is an empty track
+    # rather than an error.
+    db_path = await run_in_threadpool(_get_browse_db_optional, genome)
+    if not db_path:
+        return []
     requested_chrom = str(chrom or "").strip()
 
     def _query():
@@ -11814,7 +12471,15 @@ SV_DATASETS = {
 }
 _sv_mapping_cache: Dict[str, Dict[str, Any]] = {}
 _sv_bigchain_chrom_cache: Dict[str, Dict[str, Any]] = {}
-_sv_registry_cache: Dict[str, Any] = {"signature": None, "datasets": None, "incomplete": None}
+_sv_registry_cache: Dict[str, Any] = {
+    "signature": None,
+    "datasets": None,
+    "incomplete": None,
+    "configs": None,
+}
+# Registration used to write the registry with no lock at all, so two saves
+# arriving together could each read the same file and one lose its entry.
+_sv_config_write_lock = threading.Lock()
 
 
 def _normalize_dataset_token(value: str) -> str:
@@ -11856,6 +12521,116 @@ def _sv_alignment_scan_dir(output_dir: Any) -> Optional[Path]:
         return None
 
 
+def _sv_attached_config_paths(config: Optional[Dict[str, Any]] = None) -> List[Path]:
+    """Config files the user has attached, in the order they were attached."""
+    state = config if isinstance(config, dict) else load_config()
+    out: List[Path] = []
+    seen: Set[str] = set()
+    for raw in state.get("sv_config_paths") or []:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        try:
+            path = Path(text).expanduser()
+        except Exception:
+            continue
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
+
+
+# Sequence names per FASTA, keyed by path and invalidated on (mtime, size) of the
+# index rather than the FASTA itself: the .fai is what actually carries the names,
+# and it is rewritten whenever they change.
+_sv_assembly_sequence_cache: Dict[str, Dict[str, Any]] = {}
+
+# Derived sequence maps, keyed by (alignment id, side). Rebuilt when either the
+# chain or the assembly index changes underneath.
+_sv_derived_mapping_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+
+def _sv_fasta_signature(fasta_path: Path) -> Tuple[int, int]:
+    for candidate in (Path(f"{fasta_path}.fai"), fasta_path):
+        try:
+            stat = candidate.stat()
+            return int(stat.st_mtime_ns), int(stat.st_size)
+        except Exception:
+            continue
+    return (0, 0)
+
+
+def _sv_assembly_sequence_names(fasta_path: Any) -> List[str]:
+    """Sequence names of a local assembly, read from its FASTA index.
+
+    This is what replaced the mapping TSVs: the assembly already states its own
+    sequence names, so asking the user to restate them in a side file was never
+    buying anything the app could not work out.
+    """
+    text = str(fasta_path or "").strip()
+    if not text:
+        return []
+    path = Path(text).expanduser()
+    signature = _sv_fasta_signature(path)
+    cached = _sv_assembly_sequence_cache.get(str(path))
+    if cached and cached.get("signature") == signature:
+        return list(cached.get("names") or [])
+
+    names: List[str] = []
+    if path.exists() and path.is_file():
+        try:
+            handle = open_indexed_fasta(str(path))
+            names = [str(name).strip() for name in (handle.references or []) if str(name).strip()]
+        except Exception:
+            names = []
+    _sv_assembly_sequence_cache[str(path)] = {"signature": signature, "names": list(names)}
+    return names
+
+
+def _sv_local_fasta_for_genome(genome: Dict[str, Any], local_assemblies: List[Dict[str, Any]]) -> str:
+    match = _sv_local_species_match(genome, local_assemblies)
+    if not isinstance(match, dict):
+        return ""
+    return str((match.get("files") or {}).get("fasta") or "")
+
+
+def _sv_side_mapping(dataset: Dict[str, Any], side: str) -> Dict[str, Any]:
+    """Sequence-name map for one side of an alignment.
+
+    Two sources, in order. A mapping TSV if the record still names one -- old
+    registry entries and sidecar manifests do, and they must keep working. Otherwise
+    the names are derived from the BigChain's own chromosome list and the local
+    assembly's FASTA index, which is what a config written in the current format
+    relies on.
+    """
+    normalized = "reference" if str(side or "").strip().lower().startswith("ref") else "target"
+    mapping_key = "ref_mapping_path" if normalized == "reference" else "tgt_mapping_path"
+    mapping_path = _sv_path_text(dataset.get(mapping_key))
+    if mapping_path:
+        candidate = Path(mapping_path).expanduser()
+        if candidate.exists() and candidate.is_file():
+            return _load_sv_mapping(candidate)
+
+    cache_key = (str(dataset.get("id") or ""), normalized)
+    chain_path = Path(_sv_path_text(dataset.get("chain_path"))).expanduser()
+    fasta_path = _sv_path_text(dataset.get(f"{normalized}_fasta_path"))
+    signature = (_sv_fasta_signature(chain_path), _sv_fasta_signature(Path(fasta_path)) if fasta_path else (0, 0))
+    cached = _sv_derived_mapping_cache.get(cache_key)
+    if cached and cached.get("signature") == signature:
+        return cached["mapping"]
+
+    alias_key = "reference_sequence_aliases" if normalized == "reference" else "target_sequence_aliases"
+    mapping = sv_derive_sequence_map(
+        _load_sv_bigchain_chrom_sizes(chain_path).keys(),
+        _sv_assembly_sequence_names(fasta_path),
+        explicit_aliases=dataset.get(alias_key) or {},
+    )
+    _sv_derived_mapping_cache[cache_key] = {"signature": signature, "mapping": mapping}
+    return mapping
+
+
 def _sv_genome_key_from_record(record: Dict[str, Any]) -> str:
     key = str(record.get("genome_key") or record.get("key") or "").strip()
     if key:
@@ -11882,14 +12657,26 @@ def _sv_genome_aliases(record: Optional[Dict[str, Any]], extra_aliases: Optional
         raw.get("accession"),
         raw.get("assembly_name"),
         raw.get("name"),
-        raw.get("display_name"),
-        raw.get("common_name"),
-        raw.get("scientific_name"),
     ]
-    values.extend(raw.get("aliases") or [])
-    values.extend(raw.get("equivalent_accessions") or [])
+    weak_tokens = {
+        token
+        for token in (
+            _normalize_dataset_token(raw.get("provider")),
+            _normalize_dataset_token(raw.get("species_key")),
+            _normalize_dataset_token(raw.get("display_name")),
+            _normalize_dataset_token(raw.get("common_name")),
+            _normalize_dataset_token(raw.get("scientific_name")),
+        )
+        if token
+    }
+    identity_aliases = list(raw.get("aliases") or []) + list(raw.get("equivalent_accessions") or [])
     if extra_aliases:
-        values.extend(extra_aliases)
+        identity_aliases.extend(extra_aliases)
+    values.extend(
+        value
+        for value in identity_aliases
+        if _normalize_dataset_token(value) not in weak_tokens
+    )
     return _sv_unique_strings(values)
 
 
@@ -11916,21 +12703,51 @@ def _normalize_sv_genome_record(raw: Any, aliases: Optional[Iterable[Any]] = Non
     return out
 
 
+def _sv_path_text(value: Any) -> str:
+    """Path-or-string to text, treating an unset path as unset.
+
+    ``_normalize_sv_dataset`` stores absent paths as ``Path("")``, which stringifies
+    to ``"."`` -- a real, existing directory. Anything testing "is this path set?"
+    on the raw value therefore sees a path that is present but not a file.
+    """
+    text = str(value or "").strip()
+    return "" if text in {"", "."} else text
+
+
 def _sv_dataset_file_status(dataset: Dict[str, Any]) -> Tuple[bool, List[str]]:
-    paths = [
-        dataset.get("chain_path"),
-        dataset.get("ref_mapping_path"),
-        dataset.get("tgt_mapping_path"),
-    ]
+    """Which of an alignment's files are actually on disk.
+
+    The chain is the only hard requirement. Mapping TSVs are checked only when a
+    record still names them -- a config in the current format derives those names
+    from the assembly instead, and treating an absent TSV as a missing file there
+    would report every such alignment as broken.
+    """
     missing: List[str] = []
-    for raw in paths:
+
+    chain = _sv_path_text(dataset.get("chain_path"))
+    if not chain:
+        missing.append("")
+    else:
         try:
-            path = Path(str(raw or "")).expanduser()
+            path = Path(chain).expanduser()
         except Exception:
-            missing.append(str(raw or ""))
+            missing.append(chain)
+        else:
+            if not path.exists() or not path.is_file():
+                missing.append(str(path))
+
+    for raw in (dataset.get("ref_mapping_path"), dataset.get("tgt_mapping_path")):
+        text = _sv_path_text(raw)
+        if not text:
             continue
-        if not raw or not path.exists() or not path.is_file():
+        try:
+            path = Path(text).expanduser()
+        except Exception:
+            missing.append(text)
+            continue
+        if not path.exists() or not path.is_file():
             missing.append(str(path))
+
     return len(missing) == 0, missing
 
 
@@ -12087,25 +12904,36 @@ def _normalize_sv_dataset(raw: Dict[str, Any], source: str = "registered", base_
     return dataset
 
 
-def _load_sv_alignment_registry_from_path(path: Optional[Path]) -> List[Dict[str, Any]]:
+def _load_sv_config_file(path: Optional[Path], source: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Read one config file into datasets, plus any diagnostics worth surfacing.
+
+    Legacy registry payloads are recognised and migrated by ``parse_sv_config``, so
+    a registry written before this format existed loads through exactly this path.
+    """
     if not path or not path.exists():
-        return []
+        return [], []
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    if isinstance(payload, list):
-        raw_items = payload
-    elif isinstance(payload, dict):
-        raw_items = payload.get("alignments") or []
-    else:
-        raw_items = []
-    out: List[Dict[str, Any]] = []
-    for raw in raw_items:
-        dataset = _normalize_sv_dataset(raw, source="registered", base_dir=path.parent)
+        text = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        return [], [diagnostic_for_config(path, f"Could not read the file: {exc}")]
+
+    config, diagnostics = parse_sv_config(text, base_dir=path.parent)
+    diagnostics = sv_locate_pointer_lines(text, diagnostics)
+    datasets: List[Dict[str, Any]] = []
+    for raw in sv_config_to_datasets(config, source=source, config_path=str(path)):
+        dataset = _normalize_sv_dataset(raw, source=source, base_dir=path.parent)
         if dataset:
-            out.append(dataset)
-    return out
+            datasets.append(dataset)
+    return datasets, diagnostics
+
+
+def diagnostic_for_config(path: Path, message: str) -> Dict[str, Any]:
+    return {"severity": "error", "pointer": "", "line": 0, "message": message, "path": str(path)}
+
+
+def _load_sv_alignment_registry_from_path(path: Optional[Path]) -> List[Dict[str, Any]]:
+    datasets, _diagnostics = _load_sv_config_file(path, source="registered")
+    return datasets
 
 
 def _load_sv_mapping_info(mapping_path: Path) -> Optional[Dict[str, Any]]:
@@ -12233,18 +13061,102 @@ def _scan_sv_alignment_dir(scan_dir: Optional[Path]) -> Tuple[List[Dict[str, Any
     return datasets, incomplete
 
 
+def _sv_stat_signature(path: Optional[Path]) -> Tuple[str, int, int]:
+    if not path:
+        return "", 0, 0
+    try:
+        stat = path.stat()
+        return str(path), int(stat.st_mtime_ns), int(stat.st_size)
+    except Exception:
+        return str(path), 0, 0
+
+
+def _sv_local_assembly_signature(output_dir: Any) -> Tuple[Any, ...]:
+    """Cheap fingerprint of the local genomes, so a new download is picked up.
+
+    Only the ``assembly`` subdirectory is stat'ed: that is where the FASTA and its
+    index land, and it is the only thing the sequence-name derivation reads.
+    """
+    try:
+        local_root = _resolve_local_data_root(output_dir) if output_dir else None
+    except Exception:
+        return ()
+    if not local_root or not local_root.is_dir():
+        return ()
+    out: List[Tuple[str, int, int]] = []
+    try:
+        for _provider, _species_key, _assembly, asm_dir in iter_local_assembly_dirs(local_root):
+            out.append(_sv_stat_signature(asm_dir / "assembly"))
+    except Exception:
+        return ()
+    return tuple(out)
+
+
+_sv_local_assembly_index_cache: Dict[str, Any] = {"signature": None, "entries": []}
+
+
+def _sv_local_assembly_index(output_dir: Any) -> List[Dict[str, Any]]:
+    """Local genomes reduced to what SV needs: identity plus a FASTA path.
+
+    ``list_local_assemblies`` produces a far richer record, but it is an async route
+    handler and this runs from synchronous dataset assembly. Matching only needs the
+    accession and its aliases, so the cheaper scan here is sufficient.
+    """
+    signature = _sv_local_assembly_signature(output_dir)
+    if _sv_local_assembly_index_cache.get("signature") == signature:
+        return list(_sv_local_assembly_index_cache.get("entries") or [])
+
+    entries: List[Dict[str, Any]] = []
+    try:
+        local_root = _resolve_local_data_root(output_dir) if output_dir else None
+    except Exception:
+        local_root = None
+    if local_root and local_root.is_dir():
+        for provider, species_key, assembly, asm_dir in iter_local_assembly_dirs(local_root):
+            try:
+                manifest = _load_genome_manifest(asm_dir, assembly)
+                scanned = _scan_local_assembly(asm_dir, assembly, manifest)
+            except Exception:
+                continue
+            fasta_path = str((scanned.get("files") or {}).get("fasta") or "")
+            if not fasta_path:
+                continue
+            entries.append({
+                "provider": provider,
+                "species_key": species_key,
+                "assembly": assembly,
+                "accession": assembly,
+                "gca": assembly if str(assembly).upper().startswith("GC") else "",
+                "assembly_name": str(manifest.get("assembly_name") or assembly),
+                "scientific_name": str(manifest.get("scientific_name") or ""),
+                "common_name": str(manifest.get("common_name") or ""),
+                "display_name": str(manifest.get("display_name") or ""),
+                "equivalent_accessions": list(manifest.get("equivalent_accessions") or []),
+                "files": {"fasta": fasta_path},
+            })
+
+    _sv_local_assembly_index_cache["signature"] = signature
+    _sv_local_assembly_index_cache["entries"] = list(entries)
+    return entries
+
+
+def _sv_attach_assembly_paths(dataset: Dict[str, Any], assembly_index: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Resolve each side's FASTA once, here, rather than per request.
+
+    ``/api/sv/view`` runs on every pan and zoom; walking the local data directory
+    there would be a directory scan per frame. Doing it while datasets are being
+    assembled puts it behind the same cache that guards the rest of this work.
+    """
+    for side, key in (("reference", "reference_genome"), ("target", "target_genome")):
+        if dataset.get(f"{side}_fasta_path"):
+            continue
+        dataset[f"{side}_fasta_path"] = _sv_local_fasta_for_genome(dataset.get(key) or {}, assembly_index)
+    return dataset
+
+
 def _sv_registry_signature(output_dir: Any) -> Tuple[Any, ...]:
     registry_path = _sv_registry_store_path(output_dir)
     scan_dir = _sv_alignment_scan_dir(output_dir)
-
-    def _stat_sig(path: Optional[Path]) -> Tuple[str, int, int]:
-        if not path or not path.exists():
-            return str(path or ""), 0, 0
-        try:
-            stat = path.stat()
-            return str(path), int(stat.st_mtime_ns), int(stat.st_size)
-        except Exception:
-            return str(path), 0, 0
 
     scan_sig: List[Tuple[str, int, int]] = []
     if scan_dir and scan_dir.exists() and scan_dir.is_dir():
@@ -12254,8 +13166,15 @@ def _sv_registry_signature(output_dir: Any) -> Tuple[Any, ...]:
                 or path.name.endswith(".hal_mapping.tsv")
                 or path.name.endswith(".json")
             ):
-                scan_sig.append(_stat_sig(path))
-    return (_stat_sig(registry_path), tuple(scan_sig))
+                scan_sig.append(_sv_stat_signature(path))
+
+    attached_sig = tuple(_sv_stat_signature(path) for path in _sv_attached_config_paths())
+    return (
+        _sv_stat_signature(registry_path),
+        tuple(scan_sig),
+        attached_sig,
+        _sv_local_assembly_signature(output_dir),
+    )
 
 
 def _list_sv_datasets(output_dir: Any = "") -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -12265,29 +13184,46 @@ def _list_sv_datasets(output_dir: Any = "") -> Tuple[List[Dict[str, Any]], List[
 
     datasets: List[Dict[str, Any]] = []
     seen_ids: Set[str] = set()
-    if SV_BUILTIN_DATASETS_ENABLED:
-        for raw in SV_DATASETS.values():
-            dataset = _normalize_sv_dataset(raw, source="builtin")
-            if dataset and dataset["id"] not in seen_ids:
-                seen_ids.add(dataset["id"])
-                datasets.append(dataset)
+    config_reports: List[Dict[str, Any]] = []
 
-    for dataset in _load_sv_alignment_registry_from_path(_sv_registry_store_path(output_dir)):
-        if dataset["id"] in seen_ids:
-            continue
-        seen_ids.add(dataset["id"])
-        datasets.append(dataset)
+    def take(candidates: Iterable[Dict[str, Any]]) -> int:
+        added = 0
+        for dataset in candidates:
+            if not dataset or dataset["id"] in seen_ids:
+                continue
+            seen_ids.add(dataset["id"])
+            datasets.append(dataset)
+            added += 1
+        return added
+
+    if SV_BUILTIN_DATASETS_ENABLED:
+        take(_normalize_sv_dataset(raw, source="builtin") for raw in SV_DATASETS.values())
+
+    take(_load_sv_alignment_registry_from_path(_sv_registry_store_path(output_dir)))
 
     scanned, incomplete = _scan_sv_alignment_dir(_sv_alignment_scan_dir(output_dir))
-    for dataset in scanned:
-        if dataset["id"] in seen_ids:
-            continue
-        seen_ids.add(dataset["id"])
-        datasets.append(dataset)
+    take(scanned)
+
+    # Attached configs come last so a locally registered alignment keeps precedence
+    # over one arriving from a shared file with the same id.
+    for path in _sv_attached_config_paths():
+        loaded, diagnostics = _load_sv_config_file(path, source="config")
+        count = take(loaded)
+        config_reports.append({
+            "path": str(path),
+            "label": path.name,
+            "exists": path.exists(),
+            "alignment_count": count,
+            "diagnostics": diagnostics,
+        })
+
+    assembly_index = _sv_local_assembly_index(output_dir)
+    datasets = [_sv_attach_assembly_paths(dataset, assembly_index) for dataset in datasets]
 
     _sv_registry_cache["signature"] = signature
     _sv_registry_cache["datasets"] = list(datasets)
     _sv_registry_cache["incomplete"] = list(incomplete)
+    _sv_registry_cache["configs"] = list(config_reports)
     return datasets, incomplete
 
 
@@ -12343,10 +13279,22 @@ def _sv_aliases_for_sequence(token: str) -> List[str]:
 
 
 def _load_sv_mapping(mapping_path: Path) -> Dict[str, Any]:
+    """Parse a legacy mapping TSV.
+
+    Kept for records that still name one -- registry entries written before the
+    config format, and sidecar manifests. Current configs derive these names from
+    the assembly instead; see ``_sv_side_mapping``.
+    """
     cache_key = str(mapping_path)
+    try:
+        stat = mapping_path.stat()
+        signature = (int(stat.st_mtime_ns), int(stat.st_size))
+    except Exception:
+        signature = (0, 0)
     cached = _sv_mapping_cache.get(cache_key)
-    if cached is not None:
-        return cached
+    # Keyed by path alone this used to serve stale names forever after an edit.
+    if cached is not None and cached.get("signature") == signature:
+        return cached["mapping"]
 
     if not mapping_path.exists():
         raise HTTPException(status_code=404, detail=f"SV mapping TSV not found: {mapping_path}")
@@ -12378,7 +13326,7 @@ def _load_sv_mapping(mapping_path: Path) -> Dict[str, Any]:
         "genome_name": genome_name,
         "assembly_uuid": assembly_uuid,
     }
-    _sv_mapping_cache[cache_key] = result
+    _sv_mapping_cache[cache_key] = {"signature": signature, "mapping": result}
     return result
 
 
@@ -12434,8 +13382,8 @@ def _sv_alignment_reference_regions(dataset: Dict[str, Any], limit: int = 500) -
     if not supported:
         return []
     try:
-        ref_map = _load_sv_mapping(Path(dataset["ref_mapping_path"]))
-        tgt_map = _load_sv_mapping(Path(dataset["tgt_mapping_path"]))
+        ref_map = _sv_side_mapping(dataset, "reference")
+        tgt_map = _sv_side_mapping(dataset, "target")
     except Exception:
         return []
 
@@ -12961,8 +13909,7 @@ def _sv_record_tokens(record: Optional[Dict[str, Any]]) -> Set[str]:
         record.get("accession"),
         record.get("assembly_name"),
     ]
-    values.extend(record.get("aliases") or [])
-    values.extend(record.get("equivalent_accessions") or [])
+    values.extend(_sv_genome_aliases(record))
     return {token for token in (_normalize_dataset_token(v) for v in values) if token}
 
 
@@ -12986,6 +13933,14 @@ def _sv_catalog_genome_id(genome: Dict[str, Any]) -> str:
     key = str(genome.get("genome_key") or "").strip()
     if key:
         return key
+    # The accession before the alias set. Hashing aliases made the id depend on how
+    # thoroughly a record happened to be described, so the same assembly reached the
+    # catalog twice when one source listed more names for it than another.
+    accession = _normalize_dataset_token(
+        genome.get("accession") or genome.get("assembly") or genome.get("gca")
+    )
+    if accession:
+        return f"sv_catalog_{accession}"
     aliases = _sv_genome_aliases(genome)
     seed = "|".join(sorted(_normalize_dataset_token(alias) for alias in aliases if alias))
     if not seed:
@@ -13020,6 +13975,24 @@ def _sv_public_genome(genome: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _sv_pair_id_for_dataset(dataset: Dict[str, Any]) -> str:
+    """Identify the genome pair an alignment belongs to, ignoring direction.
+
+    Two alignments between the same assemblies share a pair id whichever way round
+    they run, which is what lets the view offer both directions under one entry.
+    Datasets built from a config carry this already; scanned and legacy ones do not.
+    """
+    tokens = sorted(
+        _normalize_dataset_token(
+            (dataset.get(field) or {}).get("accession")
+            or (dataset.get(field) or {}).get("assembly")
+            or (dataset.get(field) or {}).get("assembly_name")
+        )
+        for field in ("reference_genome", "target_genome")
+    )
+    return "__".join(token for token in tokens if token)
+
+
 def _sv_public_dataset(dataset: Dict[str, Any]) -> Dict[str, Any]:
     supported, missing = _sv_dataset_file_status(dataset)
     data_tracks = _sv_public_data_tracks(dataset)
@@ -13027,7 +14000,10 @@ def _sv_public_dataset(dataset: Dict[str, Any]) -> Dict[str, Any]:
         "id": str(dataset.get("id") or dataset.get("alignment_id") or "").strip(),
         "alignment_id": str(dataset.get("id") or dataset.get("alignment_id") or "").strip(),
         "label": str(dataset.get("label") or "").strip(),
+        "description": str(dataset.get("description") or "").strip(),
         "source": str(dataset.get("source") or "").strip(),
+        "config_path": str(dataset.get("config_path") or "").strip(),
+        "pair_id": str(dataset.get("pair_id") or _sv_pair_id_for_dataset(dataset)).strip(),
         "indexed_side": str(dataset.get("indexed_side") or "target").strip().lower(),
         "reference_genome": _sv_public_genome(dataset.get("reference_genome") or {}),
         "target_genome": _sv_public_genome(dataset.get("target_genome") or {}),
@@ -13130,40 +14106,18 @@ def _merge_sv_catalog_genome(existing: Dict[str, Any], incoming: Dict[str, Any])
     return merged
 
 
-def _sv_registry_record_from_dataset(dataset: Dict[str, Any]) -> Dict[str, Any]:
-    tracks = _sv_public_data_tracks(dataset)
-    return {
-        "id": str(dataset.get("id") or dataset.get("alignment_id") or "").strip(),
-        "label": str(dataset.get("label") or "").strip(),
-        "chain_path": str(dataset.get("chain_path") or ""),
-        "ref_mapping_path": str(dataset.get("ref_mapping_path") or ""),
-        "tgt_mapping_path": str(dataset.get("tgt_mapping_path") or ""),
-        "indexed_side": str(dataset.get("indexed_side") or "target").strip().lower(),
-        "reference_genome": dataset.get("reference_genome") or {},
-        "target_genome": dataset.get("target_genome") or {},
-        "ref_aliases": dataset.get("ref_aliases") or [],
-        "tgt_aliases": dataset.get("tgt_aliases") or [],
-        "tracks": {
-            "reference": [
-                {k: v for k, v in track.items() if k in {"id", "side", "type", "label", "path", "display_mode"}}
-                for track in tracks["reference"]
-            ],
-            "target": [
-                {k: v for k, v in track.items() if k in {"id", "side", "type", "label", "path", "display_mode"}}
-                for track in tracks["target"]
-            ],
-        },
-    }
-
-
 class SvAlignmentRegisterRequest(BaseModel):
     output_dir: str = ""
     id: Optional[str] = None
     label: str = ""
     chain_path: str
-    ref_mapping_path: str
-    tgt_mapping_path: str
-    indexed_side: str = "target"
+    description: str = ""
+    # Mapping TSVs are no longer part of registration; the fields remain so an
+    # older client's payload is accepted rather than rejected outright.
+    ref_mapping_path: str = ""
+    tgt_mapping_path: str = ""
+    # Empty means "work it out from the file name and the assemblies".
+    indexed_side: str = ""
     reference_bigwig_path: str = ""
     reference_bigbed_path: str = ""
     target_bigwig_path: str = ""
@@ -13173,6 +14127,8 @@ class SvAlignmentRegisterRequest(BaseModel):
     target_genome: Optional[Dict[str, Any]] = None
     ref_aliases: Optional[List[str]] = None
     tgt_aliases: Optional[List[str]] = None
+    # Where to save: {"kind": "registry"} or {"kind": "config", "path", "mode"}.
+    target: Optional[Dict[str, Any]] = None
 
 
 @app.get("/api/sv/catalog")
@@ -13217,102 +14173,369 @@ async def sv_catalog(output_dir: str = ""):
         "genomes": sorted(genomes_by_id.values(), key=lambda item: (str(item.get("display_name") or ""), str(item.get("id") or ""))),
         "edges": edges,
         "incomplete_scans": incomplete_scans,
+        "configs": list(_sv_registry_cache.get("configs") or []),
         "registry_path": str(registry_path) if registry_path else "",
         "scan_dir": str(scan_dir) if scan_dir else "",
     }
 
 
+def _sv_require_existing_file(label: str, raw_path: Any, required: bool = True) -> str:
+    text = str(raw_path or "").strip()
+    if not text:
+        if required:
+            raise HTTPException(status_code=400, detail=f"{label} is required.")
+        return ""
+    path = Path(text).expanduser()
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=400, detail=f"{label} not found: {path}")
+    return str(path)
+
+
+def _sv_read_config_file(path: Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]], str]:
+    """Read and parse a config file, returning ``(config, diagnostics, text)``."""
+    if not path.exists():
+        return {SV_CONFIG_VERSION_KEY: 1, "genomes": {}, "pairs": []}, [], ""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not read {path}: {exc}")
+    config, diagnostics = parse_sv_config(text, base_dir=path.parent)
+    return config, sv_locate_pointer_lines(text, diagnostics), text
+
+
+def _sv_write_config_file(path: Path, config: Dict[str, Any]) -> str:
+    """Write a config atomically, under the same lock every SV write takes."""
+    text = serialize_sv_config(sv_config_to_document(config, base_dir=path.parent))
+    with _sv_config_write_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(text, encoding="utf-8")
+        tmp_path.replace(path)
+    _sv_registry_cache["signature"] = None
+    return text
+
+
+def _sv_registration_config(payload: "SvAlignmentRegisterRequest", base_dir: Optional[Path]) -> Dict[str, Any]:
+    """Turn one registration into a single-alignment config, ready to be merged."""
+    label = str(payload.label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="An alignment label is required. Labels identify an alignment, so each must be unique.")
+
+    reference_genome = payload.reference_genome or {}
+    target_genome = payload.target_genome or {}
+    ref_handle = _sv_config_handle(reference_genome)
+    tgt_handle = _sv_config_handle(target_genome)
+    if not ref_handle or not tgt_handle:
+        raise HTTPException(status_code=400, detail="A reference and a target genome are both required.")
+    if ref_handle == tgt_handle:
+        raise HTTPException(status_code=400, detail="The reference and target must be different genomes.")
+
+    chain = _sv_require_existing_file("BigChain file", payload.chain_path)
+    indexed_side = str(payload.indexed_side or "").strip().lower()
+    if indexed_side and indexed_side not in {"reference", "target"}:
+        raise HTTPException(status_code=400, detail="indexed_side must be 'reference', 'target', or empty to detect it.")
+
+    tracks: Dict[str, List[Dict[str, Any]]] = {ref_handle: [], tgt_handle: []}
+    for handle, label_text, raw in (
+        (ref_handle, "Reference BigWig", payload.reference_bigwig_path),
+        (ref_handle, "Reference BigBed", payload.reference_bigbed_path),
+        (tgt_handle, "Target BigWig", payload.target_bigwig_path),
+        (tgt_handle, "Target BigBed", payload.target_bigbed_path),
+    ):
+        resolved = _sv_require_existing_file(label_text, raw, required=False)
+        if resolved:
+            tracks[handle].append({"path": resolved})
+
+    alignment: Dict[str, Any] = {
+        "label": label,
+        "reference": ref_handle,
+        "target": tgt_handle,
+        "chain": chain,
+    }
+    if str(payload.id or "").strip():
+        alignment["id"] = str(payload.id).strip()
+    if str(payload.description or "").strip():
+        alignment["description"] = str(payload.description).strip()
+    if indexed_side:
+        alignment["indexed_side"] = indexed_side
+    populated = {handle: items for handle, items in tracks.items() if items}
+    if populated:
+        alignment["tracks"] = populated
+
+    config = {
+        SV_CONFIG_VERSION_KEY: 1,
+        "genomes": {
+            ref_handle: _sv_config_genome_entry(reference_genome),
+            tgt_handle: _sv_config_genome_entry(target_genome),
+        },
+        "pairs": [{"genomes": [ref_handle, tgt_handle], "alignments": [alignment]}],
+    }
+
+    parsed, diagnostics = parse_sv_config(config, base_dir=base_dir)
+    if sv_config_has_errors(diagnostics):
+        detail = "; ".join(item["message"] for item in diagnostics if item["severity"] == "error")
+        raise HTTPException(status_code=400, detail=detail)
+    return parsed
+
+
+def _sv_config_handle(genome: Dict[str, Any]) -> str:
+    for field in ("assembly_name", "display_name", "accession", "assembly", "gca"):
+        text = str((genome or {}).get(field) or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _sv_config_genome_entry(genome: Dict[str, Any]) -> Dict[str, Any]:
+    source = genome or {}
+    accession = str(source.get("accession") or source.get("assembly") or source.get("gca") or "").strip()
+    entry: Dict[str, Any] = {"accession": accession}
+    assembly_name = str(source.get("assembly_name") or "").strip()
+    if assembly_name and assembly_name != accession:
+        entry["assembly_name"] = assembly_name
+    species = str(source.get("scientific_name") or "").strip()
+    if species:
+        entry["species"] = species
+    equivalents = [str(value).strip() for value in (source.get("equivalent_accessions") or []) if str(value).strip()]
+    if equivalents:
+        entry["aliases"] = equivalents
+    return entry
+
+
 @app.post("/api/sv/alignments/register")
 async def register_sv_alignment(payload: SvAlignmentRegisterRequest):
+    """Add one alignment to the registry, or to a config file the user names.
+
+    Registration and hand-writing a config now produce the same file in the same
+    format, so a setup built through the interface can be read, edited and shared
+    without an export step.
+    """
     output_dir_text = _sv_effective_output_dir(payload.output_dir)
-    registry_path = _sv_registry_store_path(output_dir_text)
-    if not registry_path:
-        raise HTTPException(status_code=400, detail="output_dir is required to register SV alignments.")
 
-    indexed_side = str(payload.indexed_side or "target").strip().lower()
-    if indexed_side not in {"reference", "target"}:
-        raise HTTPException(status_code=400, detail="indexed_side must be 'reference' or 'target'.")
-
-    paths = {
-        "BigChain": Path(payload.chain_path).expanduser(),
-        "reference mapping TSV": Path(payload.ref_mapping_path).expanduser(),
-        "target mapping TSV": Path(payload.tgt_mapping_path).expanduser(),
-    }
-    missing = [f"{label}: {path}" for label, path in paths.items() if not path.exists() or not path.is_file()]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Missing SV alignment files: {', '.join(missing)}")
-
-    optional_track_paths = {
-        "reference BigWig": str(payload.reference_bigwig_path or "").strip(),
-        "reference BigBed": str(payload.reference_bigbed_path or "").strip(),
-        "target BigWig": str(payload.target_bigwig_path or "").strip(),
-        "target BigBed": str(payload.target_bigbed_path or "").strip(),
-    }
-    missing_optional = []
-    for label, raw_path in optional_track_paths.items():
+    target_kind = str((payload.target or {}).get("kind") or "registry").strip().lower()
+    if target_kind == "config":
+        raw_path = str((payload.target or {}).get("path") or "").strip()
         if not raw_path:
-            continue
-        track_path = Path(raw_path).expanduser()
-        if not track_path.exists() or not track_path.is_file():
-            missing_optional.append(f"{label}: {track_path}")
-    if missing_optional:
-        raise HTTPException(status_code=400, detail=f"Missing optional SV data track files: {', '.join(missing_optional)}")
+            raise HTTPException(status_code=400, detail="A config file path is required when saving to a config.")
+        destination = validate_config_export_path(raw_path)
+        mode = str((payload.target or {}).get("mode") or "merge").strip().lower()
+    else:
+        destination = _sv_registry_store_path(output_dir_text)
+        if not destination:
+            raise HTTPException(status_code=400, detail="output_dir is required to register SV alignments.")
+        mode = "merge"
 
-    raw_dataset = {
-        "id": str(payload.id or "").strip(),
-        "label": str(payload.label or "").strip(),
-        "chain_path": str(paths["BigChain"]),
-        "ref_mapping_path": str(paths["reference mapping TSV"]),
-        "tgt_mapping_path": str(paths["target mapping TSV"]),
-        "indexed_side": indexed_side,
-        "reference_bigwig_path": str(Path(payload.reference_bigwig_path).expanduser()) if str(payload.reference_bigwig_path or "").strip() else "",
-        "reference_bigbed_path": str(Path(payload.reference_bigbed_path).expanduser()) if str(payload.reference_bigbed_path or "").strip() else "",
-        "target_bigwig_path": str(Path(payload.target_bigwig_path).expanduser()) if str(payload.target_bigwig_path or "").strip() else "",
-        "target_bigbed_path": str(Path(payload.target_bigbed_path).expanduser()) if str(payload.target_bigbed_path or "").strip() else "",
-        "tracks": payload.tracks or {},
-        "reference_genome": payload.reference_genome or {},
-        "target_genome": payload.target_genome or {},
-        "ref_aliases": payload.ref_aliases or [],
-        "tgt_aliases": payload.tgt_aliases or [],
-    }
-    dataset = _normalize_sv_dataset(raw_dataset, source="registered")
-    if not dataset:
-        raise HTTPException(status_code=400, detail="Could not normalize SV alignment registration.")
+    incoming = _sv_registration_config(payload, base_dir=destination.parent)
+    existing, diagnostics, _text = _sv_read_config_file(destination)
+    if sv_config_has_errors(diagnostics):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{destination} could not be parsed, so it was left untouched. Fix it in the configuration editor first.",
+        )
 
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    existing_payload: Dict[str, Any] = {"alignments": []}
-    if registry_path.exists():
-        try:
-            loaded = json.loads(registry_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, list):
-                existing_payload = {"alignments": loaded}
-            elif isinstance(loaded, dict):
-                existing_payload = loaded
-        except Exception:
-            existing_payload = {"alignments": []}
+    merged = merge_sv_config(existing, incoming, mode=mode)
+    _sv_write_config_file(destination, merged)
 
-    alignments = existing_payload.get("alignments")
-    if not isinstance(alignments, list):
-        alignments = []
-    record = _sv_registry_record_from_dataset(dataset)
-    record_id = str(record.get("id") or "").strip()
-    next_alignments = [
-        item for item in alignments
-        if not isinstance(item, dict) or str(item.get("id") or item.get("alignment_id") or "").strip() != record_id
+    datasets = [
+        _normalize_sv_dataset(raw, source="registered", base_dir=destination.parent)
+        for raw in sv_config_to_datasets(incoming, source="registered", config_path=str(destination))
     ]
-    next_alignments.append(record)
-    existing_payload["alignments"] = next_alignments
+    assembly_index = _sv_local_assembly_index(output_dir_text)
+    saved = [_sv_attach_assembly_paths(dataset, assembly_index) for dataset in datasets if dataset]
 
-    tmp_path = registry_path.with_name(f"{registry_path.name}.tmp")
-    tmp_path.write_text(json.dumps(existing_payload, indent=2, sort_keys=True), encoding="utf-8")
-    tmp_path.replace(registry_path)
-
-    _sv_registry_cache["signature"] = None
     return {
         "ok": True,
-        "alignment": _sv_public_dataset(dataset),
-        "registry_path": str(registry_path),
+        "alignment": _sv_public_dataset(saved[0]) if saved else None,
+        "registry_path": str(destination),
+        "config_path": str(destination),
     }
+
+
+class SvAlignmentDeleteRequest(BaseModel):
+    output_dir: str = ""
+    config_path: str = ""
+
+
+@app.post("/api/sv/alignments/{alignment_id}/delete")
+async def delete_sv_alignment(alignment_id: str, payload: SvAlignmentDeleteRequest):
+    """Remove one alignment from whichever config holds it.
+
+    A POST rather than a DELETE so the request can name the config file it applies
+    to; the app's own registry is the default.
+    """
+    output_dir_text = _sv_effective_output_dir(payload.output_dir)
+    if str(payload.config_path or "").strip():
+        destination = validate_config_export_path(payload.config_path)
+    else:
+        destination = _sv_registry_store_path(output_dir_text)
+    if not destination or not destination.exists():
+        raise HTTPException(status_code=404, detail="No SV configuration file to remove this alignment from.")
+
+    existing, diagnostics, _text = _sv_read_config_file(destination)
+    if sv_config_has_errors(diagnostics):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{destination} could not be parsed, so it was left untouched.",
+        )
+
+    updated, removed = sv_remove_alignment(existing, alignment_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"No alignment '{alignment_id}' in {destination.name}.")
+
+    _sv_write_config_file(destination, updated)
+    return {"ok": True, "config_path": str(destination)}
+
+
+class SvConfigValidateRequest(BaseModel):
+    text: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+    base_dir: str = ""
+
+
+@app.post("/api/sv/config/validate")
+async def validate_sv_config(payload: SvConfigValidateRequest):
+    """Check a configuration without writing anything.
+
+    Backs the editor's Validate button, so it has to tolerate whatever half-finished
+    text is in the box and answer with diagnostics rather than an error status.
+    """
+    base_dir = Path(payload.base_dir).expanduser() if str(payload.base_dir or "").strip() else None
+    source: Any = payload.text if payload.text is not None else (payload.config or {})
+    config, diagnostics = parse_sv_config(source, base_dir=base_dir)
+    if isinstance(source, str):
+        diagnostics = sv_locate_pointer_lines(source, diagnostics)
+
+    datasets = sv_config_to_datasets(config)
+    missing_files: List[str] = []
+    for dataset in datasets:
+        chain = str(dataset.get("chain_path") or "")
+        if chain and not Path(chain).expanduser().exists():
+            missing_files.append(chain)
+        for side in ("reference", "target"):
+            for track in (dataset.get("tracks") or {}).get(side) or []:
+                path = str(track.get("path") or "")
+                if path and not Path(path).expanduser().exists():
+                    missing_files.append(path)
+
+    return {
+        "ok": not sv_config_has_errors(diagnostics),
+        "config": config,
+        "diagnostics": diagnostics,
+        "alignment_count": len(datasets),
+        "missing_files": missing_files,
+    }
+
+
+@app.get("/api/sv/config")
+async def read_sv_config(path: str = "", output_dir: str = ""):
+    """Return a config file as text, or the app's registry rendered as one."""
+    if str(path or "").strip():
+        target = validate_config_export_path(path)
+    else:
+        target = _sv_registry_store_path(_sv_effective_output_dir(output_dir))
+        if not target:
+            raise HTTPException(status_code=400, detail="output_dir is required to read the SV registry.")
+
+    if not target.exists():
+        empty = {SV_CONFIG_VERSION_KEY: 1, "genomes": {}, "pairs": []}
+        return {"path": str(target), "exists": False, "text": serialize_sv_config(empty), "config": empty, "diagnostics": []}
+
+    config, diagnostics, text = _sv_read_config_file(target)
+    # A file already in the current format is returned exactly as written, so the
+    # editor does not silently reformat what the user typed. A legacy registry has
+    # no such form to preserve, so show the migrated document -- rendered the same
+    # way a write would render it, not the parsed structure, which carries derived
+    # fields nobody should have to read.
+    rendered = (
+        serialize_sv_config(sv_config_to_document(config, base_dir=target.parent))
+        if _sv_config_is_legacy_text(text)
+        else text
+    )
+    return {"path": str(target), "exists": True, "text": rendered, "config": config, "diagnostics": diagnostics}
+
+
+def _sv_config_is_legacy_text(text: str) -> bool:
+    try:
+        payload = json.loads(text or "{}")
+    except Exception:
+        return False
+    return isinstance(payload, dict) and SV_CONFIG_VERSION_KEY not in payload
+
+
+class SvConfigSaveRequest(BaseModel):
+    path: str
+    text: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+    mode: str = "replace"
+    attach: bool = False
+
+
+@app.post("/api/sv/config/save")
+async def save_sv_config(payload: SvConfigSaveRequest):
+    """Validate, then write. A config that does not parse is never written."""
+    destination = validate_config_export_path(payload.path)
+    source: Any = payload.text if payload.text is not None else (payload.config or {})
+    incoming, diagnostics = parse_sv_config(source, base_dir=destination.parent)
+    if isinstance(source, str):
+        diagnostics = sv_locate_pointer_lines(source, diagnostics)
+    if sv_config_has_errors(diagnostics):
+        return {"ok": False, "diagnostics": diagnostics, "path": str(destination)}
+
+    mode = str(payload.mode or "replace").strip().lower()
+    if mode == "merge" and destination.exists():
+        existing, existing_diagnostics, _text = _sv_read_config_file(destination)
+        if sv_config_has_errors(existing_diagnostics):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{destination} could not be parsed, so it was left untouched.",
+            )
+        final = merge_sv_config(existing, incoming, mode="merge")
+    else:
+        final = incoming
+
+    text = _sv_write_config_file(destination, final)
+    if payload.attach:
+        _sv_attach_config_path(destination)
+    return {"ok": True, "path": str(destination), "text": text, "diagnostics": diagnostics}
+
+
+class SvConfigAttachRequest(BaseModel):
+    path: str
+
+
+def _sv_attach_config_path(path: Path) -> List[str]:
+    config = load_config()
+    paths = [str(item) for item in (config.get("sv_config_paths") or []) if str(item or "").strip()]
+    if str(path) not in paths:
+        paths.append(str(path))
+    config["sv_config_paths"] = paths
+    save_config(config)
+    _sv_registry_cache["signature"] = None
+    return paths
+
+
+@app.post("/api/sv/config/attach")
+async def attach_sv_config(payload: SvConfigAttachRequest):
+    """Add a config file to the set the SV view reads from."""
+    target = validate_config_export_path(payload.path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"Configuration file not found: {target}")
+    _config, diagnostics, _text = _sv_read_config_file(target)
+    if sv_config_has_errors(diagnostics):
+        return {"ok": False, "diagnostics": diagnostics, "path": str(target)}
+    return {"ok": True, "path": str(target), "paths": _sv_attach_config_path(target), "diagnostics": diagnostics}
+
+
+@app.post("/api/sv/config/detach")
+async def detach_sv_config(payload: SvConfigAttachRequest):
+    """Stop reading a config file. The file itself is left alone."""
+    target = str(Path(str(payload.path or "").strip()).expanduser())
+    config = load_config()
+    paths = [str(item) for item in (config.get("sv_config_paths") or []) if str(item or "").strip() and str(item) != target]
+    config["sv_config_paths"] = paths
+    save_config(config)
+    _sv_registry_cache["signature"] = None
+    return {"ok": True, "paths": paths}
 
 
 @app.get("/api/sv/view")
@@ -13352,11 +14575,9 @@ async def structural_variation_view(
 
     def _query():
         chain_path: Path = dataset["chain_path"]
-        ref_mapping_path: Path = dataset["ref_mapping_path"]
-        tgt_mapping_path: Path = dataset["tgt_mapping_path"]
 
-        missing = [str(p) for p in [chain_path, ref_mapping_path, tgt_mapping_path] if not p.exists()]
-        if missing:
+        supported, missing = _sv_dataset_file_status(dataset)
+        if not supported:
             return {
                 "supported": False,
                 "detail": f"SV dataset files not found: {', '.join(missing)}",
@@ -13370,14 +14591,14 @@ async def structural_variation_view(
         except HTTPException as e:
             return {"supported": False, "detail": e.detail}
 
-        ref_map = _load_sv_mapping(ref_mapping_path)
-        tgt_map = _load_sv_mapping(tgt_mapping_path)
+        ref_map = _sv_side_mapping(dataset, "reference")
+        tgt_map = _sv_side_mapping(dataset, "target")
 
         ref_seq = _resolve_sv_sequence(ref_map, ref_chrom)
         if not ref_seq:
             return {
                 "supported": False,
-                "detail": f"Reference chromosome '{ref_chrom}' not present in the SV mapping TSV.",
+                "detail": f"Reference chromosome '{ref_chrom}' is not aligned in '{dataset.get('label') or dataset.get('id')}'.",
             }
 
         tgt_seq = _resolve_sv_sequence(tgt_map, tgt_chrom) if tgt_chrom else None
@@ -13712,14 +14933,13 @@ async def sv_alignments(
 
     def _query():
         chain_path: Path = dataset["chain_path"]
-        ref_mapping_path: Path = dataset["ref_mapping_path"]
-        tgt_mapping_path: Path = dataset["tgt_mapping_path"]
 
-        if any(not p.exists() for p in [chain_path, ref_mapping_path, tgt_mapping_path]):
+        supported, _missing = _sv_dataset_file_status(dataset)
+        if not supported:
             return []
 
-        ref_map = _load_sv_mapping(ref_mapping_path)
-        tgt_map = _load_sv_mapping(tgt_mapping_path)
+        ref_map = _sv_side_mapping(dataset, "reference")
+        tgt_map = _sv_side_mapping(dataset, "target")
         indexed_side = str(dataset.get("indexed_side") or "target").strip().lower()
 
         ref_query_chrom = use_ref_vp[0] if use_ref_vp else ""
@@ -13990,14 +15210,13 @@ async def sv_variants(
 
     def _query():
         chain_path: Path = dataset["chain_path"]
-        ref_mapping_path: Path = dataset["ref_mapping_path"]
-        tgt_mapping_path: Path = dataset["tgt_mapping_path"]
 
-        if any(not p.exists() for p in [chain_path, ref_mapping_path, tgt_mapping_path]):
+        supported, _missing = _sv_dataset_file_status(dataset)
+        if not supported:
             return []
 
-        ref_map = _load_sv_mapping(ref_mapping_path)
-        tgt_map = _load_sv_mapping(tgt_mapping_path)
+        ref_map = _sv_side_mapping(dataset, "reference")
+        tgt_map = _sv_side_mapping(dataset, "target")
         indexed_side = str(dataset.get("indexed_side") or "target").strip().lower()
 
         ref_query_chrom = ref_viewport[0] if ref_viewport else ""
@@ -15140,8 +16359,9 @@ def _trackhub_download_sync(task_id: str, url: str, destination: Path) -> None:
     max_bytes = 2 * 1024 * 1024 * 1024
     try:
         _set_trackhub_import_task(task_id, status="downloading", progress=0.0, error="")
-        with requests.get(url, stream=True, timeout=90) as response:
-            ensure_http_response_url_allowed(url, getattr(response, "url", url), validate_trackhub_data_url)
+        with get_with_validated_redirects(
+            url, validate_trackhub_data_url, stream=True, timeout=90
+        ) as response:
             response.raise_for_status()
             total_size = int(response.headers.get("content-length", 0))
             if total_size > max_bytes:
@@ -15845,7 +17065,14 @@ def _get_vcf_lock(path: str) -> threading.Lock:
         return lock
 
 
-def _get_or_open_vcf(path: str):
+def _open_vcf_handle_unlocked(path: str):
+    """Open or reuse the cached ``pysam.VariantFile`` for ``path``.
+
+    Callers must hold the handle's lock — use :func:`locked_vcf` rather than
+    calling this directly. htslib keeps seek state on the handle, and
+    ``VariantFile.fetch()`` returns a lazy iterator, so the lock has to cover the
+    whole scan and not merely the call that starts it.
+    """
     p = Path(path)
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"VCF not found: {path}")
@@ -15874,6 +17101,24 @@ def _get_or_open_vcf(path: str):
 
         _VCF_HANDLE_CACHE[key] = {"fingerprint": fp, "handle": handle}
         return handle, fp, key
+
+
+@contextmanager
+def locked_vcf(path: str):
+    """Yield ``(handle, fingerprint, resolved_path)`` with exclusive access.
+
+    The only supported way to reach a cached VCF handle. Holding the lock for the
+    whole block matters more here than it does for FASTA: ``FastaFile.fetch()``
+    does all its I/O before returning a string, whereas ``VariantFile.fetch()``
+    hands back a lazy iterator that reads as it is consumed. Locking just the
+    call that creates the iterator would leave the actual scan unguarded.
+
+    The lock is per resolved path, so unrelated VCFs never block each other.
+    """
+    resolved = str(Path(path).resolve())
+    lock = _get_vcf_lock(resolved)
+    with lock:
+        yield _open_vcf_handle_unlocked(path)
 
 
 def _resolve_vcf_chrom(vcf_handle, chrom: str) -> Optional[str]:
@@ -16623,9 +17868,7 @@ def _browse_vcf_block_tiles_sync(payload: "VcfBlockTilesRequest") -> Dict[str, A
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"VCF not found: {path}")
 
-    lock = _get_vcf_lock(str(p.resolve()))
-    with lock:
-        vcf_handle, fingerprint, resolved_path = _get_or_open_vcf(path)
+    with locked_vcf(path) as (vcf_handle, fingerprint, resolved_path):
         resolved_chrom = _resolve_vcf_chrom(vcf_handle, chrom_req)
         if not resolved_chrom:
             raise HTTPException(status_code=400, detail=f"Chromosome '{chrom_req}' not present in VCF")
@@ -16712,9 +17955,7 @@ def _browse_vcf_tiles_sync(payload: VcfTilesRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"VCF not found: {path}")
 
     open_t0 = time.perf_counter()
-    lock = _get_vcf_lock(str(p.resolve()))
-    with lock:
-        vcf_handle, fingerprint, resolved_path = _get_or_open_vcf(path)
+    with locked_vcf(path) as (vcf_handle, fingerprint, resolved_path):
         resolved_chrom = _resolve_vcf_chrom(vcf_handle, chrom_req)
         if not resolved_chrom:
             raise HTTPException(status_code=400, detail=f"Chromosome '{chrom_req}' not present in VCF")

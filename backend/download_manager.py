@@ -33,7 +33,7 @@ from species_name_policy import (
     save_species_name_policy,
     species_record_from_summary,
 )
-from security_utils import ensure_http_response_url_allowed, validate_remote_download_url
+from security_utils import get_with_validated_redirects, validate_remote_download_url
 from taxonomy_classifier import TaxonomyLineageClassifier
 
 logger = logging.getLogger(__name__)
@@ -2639,9 +2639,7 @@ class DownloadManager:
             if isinstance(entries, list):
                 return list(entries)
             return list(cached.get("files") or [])
-        validate_remote_download_url(directory_url)
-        response = requests.get(directory_url, timeout=12)
-        ensure_http_response_url_allowed(directory_url, getattr(response, "url", directory_url), validate_remote_download_url)
+        response = get_with_validated_redirects(directory_url, validate_remote_download_url, timeout=12)
         response.raise_for_status()
         hrefs = re.findall(r'href=["\']([^"\']+)["\']', response.text or "", flags=re.IGNORECASE)
         entries = []
@@ -3246,12 +3244,9 @@ class DownloadManager:
                         task.current_download_path = str(target_path)
                         try:
                             _raise_if_cancelled()
-                            with requests.get(download_url, stream=True, timeout=60) as response:
-                                ensure_http_response_url_allowed(
-                                    download_url,
-                                    getattr(response, "url", download_url),
-                                    validate_remote_download_url,
-                                )
+                            with get_with_validated_redirects(
+                                download_url, validate_remote_download_url, stream=True, timeout=60
+                            ) as response:
                                 response.raise_for_status()
                                 _raise_if_cancelled()
                                 total_size = int(response.headers.get("content-length", 0))

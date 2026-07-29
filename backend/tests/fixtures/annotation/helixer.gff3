@@ -1,0 +1,15 @@
+##gff-version 3
+##sequence-region chr1 1 100000
+# Helixer output: full gene/mRNA/exon/CDS/UTR hierarchy, but no biotype anywhere.
+# The second locus has no CDS and a mature length under 200 bp.
+chr1	Helixer	gene	1000	2600	.	+	.	ID=Ha_chr1_000001
+chr1	Helixer	mRNA	1000	2600	.	+	.	ID=Ha_chr1_000001.1;Parent=Ha_chr1_000001
+chr1	Helixer	exon	1000	1399	.	+	.	ID=Ha_chr1_000001.1.exon1;Parent=Ha_chr1_000001.1
+chr1	Helixer	five_prime_UTR	1000	1099	.	+	.	ID=Ha_chr1_000001.1.5UTR;Parent=Ha_chr1_000001.1
+chr1	Helixer	CDS	1100	1399	.	+	0	ID=Ha_chr1_000001.1.CDS1;Parent=Ha_chr1_000001.1
+chr1	Helixer	exon	2200	2600	.	+	.	ID=Ha_chr1_000001.1.exon2;Parent=Ha_chr1_000001.1
+chr1	Helixer	CDS	2200	2499	.	+	0	ID=Ha_chr1_000001.1.CDS2;Parent=Ha_chr1_000001.1
+chr1	Helixer	three_prime_UTR	2500	2600	.	+	.	ID=Ha_chr1_000001.1.3UTR;Parent=Ha_chr1_000001.1
+chr1	Helixer	gene	8000	8150	.	-	.	ID=Ha_chr1_000002
+chr1	Helixer	mRNA	8000	8150	.	-	.	ID=Ha_chr1_000002.1;Parent=Ha_chr1_000002
+chr1	Helixer	exon	8000	8150	.	-	.	ID=Ha_chr1_000002.1.exon1;Parent=Ha_chr1_000002.1

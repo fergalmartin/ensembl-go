@@ -1,0 +1,12 @@
+# stringtie --merge
+# Two loci: one multi-exon with two isoforms, one single-exon short RNA.
+# No `gene` rows at all — the hierarchy lives entirely in gene_id/transcript_id.
+chr1	StringTie	transcript	1000	5000	1000	+	.	gene_id "STRG.1"; transcript_id "STRG.1.1"; cov "12.4"; FPKM "3.211";
+chr1	StringTie	exon	1000	1400	1000	+	.	gene_id "STRG.1"; transcript_id "STRG.1.1"; exon_number "1";
+chr1	StringTie	exon	2200	2600	1000	+	.	gene_id "STRG.1"; transcript_id "STRG.1.1"; exon_number "2";
+chr1	StringTie	exon	4400	5000	1000	+	.	gene_id "STRG.1"; transcript_id "STRG.1.1"; exon_number "3";
+chr1	StringTie	transcript	1000	2600	1000	+	.	gene_id "STRG.1"; transcript_id "STRG.1.2"; cov "4.1"; FPKM "1.002";
+chr1	StringTie	exon	1000	1400	1000	+	.	gene_id "STRG.1"; transcript_id "STRG.1.2"; exon_number "1";
+chr1	StringTie	exon	2200	2600	1000	+	.	gene_id "STRG.1"; transcript_id "STRG.1.2"; exon_number "2";
+chr2	StringTie	transcript	800	920	1000	-	.	gene_id "STRG.2"; transcript_id "STRG.2.1"; cov "2.0"; FPKM "0.500";
+chr2	StringTie	exon	800	920	1000	-	.	gene_id "STRG.2"; transcript_id "STRG.2.1"; exon_number "1";

@@ -234,7 +234,7 @@ export default function SelectedSpeciesPillsBar({
                                     }}
                                     style={{
                                         opacity: isDragging ? 0.55 : 1,
-                                        paddingBottom: datasetBadge ? 8 : 0,
+                                        paddingBottom: 8,
                                         boxShadow: isDropTarget
                                             ? (dragInsertPosition === 'before'
                                                 ? `inset 3px 0 0 ${isLight ? 'rgba(0, 119, 204, 0.92)' : 'rgba(125, 211, 252, 0.92)'}`

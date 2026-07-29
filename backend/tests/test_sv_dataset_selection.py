@@ -3,13 +3,33 @@ import unittest
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import _list_sv_datasets, _select_sv_dataset, _sv_public_dataset, _sv_registry_cache  # noqa: E402
+import main  # noqa: E402
+from main import _list_sv_datasets, _select_sv_dataset, _sv_public_dataset, _sv_records_match, _sv_registry_cache  # noqa: E402
 
 
 class StructuralVariationDatasetSelectionTests(unittest.TestCase):
+    """Selection rules for the built-in structural-variation datasets.
+
+    The built-ins are development fixtures gated behind
+    ENSEMBL_GO_SV_TEST_DATA_DIR, which is unset in a normal checkout. Without
+    enabling them here every lookup returns None, which fails the positive cases
+    and lets the negative ones pass for the wrong reason. Selection is pure
+    metadata matching, so the fixture files themselves are not needed.
+    """
+
+    def setUp(self):
+        patcher = patch.object(main, "SV_BUILTIN_DATASETS_ENABLED", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # The registry cache is module-global; clear it on the way in and out so
+        # neither this class nor anything after it sees a stale dataset list.
+        _sv_registry_cache["signature"] = None
+        self.addCleanup(_sv_registry_cache.__setitem__, "signature", None)
+
     def test_selects_grch38_dataset_from_accessions(self):
         dataset = _select_sv_dataset("GCA_000001405.29", "GCA_018472595.2")
         self.assertIsNotNone(dataset)
@@ -51,6 +71,31 @@ class StructuralVariationDatasetSelectionTests(unittest.TestCase):
         dataset = _select_sv_dataset("GCF_009914755.1", "GCA_018472595.2")
         self.assertIsNotNone(dataset)
         self.assertEqual(dataset["label"], "T2T-CHM13v2.0 vs HG00438")
+
+    def test_generic_species_aliases_do_not_match_different_human_assemblies(self):
+        grch38 = {
+            "provider": "ensembl",
+            "species_key": "Homo_sapiens",
+            "assembly": "GCA_000001405.29",
+            "assembly_name": "GRCh38.p14",
+            "display_name": "Human",
+            "common_name": "Human",
+            "scientific_name": "Homo sapiens",
+            "aliases": ["GRCh38", "Human", "Homo sapiens"],
+        }
+        hg00438 = {
+            "provider": "ensembl",
+            "species_key": "Homo_sapiens",
+            "assembly": "GCA_018472595.2",
+            "assembly_name": "HG00438_pat_hprc_f2",
+            "display_name": "Human",
+            "common_name": "Human",
+            "scientific_name": "Homo sapiens",
+            "aliases": ["HG00438", "Human", "Homo sapiens"],
+        }
+
+        self.assertFalse(_sv_records_match(grch38, hg00438))
+        self.assertTrue(_sv_records_match(grch38, {**grch38}))
 
     def test_selects_registered_alignment_by_id_and_aliases(self):
         with tempfile.TemporaryDirectory() as tmp:

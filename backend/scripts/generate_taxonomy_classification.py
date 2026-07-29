@@ -183,10 +183,13 @@ def _build_artifact(catalog_path: Path, taxdump_path: Path) -> Dict[str, Any]:
         "metadata": {
             "generated_at": _now_iso_utc(),
             "generator": "backend/scripts/generate_taxonomy_classification.py",
-            "source_catalog": str(catalog_path),
+            # Filenames only: these are informational, and the absolute build
+            # paths they used to hold leaked the operator's home directory into a
+            # tracked artifact.
+            "source_catalog": Path(catalog_path).name,
             "source_catalog_fingerprint": _catalog_fingerprint(catalog),
             "source_catalog_last_updated": str(catalog.get("last_updated") or ""),
-            "source_taxdump": str(taxdump_path),
+            "source_taxdump": Path(taxdump_path).name,
         },
         "coverage": {
             "catalog_species_count": len(catalog.get("species") or {}),

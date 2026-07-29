@@ -69,6 +69,7 @@ frontend/rust/*/target/
 exports/
 temp_repos/
 ensembl_local_github_*/
+test-data/
 
 # --- Local tooling config ---
 # Personal settings. A shared .claude/settings.json, if added, should be tracked.

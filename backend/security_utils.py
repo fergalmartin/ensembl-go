@@ -9,8 +9,9 @@ import os
 import re
 from pathlib import Path
 from typing import Iterable, Optional
-from urllib.parse import unquote, urlparse, urlunparse
+from urllib.parse import unquote, urljoin, urlparse, urlunparse
 
+import requests
 from fastapi import HTTPException
 
 
@@ -162,11 +163,74 @@ def validate_trackhub_data_url(url: str) -> str:
     return normalized
 
 
+MAX_VALIDATED_REDIRECTS = 5
+
+
+def _redirect_location(response) -> Optional[str]:
+    """Return the redirect target of ``response``, or ``None`` if it is not a redirect.
+
+    Derived from the status line and headers rather than ``Response.is_redirect``
+    so that any response-like object works here, not only a real
+    ``requests.Response``. A redirect status carrying no usable ``Location``
+    yields an empty string, which the caller treats as a malformed response
+    rather than as success.
+    """
+    try:
+        status = int(getattr(response, "status_code", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if status not in requests.models.REDIRECT_STATI:
+        return None
+    headers = getattr(response, "headers", None) or {}
+    try:
+        location = headers.get("location") or headers.get("Location") or ""
+    except AttributeError:
+        location = ""
+    return str(location).strip()
+
+
 def ensure_http_response_url_allowed(original_url: str, response_url: str, validator) -> None:
-    normalized_original = validator(original_url)
-    normalized_response = validator(response_url)
-    if normalized_original and normalized_response:
-        return
+    """Fail unless both URLs pass ``validator``.
+
+    The validators raise on a disallowed URL, so this normally reports failure by
+    propagating that. The explicit check keeps the helper closed rather than open
+    if it is ever handed a validator that returns a falsy value instead.
+    """
+    if not validator(original_url) or not validator(response_url):
+        raise HTTPException(status_code=400, detail="Redirect target is not allowed")
+
+
+def get_with_validated_redirects(url: str, validator, **kwargs):
+    """GET ``url``, revalidating every redirect hop before it is followed.
+
+    ``requests`` resolves redirect chains internally, so by the time a caller can
+    inspect the response a redirect to a disallowed host has already been
+    fetched. That is enough to reach a host the allowlist exists to keep the
+    application away from, even though the body is discarded. Walking the chain
+    here keeps every hop subject to ``validator`` before a request goes out to
+    it. Returns the first non-redirect response, which the caller owns and must
+    close (directly or as a context manager).
+    """
+    kwargs.pop("allow_redirects", None)
+    current = validator(url)
+
+    for _ in range(MAX_VALIDATED_REDIRECTS):
+        response = requests.get(current, allow_redirects=False, **kwargs)
+        location = _redirect_location(response)
+        if location is None:
+            ensure_http_response_url_allowed(url, getattr(response, "url", current) or current, validator)
+            return response
+
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+        if not location:
+            raise HTTPException(status_code=502, detail="Redirect response is missing a Location header")
+        # Location may be relative, so resolve it against the hop it came from
+        # before validating the absolute result.
+        current = validator(urljoin(current, location))
+
+    raise HTTPException(status_code=502, detail="Too many redirects")
 
 
 def require_path_within(root: Path, candidate: Path) -> Path:

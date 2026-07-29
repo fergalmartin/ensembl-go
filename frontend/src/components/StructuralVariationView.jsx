@@ -11,9 +11,11 @@ import {
 import { resolveSvFeatureTrackGenomeIds, resolveSvFeatureWindowChrom } from '../utils/svFeatureTrackIdentity'
 import {
   buildAvailableSvAlignmentRows,
+  buildSvGenomeOptions,
   catalogGenomeMatchesSpecies,
-  findSvAlignment,
+  formatSvGenomeOptionLabel,
   getOutgoingSvAlignments,
+  getSvAlignmentsForPair,
   getSvGenomeDisplayName,
   speciesGenomeKey,
 } from '../utils/svCatalog'
@@ -401,6 +403,22 @@ function compareSvRegionLabels(left, right) {
   if (Number.isFinite(an)) return -1
   if (Number.isFinite(bn)) return 1
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+}
+
+/** The alignment a slot should use: the one the user picked, else the first.
+ *
+ * A preference is dropped rather than honoured when the pair changes underneath it,
+ * so switching genomes cannot leave a slot pointing at an alignment belonging to a
+ * different pair.
+ */
+function pickPreferredSvAlignment(choices, preferredId) {
+  const list = Array.isArray(choices) ? choices : []
+  const preferred = String(preferredId || '')
+  if (preferred) {
+    const match = list.find((alignment) => String(alignment?.id || '') === preferred)
+    if (match) return match
+  }
+  return list[0] || null
 }
 
 function alignmentSupportsAnchorRegion(alignment, regionId) {
@@ -6822,6 +6840,47 @@ function svSpeciesSelectionKey(species) {
   return getGenomeKey(species) || speciesGenomeKey(species)
 }
 
+// The key and label conventions this view uses, handed to the shared option
+// builder so it does not have to guess at either.
+const svGenomeOptionNaming = {
+  keyForSpecies: svSpeciesSelectionKey,
+  labelForSpecies: getSpeciesDisplayName,
+  labelForGenome: getSvCatalogGenomeDisplayName,
+}
+
+const SV_GENOME_GROUP_LABELS = {
+  selected: 'Selected genomes',
+  add: 'Available locally',
+  missing: 'No local data',
+}
+
+/** Render genome options grouped by whether they can be used.
+ *
+ * Genomes with no local data are listed rather than hidden, so a config naming a
+ * genome that has not been downloaded explains itself instead of quietly producing
+ * a shorter list than the file suggests.
+ */
+function renderSvGenomeOptionGroups(options, slot) {
+  return ['selected', 'add', 'missing'].map((state) => {
+    const group = (options || []).filter((option) => option.state === state)
+    if (!group.length) return null
+    return (
+      <optgroup key={`${slot}-${state}`} label={SV_GENOME_GROUP_LABELS[state]}>
+        {group.map((option) => (
+          <option
+            key={`${slot}-${option.value}`}
+            value={option.value}
+            disabled={option.disabled}
+            title={getSvOptionTooltip(option)}
+          >
+            {formatSvGenomeOptionLabel(option)}
+          </option>
+        ))}
+      </optgroup>
+    )
+  })
+}
+
 function StructuralVariationChooser({
   theme,
   catalog,
@@ -6834,6 +6893,9 @@ function StructuralVariationChooser({
   thirdSpecies,
   selectedSecondAlignment,
   selectedThirdAlignment,
+  secondAlignmentChoices = [],
+  thirdAlignmentChoices = [],
+  onPreferredAlignmentChange = null,
   anchorRegionOptions = [],
   selectedAnchorRegionId = '',
   regionExplicitlySelected = false,
@@ -6842,6 +6904,7 @@ function StructuralVariationChooser({
   onGenomeOrderChange,
   onOpenGenomeSelector,
   onRegisteredAlignment,
+  onRemoveAlignment,
   outputDir,
 }) {
   const isLight = theme === 'light'
@@ -6858,27 +6921,22 @@ function StructuralVariationChooser({
   const selectedKeys = useMemo(() => new Set(
     dedupeSvSpeciesList([...activeSpecies, ...inactiveSpecies]).map((species) => svSpeciesSelectionKey(species)),
   ), [activeSpecies, inactiveSpecies])
-  const findSpeciesForGenome = useCallback((genome) => {
-    return knownSpecies.find((species) => catalogGenomeMatchesSpecies(genome, species)) || genome?.local_species || null
-  }, [knownSpecies])
-
   const anchorOptions = useMemo(() => {
-    const selectedSpecies = dedupeSvSpeciesList([...(activeSpecies || []), ...(inactiveSpecies || [])])
-    const options = []
-    for (const species of selectedSpecies) {
-      const outgoing = getOutgoingSvAlignments(catalog, species)
-      if (!outgoing.some((alignment) => alignment?.supported)) continue
-      options.push({
-        value: `species:${svSpeciesSelectionKey(species)}`,
-        label: getSpeciesDisplayName(species),
-        species,
-        genome: null,
-        isActive: activeKeys.has(svSpeciesSelectionKey(species)),
-        disabled: false,
-      })
+    // Every genome that anchors at least one usable alignment, whether or not it is
+    // in the top bar. Restricting this to the top bar meant loading a config
+    // appeared to do nothing: its genomes were known but could not be chosen.
+    const seen = new Set()
+    const anchorGenomes = []
+    for (const alignment of catalog?.alignments || []) {
+      if (!alignment?.supported) continue
+      const genome = alignment.reference_genome
+      const id = String(genome?.id || '')
+      if (!genome || (id && seen.has(id))) continue
+      if (id) seen.add(id)
+      anchorGenomes.push(genome)
     }
-    return options
-  }, [catalog, activeSpecies, inactiveSpecies, activeKeys])
+    return buildSvGenomeOptions(anchorGenomes, knownSpecies, selectedKeys, activeKeys, svGenomeOptionNaming)
+  }, [catalog, knownSpecies, selectedKeys, activeKeys])
 
   const outgoingAlignments = useMemo(() => getOutgoingSvAlignments(catalog, anchorSpecies), [catalog, anchorSpecies])
   const hasSelectedAnchorRegion = Boolean(selectedAnchorRegionId && regionExplicitlySelected)
@@ -6888,43 +6946,32 @@ function StructuralVariationChooser({
   const targetOptions = useMemo(() => {
     if (!hasSelectedAnchorRegion) return []
     const seen = new Set()
-    const options = []
+    const genomes = []
+    const alignmentByGenomeId = new Map()
     for (const alignment of outgoingAlignments) {
-      if (selectedAnchorRegionId && !alignmentSupportsAnchorRegion(alignment, selectedAnchorRegionId)) continue
       const genome = alignment?.target_genome
       if (!genome?.id || seen.has(genome.id)) continue
+      // A genome that is not downloaded has no sequence names to intersect, so its
+      // alignments list no regions and the region filter would drop it silently.
+      // Keep it: the option is disabled anyway, and a config's genome explaining
+      // why it cannot be used beats it simply not being there.
+      const regionUnknowable = !genome.local
+      if (selectedAnchorRegionId && !regionUnknowable && !alignmentSupportsAnchorRegion(alignment, selectedAnchorRegionId)) continue
       seen.add(genome.id)
-      const species = findSpeciesForGenome(genome)
-      const speciesKey = species ? svSpeciesSelectionKey(species) : ''
-      const isActive = species ? activeKeys.has(speciesKey) : false
-      const isSelected = species ? selectedKeys.has(speciesKey) : false
-      options.push({
-        value: species ? `species:${speciesKey}` : `catalog:${genome.id}`,
-        label: species ? getSpeciesDisplayName(species) : getSvCatalogGenomeDisplayName(genome),
-        species,
-        genome,
-        alignment,
-        isActive,
-        isSelected,
-        supported: Boolean(alignment?.supported),
-        disabled: (!species && !genome?.downloadable) || !alignment?.supported,
-      })
+      genomes.push(genome)
+      alignmentByGenomeId.set(genome.id, alignment)
     }
-    return options.sort((a, b) => {
-      if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1
-      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1
-      if (a.disabled !== b.disabled) return a.disabled ? 1 : -1
-      return a.label.localeCompare(b.label)
+    return buildSvGenomeOptions(genomes, knownSpecies, selectedKeys, activeKeys, svGenomeOptionNaming).map((option) => {
+      const alignment = alignmentByGenomeId.get(String(option.genome?.id || '')) || null
+      const supported = Boolean(alignment?.supported)
+      return {
+        ...option,
+        alignment,
+        supported,
+        disabled: option.disabled || !supported,
+      }
     })
-  }, [outgoingAlignments, findSpeciesForGenome, activeKeys, selectedKeys, selectedAnchorRegionId, hasSelectedAnchorRegion])
-  const selectedTargetOptions = useMemo(
-    () => targetOptions.filter((option) => option.isSelected),
-    [targetOptions],
-  )
-  const addableTargetOptions = useMemo(
-    () => targetOptions.filter((option) => !option.isSelected),
-    [targetOptions],
-  )
+  }, [outgoingAlignments, knownSpecies, activeKeys, selectedKeys, selectedAnchorRegionId, hasSelectedAnchorRegion])
 
   const optionByValue = useMemo(() => {
     const map = new Map()
@@ -7016,6 +7063,10 @@ function StructuralVariationChooser({
       onOpenGenomeSelector?.()
       return
     }
+    if (action === 'remove') {
+      onRemoveAlignment?.(row)
+      return
+    }
     if (action === 'add_reference_inactive' || action === 'add_target_inactive') {
       const species = action === 'add_reference_inactive'
         ? row.reference?.species
@@ -7050,7 +7101,7 @@ function StructuralVariationChooser({
       regionId: largestRegionId || selectedAnchorRegionId,
       regionExplicitlySelected: Boolean(largestRegionId) || hasSelectedAnchorRegion,
     })
-  }, [anchorSpecies, hasSelectedAnchorRegion, onOpenGenomeSelector, promoteOrder, secondSpecies, selectedAnchorRegionId, thirdSpecies])
+  }, [anchorSpecies, hasSelectedAnchorRegion, onOpenGenomeSelector, onRemoveAlignment, promoteOrder, secondSpecies, selectedAnchorRegionId, thirdSpecies])
 
   useEffect(() => {
     if (catalogLoading || !anchorSpecies) return
@@ -7126,8 +7177,6 @@ function StructuralVariationChooser({
     isLight ? 'border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100' : 'border-gray-600 bg-slate-800 text-gray-100 hover:bg-slate-700'
   }`
   const thirdTargetOptions = targetOptions.filter((option) => option.value !== selectedSecondValue)
-  const thirdSelectedTargetOptions = selectedTargetOptions.filter((option) => option.value !== selectedSecondValue)
-  const thirdAddableTargetOptions = addableTargetOptions.filter((option) => option.value !== selectedSecondValue)
   const secondSelectDisabled = !anchorSpecies || !hasSelectedAnchorRegion
   const thirdSelectDisabled = secondSelectDisabled || !selectedSecondValue || (!selectedThirdValue && !thirdTargetOptions.some((option) => !option.disabled))
 
@@ -7138,11 +7187,7 @@ function StructuralVariationChooser({
           <span className={fieldLabelClass}>Anchor</span>
           <select className={selectClass} value={selectedAnchorValue} title={getSvOptionTooltip(selectedAnchorOption)} onChange={(event) => handleAnchorChange(event.target.value)}>
             {!selectedAnchorValue && <option value="">Select anchor</option>}
-            {anchorOptions.map((option) => (
-              <option key={option.value} value={option.value} disabled={option.disabled} title={getSvOptionTooltip(option)}>
-                {option.label}
-              </option>
-            ))}
+            {renderSvGenomeOptionGroups(anchorOptions, 'anchor')}
           </select>
         </label>
 
@@ -7193,24 +7238,7 @@ function StructuralVariationChooser({
           <span className={fieldLabelClass}>Second</span>
           <select className={secondSelectDisabled ? disabledSelectClass : selectClass} value={selectedSecondValue} title={getSvOptionTooltip(selectedSecondOption)} onChange={(event) => handleTargetChange('second', event.target.value)} disabled={secondSelectDisabled}>
             <option value="">{selectedSecondValue ? 'None' : 'Select'}</option>
-            {selectedTargetOptions.length > 0 && (
-              <optgroup label="Selected genomes">
-                {selectedTargetOptions.map((option) => (
-                  <option key={`second-${option.value}`} value={option.value} disabled={option.disabled} title={getSvOptionTooltip(option)}>
-                    {option.label}{option.supported ? '' : ' (missing files)'}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {addableTargetOptions.length > 0 && (
-              <optgroup label="Available genomes">
-                {addableTargetOptions.map((option) => (
-                  <option key={`second-${option.value}`} value={option.value} disabled={option.disabled} title={getSvOptionTooltip(option)}>
-                    {option.label} (add){option.supported ? '' : ' (missing files)'}
-                  </option>
-                ))}
-              </optgroup>
-            )}
+            {renderSvGenomeOptionGroups(targetOptions, 'second')}
           </select>
         </label>
 
@@ -7218,26 +7246,47 @@ function StructuralVariationChooser({
           <span className={fieldLabelClass}>Third</span>
           <select className={thirdSelectDisabled ? disabledSelectClass : selectClass} value={selectedThirdValue} title={getSvOptionTooltip(selectedThirdOption)} onChange={(event) => handleTargetChange('third', event.target.value)} disabled={thirdSelectDisabled}>
             <option value="">{selectedThirdValue ? 'None' : 'Select'}</option>
-            {thirdSelectedTargetOptions.length > 0 && (
-              <optgroup label="Selected genomes">
-                {thirdSelectedTargetOptions.map((option) => (
-                    <option key={`third-${option.value}`} value={option.value} disabled={option.disabled} title={getSvOptionTooltip(option)}>
-                      {option.label}{option.supported ? '' : ' (missing files)'}
-                    </option>
-                ))}
-              </optgroup>
-            )}
-            {thirdAddableTargetOptions.length > 0 && (
-              <optgroup label="Available genomes">
-                {thirdAddableTargetOptions.map((option) => (
-                    <option key={`third-${option.value}`} value={option.value} disabled={option.disabled} title={getSvOptionTooltip(option)}>
-                      {option.label} (add){option.supported ? '' : ' (missing files)'}
-                    </option>
-                ))}
-              </optgroup>
-            )}
+            {renderSvGenomeOptionGroups(thirdTargetOptions, 'third')}
           </select>
         </label>
+
+        {/* Only shown when there is actually a choice to make. A pair usually has
+            one alignment, and an inert dropdown on every pair would be noise. */}
+        {secondAlignmentChoices.length > 1 && (
+          <label className={`${fieldClass} md:col-start-1 md:row-start-3`}>
+            <span className={fieldLabelClass}>Second alignment</span>
+            <select
+              className={selectClass}
+              value={selectedSecondAlignment?.id || ''}
+              title={selectedSecondAlignment?.description || selectedSecondAlignment?.label || ''}
+              onChange={(event) => onPreferredAlignmentChange?.('second', event.target.value)}
+            >
+              {secondAlignmentChoices.map((alignment) => (
+                <option key={alignment.id} value={alignment.id} title={alignment.description || ''}>
+                  {alignment.label || alignment.id}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {thirdAlignmentChoices.length > 1 && (
+          <label className={`${fieldClass} md:col-start-2 md:row-start-3`}>
+            <span className={fieldLabelClass}>Third alignment</span>
+            <select
+              className={selectClass}
+              value={selectedThirdAlignment?.id || ''}
+              title={selectedThirdAlignment?.description || selectedThirdAlignment?.label || ''}
+              onChange={(event) => onPreferredAlignmentChange?.('third', event.target.value)}
+            >
+              {thirdAlignmentChoices.map((alignment) => (
+                <option key={alignment.id} value={alignment.id} title={alignment.description || ''}>
+                  {alignment.label || alignment.id}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <StructuralVariationRegistrationForm
           className="md:col-start-3 md:col-span-2 md:row-start-2"
@@ -7416,32 +7465,35 @@ function AvailableSvAlignmentsPanel({
     return 'Unavailable'
   }
   const renderActionButtons = (row) => {
-    if (!row.supported) {
-      return <span className={`text-xs ${statusClass(row.status)}`}>Missing files</span>
-    }
     const buttons = []
-    if (row.canUse) {
+    if (row.supported && row.canUse) {
       buttons.push(
         <button key="use" type="button" className={buttonClass} onClick={(event) => { event.stopPropagation(); onAction?.(row, 'use') }}>
           Use alignment
         </button>,
       )
     }
-    if (row.canDownloadReference) {
+    if (row.supported && row.canDownloadReference) {
       buttons.push(
         <button key="download-ref" type="button" className={buttonClass} onClick={(event) => { event.stopPropagation(); onAction?.(row, 'download_reference') }}>
           Download reference
         </button>,
       )
     }
-    if (row.canDownloadTarget) {
+    if (row.supported && row.canDownloadTarget) {
       buttons.push(
         <button key="download-target" type="button" className={buttonClass} onClick={(event) => { event.stopPropagation(); onAction?.(row, 'download_target') }}>
           Download target
         </button>,
       )
     }
-    if (!buttons.length) return <span className={`text-xs ${mutedClass}`}>No local action</span>
+    // Offered whatever the state: an entry with missing files is exactly the one
+    // most likely to need its paths corrected or to be removed outright.
+    buttons.push(
+      <button key="remove" type="button" className={buttonClass} onClick={(event) => { event.stopPropagation(); onAction?.(row, 'remove') }}>
+        Remove
+      </button>,
+    )
     return <div className="flex flex-wrap items-center gap-1.5">{buttons}</div>
   }
   const renderFileDetail = (label, file) => {
@@ -7526,14 +7578,25 @@ function AvailableSvAlignmentsPanel({
                 </div>
                 {expanded && (
                   <div className={`border-b px-3 py-3 text-xs ${detailClass}`}>
+                    {alignment.description && (
+                      <div className={`mb-3 ${mutedClass}`}>{alignment.description}</div>
+                    )}
                     <div className="grid gap-3 md:grid-cols-3">
                       {renderFileDetail('BigChain', alignment.files?.bigchain)}
-                      {renderFileDetail('Reference mapping TSV', alignment.files?.reference_mapping)}
-                      {renderFileDetail('Target mapping TSV', alignment.files?.target_mapping)}
                       <div>
                         <div className={`font-semibold ${strongClass}`}>Indexed side</div>
                         <div>{alignment.indexed_side || 'target'}</div>
                       </div>
+                      <div className="min-w-0">
+                        <div className={`font-semibold ${strongClass}`}>Defined in</div>
+                        <div className={`truncate font-mono text-[11px] ${mutedClass}`} title={alignment.config_path || ''}>
+                          {alignment.config_path || (alignment.source === 'scanned' ? 'Scanned bundle' : 'This installation')}
+                        </div>
+                      </div>
+                      {/* Only shown for records migrated from before sequence names
+                          were derived from the assemblies. */}
+                      {alignment.files?.reference_mapping?.path && renderFileDetail('Reference mapping TSV (legacy)', alignment.files.reference_mapping)}
+                      {alignment.files?.target_mapping?.path && renderFileDetail('Target mapping TSV (legacy)', alignment.files.target_mapping)}
                       {renderGenomeDetail('Reference genome', row.reference, alignment.ref_aliases)}
                       {renderGenomeDetail('Target genome', row.target, alignment.tgt_aliases)}
                     </div>
@@ -7573,6 +7636,268 @@ function AvailableSvAlignmentsPanel({
   )
 }
 
+/** Edit an SV configuration as text.
+ *
+ * A structured form is the right tool for building one record; it is the wrong tool
+ * for fixing a wrong path in three of them, or for pasting in a config a colleague
+ * sent. The file is small and readable by design, so editing it directly is a
+ * reasonable thing to offer.
+ *
+ * Nothing is written until it parses. Validate reports what is wrong and where;
+ * Save writes only after the same check passes on the backend.
+ */
+function StructuralVariationConfigPanel({ theme, catalog, outputDir, onChanged }) {
+  const isLight = theme === 'light'
+  const [selectedPath, setSelectedPath] = useState('')
+  const [text, setText] = useState('')
+  const [loadedText, setLoadedText] = useState('')
+  const [diagnostics, setDiagnostics] = useState([])
+  const [status, setStatus] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [browserMode, setBrowserMode] = useState('')
+  const textareaRef = useRef(null)
+
+  const configs = useMemo(() => (Array.isArray(catalog?.configs) ? catalog.configs : []), [catalog])
+  const registryPath = String(catalog?.registry_path || '')
+  const isDirty = text !== loadedText
+
+  const panelClass = isLight ? 'border-gray-200 bg-white text-gray-900' : 'border-gray-700 bg-[#0f172a] text-gray-100'
+  const mutedClass = isLight ? 'text-gray-600' : 'text-gray-400'
+  const buttonClass = `inline-flex h-8 items-center justify-center rounded border px-2.5 text-xs leading-none transition-colors ${
+    isLight ? 'border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100' : 'border-gray-600 bg-slate-800 text-gray-100 hover:bg-slate-700'
+  }`
+  const selectClass = `h-8 min-w-[240px] rounded border px-2 text-sm leading-tight ${
+    isLight ? 'border-gray-300 bg-white text-gray-900' : 'border-gray-600 bg-slate-900 text-gray-100'
+  }`
+
+  const load = useCallback(async (path) => {
+    setBusy(true)
+    setStatus('')
+    try {
+      const params = new URLSearchParams()
+      if (path) params.set('path', path)
+      if (outputDir) params.set('output_dir', outputDir)
+      const res = await fetch(`${API_BASE}/api/sv/config?${params.toString()}`)
+      const data = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(data?.detail || `Could not read the configuration (${res.status})`)
+      setText(data?.text || '')
+      setLoadedText(data?.text || '')
+      setDiagnostics(data?.diagnostics || [])
+      setSelectedPath(String(data?.path || path || ''))
+    } catch (error) {
+      setStatus(error?.message || 'Could not read the configuration.')
+    } finally {
+      setBusy(false)
+    }
+  }, [outputDir])
+
+  useEffect(() => { load('') }, [load])
+
+  const validate = useCallback(async () => {
+    setBusy(true)
+    setStatus('')
+    try {
+      const res = await fetch(`${API_BASE}/api/sv/config/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, base_dir: selectedPath ? selectedPath.replace(/[^/\\]+$/, '') : '' }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(data?.detail || `Validation failed (${res.status})`)
+      setDiagnostics(data?.diagnostics || [])
+      const missing = data?.missing_files || []
+      if (!data?.ok) setStatus('The configuration has errors. Nothing has been saved.')
+      else if (missing.length) setStatus(`Valid, but ${missing.length} referenced file(s) are not on disk.`)
+      else setStatus(`Valid. ${data?.alignment_count || 0} alignment(s).`)
+      return Boolean(data?.ok)
+    } catch (error) {
+      setStatus(error?.message || 'Validation failed.')
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }, [text, selectedPath])
+
+  const save = useCallback(async (path, attach) => {
+    const destination = String(path || selectedPath || '')
+    if (!destination) {
+      setStatus('Choose where to save first.')
+      return
+    }
+    setBusy(true)
+    setStatus('')
+    try {
+      const res = await fetch(`${API_BASE}/api/sv/config/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: destination, text, mode: 'replace', attach: Boolean(attach) }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(data?.detail || `Save failed (${res.status})`)
+      if (!data?.ok) {
+        setDiagnostics(data?.diagnostics || [])
+        setStatus('The configuration has errors, so nothing was written.')
+        return
+      }
+      setText(data?.text || text)
+      setLoadedText(data?.text || text)
+      setSelectedPath(String(data?.path || destination))
+      setDiagnostics([])
+      setStatus(`Saved to ${data?.path || destination}.`)
+      onChanged?.()
+    } catch (error) {
+      setStatus(error?.message || 'Save failed.')
+    } finally {
+      setBusy(false)
+    }
+  }, [text, selectedPath, onChanged])
+
+  const attach = useCallback(async (path) => {
+    setBusy(true)
+    setStatus('')
+    try {
+      const res = await fetch(`${API_BASE}/api/sv/config/attach`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(data?.detail || `Could not load the configuration (${res.status})`)
+      if (!data?.ok) {
+        setDiagnostics(data?.diagnostics || [])
+        setStatus('That configuration has errors, so it was not loaded.')
+        return
+      }
+      setStatus(`Loaded ${path}.`)
+      onChanged?.()
+      await load(path)
+    } catch (error) {
+      setStatus(error?.message || 'Could not load the configuration.')
+    } finally {
+      setBusy(false)
+    }
+  }, [load, onChanged])
+
+  const detach = useCallback(async (path) => {
+    setBusy(true)
+    try {
+      await fetch(`${API_BASE}/api/sv/config/detach`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+      setStatus(`Stopped using ${path}. The file itself is untouched.`)
+      onChanged?.()
+      if (selectedPath === path) await load('')
+    } finally {
+      setBusy(false)
+    }
+  }, [load, onChanged, selectedPath])
+
+  // Put the caret on the line a diagnostic names, so a reported error is one click
+  // from the text that caused it.
+  const focusLine = useCallback((line) => {
+    const element = textareaRef.current
+    if (!element || !line) return
+    const lines = text.split('\n')
+    const offset = lines.slice(0, Math.max(0, line - 1)).reduce((sum, item) => sum + item.length + 1, 0)
+    element.focus()
+    element.setSelectionRange(offset, offset + (lines[line - 1] || '').length)
+    const lineHeight = element.scrollHeight / Math.max(1, lines.length)
+    element.scrollTop = Math.max(0, (line - 3) * lineHeight)
+  }, [text])
+
+  const errorCount = diagnostics.filter((item) => item.severity === 'error').length
+
+  return (
+    <div className={`mt-1 w-full md:col-span-full border ${panelClass}`}>
+      <div className={`flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+        <span className="font-semibold">Configuration</span>
+        <select
+          className={selectClass}
+          value={selectedPath}
+          onChange={(event) => load(event.target.value)}
+          disabled={busy}
+        >
+          <option value={registryPath}>This installation{registryPath ? '' : ' (no output directory)'}</option>
+          {configs.map((item) => (
+            <option key={item.path} value={item.path}>
+              {item.label || item.path}{item.exists ? '' : ' (file missing)'}
+            </option>
+          ))}
+        </select>
+        <button type="button" className={buttonClass} onClick={() => setBrowserMode('load')} disabled={busy}>
+          Load file
+        </button>
+        {selectedPath && selectedPath !== registryPath && (
+          <button type="button" className={buttonClass} onClick={() => detach(selectedPath)} disabled={busy}>
+            Stop using
+          </button>
+        )}
+        <span className="ml-auto flex items-center gap-2">
+          <button type="button" className={buttonClass} onClick={validate} disabled={busy}>
+            Validate
+          </button>
+          <button type="button" className={buttonClass} onClick={() => save(selectedPath, false)} disabled={busy || !isDirty}>
+            {isDirty ? 'Save' : 'Saved'}
+          </button>
+          <button type="button" className={buttonClass} onClick={() => setBrowserMode('save')} disabled={busy}>
+            Save as
+          </button>
+        </span>
+      </div>
+
+      <textarea
+        ref={textareaRef}
+        className={`h-80 w-full resize-y px-3 py-2 font-mono text-[12px] leading-5 outline-none ${
+          isLight ? 'bg-white text-gray-900' : 'bg-[#0b1220] text-gray-100'
+        }`}
+        spellCheck={false}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
+
+      {(status || diagnostics.length > 0) && (
+        <div className={`border-t px-3 py-2 text-xs ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+          {status && (
+            <div className={errorCount > 0 ? (isLight ? 'text-red-600' : 'text-red-300') : mutedClass}>{status}</div>
+          )}
+          {diagnostics.map((item, index) => (
+            <button
+              key={`${item.pointer}-${index}`}
+              type="button"
+              className={`mt-1 block w-full text-left ${
+                item.severity === 'error'
+                  ? (isLight ? 'text-red-600' : 'text-red-300')
+                  : (isLight ? 'text-amber-700' : 'text-amber-300')
+              }`}
+              onClick={() => focusLine(item.line)}
+              title={item.pointer ? `at ${item.pointer}` : ''}
+            >
+              {item.line ? `Line ${item.line}: ` : ''}{item.message}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <FileBrowserModal
+        isOpen={Boolean(browserMode)}
+        onClose={() => setBrowserMode('')}
+        onSelect={(path) => {
+          const mode = browserMode
+          setBrowserMode('')
+          if (mode === 'load') attach(path)
+          else save(path, true)
+        }}
+        initialPath={outputDir || ''}
+        mode="file"
+        theme={theme}
+        extensions={['.json', '.cfg']}
+      />
+    </div>
+  )
+}
+
 function StructuralVariationRegistrationForm({
   className = '',
   theme,
@@ -7595,6 +7920,7 @@ function StructuralVariationRegistrationForm({
   const [message, setMessage] = useState('')
   const isRegistrationOpen = activeTool === 'register'
   const isAvailableOpen = activeTool === 'available'
+  const isConfigOpen = activeTool === 'config'
   const knownSpecies = useMemo(() => {
     const catalogLocalSpecies = []
     for (const genome of catalog?.genomes || []) {
@@ -7604,16 +7930,35 @@ function StructuralVariationRegistrationForm({
   }, [activeSpecies, inactiveSpecies, catalog])
   const [form, setForm] = useState({
     label: '',
+    description: '',
     chain_path: '',
-    ref_mapping_path: '',
-    tgt_mapping_path: '',
+    reference_bigwig_path: '',
+    reference_bigbed_path: '',
     target_bigwig_path: '',
     target_bigbed_path: '',
-    indexed_side: 'target',
+    // Empty means "work it out from the file name"; getting this wrong is the
+    // usual cause of an alignment that saves but draws nothing.
+    indexed_side: '',
     reference_key: '',
     target_key: '',
+    save_to: 'registry',
+    config_path: '',
   })
   const speciesByKey = useMemo(() => new Map(knownSpecies.map((species) => [speciesGenomeKey(species), species])), [knownSpecies])
+
+  // Start from whatever the view is already showing. The genomes were passed in
+  // all along but the form ignored them, so every registration meant re-picking
+  // the pair that was on screen.
+  useEffect(() => {
+    if (!isRegistrationOpen) return
+    setForm((prev) => {
+      if (prev.reference_key || prev.target_key) return prev
+      const anchorKey = anchorSpecies ? speciesGenomeKey(anchorSpecies) : ''
+      const secondKey = secondSpecies ? speciesGenomeKey(secondSpecies) : ''
+      if (!anchorKey && !secondKey) return prev
+      return { ...prev, reference_key: anchorKey, target_key: secondKey }
+    })
+  }, [isRegistrationOpen, anchorSpecies, secondSpecies])
   const fieldClass = 'flex min-w-0 flex-col gap-1'
   const fieldLabelClass = isLight
     ? 'h-4 text-xs font-semibold leading-4 text-gray-600'
@@ -7633,6 +7978,8 @@ function StructuralVariationRegistrationForm({
   const inputClass = `h-8 w-full rounded border px-2 text-sm leading-tight ${
     isLight ? 'border-gray-300 bg-white text-gray-900' : 'border-gray-600 bg-slate-900 text-gray-100'
   }`
+  const labelTextClass = isLight ? 'text-gray-600' : 'text-gray-400'
+  const hintClass = `mt-0.5 block text-[11px] ${isLight ? 'text-gray-500' : 'text-gray-500'}`
 
   const updateField = useCallback((field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }))
@@ -7640,6 +7987,14 @@ function StructuralVariationRegistrationForm({
 
   const handleSubmit = useCallback(async (event) => {
     event.preventDefault()
+    if (form.reference_key && form.reference_key === form.target_key) {
+      setMessage('The reference and target must be different genomes.')
+      return
+    }
+    if (form.save_to !== 'registry' && !form.config_path.trim()) {
+      setMessage('Choose a configuration file to save into.')
+      return
+    }
     setSubmitting(true)
     setMessage('')
     try {
@@ -7648,14 +8003,18 @@ function StructuralVariationRegistrationForm({
       const payload = {
         output_dir: outputDir || '',
         label: form.label,
+        description: form.description,
         chain_path: form.chain_path,
-        ref_mapping_path: form.ref_mapping_path,
-        tgt_mapping_path: form.tgt_mapping_path,
+        reference_bigwig_path: form.reference_bigwig_path,
+        reference_bigbed_path: form.reference_bigbed_path,
         target_bigwig_path: form.target_bigwig_path,
         target_bigbed_path: form.target_bigbed_path,
         indexed_side: form.indexed_side,
         reference_genome: buildSvGenomePayload(referenceSpecies),
         target_genome: buildSvGenomePayload(targetSpecies),
+        target: form.save_to === 'registry'
+          ? { kind: 'registry' }
+          : { kind: 'config', path: form.config_path.trim(), mode: 'merge' },
       }
       const res = await fetch(`${API_BASE}/api/sv/alignments/register`, {
         method: 'POST',
@@ -7664,7 +8023,18 @@ function StructuralVariationRegistrationForm({
       })
       const data = await res.json().catch(() => null)
       if (!res.ok) throw new Error(data?.detail || `Registration failed (${res.status})`)
-      setMessage('Alignment registered.')
+
+      // A config the user saved into is only useful once the view reads from it.
+      if (form.save_to !== 'registry' && data?.config_path) {
+        await fetch(`${API_BASE}/api/sv/config/attach`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: data.config_path }),
+        }).catch(() => null)
+      }
+      setMessage(form.save_to === 'registry'
+        ? 'Alignment registered.'
+        : `Alignment saved to ${data?.config_path || form.config_path}.`)
       setActiveTool('')
       onRegistered?.()
     } catch (error) {
@@ -7684,6 +8054,9 @@ function StructuralVariationRegistrationForm({
           </button>
           <button type="button" className={chooserButtonClass(isAvailableOpen)} onClick={() => setActiveTool((prev) => (prev === 'available' ? '' : 'available'))}>
             {isAvailableOpen ? 'Close alignments' : 'Available alignments'}
+          </button>
+          <button type="button" className={chooserButtonClass(isConfigOpen)} onClick={() => setActiveTool((prev) => (prev === 'config' ? '' : 'config'))}>
+            {isConfigOpen ? 'Close configuration' : 'Configuration'}
           </button>
         </div>
       </div>
@@ -7707,21 +8080,39 @@ function StructuralVariationRegistrationForm({
         />
       )}
 
+      {isConfigOpen && (
+        <StructuralVariationConfigPanel
+          theme={theme}
+          catalog={catalog}
+          outputDir={outputDir}
+          onChanged={onRegistered}
+        />
+      )}
+
       {isRegistrationOpen && (
         <form className="mt-1 grid gap-2 md:col-span-full md:grid-cols-2" onSubmit={handleSubmit}>
           <label className="text-xs">
-            <span className={isLight ? 'text-gray-600' : 'text-gray-400'}>Label</span>
-            <input className={inputClass} value={form.label} onChange={(event) => updateField('label', event.target.value)} />
+            <span className={labelTextClass}>Label</span>
+            <input
+              className={inputClass}
+              value={form.label}
+              placeholder="GRCh38 to HG00438.pat"
+              onChange={(event) => updateField('label', event.target.value)}
+              required
+            />
+            <span className={hintClass}>Identifies this alignment. Must be unique.</span>
           </label>
           <label className="text-xs">
-            <span className={isLight ? 'text-gray-600' : 'text-gray-400'}>Indexed side</span>
-            <select className={inputClass} value={form.indexed_side} onChange={(event) => updateField('indexed_side', event.target.value)}>
-              <option value="target">Target</option>
-              <option value="reference">Reference</option>
-            </select>
+            <span className={labelTextClass}>Description (optional)</span>
+            <input
+              className={inputClass}
+              value={form.description}
+              placeholder="Cactus chain, HPRC year 1"
+              onChange={(event) => updateField('description', event.target.value)}
+            />
           </label>
           <label className="text-xs">
-            <span className={isLight ? 'text-gray-600' : 'text-gray-400'}>Reference genome</span>
+            <span className={labelTextClass}>Reference genome</span>
             <select className={inputClass} value={form.reference_key} onChange={(event) => updateField('reference_key', event.target.value)} required>
               <option value="">Select genome</option>
               {knownSpecies.map((species) => (
@@ -7732,7 +8123,7 @@ function StructuralVariationRegistrationForm({
             </select>
           </label>
           <label className="text-xs">
-            <span className={isLight ? 'text-gray-600' : 'text-gray-400'}>Target genome</span>
+            <span className={labelTextClass}>Target genome</span>
             <select className={inputClass} value={form.target_key} onChange={(event) => updateField('target_key', event.target.value)} required>
               <option value="">Select genome</option>
               {knownSpecies.map((species) => (
@@ -7742,27 +8133,56 @@ function StructuralVariationRegistrationForm({
               ))}
             </select>
           </label>
-          {[
-            ['chain_path', 'BigChain file'],
-            ['ref_mapping_path', 'Reference mapping TSV'],
-            ['tgt_mapping_path', 'Target mapping TSV'],
-          ].map(([field, label]) => (
-            <label key={field} className="text-xs md:col-span-2">
-              <span className={isLight ? 'text-gray-600' : 'text-gray-400'}>{label}</span>
-              <div className="flex gap-2">
-                <input className={inputClass} value={form[field]} onChange={(event) => updateField(field, event.target.value)} required />
-                <button type="button" className={buttonClass} onClick={() => setBrowserField(field)}>
+          <label className="text-xs md:col-span-2">
+            <span className={labelTextClass}>BigChain file</span>
+            <div className="flex gap-2">
+              <input className={inputClass} value={form.chain_path} onChange={(event) => updateField('chain_path', event.target.value)} required />
+              <button type="button" className={buttonClass} onClick={() => setBrowserField('chain_path')}>
+                Browse
+              </button>
+            </div>
+            <span className={hintClass}>
+              Indexed BigBed chain file, conventionally *.bigChain.bb. Sequence names come from
+              the assemblies, so no mapping files are needed.
+            </span>
+          </label>
+          <label className="text-xs">
+            <span className={labelTextClass}>Indexed side</span>
+            <select className={inputClass} value={form.indexed_side} onChange={(event) => updateField('indexed_side', event.target.value)}>
+              <option value="">Detect from file name</option>
+              <option value="target">Target</option>
+              <option value="reference">Reference</option>
+            </select>
+            <span className={hintClass}>Which genome the chain file is indexed on.</span>
+          </label>
+          <div className="text-xs">
+            <span className={labelTextClass}>Save to</span>
+            <select className={inputClass} value={form.save_to} onChange={(event) => updateField('save_to', event.target.value)}>
+              <option value="registry">This installation</option>
+              <option value="config">A configuration file</option>
+            </select>
+            {form.save_to === 'config' && (
+              <div className="mt-1 flex gap-2">
+                <input
+                  className={inputClass}
+                  value={form.config_path}
+                  placeholder="alignments.json"
+                  onChange={(event) => updateField('config_path', event.target.value)}
+                />
+                <button type="button" className={buttonClass} onClick={() => setBrowserField('config_path')}>
                   Browse
                 </button>
               </div>
-            </label>
-          ))}
+            )}
+          </div>
           {[
-            ['target_bigwig_path', 'Target BigWig file (optional)'],
-            ['target_bigbed_path', 'Target BigBed file (optional)'],
+            ['reference_bigwig_path', 'Reference BigWig (optional)'],
+            ['reference_bigbed_path', 'Reference BigBed (optional)'],
+            ['target_bigwig_path', 'Target BigWig (optional)'],
+            ['target_bigbed_path', 'Target BigBed (optional)'],
           ].map(([field, label]) => (
-            <label key={field} className="text-xs md:col-span-2">
-              <span className={isLight ? 'text-gray-600' : 'text-gray-400'}>{label}</span>
+            <label key={field} className="text-xs">
+              <span className={labelTextClass}>{label}</span>
               <div className="flex gap-2">
                 <input className={inputClass} value={form[field]} onChange={(event) => updateField(field, event.target.value)} />
                 <button type="button" className={buttonClass} onClick={() => setBrowserField(field)}>
@@ -7773,7 +8193,7 @@ function StructuralVariationRegistrationForm({
           ))}
           <div className="md:col-span-2 flex flex-wrap items-center gap-2">
             <button type="submit" className={buttonClass} disabled={submitting}>
-              {submitting ? 'Registering...' : 'Save alignment'}
+              {submitting ? 'Saving...' : 'Save alignment'}
             </button>
           </div>
         </form>
@@ -7789,16 +8209,19 @@ function StructuralVariationRegistrationForm({
         initialPath={outputDir || ''}
         mode="file"
         theme={theme}
-        extensions={browserField === 'chain_path'
-          ? ['.bigChain.bb', '.bb']
-          : browserField === 'target_bigwig_path'
-            ? ['.bw', '.bigwig']
-          : browserField === 'target_bigbed_path'
-            ? ['.bb', '.bigbed']
-            : ['.hal_mapping.tsv', '.tsv']}
+        extensions={SV_FILE_BROWSER_EXTENSIONS[browserField] || []}
       />
     </>
   )
+}
+
+const SV_FILE_BROWSER_EXTENSIONS = {
+  chain_path: ['.bigChain.bb', '.bb'],
+  reference_bigwig_path: ['.bw', '.bigwig'],
+  target_bigwig_path: ['.bw', '.bigwig'],
+  reference_bigbed_path: ['.bb', '.bigbed'],
+  target_bigbed_path: ['.bb', '.bigbed'],
+  config_path: ['.json', '.cfg'],
 }
 
 function StructuralVariationView(props) {
@@ -7858,24 +8281,63 @@ function StructuralVariationView(props) {
     loadCatalog()
   }, [loadCatalog])
 
+  const handleRemoveAlignment = useCallback(async (row) => {
+    const alignment = row?.alignment || {}
+    const id = String(alignment.id || row?.id || '')
+    if (!id) return
+    const label = alignment.label || id
+    // Removal edits a file on disk, and for an attached config that file may be
+    // shared, so it is worth one confirmation.
+    if (!window.confirm(`Remove "${label}" from the configuration? The alignment files themselves are not deleted.`)) {
+      return
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/sv/alignments/${encodeURIComponent(id)}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ output_dir: outputDir || '', config_path: alignment.config_path || '' }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(data?.detail || `Could not remove the alignment (${res.status})`)
+      await loadCatalog()
+    } catch (error) {
+      setCatalogError(error?.message || 'Could not remove the alignment.')
+    }
+  }, [loadCatalog, outputDir])
+
   const effectiveSelectedAnchorRegionId = anchorLocationRegion ? getSvRegionKey(anchorLocationRegion) : selectedAnchorRegionId
   const hasExplicitAnchorRegion = Boolean(effectiveSelectedAnchorRegionId && regionExplicitlySelected)
 
-  const selectedSecondAlignment = useMemo(
-    () => {
-      if (!hasExplicitAnchorRegion) return null
-      const alignment = findSvAlignment(catalog, refSpecies, tgtSpecies)
-      return alignmentSupportsAnchorRegion(alignment, effectiveSelectedAnchorRegionId) ? alignment : null
-    },
+  // A genome pair can carry more than one alignment -- the other direction, or an
+  // alternative chain for the same one. Which of them is in use is a user choice,
+  // remembered per slot until the pair changes.
+  const [preferredAlignmentIds, setPreferredAlignmentIds] = useState({ second: '', third: '' })
+  const handlePreferredAlignmentChange = useCallback((slot, alignmentId) => {
+    setPreferredAlignmentIds((prev) => ({ ...prev, [slot]: String(alignmentId || '') }))
+  }, [])
+
+  const secondAlignmentChoices = useMemo(
+    () => (hasExplicitAnchorRegion
+      ? getSvAlignmentsForPair(catalog, refSpecies, tgtSpecies)
+        .filter((alignment) => alignmentSupportsAnchorRegion(alignment, effectiveSelectedAnchorRegionId))
+      : []),
     [catalog, refSpecies, tgtSpecies, effectiveSelectedAnchorRegionId, hasExplicitAnchorRegion],
   )
-  const selectedThirdAlignment = useMemo(
-    () => {
-      if (!hasExplicitAnchorRegion) return null
-      const alignment = findSvAlignment(catalog, refSpecies, thirdSpecies)
-      return alignmentSupportsAnchorRegion(alignment, effectiveSelectedAnchorRegionId) ? alignment : null
-    },
+  const thirdAlignmentChoices = useMemo(
+    () => (hasExplicitAnchorRegion
+      ? getSvAlignmentsForPair(catalog, refSpecies, thirdSpecies)
+        .filter((alignment) => alignmentSupportsAnchorRegion(alignment, effectiveSelectedAnchorRegionId))
+      : []),
     [catalog, refSpecies, thirdSpecies, effectiveSelectedAnchorRegionId, hasExplicitAnchorRegion],
+  )
+
+  const selectedSecondAlignment = useMemo(
+    () => pickPreferredSvAlignment(secondAlignmentChoices, preferredAlignmentIds.second),
+    [secondAlignmentChoices, preferredAlignmentIds.second],
+  )
+  const selectedThirdAlignment = useMemo(
+    () => pickPreferredSvAlignment(thirdAlignmentChoices, preferredAlignmentIds.third),
+    [thirdAlignmentChoices, preferredAlignmentIds.third],
   )
   const outgoingAlignments = useMemo(() => getOutgoingSvAlignments(catalog, refSpecies), [catalog, refSpecies])
   const anchorRegionOptions = useMemo(
@@ -7955,6 +8417,9 @@ function StructuralVariationView(props) {
         thirdSpecies={thirdSpecies}
         selectedSecondAlignment={selectedSecondAlignment}
         selectedThirdAlignment={selectedThirdAlignment}
+        secondAlignmentChoices={secondAlignmentChoices}
+        thirdAlignmentChoices={thirdAlignmentChoices}
+        onPreferredAlignmentChange={handlePreferredAlignmentChange}
         anchorRegionOptions={anchorRegionOptions}
         selectedAnchorRegionId={effectiveSelectedAnchorRegionId}
         regionExplicitlySelected={hasExplicitAnchorRegion}
@@ -7963,6 +8428,7 @@ function StructuralVariationView(props) {
         onGenomeOrderChange={onGenomeOrderChange}
         onOpenGenomeSelector={onOpenGenomeSelector}
         onRegisteredAlignment={loadCatalog}
+        onRemoveAlignment={handleRemoveAlignment}
         outputDir={outputDir}
       />
       {!readyForPairRender ? (

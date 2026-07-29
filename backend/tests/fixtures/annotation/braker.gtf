@@ -1,0 +1,18 @@
+# BRAKER3 braker.gtf — AUGUSTUS-family output.
+# `gene` and `transcript` rows carry a bare token in column 9; only the child
+# rows use quoted key/value pairs.
+# g1 has exon rows and a stop codon outside the CDS (GTF convention):
+#   CDS 1000-1399 (400) + 2200-2396 (197) + stop 2397-2399 (3) = 600 bp.
+# g2 has CDS rows only, so its exons have to be derived.
+chr1	AUGUSTUS	gene	1000	2399	0.62	+	.	g1
+chr1	AUGUSTUS	transcript	1000	2399	0.62	+	.	g1.t1
+chr1	AUGUSTUS	start_codon	1000	1002	.	+	0	transcript_id "g1.t1"; gene_id "g1";
+chr1	AUGUSTUS	exon	1000	1399	.	+	.	transcript_id "g1.t1"; gene_id "g1";
+chr1	AUGUSTUS	CDS	1000	1399	0.88	+	0	transcript_id "g1.t1"; gene_id "g1";
+chr1	AUGUSTUS	exon	2200	2399	.	+	.	transcript_id "g1.t1"; gene_id "g1";
+chr1	AUGUSTUS	CDS	2200	2396	0.91	+	2	transcript_id "g1.t1"; gene_id "g1";
+chr1	AUGUSTUS	stop_codon	2397	2399	.	+	0	transcript_id "g1.t1"; gene_id "g1";
+chr2	AUGUSTUS	gene	400	1200	0.44	-	.	g2
+chr2	AUGUSTUS	transcript	400	1200	0.44	-	.	g2.t1
+chr2	AUGUSTUS	CDS	400	600	0.71	-	0	transcript_id "g2.t1"; gene_id "g2";
+chr2	AUGUSTUS	CDS	1000	1200	0.71	-	0	transcript_id "g2.t1"; gene_id "g2";

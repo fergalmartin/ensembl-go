@@ -155,7 +155,7 @@ class VcfSettingsTests(unittest.TestCase):
             )
             fake_handle = _FakeVcfHandle([15, 120, 450, 455, 900])
 
-            with patch("main._get_or_open_vcf", return_value=(fake_handle, (1, 1), str(vcf_path))), \
+            with patch("main._open_vcf_handle_unlocked", return_value=(fake_handle, (1, 1), str(vcf_path))), \
                     patch("main._resolve_vcf_chrom", return_value="chr1"), \
                     patch("main._load_vcf_gene_intervals", return_value=[(0, 260), (700, 760)]), \
                     patch("main._load_vcf_block_tile_cache", return_value=None), \

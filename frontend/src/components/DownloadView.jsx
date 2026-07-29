@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { API_BASE } from '../backendRuntime'
 import ScreenshotExportModal from './ScreenshotExportModal'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
+import ProgressGlyph from './ProgressGlyph'
 import {
     buildDefaultScreenshotName,
     buildDomNodeScreenshotSnapshot,
@@ -16,6 +17,11 @@ import {
     normalizeGenomeSourceDatabase,
 } from '../utils/genomeIdentity'
 import { datasetReleaseDownloadMetadata } from '../utils/downloadMetadata'
+import {
+    DOWNLOAD_FILE_DEFS,
+    fileTypeLabel,
+    fileTypeTooltip,
+} from '../utils/genomeFileTypes'
 
 const PAGE_SIZE = 50
 const DL_PAGE_SIZE = 10
@@ -89,45 +95,9 @@ const DownloadGlyph = ({ size = 16, style = undefined, opacity = 1 }) => (
         </g>
     </svg>
 )
-const IconDownload = ({ size = 16, progress = null }) => {
-    if (progress == null) return <DownloadGlyph size={size} />
-    const pct = Math.max(0.12, Math.min(1, Number(progress || 0)))
-    const frameSize = size + 8
-    const inset = 1.5
-    const side = frameSize - inset * 2
-    const perimeter = side * 4
-    const dashOffset = perimeter * (1 - pct)
-    return (
-        <span className="relative inline-block align-middle" style={{ width: frameSize, height: frameSize }} aria-hidden="true">
-            <span
-                className="absolute left-0 right-0 bottom-0 rounded-[4px] bg-current"
-                style={{ height: `${pct * 100}%`, opacity: 0.16 }}
-            />
-            <DownloadGlyph size={size} opacity={0.26} style={{ position: 'absolute', left: 4, top: 4 }} />
-            <span className="absolute overflow-hidden" style={{ left: 4, top: 4, width: size, height: size }}>
-                <span className="absolute left-0 right-0 bottom-0 overflow-hidden" style={{ height: `${pct * 100}%` }}>
-                    <DownloadGlyph size={size} style={{ position: 'absolute', left: 0, bottom: 0 }} />
-                </span>
-            </span>
-            <svg className="absolute inset-0" width={frameSize} height={frameSize} viewBox={`0 0 ${frameSize} ${frameSize}`} fill="none">
-                <rect x={inset} y={inset} width={side} height={side} rx="4" stroke="currentColor" strokeWidth="1.6" opacity="0.24" />
-                <rect
-                    x={inset}
-                    y={inset}
-                    width={side}
-                    height={side}
-                    rx="4"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeDasharray={perimeter}
-                    strokeDashoffset={dashOffset}
-                    style={{ transition: 'stroke-dashoffset 0.25s ease' }}
-                />
-            </svg>
-        </span>
-    )
-}
+const IconDownload = ({ size = 16, progress = null }) => (
+    <ProgressGlyph size={size} progress={progress} renderGlyph={(props) => <DownloadGlyph {...props} />} />
+)
 const IconDownloaded = ({ size = 16 }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10.4" />
@@ -294,34 +264,12 @@ const NCBI_EXAMPLE_SPECIES = buildNcbiExampleSpecies()
 // ---------------------------------------------------------------------------
 // File type status badge — shows download progress inline
 // ---------------------------------------------------------------------------
-const DOWNLOAD_FILE_DEFS = {
-    fasta: { label: 'Genome', shortLabel: 'Genome', category: 'Genome', subtype: 'FASTA', color: 'bg-amber-100 text-amber-800', tooltip: 'Genome FASTA; central to app views.' },
-    gff3: { label: 'GFF3', shortLabel: 'GFF3', category: 'Annotation', subtype: 'GFF3', color: 'bg-purple-100 text-purple-800', tooltip: 'GFF3 annotation; central to app views.' },
-    homology: { label: 'Homology', shortLabel: 'Homology', category: 'Homology', subtype: 'TSV', color: 'bg-teal-100 text-teal-800', tooltip: 'Homology table used by comparative views.' },
-    cdna: { label: 'cDNA', shortLabel: 'cDNA', category: 'Transcript', subtype: 'cDNA', color: 'bg-lime-100 text-lime-800', tooltip: 'cDNA FASTA; downloaded for optional/external use.' },
-    protein: { label: 'Protein', shortLabel: 'Protein', category: 'Protein', subtype: 'FASTA', color: 'bg-rose-100 text-rose-800', tooltip: 'Protein FASTA; downloaded for optional/external use.' },
-    xref: { label: 'Xrefs', shortLabel: 'Xrefs', category: 'Xref', subtype: 'TSV', color: 'bg-cyan-100 text-cyan-800', tooltip: 'External references; downloaded for optional/external use.' },
-    metadata: { label: 'Metadata', shortLabel: 'Meta', category: 'Metadata', subtype: 'Assembly', color: 'bg-sky-100 text-sky-800', tooltip: 'Assembly report / sequence metadata.' },
-    index: { label: 'App index', shortLabel: 'Index', category: 'Index', subtype: 'App GFF3', color: 'bg-blue-100 text-blue-800', tooltip: 'Local app-generated GFF3 index.' },
-    gff3_index: { label: 'GFF3 index', shortLabel: 'GFF3 idx', category: 'Index', subtype: 'GFF3', color: 'bg-indigo-100 text-indigo-800', tooltip: 'Remote sidecar index for annotation.' },
-    gtf_index: { label: 'GTF index', shortLabel: 'GTF idx', category: 'Index', subtype: 'GTF', color: 'bg-indigo-100 text-indigo-800', tooltip: 'Remote sidecar index for GTF annotation.' },
-    cdna_index: { label: 'cDNA index', shortLabel: 'cDNA idx', category: 'Index', subtype: 'cDNA', color: 'bg-emerald-100 text-emerald-800', tooltip: 'Remote sidecar index for cDNA FASTA.' },
-    protein_index: { label: 'Protein index', shortLabel: 'Prot idx', category: 'Index', subtype: 'Protein', color: 'bg-pink-100 text-pink-800', tooltip: 'Remote sidecar index for protein FASTA.' },
-    xref_index: { label: 'Xref index', shortLabel: 'Xref idx', category: 'Index', subtype: 'Xref', color: 'bg-cyan-100 text-cyan-800', tooltip: 'Remote sidecar index for xrefs.' },
-    gtf: { label: 'GTF', shortLabel: 'GTF', category: 'Annotation', subtype: 'GTF', color: 'bg-violet-100 text-violet-800', tooltip: 'GTF annotation export.' },
-    embl: { label: 'EMBL', shortLabel: 'EMBL', category: 'Annotation', subtype: 'EMBL', color: 'bg-gray-100 text-gray-700', tooltip: 'EMBL annotation export.' },
-    alignment: { label: 'Alignments', shortLabel: 'Align', category: 'Alignment', subtype: 'MAF', color: 'bg-orange-100 text-orange-800', tooltip: 'Pairwise alignment archive from Ensembl Compara.' },
-    other_annotation: { label: 'Other', shortLabel: 'Other', category: 'Annotation', subtype: 'Other', color: 'bg-gray-100 text-gray-700', tooltip: 'Additional annotation file.' },
-}
-
 const ENSEMBL_DOWNLOAD_FILE_TYPES = ['fasta', 'gff3', 'homology', 'cdna', 'protein', 'xref']
 const REFSEQ_DOWNLOAD_FILE_TYPES = ['fasta', 'gff3']
 const DEFAULT_DOWNLOAD_FILE_TYPES = ['fasta', 'gff3']
 const DATASET_DOWNLOAD_TYPES = new Set(['gff3', 'homology', 'cdna', 'protein', 'xref', 'gff3_index', 'gtf_index', 'cdna_index', 'protein_index', 'xref_index', 'gtf', 'embl', 'alignment', 'other_annotation'])
 const ASSEMBLY_DOWNLOAD_TYPES = new Set(['fasta', 'metadata'])
 
-const fileTypeLabel = (type) => DOWNLOAD_FILE_DEFS[type]?.shortLabel || String(type || '').toUpperCase()
-const fileTypeTooltip = (type) => DOWNLOAD_FILE_DEFS[type]?.tooltip || type
 const selectedDownloadTypeList = (selectedTypes) => (
     Array.from(selectedTypes || []).filter((type) => type && type !== 'metadata')
 )
@@ -1743,14 +1691,18 @@ function SpeciesRow({ species, expanded, onToggleExpand, onDownload, onDownloadA
                             e.stopPropagation()
                             onDownloadAll(species, { selectedTypesByItem })
                         }}
-                        className={`${allSelectedDataDownloaded ? 'w-8 h-8 justify-center' : 'gap-1.5 px-2.5 py-1.5'} inline-flex items-center rounded-md text-xs font-semibold transition-colors ${downloading || selectedTypeCount === 0 || pendingAssemblyCount === 0
+                        // Asymmetric padding on purpose. The icon-only download button in
+                        // single-assembly rows insets its icon by centring it in a w-8 box,
+                        // which works out at 7.5px from the edge; matching that here puts
+                        // both icons' centres on the same vertical axis.
+                        className={`${allSelectedDataDownloaded ? 'w-8 h-8 justify-center' : 'gap-1.5 pl-2.5 pr-[7.5px] py-1.5'} inline-flex items-center rounded-md text-xs font-semibold transition-colors ${downloading || selectedTypeCount === 0 || pendingAssemblyCount === 0
                             ? (allSelectedDataDownloaded
                                 ? (isLight ? 'text-green-700 bg-green-50 border border-green-100 cursor-default' : 'text-green-300 bg-green-900/20 border border-green-900/40 cursor-default')
-                                : 'opacity-40 cursor-not-allowed')
+                                : 'opacity-40 cursor-not-allowed border border-transparent')
                             : (isLight ? 'text-blue-700 bg-white border border-blue-100 hover:bg-blue-50' : 'text-blue-300 bg-gray-800 border border-blue-900/40 hover:bg-blue-900/20')}`}
                     >
                         {!allSelectedDataDownloaded && <span>Download all</span>}
-                        {allSelectedDataDownloaded ? <IconDownloaded size={14} /> : <IconDownload size={14} />}
+                        {allSelectedDataDownloaded ? <IconDownloaded size={15} /> : <IconDownload size={15} />}
                     </button>
                 </div>
             </div>

@@ -389,11 +389,24 @@ async function captureHtmlSnapshot(payload = {}) {
   const backgroundColor = String(payload?.backgroundColor || '#ffffff').trim() || '#ffffff';
   let tempCaptureDir = null;
 
+  // The capture page renders markup handed over by the renderer. It is already
+  // sandboxed with no node access, so this CSP is the second layer: no script
+  // execution and no outbound requests, which keeps a renderer-side injection
+  // from using this file:// page to reach the network. Inline styles and
+  // data:/blob: images stay allowed because the snapshot depends on them.
+  const capturePolicy = [
+    "default-src 'none'",
+    "img-src data: blob:",
+    "style-src 'unsafe-inline'",
+    "font-src data:",
+  ].join('; ');
+
   const htmlDocument = [
     '<!DOCTYPE html>',
     '<html>',
     '<head>',
     '<meta charset="UTF-8" />',
+    `<meta http-equiv="Content-Security-Policy" content="${capturePolicy}" />`,
     '<meta name="viewport" content="width=device-width, initial-scale=1.0" />',
     headMarkup,
     '<style>',

@@ -30,12 +30,16 @@ manually without `ENSEMBL_LOCAL_API_TOKEN`.
   `output_dir/local_data` species/assembly tree.
 - Symlink escapes and path traversal are rejected for managed-delete paths.
 - Export and config writes require leaf filenames with expected extensions.
+- Directory creation takes an existing parent plus a single leaf name, so the
+  browser can add a folder where the user is looking without exposing a
+  create-arbitrary-trees-anywhere primitive.
 
 ## Outbound Network Policy
 
 Genome downloads are restricted to HTTPS URLs from approved EBI/NCBI hosts and
-their expected path prefixes. Redirect targets are revalidated before data is
-accepted.
+their expected path prefixes. Redirects are followed one hop at a time and each
+hop is revalidated *before* it is requested, so a redirect toward a disallowed
+host is never fetched at all.
 
 Track Hub imports require HTTPS, reject credentials, and block localhost/private
 host targets. Imported Track Hub files are written with atomic temp-file
@@ -51,6 +55,27 @@ application-support area:
 - Linux/other: `~/.ensembl_go/cache`
 
 Downloaded genomes live under the user-selected `output_dir/local_data`.
+
+## Dependency Advisories
+
+Shipped dependencies carry no known advisories: `npm audit --omit=dev` is clean
+in both `frontend/` and `electron/`, and the Python requirements are pinned in
+`backend/constraints.txt`.
+
+A plain `npm audit` does report findings, all of them in build-time-only
+packages that never reach a user's machine. Two are left deliberately unfixed,
+because the available fix costs more than the flaw:
+
+- `frontend/`: a denial-of-service in `brace-expansion`, reached only through
+  ESLint's own glob handling. The fix requires ESLint 10, which changes the rule
+  set enough to turn a currently clean `npm run lint` into 26 errors.
+- `electron/`: the same `brace-expansion` issue by way of `electron-builder`.
+  The fix is a major *downgrade* of the packager, to 25.x.
+
+Both would need attacker-controlled glob patterns in a developer's own build
+configuration to matter. Revisit when ESLint 10 support lands in
+`eslint-plugin-react-hooks` and when `electron-builder` refreshes its
+dependencies.
 
 ## Non-goals
 

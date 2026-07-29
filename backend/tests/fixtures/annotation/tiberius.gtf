@@ -1,0 +1,10 @@
+# Tiberius — real output shape: CDS rows only. No gene, transcript or exon
+# rows exist anywhere in the file, so both levels have to be reconstructed from
+# the transcript_id/gene_id attributes the CDS lines carry.
+# g1.t1: 400 + 197 + 3 = 600 bp across three blocks on the plus strand.
+# g2.t1: 201 + 201 = 402 bp on the minus strand, on a second contig.
+PVKX01000002.1	Tiberius	CDS	1000	1399	.	+	0	transcript_id "g1.t1"; gene_id "g1";
+PVKX01000002.1	Tiberius	CDS	2200	2396	.	+	2	transcript_id "g1.t1"; gene_id "g1";
+PVKX01000002.1	Tiberius	CDS	5000	5002	.	+	0	transcript_id "g1.t1"; gene_id "g1";
+PVKX01000003.1	Tiberius	CDS	400	600	.	-	0	transcript_id "g2.t1"; gene_id "g2";
+PVKX01000003.1	Tiberius	CDS	1000	1200	.	-	0	transcript_id "g2.t1"; gene_id "g2";

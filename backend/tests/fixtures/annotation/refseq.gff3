@@ -1,0 +1,16 @@
+##gff-version 3
+#!annotation-source NCBI RefSeq
+# RefSeq style: `gene-` / `rna-` / `cds-` ID prefixes, gene_biotype attribute,
+# and a prokaryote-style locus where the CDS hangs directly off the gene.
+NC_000001.11	BestRefSeq	region	1	100000	.	+	.	ID=NC_000001.11:1..100000;Name=1;chromosome=1
+NC_000001.11	BestRefSeq	gene	1000	2600	.	+	.	ID=gene-FOO1;Name=FOO1;gbkey=Gene;gene_biotype=protein_coding
+NC_000001.11	BestRefSeq	mRNA	1000	2600	.	+	.	ID=rna-NM_000001.1;Parent=gene-FOO1;gbkey=mRNA;transcript_id=NM_000001.1;tag=RefSeq Select
+NC_000001.11	BestRefSeq	exon	1000	1399	.	+	.	ID=exon-NM_000001.1-1;Parent=rna-NM_000001.1
+NC_000001.11	BestRefSeq	exon	2200	2600	.	+	.	ID=exon-NM_000001.1-2;Parent=rna-NM_000001.1
+NC_000001.11	BestRefSeq	CDS	1100	1399	.	+	0	ID=cds-NP_000001.1;Parent=rna-NM_000001.1;protein_id=NP_000001.1
+NC_000001.11	BestRefSeq	CDS	2200	2499	.	+	0	ID=cds-NP_000001.1;Parent=rna-NM_000001.1;protein_id=NP_000001.1
+NC_000001.11	BestRefSeq	gene	7000	7299	.	-	.	ID=gene-b0001;Name=thrA;gbkey=Gene;locus_tag=b0001
+NC_000001.11	BestRefSeq	CDS	7000	7299	.	-	0	ID=cds-NP_000002.1;Parent=gene-b0001;gbkey=CDS;protein_id=NP_000002.1
+NC_000001.11	BestRefSeq	gene	9000	9080	.	+	.	ID=gene-TRNA1;Name=TRNA1;gbkey=Gene;gene_biotype=tRNA
+NC_000001.11	BestRefSeq	tRNA	9000	9080	.	+	.	ID=rna-TRNA1;Parent=gene-TRNA1;gbkey=tRNA
+NC_000001.11	BestRefSeq	exon	9000	9080	.	+	.	ID=exon-TRNA1-1;Parent=rna-TRNA1

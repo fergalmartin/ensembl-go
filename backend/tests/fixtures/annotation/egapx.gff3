@@ -1,0 +1,17 @@
+##gff-version 3
+# egapx / Gnomon output — NCBI-shaped GFF3 with a two-isoform coding locus and a
+# single-exon lncRNA. Isoform 1 CDS = 600 bp, isoform 2 CDS = 402 bp.
+chr1	Gnomon	gene	1000	2600	.	+	.	ID=gene-LOC100001;Name=LOC100001;gene_biotype=protein_coding
+chr1	Gnomon	mRNA	1000	2600	.	+	.	ID=rna-XM_00000001.1;Parent=gene-LOC100001;transcript_id=XM_00000001.1
+chr1	Gnomon	exon	1000	1399	.	+	.	ID=exon-XM_00000001.1-1;Parent=rna-XM_00000001.1
+chr1	Gnomon	exon	2200	2600	.	+	.	ID=exon-XM_00000001.1-2;Parent=rna-XM_00000001.1
+chr1	Gnomon	CDS	1100	1399	.	+	0	ID=cds-XP_00000001.1;Parent=rna-XM_00000001.1;protein_id=XP_00000001.1
+chr1	Gnomon	CDS	2200	2499	.	+	0	ID=cds-XP_00000001.1;Parent=rna-XM_00000001.1;protein_id=XP_00000001.1
+chr1	Gnomon	mRNA	1000	2600	.	+	.	ID=rna-XM_00000002.1;Parent=gene-LOC100001;transcript_id=XM_00000002.1
+chr1	Gnomon	exon	1000	1399	.	+	.	ID=exon-XM_00000002.1-1;Parent=rna-XM_00000002.1
+chr1	Gnomon	exon	2200	2600	.	+	.	ID=exon-XM_00000002.1-2;Parent=rna-XM_00000002.1
+chr1	Gnomon	CDS	1199	1399	.	+	0	ID=cds-XP_00000002.1;Parent=rna-XM_00000002.1;protein_id=XP_00000002.1
+chr1	Gnomon	CDS	2200	2400	.	+	1	ID=cds-XP_00000002.1;Parent=rna-XM_00000002.1;protein_id=XP_00000002.1
+chr1	Gnomon	gene	20000	20600	.	-	.	ID=gene-LOC100002;Name=LOC100002;gene_biotype=lncRNA
+chr1	Gnomon	lnc_RNA	20000	20600	.	-	.	ID=rna-XR_00000001.1;Parent=gene-LOC100002;transcript_id=XR_00000001.1
+chr1	Gnomon	exon	20000	20600	.	-	.	ID=exon-XR_00000001.1-1;Parent=rna-XR_00000001.1

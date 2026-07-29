@@ -1,0 +1,6 @@
+# scallop assembled transcripts — no gene rows, no CDS, quoted GTF attributes.
+chr1	scallop	transcript	1000	5000	1000	+	.	gene_id "gene.0"; transcript_id "gene.0.0"; RPKM "3.2119"; cov "12.4";
+chr1	scallop	exon	1000	1400	1000	+	.	gene_id "gene.0"; transcript_id "gene.0.0"; exon "1";
+chr1	scallop	exon	2200	2600	1000	+	.	gene_id "gene.0"; transcript_id "gene.0.0"; exon "2";
+chr1	scallop	transcript	9000	9120	1000	-	.	gene_id "gene.1"; transcript_id "gene.1.0"; RPKM "0.5000"; cov "2.0";
+chr1	scallop	exon	9000	9120	1000	-	.	gene_id "gene.1"; transcript_id "gene.1.0"; exon "1";
