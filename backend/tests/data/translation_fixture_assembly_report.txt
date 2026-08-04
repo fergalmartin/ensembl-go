@@ -1,0 +1,18 @@
+# Assembly name:  translation-fixture
+# Organism name:  Homo sapiens (human)
+# Taxid:          9606
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+fx14a	assembled-molecule	fx14a	Chromosome	na	=	fx14a	Primary Assembly	1923	fx14a
+fx14b	assembled-molecule	fx14b	Chromosome	na	=	fx14b	Primary Assembly	16371	fx14b
+fx14f	assembled-molecule	fx14f	Chromosome	na	=	fx14f	Primary Assembly	7137	fx14f
+fx14c	assembled-molecule	fx14c	Chromosome	na	=	fx14c	Primary Assembly	4126	fx14c
+fx14d	assembled-molecule	fx14d	Chromosome	na	=	fx14d	Primary Assembly	4295	fx14d
+fx19a	assembled-molecule	fx19a	Chromosome	na	=	fx19a	Primary Assembly	1869	fx19a
+fx19b	assembled-molecule	fx19b	Chromosome	na	=	fx19b	Primary Assembly	4572	fx19b
+fx19c	assembled-molecule	fx19c	Chromosome	na	=	fx19c	Primary Assembly	2824	fx19c
+fx19d	assembled-molecule	fx19d	Chromosome	na	=	fx19d	Primary Assembly	2320	fx19d
+fxMT2	assembled-molecule	fxMT2	Mitochondrion	na	=	fxMT2	non-nuclear	1102	fxMT2
+fxMT3	assembled-molecule	fxMT3	Mitochondrion	na	=	fxMT3	non-nuclear	1602	fxMT3
+fx14e	assembled-molecule	fx14e	Chromosome	na	=	fx14e	Primary Assembly	3299	fx14e
+fx21a	assembled-molecule	fx21a	Chromosome	na	=	fx21a	Primary Assembly	8869	fx21a
+NC_012920.1	assembled-molecule	NC_012920.1	Mitochondrion	na	=	NC_012920.1	non-nuclear	1602	NC_012920.1

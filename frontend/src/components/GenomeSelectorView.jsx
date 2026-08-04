@@ -52,6 +52,19 @@ import {
     registrationBadgeTooltip,
 } from '../utils/genomeBundle'
 import GenomeBundlePreviewModal from './GenomeBundlePreviewModal'
+import { deregisterGenomesFromConfig } from '../utils/genomeDeregistration'
+import {
+    REMOVAL_FILL_ALL,
+    REMOVAL_FILL_SELECTED,
+    computeSelectAllChecked,
+    flaggedItems,
+    formatBytes,
+    nextRemovalFlags,
+    partitionRemovalTargets,
+    registeredRemovalFiles,
+    selectableItems,
+    toggleRemovalFlag,
+} from '../utils/genomeRemovalSelection'
 
 const FASTA_EXTENSIONS = ['.fa', '.fna', '.fasta', '.fa.gz', '.fna.gz', '.fasta.gz', '.fa.bgz', '.fna.bgz', '.fasta.bgz']
 // GFF3 loads directly; GFF and GTF are accepted too but must be converted into
@@ -64,6 +77,11 @@ const GFF3_EXTENSIONS = [
 const CONVERSION_REQUIRED_EXTENSIONS = ['.gtf', '.gtf.gz', '.gtf.bgz', '.gff2', '.gff2.gz']
 const HOMOLOGY_EXTENSIONS = ['.tsv', '.tsv.gz']
 const LOCAL_PAGE_SIZE = 10
+// Selecting this many genomes at once is worth a confirmation: it changes what
+// the whole app is working with.
+const BULK_SELECT_CONFIRM_THRESHOLD = 50
+// Genomes per remove-data call, so a long run reports progress as it goes.
+const REMOVAL_CHUNK_SIZE = 8
 const PLAYLIST_ALL_ID = '__all__'
 const SELECTOR_PENDING_GENOMES_STORAGE_KEY = 'ensembl_selector_pending_genomes'
 const SELECTOR_REFRESH_EVENT = 'ensembl:selector-refresh'
@@ -110,6 +128,23 @@ const AddGenomeGlyph = ({ size = 16, style = undefined, opacity = 1 }) => (
         opacity={opacity}
     >
         <path d="M12 5v14M5 12h14" />
+    </svg>
+)
+
+const IconClipboard = ({ size = 14 }) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+    >
+        <rect x="7" y="4" width="13" height="16" rx="2" />
+        <path d="M16 4V3a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h2" />
     </svg>
 )
 
@@ -552,6 +587,279 @@ const formatPlaylistGenomeLabel = (item) => {
 const canDownloadPlaylistGenome = (item) => {
     if (!item || item.is_manual) return false
     return Boolean(item.species_key && getAssemblyAccession(item) && normalizeGenomeProvider(item))
+}
+
+/**
+ * Confirming a removal.
+ *
+ * Two intentions get their own button, because they are not the same thing:
+ * forgetting a genome, and deleting its data. The preview comes from the backend
+ * so the list of files is what will actually be deleted, and the files the user
+ * supplied are named in full — they are the ones people worry about.
+ */
+function GenomeRemovalDialog({ isOpen, theme, targets, preview, onClose, onRemove }) {
+    const isLight = theme === 'light'
+    const [expanded, setExpanded] = useState(false)
+    const [affectedFilesExpanded, setAffectedFilesExpanded] = useState(false)
+    const [copiedPath, setCopiedPath] = useState('')
+    const [includeManual, setIncludeManual] = useState(true)
+
+    useEffect(() => {
+        if (isOpen) {
+            setExpanded(false)
+            setAffectedFilesExpanded(false)
+            setCopiedPath('')
+            setIncludeManual(true)
+        }
+    }, [isOpen])
+
+    const { manual, downloaded, missing } = useMemo(
+        () => partitionRemovalTargets(targets || []),
+        [targets],
+    )
+    const knownAffectedFiles = useMemo(
+        () => registeredRemovalFiles(targets || []),
+        [targets],
+    )
+
+    if (!isOpen || !(targets || []).length) return null
+
+    const plans = preview?.status === 'ready' ? (preview.plans || []) : []
+    const totals = preview?.totals || {}
+    const protectedFiles = plans.flatMap((plan) => plan.protected || [])
+    const leftInPlace = plans.flatMap((plan) => plan.left_in_place || [])
+    const previewAffectedFiles = plans.flatMap((plan) => plan.deletable || [])
+    const affectedFiles = preview?.status === 'ready' ? previewAffectedFiles : knownAffectedFiles
+    const deletableCount = Number(totals.files || 0)
+    const canDeleteData = downloaded.length > 0 || manual.length > 0
+    const deleteScopeCount = includeManual ? downloaded.length + manual.length : downloaded.length
+    const deregisterLabel = targets.length === 1 ? 'Deregister genome' : 'Deregister genomes'
+
+    const heading = (targets || []).length === 1
+        ? `Remove ${targets[0].scientific_name || targets[0].species_key}?`
+        : `Remove ${targets.length} genomes?`
+
+    const copyAffectedPath = async (path) => {
+        const value = String(path || '')
+        if (!value || !navigator?.clipboard?.writeText) return
+        try {
+            await navigator.clipboard.writeText(value)
+            setCopiedPath(value)
+            window.setTimeout(() => setCopiedPath((current) => current === value ? '' : current), 1600)
+        } catch {
+            // The full path remains available in the tooltip if clipboard access
+            // is unavailable in the current runtime.
+        }
+    }
+
+    return (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className={`w-full max-w-2xl rounded-xl border shadow-2xl max-h-[85vh] flex flex-col ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800 border-gray-700'}`}>
+                <div className={`px-5 py-4 border-b flex items-center justify-between ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+                    <h3 className={`text-base font-bold ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>{heading}</h3>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className={`w-7 h-7 rounded flex items-center justify-center ${isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-700'}`}
+                    >
+                        &#10005;
+                    </button>
+                </div>
+
+                <div className="px-5 py-4 overflow-y-auto text-sm space-y-4">
+                    <ul className={`space-y-1 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
+                        {(targets || []).slice(0, expanded ? targets.length : 6).map((item) => (
+                            <li key={itemKey(item)} className="flex items-center gap-2">
+                                <span className="font-medium">{item.scientific_name || item.species_key}</span>
+                                <span className="opacity-60 text-xs font-mono">{getAssemblyAccession(item) || item.assembly}</span>
+                                {item.is_manual ? (
+                                    <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${isLight ? 'bg-indigo-100 text-indigo-700' : 'bg-indigo-900/40 text-indigo-300'}`}>
+                                        added manually
+                                    </span>
+                                ) : null}
+                            </li>
+                        ))}
+                        {!expanded && targets.length > 6 ? (
+                            <li>
+                                <button type="button" onClick={() => setExpanded(true)} className="text-xs underline opacity-70 hover:opacity-100">
+                                    show {targets.length - 6} more
+                                </button>
+                            </li>
+                        ) : null}
+                    </ul>
+
+                    <div className={`rounded-lg border px-3 py-2.5 ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-900/40'}`}>
+                        {preview?.status === 'loading' ? (
+                            <span className="text-xs opacity-70">Checking what is on disk…</span>
+                        ) : preview?.status === 'error' ? (
+                            <span className={`text-xs ${isLight ? 'text-red-700' : 'text-red-300'}`}>
+                                Could not check what is on disk: {preview.error}
+                            </span>
+                        ) : (
+                            <div className="text-xs space-y-1">
+                                <div>
+                                    <span className="font-semibold">{deletableCount}</span> file{deletableCount === 1 ? '' : 's'} would be deleted
+                                    {totals.bytes ? <> — frees up to <span className="font-semibold">{formatBytes(totals.bytes)}</span></> : null}
+                                </div>
+                                {downloaded.length > 0 ? (
+                                    <div className="opacity-80">{downloaded.length} downloaded genome{downloaded.length === 1 ? '' : 's'} in your data folder</div>
+                                ) : null}
+                                {missing.length > 0 ? (
+                                    <div className="opacity-80">{missing.length} playlist entr{missing.length === 1 ? 'y has' : 'ies have'} no local files — they can only be forgotten</div>
+                                ) : null}
+                                {downloaded.length > 0 ? (
+                                    <div className="opacity-80">
+                                        Deregistering removes the genome from this list while leaving its
+                                        downloaded files untouched.
+                                    </div>
+                                ) : null}
+                                {leftInPlace.length > 0 ? (
+                                    <div className="opacity-80">
+                                        Attached track hub files stay on disk ({leftInPlace.map((entry) => formatBytes(entry.bytes)).join(', ')}).
+                                    </div>
+                                ) : null}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className={`rounded-lg border overflow-hidden ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-900/30'}`}>
+                        <button
+                            type="button"
+                            onClick={() => setAffectedFilesExpanded((current) => !current)}
+                            className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left text-xs font-semibold transition-colors ${isLight
+                                ? 'text-gray-800 hover:bg-gray-50'
+                                : 'text-gray-200 hover:bg-gray-800'
+                                }`}
+                            aria-expanded={affectedFilesExpanded}
+                        >
+                            <span>
+                                Affected files
+                                {` (${affectedFiles.length})`}
+                            </span>
+                            <IconChevron open={affectedFilesExpanded} size={13} />
+                        </button>
+                        {affectedFilesExpanded ? (
+                            <div className={`border-t px-3 py-2.5 ${isLight ? 'border-gray-200 bg-gray-50/60' : 'border-gray-700 bg-gray-900/50'}`}>
+                                {affectedFiles.length === 0 ? (
+                                    <div className="text-xs opacity-70">
+                                        {preview?.status === 'loading'
+                                            ? 'Checking for generated files…'
+                                            : 'No files would be deleted.'}
+                                    </div>
+                                ) : (
+                                    <>
+                                        {preview?.status === 'loading' ? (
+                                            <div className="mb-2 text-[11px] opacity-70">
+                                                Showing registered paths now; checking for generated sidecars…
+                                            </div>
+                                        ) : preview?.status === 'error' ? (
+                                            <div className={`mb-2 text-[11px] ${isLight ? 'text-amber-700' : 'text-amber-300'}`}>
+                                                Showing registered paths; the additional disk check was unavailable.
+                                            </div>
+                                        ) : null}
+                                        <ul className="space-y-1.5">
+                                            {affectedFiles.map((entry, index) => {
+                                                const path = String(entry?.path || '')
+                                                return (
+                                                    <li key={`${path}-${index}`} className="flex min-w-0 items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => copyAffectedPath(path)}
+                                                            className={`flex-none rounded p-1 transition-colors ${isLight
+                                                                ? 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'
+                                                                : 'text-gray-400 hover:bg-gray-700 hover:text-gray-100'
+                                                                }`}
+                                                            title={copiedPath === path ? 'Copied' : 'Copy full path'}
+                                                            aria-label={copiedPath === path ? 'Path copied' : `Copy ${path}`}
+                                                        >
+                                                            <IconClipboard size={13} />
+                                                        </button>
+                                                        <span
+                                                            className={`min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-xs font-mono ${isLight ? 'text-gray-700' : 'text-gray-300'}`}
+                                                            style={{ direction: 'rtl', textAlign: 'left' }}
+                                                            title={path}
+                                                        >
+                                                            {path}
+                                                        </span>
+                                                    </li>
+                                                )
+                                            })}
+                                        </ul>
+                                    </>
+                                )}
+                            </div>
+                        ) : null}
+                    </div>
+
+                    {manual.length > 0 ? (
+                        <div className={`rounded-lg border px-3 py-2.5 text-xs ${isLight ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-amber-700/60 bg-amber-900/20 text-amber-100'}`}>
+                            <div className="font-semibold">
+                                {manual.length} genome{manual.length === 1 ? ' was' : 's were'} added manually.
+                            </div>
+                            <p className="mt-1">
+                                Only files Ensembl Go generated for them are deleted — the index, sequence
+                                and annotation indexes, and any annotation it converted. The files you
+                                supplied are left exactly where they are:
+                            </p>
+                            <ul className="mt-1.5 space-y-0.5 font-mono break-all">
+                                {protectedFiles.slice(0, 8).map((entry) => (
+                                    <li key={entry.path}>{entry.path}</li>
+                                ))}
+                                {protectedFiles.length > 8 ? <li className="font-sans opacity-70">…and {protectedFiles.length - 8} more</li> : null}
+                            </ul>
+                        </div>
+                    ) : null}
+
+                    {manual.length > 0 && downloaded.length > 0 ? (
+                        <label className={`flex items-center gap-2 text-xs ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
+                            <input
+                                type="checkbox"
+                                checked={includeManual}
+                                onChange={(event) => setIncludeManual(event.target.checked)}
+                                className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                            />
+                            Include the manually added genomes
+                        </label>
+                    ) : null}
+                </div>
+
+                <div className={`px-5 py-4 border-t flex flex-wrap items-center gap-2 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+                    <button
+                        type="button"
+                        onClick={() => onRemove({ deleteData: false, includeManual: true })}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${isLight
+                            ? 'bg-white border-gray-300 text-gray-800 hover:bg-gray-100'
+                            : 'bg-transparent border-gray-600 text-gray-200 hover:bg-gray-700'
+                            }`}
+                        title="Forget these genomes. Nothing on disk is touched."
+                    >
+                        {deregisterLabel}
+                    </button>
+                    <button
+                        type="button"
+                        disabled={!canDeleteData || deleteScopeCount === 0}
+                        onClick={() => onRemove({ deleteData: true, includeManual })}
+                        className={`px-3 py-2 rounded-lg text-xs font-bold text-white transition-colors ${!canDeleteData || deleteScopeCount === 0
+                            ? 'bg-gray-400 cursor-not-allowed'
+                            : 'bg-red-600 hover:bg-red-500'
+                            }`}
+                        title="Delete the files Ensembl Go downloaded or generated, then forget the genomes."
+                    >
+                        {manual.length > 0 && downloaded.length > 0 && !includeManual
+                            ? `Delete data · downloads only (${downloaded.length})`
+                            : `Delete data (${deleteScopeCount})`}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className={`ml-auto px-3 py-2 rounded-lg text-xs font-medium ${isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-300 hover:bg-gray-700'}`}
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
 }
 
 function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, onSave }) {
@@ -1114,7 +1422,7 @@ function CustomAnnotationModal({
     )
 }
 
-export default function SpeciesSelectorView({
+export default function GenomeSelectorView({
     config,
     onConfigChange,
     onToggleSpecies,
@@ -1137,9 +1445,10 @@ export default function SpeciesSelectorView({
 
     const [assemblies, setAssemblies] = useState([])
     const [loading, setLoading] = useState(false)
+    const assembliesLoadedRef = useRef(false)
+    const assembliesOutputDirRef = useRef('')
     const [search, setSearch] = useState('')
     const [page, setPage] = useState(1)
-    const [confirmDelete, setConfirmDelete] = useState(null)
     const [expandedRows, setExpandedRows] = useState(new Set())
     const [fileBrowserEditTarget, setFileBrowserEditTarget] = useState(null) // { genomeKey, fileType, item }
     const [confirmDeleteFile, setConfirmDeleteFile] = useState(null) // { path, fileType, item }
@@ -1151,6 +1460,14 @@ export default function SpeciesSelectorView({
     const selectionDelayTimersRef = useRef(new Map())
     const tableScrollRef = useRef(null)
     const pendingScrollTopRef = useRef(null)
+    // Removal mode keeps its own flags: the Active ticks say what the app is
+    // working with, and mixing the two would make a mis-click destructive.
+    const [removalMode, setRemovalMode] = useState(false)
+    const [removalKeys, setRemovalKeys] = useState(() => new Set())
+    const [removalFillMode, setRemovalFillMode] = useState(null)
+    const [removalDialog, setRemovalDialog] = useState(null)   // { targets, origin }
+    const [removalPreview, setRemovalPreview] = useState({ status: 'idle' })
+    const [removalRun, setRemovalRun] = useState(null)
     const [playlistMembershipTarget, setPlaylistMembershipTarget] = useState(null)
     const [editingPlaylistId, setEditingPlaylistId] = useState('')
     const [playlistsCollapsed, setPlaylistsCollapsed] = useState(true)
@@ -1352,13 +1669,22 @@ export default function SpeciesSelectorView({
     }, [customAnnotationValidation])
 
     const fetchAssemblies = useCallback(async () => {
-        if (!config.output_dir) {
+        const outputDir = String(config.output_dir || '').trim()
+        if (assembliesOutputDirRef.current !== outputDir) {
+            assembliesOutputDirRef.current = outputDir
+            assembliesLoadedRef.current = false
             setAssemblies([])
+        }
+        if (!outputDir) {
+            setAssemblies([])
+            setLoading(false)
+            assembliesLoadedRef.current = true
             return
         }
-        setLoading(true)
+        const showInitialLoading = !assembliesLoadedRef.current
+        if (showInitialLoading) setLoading(true)
         try {
-            const res = await fetch(`${API_BASE}/api/remote/local-assemblies?output_dir=${encodeURIComponent(config.output_dir)}`)
+            const res = await fetch(`${API_BASE}/api/remote/local-assemblies?output_dir=${encodeURIComponent(outputDir)}`)
 	            if (res.ok) {
                 const data = await res.json()
                 const pendingIds = readPendingSelectorGenomeIds()
@@ -1376,7 +1702,8 @@ export default function SpeciesSelectorView({
 	        } catch (error) {
 	            console.warn('Failed to refresh local assemblies:', error)
 	        } finally {
-	            setLoading(false)
+                assembliesLoadedRef.current = true
+                if (showInitialLoading) setLoading(false)
 	        }
     }, [config.output_dir])
 
@@ -1455,8 +1782,11 @@ export default function SpeciesSelectorView({
 
             if (indexPath) {
                 showStatus('Index generated successfully!')
-                await fetchAssemblies()
                 if (onComplete) onComplete(indexPath)
+                // Refresh in the background. The task badge is cleared by the
+                // surrounding finally block immediately, rather than waiting
+                // for a full filesystem rescan to finish.
+                fetchAssemblies()
             }
             return indexPath
         } catch (e) {
@@ -1770,13 +2100,20 @@ export default function SpeciesSelectorView({
 
     const allAssemblies = useMemo(() => {
         const byKey = new Map()
-        for (const item of assemblies || []) byKey.set(itemKey(item), normalizeGenomeRecord(item))
+        const deregisteredKeys = Array.isArray(config.deregistered_genome_keys)
+            ? config.deregistered_genome_keys
+            : []
+        const isDeregistered = (item) => deregisteredKeys.some((key) => genomeKeysMatch(item, key))
+        for (const item of assemblies || []) {
+            if (!isDeregistered(item)) byKey.set(itemKey(item), normalizeGenomeRecord(item))
+        }
         for (const item of manualAssemblies) {
+            if (isDeregistered(item)) continue
             const key = itemKey(item)
             if (!byKey.has(key)) byKey.set(key, item)
         }
         return Array.from(byKey.values())
-    }, [assemblies, manualAssemblies])
+    }, [assemblies, config.deregistered_genome_keys, manualAssemblies])
 	    const allAssembliesByKey = useMemo(
 	        () => {
 	            const map = new Map()
@@ -1887,28 +2224,6 @@ export default function SpeciesSelectorView({
             return next.size === prev.size ? prev : next
         })
     }, [allAssembliesByKey, downloadingMissingKeys.size])
-
-
-    useEffect(() => {
-        const active = config.active_species || []
-        const candidates = []
-
-        if (config.ref_gff) {
-            const refItem = active.find((s) => s.files?.gff3 === config.ref_gff)
-            if (refItem) candidates.push(refItem)
-        }
-        if (config.target_gff) {
-            const tgtItem = active.find((s) => s.files?.gff3 === config.target_gff)
-            if (tgtItem && !candidates.some((c) => itemKey(c) === itemKey(tgtItem))) {
-                candidates.push(tgtItem)
-            }
-        }
-
-        candidates.forEach((item) => {
-            ensureIndexForGenome(item)
-        })
-    }, [config.active_species, config.ref_gff, config.target_gff, ensureIndexForGenome])
-
     const filtered = useMemo(() => {
         if (!search.trim()) return visibleAssembliesBase
         const q = search.toLowerCase().trim()
@@ -1958,6 +2273,10 @@ export default function SpeciesSelectorView({
     useEffect(() => {
         setPage(1)
     }, [search, selectedPlaylistId])
+    // Removing genomes can shorten the list under the current page.
+    useEffect(() => {
+        setPage((current) => Math.min(current, Math.max(1, totalPages)))
+    }, [totalPages])
 
     useEffect(() => {
         if (selectedPlaylistIdRaw === selectedPlaylistId) return
@@ -2208,86 +2527,193 @@ export default function SpeciesSelectorView({
         [genomePlaylists, editingPlaylistId]
     )
 
-    const removeManualGenome = (item) => {
-        const key = itemKey(item)
-        const nextManual = (config.manual_species || []).filter((s) => itemKey(s) !== key)
-        const nextActive = (config.active_species || []).filter((s) => itemKey(s) !== key)
+    // Removing genomes: deregistering forgets them, deleting also removes the
+    // files we downloaded or generated. Both go through the same dialog, whether
+    // one row's trash or a whole flagged set, so the choice is always explicit.
 
-        const updates = {
-            manual_species: nextManual,
-            active_species: nextActive,
-            genome_analysis_reports: withoutGenomeAnalysis(
-                withoutGenomeAnalysis(config.genome_analysis_reports, key, 'fasta'),
-                key,
-                'gff3',
-            ),
+    const openRemovalDialog = useCallback((targets, origin = 'row') => {
+        const list = (Array.isArray(targets) ? targets : []).filter(Boolean)
+        if (list.length === 0) return
+        setRemovalRun(null)
+        setRemovalPreview({ status: 'loading' })
+        setRemovalDialog({ targets: list, origin })
+    }, [])
+
+    const closeRemovalDialog = useCallback(() => {
+        setRemovalDialog(null)
+        setRemovalPreview({ status: 'idle' })
+    }, [])
+
+    const removalDescriptors = useCallback((targets) => (
+        (targets || []).map((item) => ({
+            genome_key: itemKey(item),
+            species_key: String(item?.species_key || ''),
+            assembly: getAssemblyAccession(item) || String(item?.assembly || ''),
+            provider: normalizeGenomeProvider(item),
+            is_manual: Boolean(item?.is_manual),
+        }))
+    ), [])
+
+    /** Forget genomes without touching a single file.
+     *
+     * The update is a function rather than an object built from the `config`
+     * prop. That prop is a render-time snapshot with the app's internal
+     * playlists filtered out of it, so writing it back both lost those
+     * playlists and let any config change made since that render — a selection
+     * toggle raised by the same click, for one — overwrite the deregistration
+     * that had just been recorded, putting the genome straight back in the list.
+     */
+    const deregisterGenomes = useCallback((targets) => {
+        onConfigChange((current) => {
+            const result = deregisterGenomesFromConfig(current, targets)
+            return result.changed ? result.config : null
+        })
+    }, [onConfigChange])
+
+    // Ask the backend what it would delete. The dialog shows that list rather
+    // than a guess, and the answer is thrown away when the dialog closes.
+    //
+    // There is deliberately no deadline. A genome with a lot of data on disk can
+    // take a while to total up, and cutting the count short only replaced a
+    // number the user was waiting for with an error. Nothing is blocked on it
+    // either: both buttons work while it runs, and choosing one — or closing the
+    // dialog — clears `removalDialog`, which aborts the request through this
+    // effect's cleanup.
+    useEffect(() => {
+        const targets = removalDialog?.targets
+        if (!targets || targets.length === 0) {
+            setRemovalPreview({ status: 'idle' })
+            return undefined
         }
-
-        if (item.files?.gff3) {
-            if (config.ref_gff === item.files.gff3) {
-                updates.ref_fasta = ''
-                updates.ref_gff = ''
-                updates.ref_index = ''
-                updates.homologies_file = ''
+        const controller = new AbortController()
+        let disposed = false
+        setRemovalPreview({ status: 'loading' })
+        ;(async () => {
+            try {
+                const res = await fetch(`${API_BASE}/api/genomes/removal-preview`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        output_dir: config.output_dir,
+                        genomes: removalDescriptors(targets),
+                    }),
+                    signal: controller.signal,
+                })
+                const data = await res.json().catch(() => ({}))
+                if (disposed) return
+                if (!res.ok) {
+                    setRemovalPreview({ status: 'error', error: data?.detail || `Request failed (${res.status})` })
+                    return
+                }
+                setRemovalPreview({ status: 'ready', ...data })
+            } catch (error) {
+                if (disposed || error?.name === 'AbortError') return
+                setRemovalPreview({ status: 'error', error: error?.message || 'Request failed' })
             }
-            if (config.target_gff === item.files.gff3) {
-                updates.target_fasta = ''
-                updates.target_gff = ''
-                updates.target_index = ''
-            }
+        })()
+        return () => {
+            disposed = true
+            controller.abort()
         }
+    }, [removalDialog, config.output_dir, removalDescriptors])
 
-        onConfigChange({ ...config, ...updates })
-        showStatus(`Removed manual genome: ${item.scientific_name} (${item.assembly})`)
-    }
+    const runRemoval = useCallback(async (targets, { deleteData, includeManual }) => {
+        const list = (Array.isArray(targets) ? targets : []).filter(Boolean)
+        if (list.length === 0) return
+        const { manual } = partitionRemovalTargets(list)
+        const manualKeys = new Set(manual.map((item) => itemKey(item)))
+        const scope = includeManual ? list : list.filter((item) => !manualKeys.has(itemKey(item)))
+        if (scope.length === 0) return
 
-    const handleDelete = async (item) => {
-        if (item?.is_manual) {
-            removeManualGenome(item)
-            setConfirmDelete(null)
+        setRemovalDialog(null)
+        setRemovalPreview({ status: 'idle' })
+
+        if (!deleteData) {
+            deregisterGenomes(scope)
+            setAssemblies((current) => current.filter(
+                (item) => !scope.some((target) => genomeKeysMatch(item, target))
+            ))
+            setRemovalRun(null)
+            showStatus(`Deregistered ${scope.length} genome${scope.length === 1 ? '' : 's'}`)
+            setRemovalKeys(new Set())
+            setRemovalFillMode(null)
+            setRemovalMode(false)
+            // No refresh: nothing on disk changed, and re-reading the directory
+            // would put the row back for as long as the config write is in
+            // flight — the very flicker that made deregistering look inert.
             return
         }
 
-        try {
-            const res = await fetch(`${API_BASE}/api/remote/local-files`, {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    output_dir: config.output_dir,
-                    species_key: item.species_key,
-                    assembly: item.assembly,
-                    provider: normalizeGenomeProvider(item),
-                }),
-            })
-            if (res.ok) {
-                showStatus(`Deleted ${item.scientific_name} (${item.assembly})`)
+        const descriptors = removalDescriptors(scope)
+        const results = []
+        setRemovalRun({ status: 'running', total: descriptors.length, completed: 0, results, failures: [] })
 
-                const key = itemKey(item)
-                const activeSpecies = config.active_species || []
-                const nextAnalyses = withoutGenomeAnalysis(
-                    withoutGenomeAnalysis(config.genome_analysis_reports, key, 'fasta'),
-                    key,
-                    'gff3',
-                )
-                if (activeSpecies.some((s) => itemKey(s) === key)) {
-                    onConfigChange({
-                        ...config,
-                        active_species: activeSpecies.filter((s) => itemKey(s) !== key),
-                        genome_analysis_reports: nextAnalyses,
-                    })
-                } else if (nextAnalyses !== config.genome_analysis_reports) {
-                    onConfigChange({ ...config, genome_analysis_reports: nextAnalyses })
+        for (let index = 0; index < descriptors.length; index += REMOVAL_CHUNK_SIZE) {
+            const chunk = descriptors.slice(index, index + REMOVAL_CHUNK_SIZE)
+            try {
+                const res = await fetch(`${API_BASE}/api/genomes/remove-data`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ output_dir: config.output_dir, genomes: chunk }),
+                })
+                const data = await res.json().catch(() => ({}))
+                if (!res.ok) {
+                    // One chunk failing must not abandon the rest of the selection.
+                    results.push(...chunk.map((genome) => ({
+                        genome_key: genome.genome_key,
+                        status: 'failed',
+                        failed: [{ path: '', error: data?.detail || `Request failed (${res.status})` }],
+                        deleted: [],
+                        freed_bytes: 0,
+                    })))
+                } else {
+                    results.push(...(Array.isArray(data?.results) ? data.results : []))
                 }
-
-                fetchAssemblies()
-            } else {
-                showStatus('Failed to delete files', true)
+            } catch (error) {
+                results.push(...chunk.map((genome) => ({
+                    genome_key: genome.genome_key,
+                    status: 'failed',
+                    failed: [{ path: '', error: error?.message || 'Request failed' }],
+                    deleted: [],
+                    freed_bytes: 0,
+                })))
             }
-        } catch (e) {
-            showStatus(`Error: ${e.message}`, true)
+            setRemovalRun({
+                status: 'running',
+                total: descriptors.length,
+                completed: Math.min(index + REMOVAL_CHUNK_SIZE, descriptors.length),
+                results: [...results],
+                failures: results.filter((row) => (row.failed || []).length > 0),
+            })
         }
-        setConfirmDelete(null)
-    }
+
+        // Deregister everything the user confirmed, including genomes whose files
+        // only partly went: leaving one half-deleted but registered would point
+        // the browser at files that are no longer there.
+        deregisterGenomes(scope)
+
+        const freed = results.reduce((total, row) => total + (Number(row.freed_bytes) || 0), 0)
+        const failures = results.filter((row) => (row.failed || []).length > 0)
+        setRemovalRun({
+            status: failures.length > 0 ? 'error' : 'success',
+            total: descriptors.length,
+            completed: descriptors.length,
+            results,
+            failures,
+            freed,
+        })
+        showStatus(
+            failures.length > 0
+                ? `Removed ${descriptors.length - failures.length} of ${descriptors.length} genomes; ${failures.length} had files that could not be deleted`
+                : `Deleted data for ${descriptors.length} genome${descriptors.length === 1 ? '' : 's'} (${formatBytes(freed)})`,
+            failures.length > 0,
+        )
+        setRemovalKeys(new Set())
+        setRemovalFillMode(null)
+        setRemovalMode(false)
+        fetchAssemblies()
+        window.dispatchEvent(new Event(SELECTOR_REFRESH_EVENT))
+    }, [config.output_dir, deregisterGenomes, fetchAssemblies, removalDescriptors, showStatus])
 
     const buildRemoteFilesUrl = useCallback((item, requestedTypes = []) => {
         const params = new URLSearchParams({
@@ -2584,9 +3010,6 @@ export default function SpeciesSelectorView({
 
             onConfigChange({ ...config, ...updates })
 
-            if (item.files?.gff3) {
-                await ensureIndexForGenome(item)
-            }
         }
     }
 
@@ -2625,6 +3048,93 @@ export default function SpeciesSelectorView({
         }, 1000)
         selectionDelayTimersRef.current.set(key, timer)
     }
+
+    /**
+     * Select or deselect a whole list of genomes in one config write.
+     *
+     * Looping toggleSpecies would post the config once per genome, each from a
+     * stale snapshot, and would queue an index build for every one of them.
+     */
+    const applyBulkSelection = useCallback((items, { select }) => {
+        const candidates = selectableItems(items)
+        if (candidates.length === 0) return
+        cancelPendingSelections()
+
+        const currentActive = activeSpeciesList || []
+        const keys = new Set(candidates.map((item) => itemKey(item)))
+        if (select) {
+            const kept = currentActive.filter((entry) => !keys.has(itemKey(entry)))
+            const addedKeys = candidates
+                .filter((item) => !currentActive.some((entry) => itemKey(entry) === itemKey(item)))
+                .map((item) => itemKey(item))
+            onConfigChange({
+                ...config,
+                active_species: [...kept, ...candidates],
+                // App keeps the first and moves the rest to selected-but-inactive,
+                // which is what selecting many genomes at once should mean.
+                __manual_batch_added_keys: addedKeys,
+            })
+            return
+        }
+
+        const remaining = currentActive.filter((entry) => !keys.has(itemKey(entry)))
+        onConfigChange({
+            ...config,
+            active_species: remaining,
+            __removed_genome_keys: [...keys],
+        })
+    }, [activeSpeciesList, cancelPendingSelections, config, onConfigChange])
+
+    const selectAllChecked = useMemo(
+        () => computeSelectAllChecked(filteredSorted, selectedGenomeKeys),
+        [filteredSorted, selectedGenomeKeys],
+    )
+    const selectableFilteredCount = useMemo(
+        () => selectableItems(filteredSorted).length,
+        [filteredSorted],
+    )
+    // What the shortcuts would actually flag: the filter is what is on screen.
+    const selectedFilteredCount = useMemo(
+        () => selectableItems(filteredSorted).filter((item) => selectedGenomeKeys.has(itemKey(item))).length,
+        [filteredSorted, selectedGenomeKeys],
+    )
+
+    const handleRemovalFillToggle = useCallback((action) => {
+        if (removalFillMode === action) {
+            setRemovalKeys(new Set())
+            setRemovalFillMode(null)
+            return
+        }
+        setRemovalKeys(nextRemovalFlags(new Set(), action, {
+            filteredItems: filteredSorted,
+            selectedKeys: selectedGenomeKeys,
+        }))
+        setRemovalFillMode(action)
+    }, [filteredSorted, removalFillMode, selectedGenomeKeys])
+
+    const toggleRemovalMode = useCallback(() => {
+        setRemovalMode((current) => {
+            if (current) setRemovalKeys(new Set())
+            return !current
+        })
+        setRemovalFillMode(null)
+    }, [])
+
+    const handleSelectAllToggle = useCallback(() => {
+        const candidates = selectableItems(filteredSorted)
+        if (candidates.length === 0) return
+        if (selectAllChecked) {
+            applyBulkSelection(candidates, { select: false })
+            return
+        }
+        if (candidates.length > BULK_SELECT_CONFIRM_THRESHOLD) {
+            const proceed = window.confirm(
+                `Select all ${candidates.length} genomes matching the current filter?`
+            )
+            if (!proceed) return
+        }
+        applyBulkSelection(candidates, { select: true })
+    }, [applyBulkSelection, filteredSorted, selectAllChecked])
 
     const openManualBrowser = (target, mode = 'file') => {
         setModalTarget(target)
@@ -2734,7 +3244,11 @@ export default function SpeciesSelectorView({
     // reads as what it actually is. It also makes the genome key collide
     // correctly with the same genome downloaded later — allAssemblies already
     // prefers the download-managed record on a key clash.
-    const buildManualGenomeRecord = (entry, annotationPath = '') => {
+    // `prepared` is the /api/custom/prepare-annotation result, when there was one.
+    // Recording what it converted, and from what, is the only way a later removal
+    // can tell our converted GFF3 from the file the user pointed us at — the
+    // record keeps only the converted path in files.gff3.
+    const buildManualGenomeRecord = (entry, annotationPath = '', prepared = null) => {
         const speciesLabel = String(entry?.species || '').trim()
         const assemblyLabel = String(entry?.assembly || '').trim()
         const assemblyName = String(entry?.assembly_name || '').trim() || assemblyLabel
@@ -2743,6 +3257,14 @@ export default function SpeciesSelectorView({
         const isHandAdded = provider.toLowerCase() === 'manual'
         const files = canonicalBundleFiles(entry?.files)
         const preparedAnnotation = annotationPath || files.gff3 || ''
+        const artifacts = prepared?.converted
+            ? {
+                converted_annotation: String(prepared.annotation_path || preparedAnnotation || ''),
+                source_annotation: String(prepared.source_path || files.gff3 || ''),
+                id_map: String(prepared.id_map_path || ''),
+                generated_at: new Date().toISOString(),
+            }
+            : (entry?.artifacts && typeof entry.artifacts === 'object' ? entry.artifacts : null)
 
         const resolvedFiles = { ...files }
         if (preparedAnnotation) {
@@ -2779,6 +3301,7 @@ export default function SpeciesSelectorView({
             has_annotation: Boolean(preparedAnnotation),
             files: resolvedFiles,
             missing_files: Array.isArray(entry?.missing_files) ? entry.missing_files : [],
+            ...(artifacts ? { artifacts } : {}),
         })
     }
 
@@ -2809,6 +3332,12 @@ export default function SpeciesSelectorView({
         const updates = {
             manual_species: nextManual,
             active_species: nextActive,
+            // Explicitly registering this genome again reverses a previous
+            // deregistration. Otherwise filesystem discovery would remain
+            // hidden even though the user has just added the genome back.
+            deregistered_genome_keys: (config.deregistered_genome_keys || []).filter(
+                (hiddenKey) => !records.some((record) => genomeKeysMatch(record, hiddenKey))
+            ),
         }
         if (playlistAssignments.length) {
             updates.genome_playlists = mergeManualGenomePlaylistMemberships(
@@ -2993,6 +3522,7 @@ export default function SpeciesSelectorView({
 
                 try {
                     let annotationPath = genome.files?.gff3 || ''
+                    let preparedResult = null
                     if (annotationPath) {
                         const prepared = await prepareAnnotation(
                             annotationPath,
@@ -3010,6 +3540,7 @@ export default function SpeciesSelectorView({
                             },
                         )
                         annotationPath = prepared.annotation_path || annotationPath
+                        preparedResult = prepared
                     } else {
                         setManualOperation((prev) => ({
                             ...prev,
@@ -3019,7 +3550,7 @@ export default function SpeciesSelectorView({
                             counters: {},
                         }))
                     }
-                    const record = buildManualGenomeRecord(genome, annotationPath)
+                    const record = buildManualGenomeRecord(genome, annotationPath, preparedResult)
                     records.push(record)
                     if (genome.playlists?.length) {
                         playlistAssignments.push({
@@ -3219,6 +3750,7 @@ export default function SpeciesSelectorView({
         })
         try {
             let annotationPath = manualGff3
+            let preparedResult = null
             if (manualGff3) {
                 const prepared = await prepareAnnotation(manualGff3, manualFasta, (progress) => {
                     setManualOperation((prev) => ({
@@ -3232,6 +3764,7 @@ export default function SpeciesSelectorView({
                     }))
                 })
                 annotationPath = prepared.annotation_path || manualGff3
+                preparedResult = prepared
             }
 
             setManualOperation((prev) => ({
@@ -3250,7 +3783,7 @@ export default function SpeciesSelectorView({
                     homology: manualHomology,
                     index: manualIndexPath,
                 },
-            }, annotationPath)
+            }, annotationPath, preparedResult)
             mergeManualGenomeRecords(
                 [record],
                 { retainFormAnalyses: true, sourceAnnotation: manualGff3 },
@@ -3313,7 +3846,13 @@ export default function SpeciesSelectorView({
         ? 'All genomes'
         : (selectedPlaylist?.name || 'All genomes')
 
-    const thClass = `px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500 bg-gray-50' : 'text-gray-400 bg-gray-800'}`
+    // The alignment is split out rather than overridden per column: appending
+    // `text-center` to a class string that already carries `text-left` leaves
+    // which one wins up to the order the two utilities happen to be emitted in,
+    // which is how the header controls drifted out of line with their columns.
+    const thBaseClass = `px-4 py-3 text-xs font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500 bg-gray-50' : 'text-gray-400 bg-gray-800'}`
+    const thClass = `${thBaseClass} text-left`
+    const thCenteredClass = `${thBaseClass} text-center`
     const manualProcessing = manualOperation.status === 'processing'
     const manualLocked = manualProcessing || manualOperation.status === 'success'
     const manualStatusText = manualProgressText(manualOperation)
@@ -3324,7 +3863,7 @@ export default function SpeciesSelectorView({
         if (!node) return null
         const allowedFormats = canCaptureRasterScreenshot ? ['svg', 'png', 'jpeg'] : ['svg']
         return {
-            id: 'species-selector-view',
+            id: 'genome-selector-view',
             label: 'Genome Selector view',
             allowedFormats,
             defaultFormat: canCaptureRasterScreenshot ? 'png' : 'svg',
@@ -3348,8 +3887,8 @@ export default function SpeciesSelectorView({
     }, [config?.output_dir])
 
     useEffect(() => {
-        onScreenshotAvailabilityChange?.('species_selector', Boolean(screenshotTarget))
-        return () => onScreenshotAvailabilityChange?.('species_selector', false)
+        onScreenshotAvailabilityChange?.('genome_selector', Boolean(screenshotTarget))
+        return () => onScreenshotAvailabilityChange?.('genome_selector', false)
     }, [onScreenshotAvailabilityChange, screenshotTarget])
 
     useEffect(() => {
@@ -3509,6 +4048,14 @@ export default function SpeciesSelectorView({
                 onCloseValidation={() => closeValidation('customAnnotation')}
                 onIdModeChange={setCustomAnnotationIdMode}
                 onIdPrefixChange={setCustomAnnotationIdPrefix}
+            />
+            <GenomeRemovalDialog
+                isOpen={!!removalDialog}
+                theme={theme}
+                targets={removalDialog?.targets || []}
+                preview={removalPreview}
+                onClose={closeRemovalDialog}
+                onRemove={(options) => runRemoval(removalDialog?.targets || [], options)}
             />
             <PlaylistMembershipModal
                 isOpen={!!playlistMembershipTarget}
@@ -3776,6 +4323,7 @@ export default function SpeciesSelectorView({
                     <button
                         type="button"
                         disabled={manualLocked}
+                        title="Load a json file containing details for data relating to one or more genomes. Good for bulk loading data"
                         onClick={() => {
                             setManualOpen(true)
                             setModalTarget('manual_config_load')
@@ -4166,10 +4714,127 @@ export default function SpeciesSelectorView({
                 </div>
             </div>
 
+            {removalMode ? (
+                <div className={`order-2 mb-3 rounded-xl border px-4 py-3 ${isLight
+                    ? 'border-red-300 bg-red-50'
+                    : 'border-red-900/60 bg-red-900/20'
+                    }`}>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <div className={`text-sm font-bold ${isLight ? 'text-red-800' : 'text-red-200'}`}>
+                            Flag genomes to remove
+                        </div>
+                        <div className={`text-xs ${isLight ? 'text-red-700' : 'text-red-300'}`}>
+                            {removalKeys.size === 0
+                                ? 'Click rows, or use a shortcut below.'
+                                : `${removalKeys.size} flagged`}
+                        </div>
+                        <div className="flex items-center gap-1.5 ml-auto">
+                            {[
+                                { action: REMOVAL_FILL_ALL, label: `All ${selectableFilteredCount}` },
+                                { action: REMOVAL_FILL_SELECTED, label: `Selected ${selectedFilteredCount}` },
+                            ].map(({ action, label }) => (
+                                <button
+                                    key={action}
+                                    type="button"
+                                    disabled={action === REMOVAL_FILL_SELECTED && selectedFilteredCount === 0}
+                                    onClick={() => handleRemovalFillToggle(action)}
+                                    aria-pressed={removalFillMode === action}
+                                    className={`px-2.5 py-1.5 rounded text-xs font-semibold border transition-colors ${action === REMOVAL_FILL_SELECTED && selectedFilteredCount === 0
+                                        ? (isLight ? 'bg-white border-red-200 text-red-300 cursor-not-allowed' : 'bg-transparent border-red-900/50 text-red-800 cursor-not-allowed')
+                                        : removalFillMode === action
+                                            ? 'bg-red-600 border-red-600 text-white hover:bg-red-500'
+                                            : (isLight
+                                                ? 'bg-white border-red-300 text-red-800 hover:bg-red-100'
+                                                : 'bg-transparent border-red-800 text-red-200 hover:bg-red-900/40')
+                                        }`}
+                                >
+                                    {label}
+                                </button>
+                            ))}
+                            <button
+                                type="button"
+                                disabled={removalKeys.size === 0}
+                                onClick={() => openRemovalDialog(flaggedItems(allAssemblies, removalKeys), 'bulk')}
+                                className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${removalKeys.size === 0
+                                    ? (isLight ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-700 text-gray-500 cursor-not-allowed')
+                                    : 'bg-red-600 text-white hover:bg-red-500'
+                                    }`}
+                            >
+                                Summary
+                            </button>
+                            <button
+                                type="button"
+                                disabled={removalKeys.size === 0}
+                                onClick={() => runRemoval(
+                                    flaggedItems(allAssemblies, removalKeys),
+                                    { deleteData: true, includeManual: true },
+                                )}
+                                className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${removalKeys.size === 0
+                                    ? (isLight ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-700 text-gray-500 cursor-not-allowed')
+                                    : 'bg-red-600 text-white hover:bg-red-500'
+                                    }`}
+                                title="Delete affected files and deregister the flagged genomes without opening the summary"
+                            >
+                                Delete
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setRemovalMode(false)
+                                    setRemovalKeys(new Set())
+                                    setRemovalFillMode(null)
+                                }}
+                                className={`px-2.5 py-1.5 rounded text-xs font-medium ${isLight ? 'text-red-800 hover:bg-red-100' : 'text-red-200 hover:bg-red-900/40'}`}
+                            >
+                                Exit
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {removalRun ? (
+                <div className={`order-2 mb-3 rounded-xl border px-4 py-3 text-xs ${removalRun.status === 'error'
+                    ? (isLight ? 'border-red-200 bg-red-50 text-red-800' : 'border-red-800/60 bg-red-900/20 text-red-200')
+                    : (isLight ? 'border-gray-200 bg-gray-50 text-gray-700' : 'border-gray-700 bg-gray-900/40 text-gray-300')
+                    }`} role="status" aria-live="polite">
+                    <div className="flex items-center gap-2">
+                        <span className="font-semibold">
+                            {removalRun.status === 'running'
+                                ? `Deleting data… ${removalRun.completed}/${removalRun.total}`
+                                : removalRun.status === 'error'
+                                    ? `${removalRun.failures.length} of ${removalRun.total} genomes had files that could not be deleted`
+                                    : `Deleted data for ${removalRun.total} genome${removalRun.total === 1 ? '' : 's'}${removalRun.freed ? ` — ${formatBytes(removalRun.freed)} freed` : ''}`}
+                        </span>
+                        {removalRun.status !== 'running' ? (
+                            <button
+                                type="button"
+                                onClick={() => setRemovalRun(null)}
+                                className="ml-auto px-2 py-1 rounded font-medium opacity-70 hover:opacity-100"
+                            >
+                                Dismiss
+                            </button>
+                        ) : null}
+                    </div>
+                    {removalRun.status === 'error' ? (
+                        <ul className="mt-2 space-y-1">
+                            {removalRun.failures.slice(0, 6).map((row) => (
+                                <li key={row.genome_key} className="break-all">
+                                    <span className="font-mono">{row.genome_key}</span>
+                                    {' — '}
+                                    {(row.failed || []).map((failure) => failure.error).filter(Boolean).join('; ')}
+                                </li>
+                            ))}
+                        </ul>
+                    ) : null}
+                </div>
+            ) : null}
+
             <div className={`order-2 flex-none h-[560px] min-h-[560px] rounded-xl border overflow-hidden flex flex-col ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}>
                 {loading ? (
-                    <div className="flex-1 flex items-center justify-center">
+                    <div className={`flex-1 flex flex-col items-center justify-center gap-3 ${isLight ? 'text-gray-600' : 'text-gray-300'}`}>
                         <div className={`animate-spin w-8 h-8 border-4 border-t-transparent rounded-full ${isLight ? 'border-blue-500' : 'border-blue-400'}`}></div>
+                        <div className="text-sm font-medium">Loading genomes…</div>
                     </div>
                 ) : filtered.length === 0 ? (
                     <div className={`flex-1 flex items-center justify-center p-8 text-center ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
@@ -4188,14 +4853,50 @@ export default function SpeciesSelectorView({
                             <table className="w-full text-sm">
                                 <thead className={`sticky top-0 z-10 ${isLight ? 'bg-gray-50' : 'bg-gray-800'}`}>
                                     <tr className={`border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
-                                        <th className={`${thClass} w-16 text-center`}>Active</th>
+                                        {/* No column label: the select-all box sits directly above the
+                                            per-genome boxes, which says what it does more plainly than
+                                            a word that pushed it off centre. */}
+                                        <th className={`${thCenteredClass} w-16`}>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectAllChecked}
+                                                onChange={handleSelectAllToggle}
+                                                disabled={selectableFilteredCount === 0}
+                                                aria-label={selectAllChecked
+                                                    ? 'Deselect all genomes'
+                                                    : 'Select all genomes matching the filter'}
+                                                title={selectAllChecked
+                                                    ? `Deselect all ${selectableFilteredCount} genomes`
+                                                    : `Select all ${selectableFilteredCount} genomes matching the filter`}
+                                                className={`w-4 h-4 align-middle rounded border-gray-300 text-blue-600 focus:ring-blue-500 ${selectableFilteredCount === 0 ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                            />
+                                        </th>
                                         <th className={thClass}>Species</th>
                                         <th className={thClass}>Source</th>
                                         <th className={thClass}>Accession</th>
                                         <th className={thClass}>Assembly</th>
                                         <th className={thClass}>Files</th>
                                         <th className={thClass}>Index</th>
-                                        <th className={`${thClass} w-32 min-w-[8rem] text-center`}>Actions</th>
+                                        <th className={`${thCenteredClass} w-32 min-w-[8rem]`}>
+                                            {/* Same 72px two-slot box as every row's action cell, so the
+                                                bulk-removal bin sits in the same column as the row bins. */}
+                                            <div className="mx-auto inline-flex w-[72px] items-center justify-center gap-1 align-middle">
+                                                <span aria-hidden="true" className="h-8 w-8 flex-none" />
+                                                <button
+                                                    type="button"
+                                                    onClick={toggleRemovalMode}
+                                                    title={removalMode
+                                                        ? 'Leave removal mode'
+                                                        : 'Flag several genomes to remove'}
+                                                    className={`w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors ${removalMode
+                                                        ? (isLight ? 'bg-red-100 text-red-700' : 'bg-red-900/50 text-red-300')
+                                                        : (isLight ? 'text-gray-400 hover:text-red-600 hover:bg-red-50' : 'text-gray-500 hover:text-red-400 hover:bg-red-900/20')
+                                                        }`}
+                                                >
+                                                    <IconTrash size={16} />
+                                                </button>
+                                            </div>
+                                        </th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -4205,6 +4906,7 @@ export default function SpeciesSelectorView({
 	                                        const isMissing = Boolean(item?.is_missing)
 	                                        const isSelected = selectedGenomeKeys.has(key)
 			                                        const isPendingSelection = pendingSelectionKeys.has(key)
+			                                        const isFlaggedForRemoval = removalKeys.has(key)
 			                                        const effectiveFiles = getEffectiveFiles(item)
                                                     const fileAnalysisByType = getFileAnalysisByType(item, effectiveFiles)
 			                                        const filesExpanded = expandedRows.has(rowKey)
@@ -4231,12 +4933,23 @@ export default function SpeciesSelectorView({
 	                                        return (
 	                                            <React.Fragment key={rowKey}>
                                             <tr
-                                                onClick={() => !isMissing && toggleSpecies(item)}
+                                                onClick={() => {
+                                                    if (isMissing) return
+                                                    // In removal mode a click curates the removal set
+                                                    // rather than changing what the app is working with.
+                                                    if (removalMode) {
+                                                        setRemovalFillMode(null)
+                                                        setRemovalKeys((prev) => toggleRemovalFlag(prev, item))
+                                                    }
+                                                    else toggleSpecies(item)
+                                                }}
                                                 className={`border-b transition-colors group ${isMissing
                                                     ? (isLight ? 'bg-gray-50/80 border-gray-100' : 'bg-gray-900/20 border-gray-700/50')
-                                                    : (isLight
-                                                        ? (isSelected ? 'bg-blue-50/50 hover:bg-blue-50 border-gray-100 cursor-pointer' : 'border-gray-100 hover:bg-gray-50 cursor-pointer')
-                                                        : (isSelected ? 'bg-blue-900/10 hover:bg-blue-900/20 border-gray-700/50 cursor-pointer' : 'border-gray-700/50 hover:bg-gray-700/30 cursor-pointer'))
+                                                    : isFlaggedForRemoval
+                                                        ? (isLight ? 'bg-red-50 hover:bg-red-100 border-red-100 cursor-pointer' : 'bg-red-900/20 hover:bg-red-900/30 border-red-900/40 cursor-pointer')
+                                                        : (isLight
+                                                            ? (isSelected ? 'bg-blue-50/50 hover:bg-blue-50 border-gray-100 cursor-pointer' : 'border-gray-100 hover:bg-gray-50 cursor-pointer')
+                                                            : (isSelected ? 'bg-blue-900/10 hover:bg-blue-900/20 border-gray-700/50 cursor-pointer' : 'border-gray-700/50 hover:bg-gray-700/30 cursor-pointer'))
                                                     }`}
                                             >
                                                 <td className="px-4 py-3 text-center align-middle" onClick={(e) => e.stopPropagation()}>
@@ -4251,7 +4964,7 @@ export default function SpeciesSelectorView({
 	                                                            if (isMissing) return
 	                                                            toggleSpecies(item, { removeSelected: true })
 	                                                        }}
-                                                        className={`w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 ${isMissing ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+                                                        className={`w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 ${isMissing ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
                                                     />
                                                 </td>
                                                 <td className={`px-4 py-3 align-middle ${isMissing
@@ -4403,39 +5116,32 @@ export default function SpeciesSelectorView({
                                                                 Not downloadable
                                                             </span>
                                                         )
-                                                    ) : confirmDelete === key ? (
-                                                        <div className="flex items-center justify-center gap-2">
-                                                            <button
-                                                                type="button"
-                                                                onMouseDown={(event) => {
-                                                                    event.preventDefault()
-                                                                    event.stopPropagation()
-                                                                }}
-                                                                onClick={() => handleDelete(item)}
-                                                                className={`px-3 py-1.5 rounded text-[11px] font-bold uppercase tracking-wide ${isLight
-                                                                    ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                                                                    : 'bg-red-900/40 text-red-400 hover:bg-red-900/60'
-                                                                    }`}
-                                                            >
-                                                                Delete
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onMouseDown={(event) => {
-                                                                    event.preventDefault()
-                                                                    event.stopPropagation()
-                                                                }}
-                                                                onClick={() => setConfirmDelete(null)}
-                                                                className={`px-3 py-1.5 rounded text-[11px] font-bold uppercase tracking-wide ${isLight
-                                                                    ? 'text-gray-500 hover:bg-gray-100'
-                                                                    : 'text-gray-400 hover:bg-gray-700'
-                                                                    }`}
-                                                            >
-                                                                Cancel
-                                                            </button>
-                                                        </div>
+                                                    ) : removalMode ? (
+                                                        <label
+                                                            className="mx-auto inline-flex w-[72px] items-center justify-center gap-1 cursor-pointer"
+                                                            onMouseDown={(event) => event.preventDefault()}
+                                                            title={isFlaggedForRemoval ? 'Flagged for deletion' : 'Keep this genome'}
+                                                        >
+                                                            <span className="inline-flex h-8 w-8 flex-none items-center justify-center">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={isFlaggedForRemoval}
+                                                                    onChange={() => {
+                                                                        setRemovalFillMode(null)
+                                                                        setRemovalKeys((prev) => toggleRemovalFlag(prev, item))
+                                                                    }}
+                                                                    className="w-5 h-5 rounded border-red-400 text-red-600 focus:ring-red-500 cursor-pointer"
+                                                                />
+                                                            </span>
+                                                            <span className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${isFlaggedForRemoval
+                                                                ? (isLight ? 'text-red-700' : 'text-red-300')
+                                                                : (isLight ? 'text-gray-400' : 'text-gray-500')
+                                                                }`}>
+                                                                <IconTrash size={16} />
+                                                            </span>
+                                                        </label>
                                                     ) : (
-	                                                        <div className="mx-auto inline-flex items-center justify-center gap-1 w-[72px]">
+	                                                        <div className="mx-auto inline-flex w-[72px] items-center justify-center gap-1">
 	                                                            <button
 	                                                                type="button"
 	                                                                onMouseDown={(event) => {
@@ -4457,12 +5163,12 @@ export default function SpeciesSelectorView({
                                                                     event.preventDefault()
                                                                     event.stopPropagation()
                                                                 }}
-                                                                onClick={() => setConfirmDelete(key)}
+                                                                onClick={() => openRemovalDialog([item], 'row')}
                                                                 className={`w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors ${isLight
                                                                     ? 'text-gray-400 hover:text-red-600 hover:bg-red-50'
                                                                     : 'text-gray-500 hover:text-red-400 hover:bg-red-900/20'
                                                                     }`}
-                                                                title={item.is_manual ? 'Remove manual genome' : 'Delete local files'}
+                                                                title={item.is_manual ? 'Remove this genome' : 'Remove this genome or delete its data'}
                                                             >
                                                                 <IconTrash size={16} />
                                                             </button>

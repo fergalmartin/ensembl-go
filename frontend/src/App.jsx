@@ -45,7 +45,7 @@ import HomologyView from './components/HomologyView'
 import StatsView from './components/StatsView'
 import FeatureExplorerView from './components/FeatureExplorerView'
 import DownloadView from './components/DownloadView'
-import GenomeSelectorView from './components/SpeciesSelectorView'
+import GenomeSelectorView from './components/GenomeSelectorView'
 import GenomeBrowserView from './components/GenomeBrowserView'
 import HomeView from './components/HomeView'
 import HelpView from './components/HelpView'
@@ -84,6 +84,10 @@ import {
   subtreeContainsCanvas,
 } from './utils/screenshotExport'
 import { getGenomeKey, genomeKeysMatch, normalizeGenomeRecord, getAssemblyAccession, getAssemblyGenomeKey, normalizeGenomeProvider, MANUAL_PROVIDER } from './utils/genomeIdentity'
+import {
+  primaryGenomeForIndex,
+  shouldAutoEnsurePrimaryIndex,
+} from './utils/genomeIndexingPolicy'
 
 const SELECTOR_PENDING_GENOMES_STORAGE_KEY = 'ensembl_selector_pending_genomes'
 const SELECTOR_REFRESH_EVENT = 'ensembl:selector-refresh'
@@ -911,6 +915,7 @@ function App() {
     manual_species: [],
     genome_file_overrides: {},
     genome_analysis_reports: {},
+    deregistered_genome_keys: [],
     genome_playlists: [],
     selected_genome_playlist_id: '__all__',
     default_light_mode: false,
@@ -3115,7 +3120,7 @@ function App() {
 
   // Theme-specific styles
   const isLight = theme === 'light'
-  const explicitScreenshotViews = useMemo(() => new Set(['genome_browser', 'feature_explorer', 'download', 'species_selector']), [])
+  const explicitScreenshotViews = useMemo(() => new Set(['genome_browser', 'feature_explorer', 'download', 'genome_selector']), [])
   const fallbackScreenshotViews = useMemo(() => new Set([
     'home',
     'feature_explorer',
@@ -3160,7 +3165,7 @@ function App() {
 
   const viewTitles = {
     home: 'Home',
-    species_selector: 'Genome Selector',
+    genome_selector: 'Genome Selector',
     genome_browser: 'Genome Browser',
     feature_explorer: 'Feature Explorer',
     alignment: 'Alignment',
@@ -3176,7 +3181,7 @@ function App() {
 
   const viewDescriptions = {
     home: 'Download, browse and analyse Ensembl data locally',
-    species_selector: 'Select downloaded genomes for visualisation in the Genome Browser',
+    genome_selector: 'Select downloaded genomes for visualisation in the Genome Browser',
     genome_browser: 'Navigate gene annotations across chromosomes',
     feature_explorer: 'Inspect transcript-level features for a selected gene in an active genome',
     alignment: 'Comparative genomic annotation visualisation',
@@ -3635,7 +3640,7 @@ function App() {
     }
   }, [buildFocusFromActive])
 
-  // Called when GenomeBrowserView or SpeciesSelectorView changes active genome selection.
+  // Called when GenomeBrowserView or GenomeSelectorView changes active genome selection.
   // Immediately saves new config to backend so browser fetch calls get the right index/gff paths.
   const handleBrowserConfigChange = async (configUpdate) => {
     const prev = configRef.current
@@ -3993,15 +3998,13 @@ function App() {
   }, [fileExistsAtPath, persistBuiltIndexForGenome])
 
   useEffect(() => {
-    if (currentView === 'download') return
-    const selectedSpecies = dedupeSpeciesList([
-      ...(config?.active_species || []),
-      ...(inactiveSelectedSpecies || []),
-    ]).filter((species) => Boolean(species?.files?.gff3))
-    selectedSpecies.forEach((species) => {
-      ensureSelectedGenomeIndex(species)
-    })
-  }, [currentView, config?.active_species, inactiveSelectedSpecies, config?.ref_gff, config?.target_gff, ensureSelectedGenomeIndex])
+    if (!shouldAutoEnsurePrimaryIndex(currentView)) return
+    const primary = primaryGenomeForIndex(
+      dedupeSpeciesList(config?.active_species || []),
+      config?.ref_gff,
+    )
+    if (primary) ensureSelectedGenomeIndex(primary)
+  }, [currentView, config?.active_species, config?.ref_gff, ensureSelectedGenomeIndex])
 
   useEffect(() => {
     if (suppressViewSyncRef.current) return
@@ -5544,12 +5547,32 @@ function App() {
         ? rawConfigWithSystemPlaylists.__manual_batch_added_keys
         : []
     )
-    const { __manual_batch_added_keys: _manualBatchAddedKeys, ...rawNextConfig } = rawConfigWithSystemPlaylists
+    const removedGenomeKeys = Array.isArray(rawConfigWithSystemPlaylists.__removed_genome_keys)
+      ? rawConfigWithSystemPlaylists.__removed_genome_keys
+      : []
+    const {
+      __manual_batch_added_keys: _manualBatchAddedKeys,
+      __removed_genome_keys: _removedGenomeKeys,
+      ...rawNextConfig
+    } = rawConfigWithSystemPlaylists
 
     const previousActive = dedupeSpeciesList(currentConfig?.active_species)
     const previousKeys = new Set(previousActive.map((species) => speciesItemKey(species)))
     let nextActive = dedupeSpeciesList(rawNextConfig?.active_species)
     let nextInactive = dedupeSpeciesList(inactiveSelectedSpeciesRef.current)
+
+    // A removed genome has to leave the selected-but-inactive list before the
+    // session snapshot below is rebuilt from it, or it is written straight back
+    // and returns on the next launch.
+    if (removedGenomeKeys.length > 0) {
+      const survivors = nextInactive.filter(
+        (species) => !removedGenomeKeys.some((key) => genomeKeysMatch(species, key))
+      )
+      if (survivors.length !== nextInactive.length) {
+        nextInactive = survivors
+        setInactiveSelectedSpecies(survivors)
+      }
+    }
 
     suppressViewSyncRef.current = true
     try {
@@ -6090,7 +6113,7 @@ function App() {
                 screenshotToggleButtonRef={screenshotActionButtonRef}
               />
             </div>
-          ) : currentView === 'species_selector' ? (
+          ) : currentView === 'genome_selector' ? (
             /* ========== GENOME SELECTOR VIEW ========== */
             <div className="h-full">
 	              <GenomeSelectorView
@@ -6100,7 +6123,7 @@ function App() {
                 onApplyPlaylist={handleApplyPlaylistFromSelector}
                 selectedSpeciesList={topBarSpecies}
                 theme={theme}
-                screenshotMode={currentView === 'species_selector' ? screenshotMode : false}
+                screenshotMode={currentView === 'genome_selector' ? screenshotMode : false}
                 onScreenshotModeChange={setScreenshotMode}
                 onScreenshotAvailabilityChange={handleScreenshotAvailabilityChange}
                 screenshotToggleButtonRef={screenshotActionButtonRef}

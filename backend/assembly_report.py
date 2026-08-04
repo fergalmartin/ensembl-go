@@ -18,6 +18,8 @@ class AssemblyReportRow:
     refseq_accession: str
     ucsc_style_name: str
     sequence_role: str
+    # "Assigned-Molecule-Location/Type": Chromosome | Mitochondrion | Plastid | ...
+    molecule_type: str = ""
 
     @property
     def is_assembled_molecule(self) -> bool:
@@ -156,6 +158,7 @@ def parse_assembly_report_file(path: str) -> List[AssemblyReportRow]:
                 refseq_accession=_row_value(mapped, "refseq_accn", "refseq_accession"),
                 ucsc_style_name=_row_value(mapped, "ucsc_style_name"),
                 sequence_role=_row_value(mapped, "sequence_role"),
+                molecule_type=_row_value(mapped, "assigned_molecule_location_type"),
             )
             rows.append(row)
     return rows
@@ -192,6 +195,7 @@ def parse_sequence_report_file(path: str) -> List[AssemblyReportRow]:
                             refseq_accession=str(report.get("refseq_accession") or "").strip(),
                             ucsc_style_name=str(report.get("ucsc_style_name") or "").strip(),
                             sequence_role=str(report.get("role") or "").strip(),
+                            molecule_type=str(report.get("assigned_molecule_location_type") or "").strip(),
                         )
                     )
                 return rows
@@ -210,6 +214,7 @@ def parse_sequence_report_file(path: str) -> List[AssemblyReportRow]:
                             refseq_accession=str(report.get("refseq_accession") or "").strip(),
                             ucsc_style_name=str(report.get("ucsc_style_name") or "").strip(),
                             sequence_role=str(report.get("role") or "").strip(),
+                            molecule_type=str(report.get("assigned_molecule_location_type") or "").strip(),
                         )
                     )
                 return rows
@@ -236,6 +241,7 @@ def parse_sequence_report_file(path: str) -> List[AssemblyReportRow]:
                             refseq_accession=str(report.get("refseq_accession") or "").strip(),
                             ucsc_style_name=str(report.get("ucsc_style_name") or "").strip(),
                             sequence_role=str(report.get("role") or "").strip(),
+                            molecule_type=str(report.get("assigned_molecule_location_type") or "").strip(),
                         )
                     )
                     continue
@@ -255,6 +261,7 @@ def parse_sequence_report_file(path: str) -> List[AssemblyReportRow]:
                         refseq_accession=_row_value(mapped, "refseq_accession", "refseq_accn"),
                         ucsc_style_name=_row_value(mapped, "ucsc_style_name"),
                         sequence_role=_row_value(mapped, "role", "sequence_role"),
+                        molecule_type=_row_value(mapped, "assigned_molecule_location_type"),
                     )
                 )
     except Exception:
@@ -298,23 +305,54 @@ def _build_known_token_map(known_regions: Iterable[str]) -> Dict[str, Set[str]]:
     return token_map
 
 
-def _resolve_known_region_value(value: str, known_set: Set[str], known_token_map: Dict[str, Set[str]]) -> Optional[str]:
-    text = str(value or "").strip()
-    if not text:
+class KnownRegions:
+    """The three lookups every region-name resolution needs, built once.
+
+    A scaffold-level assembly brings hundreds of thousands of sequence names,
+    and resolving a name used to scan all of them (and rebuild the token map)
+    on each lookup. Since a synonym index performs a lookup per alias, that made
+    /api/browse/regions quadratic: it never returned, the browser sat on
+    "Building Index" waiting for it, and the polls that followed took a request
+    thread each until the backend had none left to answer anything else with.
+    """
+
+    __slots__ = ("values", "lower_map", "token_map")
+
+    def __init__(self, known_regions: Iterable[str]):
+        self.values: Set[str] = {str(x or "").strip() for x in known_regions if str(x or "").strip()}
+        lower_map: Dict[str, List[str]] = {}
+        for value in self.values:
+            lower_map.setdefault(value.lower(), []).append(value)
+        self.lower_map = lower_map
+        self.token_map = _build_known_token_map(self.values)
+
+    def __bool__(self) -> bool:
+        return bool(self.values)
+
+    def __contains__(self, value: object) -> bool:
+        return value in self.values
+
+    def resolve(self, value: str) -> Optional[str]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text in self.values:
+            return text
+
+        direct_lower = self.lower_map.get(text.lower()) or []
+        if len(direct_lower) == 1:
+            return direct_lower[0]
+
+        matches: Set[str] = set()
+        for token in chrom_token_variants(text):
+            matches.update(self.token_map.get(token, set()))
+        if len(matches) == 1:
+            return next(iter(matches))
         return None
-    if text in known_set:
-        return text
 
-    direct_lower = [k for k in known_set if k.lower() == text.lower()]
-    if len(direct_lower) == 1:
-        return direct_lower[0]
 
-    matches: Set[str] = set()
-    for token in chrom_token_variants(text):
-        matches.update(known_token_map.get(token, set()))
-    if len(matches) == 1:
-        return next(iter(matches))
-    return None
+def _as_known_regions(known_regions: Any) -> KnownRegions:
+    return known_regions if isinstance(known_regions, KnownRegions) else KnownRegions(known_regions)
 
 
 def _best_priority(left: Tuple[int, int], right: Tuple[int, int]) -> Tuple[int, int]:
@@ -325,8 +363,7 @@ def build_synonym_index(
     report_rows: Sequence[AssemblyReportRow],
     known_regions: Iterable[str],
 ) -> Dict[str, Dict[str, List]]:
-    known_set = {str(x or "").strip() for x in known_regions if str(x or "").strip()}
-    known_token_map = _build_known_token_map(known_set)
+    known = _as_known_regions(known_regions)
 
     canonical_to_synonyms: Dict[str, Set[str]] = {}
     canonical_alias_pairs: List[Tuple[str, str]] = []
@@ -345,12 +382,12 @@ def build_synonym_index(
             row.ucsc_style_name,
             row.assigned_molecule,
         ):
-            canonical = _resolve_known_region_value(preferred, known_set, known_token_map)
+            canonical = known.resolve(preferred)
             if canonical:
                 break
         if not canonical:
             for alias in aliases:
-                canonical = _resolve_known_region_value(alias, known_set, known_token_map)
+                canonical = known.resolve(alias)
                 if canonical:
                     break
         if not canonical:
@@ -394,7 +431,7 @@ def build_synonym_index(
     # example assigned-molecule values shared by unlocalized scaffolds) on
     # multiple regions in /api/browse/regions.
     for canonical, alias in canonical_alias_pairs:
-        resolved = resolve_region_name(alias, known_set, alias_to_candidates)
+        resolved = resolve_region_name(alias, known, alias_to_candidates)
         if resolved == canonical:
             canonical_to_synonyms.setdefault(canonical, set()).add(alias)
 
@@ -412,30 +449,29 @@ def resolve_region_name(
     known_regions: Iterable[str],
     alias_to_candidates: Optional[Dict[str, List[Dict[str, object]]]] = None,
 ) -> Optional[str]:
-    known_set = {str(x or "").strip() for x in known_regions if str(x or "").strip()}
-    if not known_set:
+    """Map a requested region name onto one the genome actually has.
+
+    ``known_regions`` may be a plain iterable of names or a prepared
+    :class:`KnownRegions`. Pass the prepared form when resolving more than one
+    name against the same genome: building it walks every sequence in the
+    assembly, which is not something to repeat per lookup.
+    """
+    known = _as_known_regions(known_regions)
+    if not known:
         return None
 
     query = str(requested or "").strip()
     if not query:
         return None
-    if query in known_set:
-        return query
 
-    direct_lower = [k for k in known_set if k.lower() == query.lower()]
-    if len(direct_lower) == 1:
-        return direct_lower[0]
-
-    known_token_map = _build_known_token_map(known_set)
-    direct_matches: Set[str] = set()
     query_tokens = chrom_token_variants(query)
-    for token in query_tokens:
-        direct_matches.update(known_token_map.get(token, set()))
-    if len(direct_matches) == 1:
-        return next(iter(direct_matches))
+    direct = known.resolve(query)
+    if direct is not None:
+        return direct
 
     if not alias_to_candidates:
         return None
+    known_set = known.values
 
     best: Optional[Tuple[int, int, int, str, str]] = None
     for token in query_tokens:

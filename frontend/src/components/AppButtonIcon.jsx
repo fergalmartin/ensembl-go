@@ -22,7 +22,7 @@ export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
     )
   }
 
-  if (buttonId === 'species_selector') {
+  if (buttonId === 'genome_selector') {
     const selectorSize = compact ? size + 5 : size + 9
     return (
       <svg width={selectorSize} height={selectorSize} viewBox="1 1 34 34" fill="currentColor" stroke="none">

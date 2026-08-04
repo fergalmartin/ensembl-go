@@ -1,7 +1,7 @@
 // Shared definitions for the file types a genome can carry.
 //
 // These used to be duplicated across DownloadView (download badges) and
-// SpeciesSelectorView (the per-genome file editor). They live here so the
+// GenomeSelectorView (the per-genome file editor). They live here so the
 // portable genome bundle, the download view and the selector all agree on the
 // key set and its ordering, and so the labels can be unit tested — the test
 // runner is `node --test`, which cannot load `.jsx`.

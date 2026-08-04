@@ -1,6 +1,10 @@
 import { css, LitElement, html } from "lit";
 import { DataService } from "../alignments-data/data-service.js";
+import { isRetryableSvRequestError } from "../../../utils/svRequestRetry.js";
 import "./variant-alignments-image.js";
+
+const LOAD_RETRY_LIMIT = 4;
+const LOAD_RETRY_BASE_MS = 250;
 
 const expandRequestInterval = ({ start, end, minStart = 1 }) => {
   const span = Math.max(1, end - start);
@@ -9,6 +13,24 @@ const expandRequestInterval = ({ start, end, minStart = 1 }) => {
     start: Math.max(minStart, start - pad),
     end: end + pad
   };
+};
+
+const getLoadRetryDelay = (attempt) => {
+  return Math.min(4000, LOAD_RETRY_BASE_MS * (2 ** Math.max(0, attempt - 1)));
+};
+
+const fetchJson = async (url, signal) => {
+  const response = await fetch(url, { signal });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = new Error(data?.detail || `SV alignment request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  if (!Array.isArray(data)) {
+    throw new Error("SV alignment request returned an invalid response.");
+  }
+  return data;
 };
 
 export class VariantAlignments extends LitElement {
@@ -59,11 +81,26 @@ export class VariantAlignments extends LitElement {
     this.referenceService = null;
     this.altService = null;
     this.variantService = null;
+    this.loadGeneration = 0;
+    this.loadRetryAttempt = 0;
+    this.loadRetryTimer = null;
+    this.loadAbortController = null;
 
     this.forwardVariantEvent = (event) => {
       const forwarded = new CustomEvent(event.type, { detail: event.detail });
       this.dispatchEvent(forwarded);
     };
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.loadGeneration += 1;
+    this.loadAbortController?.abort();
+    this.loadAbortController = null;
+    if (this.loadRetryTimer) {
+      clearTimeout(this.loadRetryTimer);
+      this.loadRetryTimer = null;
+    }
   }
 
   willUpdate(changed) {
@@ -121,21 +158,65 @@ export class VariantAlignments extends LitElement {
     `;
   }
 
-  async loadData() {
+  async loadData({ retry = false } = {}) {
+    if (!retry) {
+      this.loadRetryAttempt = 0;
+      if (this.loadRetryTimer) {
+        clearTimeout(this.loadRetryTimer);
+        this.loadRetryTimer = null;
+      }
+    }
+
+    const generation = ++this.loadGeneration;
+    this.loadAbortController?.abort();
+    this.loadAbortController = new AbortController();
     this.dispatchLoadingChange(true);
     try {
       const alignments = await this.loadAlignments();
+      if (generation !== this.loadGeneration || !this.isConnected) {
+        return;
+      }
       const variants = await this.loadVariants();
+      if (generation !== this.loadGeneration || !this.isConnected) {
+        return;
+      }
       this.data = {
         alignments,
         variants
       };
+      this.loadRetryAttempt = 0;
 
       if (!this.altStart && !this.altEnd) {
         this.inferAltViewport();
       }
+    } catch (error) {
+      if (generation !== this.loadGeneration || !this.isConnected) {
+        return;
+      }
+      // A new viewport can inherit an in-flight DataService promise which the
+      // previous viewport just aborted. That AbortError belongs to the current
+      // load too, so retry it once the old pending request has been released.
+      const retryable = error?.name === "AbortError" || isRetryableSvRequestError(error);
+      if (retryable && this.loadRetryAttempt < LOAD_RETRY_LIMIT) {
+        this.loadRetryAttempt += 1;
+        const delay = getLoadRetryDelay(this.loadRetryAttempt);
+        this.loadRetryTimer = setTimeout(() => {
+          this.loadRetryTimer = null;
+          if (generation === this.loadGeneration && this.isConnected) {
+            this.loadData({ retry: true });
+          }
+        }, delay);
+        return;
+      }
+      this.dispatchEvent(new CustomEvent("loading-error", {
+        bubbles: true,
+        composed: true,
+        detail: { message: error?.message || "Failed to load SV alignment data." }
+      }));
     } finally {
-      this.dispatchLoadingChange(false);
+      if (generation === this.loadGeneration && !this.loadRetryTimer) {
+        this.dispatchLoadingChange(false);
+      }
     }
   }
 
@@ -251,7 +332,8 @@ export class VariantAlignments extends LitElement {
       endpoint: this.endpoints.alignments,
       isReference: true,
       getReferenceWindow: () => this.getReferenceViewportForFetch(),
-      getAltWindow: () => this.getAltViewportForFetch()
+      getAltWindow: () => this.getAltViewportForFetch(),
+      getSignal: () => this.loadAbortController?.signal
     });
 
     this.altService = createAlignmentService({
@@ -262,7 +344,8 @@ export class VariantAlignments extends LitElement {
       endpoint: this.endpoints.alignments,
       isReference: false,
       getReferenceWindow: () => this.getReferenceViewportForFetch(),
-      getAltWindow: () => this.getAltViewportForFetch()
+      getAltWindow: () => this.getAltViewportForFetch(),
+      getSignal: () => this.loadAbortController?.signal
     });
 
     this.variantService = createVariantService({
@@ -270,7 +353,8 @@ export class VariantAlignments extends LitElement {
       altGenomeId: this.altGenomeId,
       regionName: this.regionName,
       endpoint: this.endpoints.variants,
-      getReferenceWindow: () => this.getReferenceViewportForFetch()
+      getReferenceWindow: () => this.getReferenceViewportForFetch(),
+      getSignal: () => this.loadAbortController?.signal
     });
   }
 
@@ -325,7 +409,8 @@ const createVariantService = ({
   regionName,
   altRegionName,
   endpoint,
-  getReferenceWindow
+  getReferenceWindow,
+  getSignal
 }) => {
   return new DataService({
     loader: async (interval) => {
@@ -340,7 +425,7 @@ const createVariantService = ({
       }
 
       const url = appendEndpointParams(endpoint, params);
-      return await fetch(url).then((response) => response.json());
+      return await fetchJson(url, getSignal?.());
     },
     getFeatureId: (variant) => variant.name,
     getFeatureStart: (variant) => variant.location.start,
@@ -356,7 +441,8 @@ const createAlignmentService = ({
   endpoint,
   isReference,
   getReferenceWindow,
-  getAltWindow
+  getAltWindow,
+  getSignal
 }) => {
   const getFeatureStart = isReference
     ? (alignment) => alignment.reference.start
@@ -400,7 +486,7 @@ const createAlignmentService = ({
       }
 
       const url = appendEndpointParams(endpoint, params);
-      return await fetch(url).then((response) => response.json());
+      return await fetchJson(url, getSignal?.());
     },
     getFeatureStart,
     getFeatureEnd,

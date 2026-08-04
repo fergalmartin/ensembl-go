@@ -11,7 +11,7 @@ function HomeView({ theme, onNavigate }) {
 
   const views = [
     {
-      id: 'species_selector',
+      id: 'genome_selector',
       title: 'Genome Selector',
       description: 'Select downloaded genomes for visualisation.',
       icon: (

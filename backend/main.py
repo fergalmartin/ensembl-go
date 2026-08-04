@@ -54,6 +54,7 @@ except Exception:
 
 from download_manager import DownloadManager, SpeciesSummary, FileInfo, DownloadTask, GroupCount
 from assembly_report import (
+    KnownRegions,
     build_synonym_index,
     chrom_token_variants,
     load_assembly_synonym_rows,
@@ -114,6 +115,17 @@ from annotation import (
 from manual_genome_config import (
     parse_manual_genome_config,
     save_manual_genome_config,
+)
+import removal_rules
+from translation import (
+    MOLECULE_NUCLEAR,
+    TABLE_STANDARD,
+    TranslationLayout,
+    autodetect_organelle_table,
+    build_translation_layout,
+    classify_contig_molecule,
+    translate_cds_dna,
+    translation_table_for_lineage,
 )
 from sv_config import (
     CONFIG_VERSION_KEY as SV_CONFIG_VERSION_KEY,
@@ -4783,6 +4795,34 @@ def _ensure_index_worker_started() -> None:
         _index_worker_started = True
 
 
+def queue_index_build(gff_path: str, db_path: str) -> Tuple[str, str]:
+    """Hand a GFF3 index build to the background worker, reusing a live task.
+
+    Returns ``(task_id, status)``. This is deliberately cheap and never waits for
+    the build: it is called from request handlers that must answer immediately,
+    including the browse endpoints, which report "not ready yet" rather than
+    holding a connection open for the minutes a large annotation takes.
+    """
+    normalized_target = _normalize_fs_path(db_path)
+    with _index_tasks_guard:
+        for tid, task in _index_tasks.items():
+            if task.get("db_path") == normalized_target and task.get("status") in {"queued", "running"}:
+                return tid, str(task.get("status") or "queued")
+
+        task_id = str(uuid.uuid4())
+        _index_tasks[task_id] = {
+            "status": "queued",
+            "db_path": normalized_target,
+            "index_path": None,
+            "error": None,
+            "queued_at": now_iso(),
+        }
+
+    _ensure_index_worker_started()
+    _index_task_queue.put((task_id, str(gff_path), str(db_path)))
+    return task_id, "queued"
+
+
 @app.post("/api/index/generate-for-genome")
 async def generate_index_for_genome(request: SingleIndexRequest):
     """Start a background GFF3 index build. Returns a task_id immediately.
@@ -4804,30 +4844,8 @@ async def generate_index_for_genome(request: SingleIndexRequest):
         fallback_name = _index_basename_for_annotation(request.gff_path)
         target_index = _resolve_index_path(request.gff_path, output_dir, fallback_name)
 
-    normalized_target = _normalize_fs_path(str(target_index))
-
-    # If there's already a queued/running task for this exact DB path, return it.
-    with _index_tasks_guard:
-        for tid, task in _index_tasks.items():
-            if task.get("db_path") == normalized_target and task.get("status") in {"queued", "running"}:
-                return {"task_id": tid, "status": task.get("status") or "queued"}
-
-    task_id = str(uuid.uuid4())
-    with _index_tasks_guard:
-        _index_tasks[task_id] = {
-            "status": "queued",
-            "db_path": normalized_target,
-            "index_path": None,
-            "error": None,
-            "queued_at": now_iso(),
-        }
-
-    gff_path_str = request.gff_path
-    target_index_str = str(target_index)
-    _ensure_index_worker_started()
-    _index_task_queue.put((task_id, gff_path_str, target_index_str))
-
-    return {"task_id": task_id, "status": "queued"}
+    task_id, status = queue_index_build(request.gff_path, str(target_index))
+    return {"task_id": task_id, "status": status}
 
 
 @app.get("/api/index/task-status/{task_id}")
@@ -5332,6 +5350,7 @@ DEFAULT_CONFIG = {
     "manual_species": [],
     "genome_file_overrides": {},
     "genome_analysis_reports": {},
+    "deregistered_genome_keys": [],
     "genome_playlists": [],
     "selected_genome_playlist_id": "__all__",
     "genome_browser_colors": [
@@ -5343,7 +5362,7 @@ DEFAULT_CONFIG = {
     ],
     "active_app_buttons": [
         "home",
-        "species_selector",
+        "genome_selector",
         "genome_browser",
         "track_manager",
         "feature_explorer",
@@ -5930,6 +5949,7 @@ class ConfigUpdate(BaseModel):
     manual_species: Optional[List[Dict[str, Any]]] = None
     genome_file_overrides: Optional[Dict[str, Dict[str, Any]]] = None
     genome_analysis_reports: Optional[Dict[str, Dict[str, Any]]] = None
+    deregistered_genome_keys: Optional[List[str]] = None
     genome_playlists: Optional[List[Dict[str, Any]]] = None
     selected_genome_playlist_id: Optional[str] = None
     genome_browser_colors: Optional[List[str]] = None
@@ -6666,7 +6686,21 @@ def _download_manifest_file_records(manifest: Dict[str, Any], dataset_release_ke
     return records
 
 
-def _is_download_managed_assembly(manifest: Dict[str, Any]) -> bool:
+def _is_download_managed_assembly(
+    manifest: Dict[str, Any],
+    asm_dir: Optional[Path] = None,
+    assembly: str = "",
+) -> bool:
+    """Whether this assembly's files were downloaded by us, and so can be deleted.
+
+    With a directory to look at, the answer is simply whether it holds any file we
+    downloaded — which is what the delete endpoint acts on. The manifest alone can
+    only answer for genomes downloaded after manifests started recording individual
+    files; the ones before that list nothing at all.
+    """
+    if asm_dir is not None:
+        deletable, _user_supplied = _downloaded_assembly_files(asm_dir, assembly, manifest or {})
+        return bool(deletable)
     if not manifest:
         return False
     try:
@@ -6678,9 +6712,84 @@ def _is_download_managed_assembly(manifest: Dict[str, Any]) -> bool:
     return False
 
 
-def _delete_download_manifest_files(asm_dir: Path, manifest: Dict[str, Any], dataset_release_key: str = "") -> int:
-    deleted = 0
+def _user_supplied_manifest_paths(manifest: Dict[str, Any]) -> Set[str]:
+    """Files the user brought in, which a delete must never remove.
+
+    A custom annotation import records the file it copied with an empty ``url``;
+    downloads always carry the URL they came from.
+    """
+    kept: Set[str] = set()
+    for record in _download_manifest_file_records(manifest):
+        if str(record.get("url") or "").strip():
+            continue
+        raw_path = str(record.get("path") or "").strip()
+        if raw_path:
+            kept.add(str(Path(raw_path)))
+    return kept
+
+
+def _downloaded_assembly_files(
+    asm_dir: Path,
+    assembly: str,
+    manifest: Dict[str, Any],
+    release_dir: Optional[Path] = None,
+    legacy_release: bool = False,
+    dataset_release_key: str = "",
+) -> Tuple[List[Path], List[Path]]:
+    """(deletable, user_supplied) files inside a managed assembly directory.
+
+    The manifest is not enough on its own: genomes downloaded before manifests
+    recorded individual files list nothing, and even a current manifest does not
+    mention the sidecars we generate afterwards (``.fai``, ``.gzi``, tabix indexes,
+    ``.index.db``). Every downloaded file is named after the assembly it belongs to
+    (``GCA_000001405.29.gff3.gz``, ``GCF_000001405.40_GRCh38.p14_genomic.fna``)
+    wherever it lands, so that prefix is what marks a file as ours to delete.
+    User-supplied files are excluded: they live under ``datasets/custom/`` and are
+    recorded in the manifest without a URL.
+    """
+    deletable: List[Path] = []
+    user_supplied: List[Path] = []
+    if not asm_dir.is_dir():
+        return deletable, user_supplied
+
+    accession = str(assembly or "").strip()
+    # "<accession>." for our own naming, "<accession>_" for the NCBI names we keep
+    # as downloaded; a bare prefix would also match a different assembly version.
+    prefixes = (f"{accession}.", f"{accession}_")
+    protected = _user_supplied_manifest_paths(manifest)
+
+    # Only the directories downloads land in, so a large attached track hub is
+    # neither walked nor touched.
+    candidates: List[Path] = [p for p in asm_dir.iterdir() if p.is_file()] if asm_dir.is_dir() else []
+    candidates.extend(p for p in (asm_dir / "assembly").rglob("*") if p.is_file())
+    candidates.extend(p for p in (asm_dir / "datasets").rglob("*") if p.is_file())
+
+    for path in sorted(candidates):
+        if path.name.endswith(".genome_manifest.json"):
+            continue
+        parts = path.relative_to(asm_dir).parts
+        if str(path) in protected or parts[:2] == ("datasets", "custom"):
+            user_supplied.append(path)
+            continue
+        if not path.name.startswith(prefixes):
+            continue
+        if legacy_release:
+            # Pre-manifest downloads sit directly in the assembly directory, and
+            # only the annotation-scoped ones belong to that pseudo-release — the
+            # genome FASTA and its sidecars stay.
+            if path.parent != asm_dir:
+                continue
+            if _classify_local_download_file(path) not in DATASET_SCOPED_FILE_TYPES:
+                continue
+        elif release_dir is not None and not path.is_relative_to(release_dir):
+            continue
+        deletable.append(path)
+
+    # Anything the manifest recorded with a URL but that does not carry the
+    # prefix (an older naming convention) is ours too.
     for record in _download_manifest_file_records(manifest, dataset_release_key=dataset_release_key):
+        if not str(record.get("url") or "").strip():
+            continue
         raw_path = str(record.get("path") or "").strip()
         if not raw_path:
             continue
@@ -6688,9 +6797,27 @@ def _delete_download_manifest_files(asm_dir: Path, manifest: Dict[str, Any], dat
             path = require_path_within(asm_dir, Path(raw_path))
         except Exception:
             continue
-        if path.exists() and path.is_file():
-            path.unlink()
-            deleted += 1
+        if path.is_file() and path not in deletable and str(path) not in protected:
+            deletable.append(path)
+
+    return deletable, user_supplied
+
+
+_CUSTOM_FILES_DELETE_DETAIL = (
+    "These files were supplied by you rather than downloaded, so they are left alone. "
+    "Remove them from disk yourself."
+)
+
+
+def _unlink_files(paths: Iterable[Path]) -> int:
+    deleted = 0
+    for path in paths:
+        try:
+            if path.is_file():
+                path.unlink()
+                deleted += 1
+        except Exception:
+            continue
     return deleted
 
 
@@ -7539,7 +7666,7 @@ async def list_local_assemblies(output_dir: str):
     for provider, species_key, assembly, asm_dir in iter_local_assembly_dirs(local_root):
         manifest = _load_genome_manifest(asm_dir, assembly)
         scanned = _scan_local_assembly(asm_dir, assembly, manifest)
-        download_managed = _is_download_managed_assembly(manifest)
+        download_managed = _is_download_managed_assembly(manifest, asm_dir, assembly)
         types = list(scanned.get("types") or [])
         files = dict(scanned.get("files") or {})
 
@@ -7683,7 +7810,7 @@ async def list_local_assemblies(output_dir: str):
             "default_dataset_release_key": default_release_key,
             "dataset_releases": scanned.get("dataset_releases") or [],
             "download_managed": download_managed,
-            "delete_blocked_reason": "" if download_managed else "Custom genomes must be deleted manually",
+            "delete_blocked_reason": "" if download_managed else _CUSTOM_FILES_DELETE_DETAIL,
             "retired_remote": not (
                 species_key in species_lookup
                 and (
@@ -7756,8 +7883,6 @@ async def delete_local_files(request: DeleteLocalFilesRequest):
     if not asm_dir.is_dir():
         raise HTTPException(status_code=404, detail="Assembly directory not found")
     manifest = _load_genome_manifest(asm_dir, request.assembly)
-    if not _is_download_managed_assembly(manifest):
-        raise HTTPException(status_code=400, detail="Custom genomes must be deleted manually")
     local_root = _resolve_local_data_root(request.output_dir)
     if request.dataset_release_key:
         source, date, release_key = _dataset_release_parts(
@@ -7765,10 +7890,22 @@ async def delete_local_files(request: DeleteLocalFilesRequest):
             "gff3",
             release_key=request.dataset_release_key,
         )
-        deleted_count = _delete_download_manifest_files(asm_dir, manifest, dataset_release_key=release_key)
         release_dir = asm_dir / "datasets" / source / date
-        if not release_dir.is_dir() and deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Dataset release directory not found")
+        legacy_release = release_key == LEGACY_DATASET_RELEASE_KEY
+        deletable, user_supplied = _downloaded_assembly_files(
+            asm_dir,
+            request.assembly,
+            manifest,
+            release_dir=None if legacy_release else release_dir,
+            legacy_release=legacy_release,
+            dataset_release_key=release_key,
+        )
+        if not deletable:
+            if user_supplied:
+                raise HTTPException(status_code=400, detail=_CUSTOM_FILES_DELETE_DETAIL)
+            if not release_dir.is_dir():
+                raise HTTPException(status_code=404, detail="Dataset release directory not found")
+        deleted_count = _unlink_files(deletable)
         releases = manifest.get("dataset_releases")
         if isinstance(releases, dict):
             releases.pop(release_key, None)
@@ -7777,9 +7914,16 @@ async def delete_local_files(request: DeleteLocalFilesRequest):
             _write_genome_manifest(asm_dir, manifest)
         _prune_empty_download_dirs(asm_dir, local_root)
         return {"status": "deleted", "species_key": request.species_key, "assembly": request.assembly, "dataset_release_key": release_key, "deleted_files": deleted_count}
-    deleted_count = _delete_download_manifest_files(asm_dir, manifest)
+
+    deletable, user_supplied = _downloaded_assembly_files(asm_dir, request.assembly, manifest)
+    if not deletable:
+        if user_supplied:
+            raise HTTPException(status_code=400, detail=_CUSTOM_FILES_DELETE_DETAIL)
+        raise HTTPException(status_code=404, detail="No downloaded files found for this assembly")
+    deleted_count = _unlink_files(deletable)
+    # The manifest describes what is left; drop it only when nothing is.
     manifest_path = asm_dir / genome_manifest_filename(request.assembly)
-    if manifest_path.exists():
+    if manifest_path.exists() and not user_supplied:
         try:
             manifest_path.unlink()
         except Exception:
@@ -7823,6 +7967,352 @@ async def delete_single_local_file(request: DeleteSingleFileRequest):
         raise HTTPException(status_code=400, detail="Path is not a file")
     path.unlink()
     return {"deleted": str(path)}
+
+
+# ── genome removal: preview then delete ───────────────────────────────────────
+#
+# Deleting a genome's data has to answer for two very different layouts. A
+# downloaded genome owns a directory under local_data, so the question is which
+# of its files we put there (see _downloaded_assembly_files). A manually added
+# genome owns nothing: its FASTA and annotation are the user's, sitting wherever
+# they chose, with our index, sidecars and converted annotation written beside
+# them. backend/removal_rules.py holds those rules, each with a proof.
+#
+# Both endpoints run the same planner. The preview never writes, and the delete
+# re-derives the plan rather than trusting the paths the client sends back.
+
+
+class GenomeRemovalDescriptor(BaseModel):
+    genome_key: str = ""
+    species_key: str = ""
+    assembly: str = ""
+    provider: str = DEFAULT_PROVIDER
+    is_manual: bool = False
+
+
+class GenomeRemovalRequest(BaseModel):
+    output_dir: str = ""
+    genomes: List[GenomeRemovalDescriptor] = []
+    plan_token: str = ""
+
+
+def _manual_species_entries(config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    cfg = config if isinstance(config, dict) else load_config()
+    entries = cfg.get("manual_species") or []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _genome_descriptor_keys(descriptor: "GenomeRemovalDescriptor") -> Set[str]:
+    """Every key form a stored genome record might carry for this descriptor."""
+    keys: Set[str] = set()
+    for value in (descriptor.genome_key,):
+        text = str(value or "").strip()
+        if text:
+            keys.add(text)
+            keys.add(strip_dataset_release_from_selection_key(text))
+    provider = normalize_provider(descriptor.provider)
+    species_key = str(descriptor.species_key or "").strip()
+    assembly = str(descriptor.assembly or "").strip()
+    if species_key and assembly:
+        keys.add(build_provider_aware_genome_key(species_key, assembly, provider, descriptor.is_manual))
+        keys.add(legacy_genome_key(species_key, assembly))
+    return {key for key in keys if key}
+
+
+def _find_manual_entry(
+    descriptor: "GenomeRemovalDescriptor",
+    entries: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    wanted = _genome_descriptor_keys(descriptor)
+    species_key = str(descriptor.species_key or "").strip().lower()
+    assembly = str(descriptor.assembly or "").strip().lower()
+    for entry in entries:
+        candidates = {
+            str(entry.get("selection_key") or "").strip(),
+            str(entry.get("assembly_key") or "").strip(),
+            str(entry.get("key") or "").strip(),
+            build_provider_aware_genome_key(
+                entry.get("species_key"),
+                entry.get("assembly") or entry.get("gca"),
+                entry.get("provider"),
+                bool(entry.get("is_manual", True)),
+            ),
+            legacy_genome_key(entry.get("species_key"), entry.get("assembly") or entry.get("gca")),
+        }
+        if wanted & {candidate for candidate in candidates if candidate}:
+            return entry
+        if (
+            species_key
+            and assembly
+            and str(entry.get("species_key") or "").strip().lower() == species_key
+            and str(entry.get("assembly") or entry.get("gca") or "").strip().lower() == assembly
+        ):
+            return entry
+    return None
+
+
+def _plan_downloaded_removal(
+    descriptor: "GenomeRemovalDescriptor",
+    output_dir: str,
+    plan: removal_rules.RemovalPlan,
+) -> None:
+    """Add a download-managed assembly directory's files to *plan*."""
+    try:
+        asm_dir = _resolve_species_assembly_dir(
+            output_dir,
+            descriptor.species_key,
+            descriptor.assembly,
+            provider=normalize_provider(descriptor.provider),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        return
+    if not asm_dir.is_dir():
+        return
+
+    manifest = _load_genome_manifest(asm_dir, descriptor.assembly)
+    deletable, user_supplied = _downloaded_assembly_files(asm_dir, descriptor.assembly, manifest)
+    for path in deletable:
+        plan.add(path, "downloaded")
+
+    # A custom annotation import copies the user's file into the managed
+    # directory and records where it came from. The copy is ours to delete; the
+    # original never is, so it is named here rather than silently kept.
+    custom_sources = {
+        str(record.get("source_path") or "").strip()
+        for record in _download_manifest_file_records(manifest)
+        if str(record.get("source_path") or "").strip()
+    }
+    for path in user_supplied:
+        parts = path.relative_to(asm_dir).parts
+        if parts[:2] == ("datasets", "custom"):
+            plan.add(path, "app_copy")
+        else:
+            plan.protect(path, _CUSTOM_FILES_DELETE_DETAIL)
+    for source in sorted(custom_sources):
+        plan.protect(source, "the annotation you imported, left where you put it")
+
+    manifest_path = asm_dir / genome_manifest_filename(descriptor.assembly)
+    if manifest_path.is_file():
+        plan.add(manifest_path, "manifest")
+
+    # Attached track hubs are the user's doing and can be large; they are left
+    # alone, but the dialog should say so rather than leave a surprise directory.
+    hub_dir = asm_dir / "trackhub"
+    if hub_dir.is_dir():
+        plan.left_in_place.append({
+            "path": str(hub_dir),
+            "reason": "attached track hub files stay on disk",
+            # Do not recursively size a directory we are not deleting. Large
+            # attached hubs made a simple removal preview appear to hang.
+            "bytes": 0,
+        })
+
+
+def _plan_genome_removal(
+    descriptor: "GenomeRemovalDescriptor",
+    output_dir: str,
+    manual_entries: List[Dict[str, Any]],
+    foreign_seeds: Set[Path],
+) -> removal_rules.RemovalPlan:
+    """What removing one genome would delete.
+
+    A genome can be both downloaded and manually registered (a bundle registered
+    after a download), so both planners run and their results merge. Every rule
+    is a whitelist, so a union stays safe.
+    """
+    plan = removal_rules.RemovalPlan(genome_key=str(descriptor.genome_key or ""))
+    _plan_downloaded_removal(descriptor, output_dir, plan)
+
+    entry = _find_manual_entry(descriptor, manual_entries)
+    if entry is not None:
+        files = entry.get("files") or {}
+        gff_path = str(files.get("gff3") or "")
+        manual_plan = removal_rules.plan_manual_genome_removal(
+            entry,
+            output_dir=output_dir,
+            cache_root=CACHE_DIR,
+            foreign_seeds=foreign_seeds,
+            index_basename=_index_basename_for_annotation(gff_path) if gff_path else "genome.gff3.index.db",
+            genome_key=plan.genome_key,
+        )
+        for candidate in manual_plan.deletable:
+            plan.add(Path(candidate.path), candidate.kind)
+        for protected in manual_plan.protected:
+            plan.protect(protected.get("path"), str(protected.get("reason") or ""))
+        plan.notes.extend(note for note in manual_plan.notes if note not in plan.notes)
+
+    # Never delete something another genome still points at.
+    own_seeds = removal_rules.collect_seed_paths([entry] if entry else [])
+    keep = {path for path in foreign_seeds if path not in own_seeds}
+    if keep:
+        filtered = []
+        for candidate in plan.deletable:
+            if Path(candidate.path) in keep:
+                plan.protect(candidate.path, "another genome uses this file")
+                continue
+            filtered.append(candidate)
+        plan.deletable = filtered
+    return plan
+
+
+def _build_removal_plans(request: "GenomeRemovalRequest") -> List[removal_rules.RemovalPlan]:
+    config = load_config()
+    output_dir = str(request.output_dir or config.get("output_dir") or "").strip()
+    manual_entries = _manual_species_entries(config)
+    # Seeds of every genome still registered, so removing one never breaks
+    # another that shares a directory or a FASTA.
+    requested_keys: Set[str] = set()
+    for descriptor in request.genomes:
+        requested_keys |= _genome_descriptor_keys(descriptor)
+
+    def _is_being_removed(entry: Dict[str, Any]) -> bool:
+        entry_keys = {
+            str(entry.get("selection_key") or "").strip(),
+            str(entry.get("assembly_key") or "").strip(),
+            str(entry.get("key") or "").strip(),
+            build_provider_aware_genome_key(
+                entry.get("species_key"),
+                entry.get("assembly") or entry.get("gca"),
+                entry.get("provider"),
+                bool(entry.get("is_manual")),
+            ),
+            legacy_genome_key(entry.get("species_key"), entry.get("assembly") or entry.get("gca")),
+        }
+        return bool(requested_keys & {key for key in entry_keys if key})
+
+    # Both lists are filtered: a genome being removed is usually also the one
+    # selected, and treating its own files as another genome's would leave its
+    # artifacts behind.
+    keep_entries = [
+        entry
+        for entry in list(manual_entries) + [
+            item for item in (config.get("active_species") or []) if isinstance(item, dict)
+        ]
+        if not _is_being_removed(entry)
+    ]
+    foreign_seeds = removal_rules.collect_seed_paths(keep_entries)
+
+    plans: List[removal_rules.RemovalPlan] = []
+    for descriptor in request.genomes:
+        plans.append(_plan_genome_removal(descriptor, output_dir, manual_entries, foreign_seeds))
+    return plans
+
+
+@app.post("/api/genomes/removal-preview")
+async def preview_genome_removal(request: GenomeRemovalRequest):
+    """List what deleting these genomes' data would remove. Writes nothing."""
+    if not request.genomes:
+        raise HTTPException(status_code=400, detail="genomes must not be empty")
+    if len(request.genomes) > 500:
+        raise HTTPException(status_code=400, detail="genome limit exceeded (max 500)")
+
+    def _work():
+        plans = _build_removal_plans(request)
+        return {
+            "plans": [plan.as_dict() for plan in plans],
+            "plan_token": removal_rules.plan_token(plans),
+            "totals": {
+                "genomes": len(plans),
+                "files": sum(len(plan.deletable) for plan in plans),
+                "bytes": sum(plan.total_bytes for plan in plans),
+                "protected": sum(len(plan.protected) for plan in plans),
+            },
+        }
+
+    return await run_in_threadpool(_work)
+
+
+@app.post("/api/genomes/remove-data")
+async def remove_genome_data(request: GenomeRemovalRequest):
+    """Delete the files a preview listed, reporting per-genome results.
+
+    Returns 200 even when some files could not be removed: a batch that stops at
+    the first failure leaves the rest of the user's selection silently untouched.
+    """
+    if not request.genomes:
+        raise HTTPException(status_code=400, detail="genomes must not be empty")
+    if len(request.genomes) > 500:
+        raise HTTPException(status_code=400, detail="genome limit exceeded (max 500)")
+
+    def _work():
+        plans = _build_removal_plans(request)
+        token = removal_rules.plan_token(plans)
+        if request.plan_token and request.plan_token != token:
+            raise HTTPException(
+                status_code=409,
+                detail="The files on disk changed since this was previewed. Review the removal again.",
+            )
+
+        config = load_config()
+        output_dir = str(request.output_dir or config.get("output_dir") or "").strip()
+        local_root = _resolve_local_data_root(output_dir) if output_dir else None
+
+        results: List[Dict[str, Any]] = []
+        for descriptor, plan in zip(request.genomes, plans):
+            paths: List[str] = []
+            skipped: List[Dict[str, str]] = []
+            for candidate in plan.deletable:
+                if candidate.kind == "index_db" and removal_rules.is_index_lock_held(candidate.path):
+                    skipped.append({"path": candidate.path, "error": "an index build is using this file"})
+                    continue
+                paths.append(candidate.path)
+
+            freed = sum(item.bytes for item in plan.deletable if item.path in set(paths))
+            deleted, failed = removal_rules.unlink_paths(paths)
+            failed.extend(skipped)
+
+            try:
+                asm_dir = _resolve_species_assembly_dir(
+                    output_dir,
+                    descriptor.species_key,
+                    descriptor.assembly,
+                    provider=normalize_provider(descriptor.provider),
+                )
+                if local_root is not None and asm_dir.is_dir():
+                    _prune_empty_download_dirs(asm_dir, local_root)
+            except Exception:
+                pass
+
+            if not plan.deletable:
+                status = "nothing_to_delete"
+            elif failed and deleted:
+                status = "partial"
+            elif failed:
+                status = "failed"
+            else:
+                status = "deleted"
+            results.append({
+                "genome_key": plan.genome_key or descriptor.genome_key,
+                "status": status,
+                "deleted": deleted,
+                "failed": failed,
+                "protected": plan.protected,
+                "freed_bytes": freed if status in {"deleted", "partial"} else 0,
+            })
+
+        # Stale download badges for a genome whose files are gone.
+        removed_pairs = {
+            (str(descriptor.species_key or ""), str(descriptor.assembly or ""), normalize_provider(descriptor.provider))
+            for descriptor in request.genomes
+        }
+        for task_id, task in list(download_manager.tasks.items()):
+            key = (str(task.species_key or ""), str(task.assembly or ""), normalize_provider(task.provider))
+            if key in removed_pairs:
+                download_manager.tasks.pop(task_id, None)
+
+        return {
+            "results": results,
+            "totals": {
+                "genomes": len(results),
+                "deleted": sum(len(item["deleted"]) for item in results),
+                "failed": sum(len(item["failed"]) for item in results),
+                "bytes": sum(int(item["freed_bytes"]) for item in results),
+            },
+        }
+
+    return await run_in_threadpool(_work)
 
 
 @app.get("/api/remote/tasks")
@@ -8677,16 +9167,87 @@ def _get_genome_metadata_path(genome: str) -> Optional[str]:
     return None
 
 
+#: Prepared region-name lookups and synonym indexes, keyed by the exact region
+#: list they describe. Small: a handful of entries, one per genome being browsed.
+_KNOWN_REGIONS_CACHE: "OrderedDict[Tuple[str, ...], KnownRegions]" = OrderedDict()
+_KNOWN_REGIONS_CACHE_GUARD = threading.Lock()
+_SYNONYM_INDEX_CACHE: "OrderedDict[Tuple[Any, ...], Dict[str, Dict[str, List]]]" = OrderedDict()
+_SYNONYM_INDEX_CACHE_GUARD = threading.Lock()
+_REGION_CACHE_LIMIT = 8
+
+
+def _trim_region_cache(cache: "OrderedDict[Any, Any]", key: Any, value: Any) -> None:
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > _REGION_CACHE_LIMIT:
+        cache.popitem(last=False)
+
+
+def _known_regions_lookup(known_regions: Iterable[str]) -> KnownRegions:
+    """Prepared name lookups for a genome's regions, reused across requests.
+
+    Preparing these walks every sequence in the assembly. Each browse request
+    resolves the chromosome it was asked for, so on a genome with hundreds of
+    thousands of scaffolds that walk was being repeated on every pan and zoom.
+    """
+    regions = tuple(known_regions)
+    with _KNOWN_REGIONS_CACHE_GUARD:
+        cached = _KNOWN_REGIONS_CACHE.get(regions)
+        if cached is not None:
+            _KNOWN_REGIONS_CACHE.move_to_end(regions)
+            return cached
+
+    prepared = KnownRegions(regions)
+    with _KNOWN_REGIONS_CACHE_GUARD:
+        _trim_region_cache(_KNOWN_REGIONS_CACHE, regions, prepared)
+    return prepared
+
+
+def _synonym_index_cache_key(metadata_path: str, known_regions: Iterable[str]) -> Optional[Tuple[Any, ...]]:
+    try:
+        st = Path(metadata_path).stat()
+    except OSError:
+        return None
+    return (metadata_path, int(st.st_mtime_ns), int(st.st_size), tuple(known_regions))
+
+
 def _build_genome_synonym_index(genome: str, known_regions: List[str]) -> Dict[str, Dict[str, List]]:
+    """Alias/canonical name mapping for a genome's regions.
+
+    Cached, because building it pairs every sequence in the assembly with every
+    row of its assembly report. A scaffold-level genome has hundreds of
+    thousands of both, and /api/browse/regions and /api/browse/genes would
+    otherwise rebuild it on every single request — including the browser's
+    readiness poll, which repeats every 1.5 seconds until the view loads, so the
+    backend ran out of request threads before the first one ever finished.
+
+    The cached value is shared between callers and must be treated as read-only.
+    """
     metadata_path = _get_genome_metadata_path(genome)
     if not metadata_path:
         return {"canonical_to_synonyms": {}, "alias_to_candidates": {}}
 
-    rows = _load_cached_assembly_report_rows(metadata_path)
-    if not rows:
-        return {"canonical_to_synonyms": {}, "alias_to_candidates": {}}
+    cache_key = _synonym_index_cache_key(metadata_path, known_regions)
+    if cache_key is not None:
+        with _SYNONYM_INDEX_CACHE_GUARD:
+            cached = _SYNONYM_INDEX_CACHE.get(cache_key)
+            if cached is not None:
+                _SYNONYM_INDEX_CACHE.move_to_end(cache_key)
+                return cached
 
-    return build_synonym_index(rows, known_regions)
+    rows = _load_cached_assembly_report_rows(metadata_path)
+    # Built outside the lock: it is slow, and two callers racing to build the
+    # same index is far cheaper than every other genome waiting behind one.
+    index = (
+        build_synonym_index(rows, _known_regions_lookup(known_regions))
+        if rows
+        else {"canonical_to_synonyms": {}, "alias_to_candidates": {}}
+    )
+
+    if cache_key is not None:
+        with _SYNONYM_INDEX_CACHE_GUARD:
+            _trim_region_cache(_SYNONYM_INDEX_CACHE, cache_key, index)
+    return index
 
 
 def _resolve_browse_chrom_name(genome: str, requested: str, known_regions: List[str]) -> str:
@@ -8694,7 +9255,11 @@ def _resolve_browse_chrom_name(genome: str, requested: str, known_regions: List[
     if not token:
         return token
     synonym_index = _build_genome_synonym_index(genome, known_regions)
-    resolved = resolve_region_name(token, known_regions, synonym_index.get("alias_to_candidates"))
+    resolved = resolve_region_name(
+        token,
+        _known_regions_lookup(known_regions),
+        synonym_index.get("alias_to_candidates"),
+    )
     return resolved or token
 
 class RegionInfo(BaseModel):
@@ -8999,6 +9564,9 @@ class FeatureExplorerProteinRowResponse(BaseModel):
     sequence: str = ""       # amino-acid sequence for the requested window
     cds_segments: List[CdsSegmentInfo] = []  # used by the client for alignment
     strand: str = "+"
+    translation_table: int = 1        # NCBI genetic code used (2 = vertebrate mito, …)
+    five_prime_partial: bool = False  # CDS starts mid-codon; sequence begins with X
+    three_prime_partial: bool = False # trailing incomplete codon was dropped
 
 
 class FeatureExplorerProteinsResponse(BaseModel):
@@ -9180,10 +9748,23 @@ def _resolve_gene_description_for_db(db_path: str, gene_id: str, current_descrip
     return desc
 
 
+#: "Too Early" — the annotation index this request needs is still being built.
+#: Distinct from 404 so callers can tell "come back shortly" from "there is no
+#: annotation at all", and so the browser keeps polling instead of giving up.
+INDEX_BUILDING_STATUS = 425
+
+
 def _get_browse_db(genome: str) -> str:
     """Resolve the SQLite index path for a given genome from config.
 
     Validates that the index was built from the currently configured GFF.
+
+    Browsing never builds the index itself. Building one takes minutes on a
+    large annotation, and doing it inside a request blocked every other request
+    behind it: the selector could not list genomes, and the browser's own
+    readiness poll — which is what would have shown the build finishing — could
+    not be answered either. A missing or stale index is handed to the background
+    index worker and reported as :data:`INDEX_BUILDING_STATUS`.
     """
     context = _resolve_browse_genome_context(genome)
     db = str(context.get("db_path") or "")
@@ -9192,17 +9773,19 @@ def _get_browse_db(genome: str) -> str:
         raise HTTPException(status_code=404, detail=f"Index not found for {genome} genome. Generate indexes first.")
 
     if gff and os.path.exists(gff):
+        if _is_existing_index_usable(db, gff):
+            return _normalize_fs_path(db)
         try:
-            return ensure_gff_index(gff, db, force_rebuild=False)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"GFF not found for {genome} genome.")
-        except HTTPException:
-            raise
+            queue_index_build(gff, db)
         except Exception as exc:
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to prepare index for {genome} genome: {exc}",
             )
+        raise HTTPException(
+            status_code=INDEX_BUILDING_STATUS,
+            detail=f"The annotation index for the {genome} genome is still being built.",
+        )
 
     if not os.path.exists(db):
         raise HTTPException(status_code=404, detail=f"Index not found for {genome} genome. Generate indexes first.")
@@ -9215,6 +9798,11 @@ def _get_browse_db_optional(genome: str) -> str:
     A genome may be loaded with a FASTA alone, in which case the sequence track
     and any attached data tracks still work and only the gene track is empty.
     Callers that can render without genes use this instead of 404ing.
+
+    A genome that *does* have an annotation whose index is not built yet still
+    raises :data:`INDEX_BUILDING_STATUS`. Returning "" there would render the
+    genome as though it had no genes and never correct itself once the build
+    finished; the status keeps the caller polling.
     """
     try:
         return _get_browse_db(genome)
@@ -9888,7 +10476,7 @@ async def browse_transcripts(
     if not gene_id:
         raise HTTPException(status_code=400, detail="gene_id parameter is required.")
     
-    db_path = _get_browse_db(genome)
+    db_path = await run_in_threadpool(_get_browse_db, genome)
     
     def _query():
         conn = sqlite3.connect(db_path)
@@ -9955,7 +10543,7 @@ async def browse_canonical_transcripts(
     if not chrom or end <= start:
         raise HTTPException(status_code=400, detail="Valid chrom, start, and end required.")
 
-    db_path = _get_browse_db(genome)
+    db_path = await run_in_threadpool(_get_browse_db, genome)
 
     def _query():
         requested_chrom = str(chrom or "").strip()
@@ -11382,7 +11970,7 @@ async def feature_explorer_sequences(payload: FeatureExplorerSequencesRequest):
         raise HTTPException(status_code=400, detail="rows limit exceeded (max 50)")
 
     genome = str(payload.genome or "reference").strip() or "reference"
-    db_path = _get_browse_db(genome)
+    db_path = await run_in_threadpool(_get_browse_db, genome)
 
     def _query():
         fasta = _get_browse_fasta(genome)
@@ -11712,112 +12300,206 @@ def _extract_protein_ids_from_gff(
     return result
 
 
-def _build_phase_aware_cds_segments(cds_list: List[Dict[str, Any]], strand: str) -> List[Dict[str, int]]:
-    """
-    Build translated CDS segments in biological 5'->3' order.
+# ── protein translation ───────────────────────────────────────────────────────
+#
+# The translation rules themselves live in backend/translation.py; what is here
+# is the genome plumbing: which genetic code a contig uses, and how CDS bases are
+# read out of the FASTA.
 
-    GFF CDS phase denotes how many bases at the 5' end of this feature belong to
-    the incomplete codon continued from the previous CDS fragment. Those bases
-    must be skipped before concatenation or translation will fall out of frame
-    and introduce spurious stop codons.
-    """
-    normalized = _normalize_interval_list(cds_list, "cds", strand)
-    ordered = _ordered_five_to_three(normalized, strand)
-    cursor = 1
-    out: List[Dict[str, int]] = []
-
-    for seg in ordered:
-        g_start = int(seg.get("start", 0) or 0)
-        g_end = int(seg.get("end", 0) or 0)
-        if g_start <= 0 or g_end <= 0:
-            continue
-        if g_end < g_start:
-            g_start, g_end = g_end, g_start
-        raw_phase = seg.get("phase")
-        phase = int(raw_phase) if raw_phase in (0, 1, 2) else 0
-
-        seg_len = (g_end - g_start) + 1
-        if seg_len <= 0:
-            continue
-
-        trimmed_len = seg_len - phase
-        if trimmed_len <= 0:
-            continue
-
-        if strand == "+":
-            translated_g_start = g_start + phase
-            translated_g_end = g_end
-        else:
-            translated_g_start = g_start
-            translated_g_end = g_end - phase
-
-        out.append({
-            "coord_start": cursor,
-            "coord_end": cursor + trimmed_len - 1,
-            "genomic_start": translated_g_start,
-            "genomic_end": translated_g_end,
-            "phase": phase,
-        })
-        cursor += trimmed_len
-
-    return out
+_TRANSLATION_CONTEXT_CACHE: Dict[str, Dict[str, Any]] = {}
+_TRANSLATION_CONTEXT_GUARD = threading.Lock()
 
 
-def _translate_cds(fasta, chrom: str, strand: str, cds_list: List[Dict[str, Any]]) -> str:
-    """Assembles CDS exons in 5'→3' order and translates to amino-acid sequence.
-
-    Uses the same _build_mode_segments / _extract_window_sequence_from_segments
-    infrastructure as the sequences panel to ensure consistent behaviour.
-    Terminal stop codon (*) is stripped; internal stops are preserved.
-
-    NOTE: GFF3 phase values indicate reading-frame position but do NOT imply that
-    bases should be removed before concatenation.  All CDS bases are part of the
-    coding sequence; trimming by phase would discard real coding bases, shorten the
-    protein, and introduce frameshifts.  We therefore build segments without any
-    phase-based trimming, matching the behaviour of the sequences panel.
-    """
-    if not cds_list:
-        return ""
-
-    coord_min, coord_max, segments, status = _build_mode_segments(
-        1, 1, strand, [], cds_list, "cds"
-    )
-    if status != "ok" or not segments:
-        return ""
-
-    dna = _extract_window_sequence_from_segments(
-        fasta, chrom, strand, segments,
-        coord_min=coord_min,
-        coord_max=coord_max,
-        window_start=coord_min,
-        window_end=coord_max,
-        placeholder="N",
-    )
-    if not dna:
-        return ""
-
-    # Trim to a multiple of 3 before translating
-    trim = len(dna) - (len(dna) % 3)
-    if trim == 0:
-        return ""
-    dna = dna[:trim]
-
+def _assembly_report_taxid(path: str) -> int:
+    """Taxid from an NCBI-style assembly report header ('# Taxid: 9606')."""
     try:
-        aa_seq = str(Seq(dna.upper()).translate(to_stop=False))
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if not line.startswith("#"):
+                    break
+                match = re.match(r"#\s*Taxid:\s*(\d+)", line)
+                if match:
+                    return int(match.group(1))
     except Exception:
-        # Fall back: replace ambiguous bases with N then retry
+        return 0
+    return 0
+
+
+def _genome_taxid(genome: str, species: Dict[str, Any]) -> int:
+    """Best-effort NCBI taxid for a configured genome."""
+    for key in ("taxid", "species_taxonomy_id", "taxonomy_id"):
         try:
-            import re as _re
-            dna_clean = _re.sub(r'[^ACGT]', 'N', dna.upper())
-            aa_seq = str(Seq(dna_clean).translate(to_stop=False))
+            value = int(species.get(key) or 0)
         except Exception:
-            return ""
+            value = 0
+        if value:
+            return value
 
-    # Strip only the terminal stop codon; keep internal stops (readthrough / frameshifts)
-    if aa_seq.endswith('*'):
-        aa_seq = aa_seq[:-1]
+    catalog_key = _find_catalog_species_key(species.get("species_key"))
+    info = (getattr(download_manager, "species_data", {}) or {}).get(catalog_key) or {}
+    if isinstance(info, dict):
+        for key in ("taxid", "species_taxonomy_id"):
+            try:
+                value = int(info.get(key) or 0)
+            except Exception:
+                value = 0
+            if value:
+                return value
 
-    return aa_seq
+    metadata_path = None
+    try:
+        metadata_path = _get_genome_metadata_path(genome)
+    except Exception:
+        metadata_path = None
+    if metadata_path:
+        return _assembly_report_taxid(metadata_path)
+    return 0
+
+
+def _genome_lineage(genome: str, species: Dict[str, Any]) -> Tuple[int, ...]:
+    taxid = _genome_taxid(genome, species)
+    if not taxid:
+        return ()
+    classifier = getattr(download_manager, "taxonomy_classifier", None)
+    if classifier is None:
+        return ()
+    try:
+        _resolved, lineage = classifier.lineage_for_taxid(taxid)
+    except Exception:
+        return ()
+    return tuple(lineage)
+
+
+def _translation_context(genome: str) -> Dict[str, Any]:
+    """Per-genome translation settings: contig molecule types and species lineage.
+
+    Cached per genome because it reads the assembly report and the taxonomy
+    artifact, and the answer is the same for every transcript of that genome.
+    """
+    context = _resolve_browse_genome_context(genome)
+    species = context.get("species") or {}
+    try:
+        metadata_path = _get_genome_metadata_path(genome)
+    except Exception:
+        metadata_path = None
+
+    # Keyed on the files too, so re-pointing a genome at a different assembly or
+    # annotation does not keep the previous answer.
+    cache_key = "\x1f".join([
+        str(context.get("cache_key") or genome or "reference"),
+        str(context.get("fasta_path") or ""),
+        str(metadata_path or ""),
+    ])
+    with _TRANSLATION_CONTEXT_GUARD:
+        cached = _TRANSLATION_CONTEXT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    molecules: Dict[str, str] = {}
+    if metadata_path:
+        for row in _load_cached_assembly_report_rows(metadata_path):
+            molecule = classify_contig_molecule(row.sequence_name, getattr(row, "molecule_type", ""))
+            if molecule == MOLECULE_NUCLEAR:
+                continue
+            for alias in row.ordered_aliases():
+                molecules[str(alias).strip().lower()] = molecule
+
+    resolved = {
+        "molecules": molecules,
+        "lineage": _genome_lineage(genome, species),
+    }
+    with _TRANSLATION_CONTEXT_GUARD:
+        _TRANSLATION_CONTEXT_CACHE[cache_key] = resolved
+    return resolved
+
+
+def _resolve_translation_table(genome: str, chrom: str) -> Tuple[int, str, bool]:
+    """Genetic code for *chrom* of *genome*.
+
+    Returns ``(table, molecule, resolved)`` where ``resolved`` is False when the
+    species lineage was unavailable, which lets organelle callers fall back to
+    auto-detection instead of silently using the wrong code.
+    """
+    try:
+        context = _translation_context(genome)
+    except Exception:
+        context = {"molecules": {}, "lineage": ()}
+
+    molecules = context.get("molecules") or {}
+    lineage = context.get("lineage") or ()
+    molecule = molecules.get(str(chrom or "").strip().lower())
+    if not molecule:
+        molecule = classify_contig_molecule(chrom)
+
+    table = translation_table_for_lineage(molecule, lineage)
+    if table is None:
+        return TABLE_STANDARD, molecule, False
+    return table, molecule, True
+
+
+def _cds_dna_from_layout(fasta, chrom: str, strand: str, layout: TranslationLayout) -> str:
+    """Concatenate the translated CDS bases in 5'→3' order.
+
+    A segment that cannot be read (contig missing from the FASTA, coordinates off
+    the end) is padded with Ns rather than skipped: dropping bases would shift the
+    reading frame of everything downstream.
+    """
+    pieces: List[str] = []
+    for segment in layout.segments:
+        expected = segment.coord_end - segment.coord_start + 1
+        piece = _fetch_oriented_piece(
+            fasta, chrom, segment.genomic_start, segment.genomic_end, strand
+        )
+        if len(piece) < expected:
+            piece = piece + ("N" * (expected - len(piece)))
+        pieces.append(piece[:expected])
+    return "".join(pieces)
+
+
+def _translate_cds(
+    fasta,
+    chrom: str,
+    strand: str,
+    cds_list: List[Dict[str, Any]],
+    table: Optional[int] = None,
+) -> str:
+    """Amino-acid sequence for a CDS, following Ensembl/RefSeq pep conventions.
+
+    See backend/translation.py for the rules. ``table`` defaults to the standard
+    genetic code; callers with a genome in hand should pass the code resolved by
+    :func:`_resolve_translation_table` so that organelle genes are not translated
+    with the nuclear code.
+    """
+    protein, _layout, _table = _translate_transcript(
+        fasta, chrom, strand, cds_list, table=table
+    )
+    return protein
+
+
+def _translate_transcript(
+    fasta,
+    chrom: str,
+    strand: str,
+    cds_list: List[Dict[str, Any]],
+    table: Optional[int] = None,
+    molecule: str = MOLECULE_NUCLEAR,
+    autodetect: bool = False,
+) -> Tuple[str, TranslationLayout, int]:
+    """Translate a transcript, returning the protein, CDS layout and code used."""
+    layout = build_translation_layout(cds_list, strand)
+    if not layout.segments:
+        return "", layout, int(table or TABLE_STANDARD)
+
+    dna = _cds_dna_from_layout(fasta, chrom, strand, layout)
+    if not dna:
+        return "", layout, int(table or TABLE_STANDARD)
+
+    resolved_table = int(table or TABLE_STANDARD)
+    if autodetect and molecule != MOLECULE_NUCLEAR:
+        resolved_table = autodetect_organelle_table(dna, start_phase=layout.start_phase)
+
+    protein = translate_cds_dna(dna, start_phase=layout.start_phase, table=resolved_table)
+    return protein, layout, resolved_table
 
 
 @app.post("/api/feature_explorer/proteins", response_model=FeatureExplorerProteinsResponse)
@@ -11829,7 +12511,7 @@ async def feature_explorer_proteins(payload: FeatureExplorerProteinsRequest):
         raise HTTPException(status_code=400, detail="rows limit exceeded (max 50)")
 
     genome = str(payload.genome or "reference").strip() or "reference"
-    db_path = _get_browse_db(genome)
+    db_path = await run_in_threadpool(_get_browse_db, genome)
 
     def _query():
         fasta = _get_browse_fasta(genome)
@@ -11887,8 +12569,9 @@ async def feature_explorer_proteins(payload: FeatureExplorerProteinsRequest):
 
         # Translate CDS sequences and cache results per tx_id (avoid re-translating for multiple windows)
         protein_seq_cache: Dict[str, str] = {}
-        # CDS segments cache for alignment — {tx_id: [{coord_start,coord_end,genomic_start,genomic_end}]}
-        segments_cache: Dict[str, List[Dict[str, int]]] = {}
+        # Codon-aligned CDS layout per tx_id, reused for the client-side alignment
+        layout_cache: Dict[str, TranslationLayout] = {}
+        table_cache: Dict[str, int] = {}
 
         rows_out: List[FeatureExplorerProteinRowResponse] = []
         for row_req in payload.rows:
@@ -11917,17 +12600,23 @@ async def feature_explorer_proteins(payload: FeatureExplorerProteinsRequest):
                 continue
 
             if tx_id not in protein_seq_cache:
-                protein_seq_cache[tx_id] = _translate_cds(
-                    fasta, tx["chrom"], tx["strand"], cds_list
+                # Organelle contigs use their own genetic code; when the species
+                # lineage is unknown (manual genomes) fall back to detecting it.
+                table, molecule, table_resolved = _resolve_translation_table(genome, tx["chrom"])
+                aa, layout, used_table = _translate_transcript(
+                    fasta,
+                    tx["chrom"],
+                    tx["strand"],
+                    cds_list,
+                    table=table,
+                    molecule=molecule,
+                    autodetect=not table_resolved,
                 )
+                protein_seq_cache[tx_id] = aa
+                layout_cache[tx_id] = layout
+                table_cache[tx_id] = used_table
             aa_seq = protein_seq_cache[tx_id]
-
-            # Compute CDS segments (cheap, array-only) and cache for reuse.
-            # Use _build_mode_segments (no phase trimming) so coord positions align
-            # with the protein sequence produced by _translate_cds above.
-            if tx_id not in segments_cache:
-                _, _, segs, _ = _build_mode_segments(1, 1, tx["strand"], [], cds_list, "cds")
-                segments_cache[tx_id] = segs
+            layout = layout_cache[tx_id]
 
             if not aa_seq:
                 rows_out.append(FeatureExplorerProteinRowResponse(
@@ -11936,6 +12625,7 @@ async def feature_explorer_proteins(payload: FeatureExplorerProteinsRequest):
                     coord_min=1, coord_max=1,
                     window_start=w_start, window_end=w_end, sequence="",
                     cds_segments=[], strand=tx["strand"],
+                    translation_table=table_cache.get(tx_id, TABLE_STANDARD),
                 ))
                 continue
 
@@ -11943,15 +12633,17 @@ async def feature_explorer_proteins(payload: FeatureExplorerProteinsRequest):
             w_start = max(1, min(w_start, protein_len))
             w_end = min(w_end, protein_len)
             window_seq = aa_seq[w_start - 1:w_end]
+            # Coordinates are codon-aligned: amino acid n covers CDS nucleotides
+            # 3n-2..3n, including when a 5'-incomplete CDS shifts the frame.
             seg_objs = [
                 CdsSegmentInfo(
-                    coord_start=s["coord_start"],
-                    coord_end=s["coord_end"],
-                    genomic_start=s["genomic_start"],
-                    genomic_end=s["genomic_end"],
-                    phase=(int(s["phase"]) if s.get("phase") in (0, 1, 2) else None),
+                    coord_start=s.coord_start,
+                    coord_end=s.coord_end,
+                    genomic_start=s.genomic_start,
+                    genomic_end=s.genomic_end,
+                    phase=s.phase,
                 )
-                for s in segments_cache.get(tx_id, [])
+                for s in layout.segments
             ]
 
             rows_out.append(FeatureExplorerProteinRowResponse(
@@ -11965,6 +12657,9 @@ async def feature_explorer_proteins(payload: FeatureExplorerProteinsRequest):
                 sequence=window_seq,
                 cds_segments=seg_objs,
                 strand=tx["strand"],
+                translation_table=table_cache.get(tx_id, TABLE_STANDARD),
+                five_prime_partial=layout.five_prime_partial,
+                three_prime_partial=layout.three_prime_partial,
             ))
 
         return FeatureExplorerProteinsResponse(rows=rows_out)
@@ -12203,7 +12898,7 @@ async def browse_bigwig(
         raise HTTPException(status_code=400, detail="end must be greater than start.")
 
     # Ensure selected genome is valid/configured (same guardrails as other browse APIs).
-    _get_browse_db(genome)
+    await run_in_threadpool(_get_browse_db, genome)
 
     bw_path = Path(path).expanduser()
     if not bw_path.exists() or not bw_path.is_file():
@@ -19703,7 +20398,7 @@ async def browse_bigwig_batch(payload: BigWigBatchRequest):
     if not chrom:
         raise HTTPException(status_code=400, detail="chrom is required.")
 
-    _get_browse_db(genome)
+    await run_in_threadpool(_get_browse_db, genome)
     p = Path(path).expanduser()
     if not p.exists() or not p.is_file():
         raise HTTPException(status_code=404, detail=f"BigWig not found: {p}")

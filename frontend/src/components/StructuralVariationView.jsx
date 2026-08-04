@@ -19,6 +19,11 @@ import {
   getSvGenomeDisplayName,
   speciesGenomeKey,
 } from '../utils/svCatalog'
+import {
+  createSvRequestError,
+  isRetryableSvRequestError,
+  shouldStartSvRequest,
+} from '../utils/svRequestRetry'
 import FileBrowserModal from './FileBrowserModal'
 import StructuralVariationFeatureBand from './StructuralVariationFeatureBand'
 
@@ -5176,6 +5181,8 @@ function StructuralVariationThreeGenomeView({
   const lowerAbortRef = useRef(null)
   const upperLastFetchKeyRef = useRef('')
   const lowerLastFetchKeyRef = useRef('')
+  const upperInFlightFetchKeyRef = useRef('')
+  const lowerInFlightFetchKeyRef = useRef('')
   const bufferRetryRef = useRef({
     top: { key: '', attempt: 0, timer: null },
     bottom: { key: '', attempt: 0, timer: null },
@@ -5433,19 +5440,26 @@ function StructuralVariationThreeGenomeView({
     const tokenRef = slot === 'top' ? upperFetchTokenRef : lowerFetchTokenRef
     const abortRef = slot === 'top' ? upperAbortRef : lowerAbortRef
     const lastFetchKeyRef = slot === 'top' ? upperLastFetchKeyRef : lowerLastFetchKeyRef
+    const inFlightFetchKeyRef = slot === 'top' ? upperInFlightFetchKeyRef : lowerInFlightFetchKeyRef
     const retryState = bufferRetryRef.current[slot]
     const setLoadingState = slot === 'top' ? setUpperBufferLoading : setLowerBufferLoading
     const setDataState = slot === 'top' ? setUpperBufferData : setLowerBufferData
 
-    if (fetchKey === lastFetchKeyRef.current) return
     if (retryState.key !== fetchKey) {
       if (retryState.timer) clearTimeout(retryState.timer)
       retryState.key = fetchKey
       retryState.attempt = 0
       retryState.timer = null
     }
+    if (!shouldStartSvRequest({
+      fetchKey,
+      lastFetchKey: lastFetchKeyRef.current,
+      inFlightFetchKey: inFlightFetchKeyRef.current,
+      retryScheduled: Boolean(retryState.timer),
+    })) return
 
     const token = ++tokenRef.current
+    inFlightFetchKeyRef.current = fetchKey
     abortRef.current?.abort?.()
     const abortController = new AbortController()
     abortRef.current = abortController
@@ -5456,10 +5470,18 @@ function StructuralVariationThreeGenomeView({
       const data = await res.json().catch(() => null)
       if (token !== tokenRef.current) return
       if (!res.ok) {
-        throw new Error(data?.detail || `SV request failed (${res.status})`)
+        throw createSvRequestError(data?.detail || `SV request failed (${res.status})`, {
+          status: res.status,
+        })
       }
       if (!data?.supported) {
-        throw new Error(data?.detail || 'SV dataset not available for this genome pair.')
+        // The selected alignment came from the supported catalogue. A temporary
+        // unsupported response can therefore be caused by startup/config refresh
+        // timing and is worth retrying before declaring this ribbon unavailable.
+        throw createSvRequestError(
+          data?.detail || 'SV dataset not available for this genome pair.',
+          { retryable: true },
+        )
       }
       setDataState(data)
       lastFetchKeyRef.current = fetchKey
@@ -5469,17 +5491,19 @@ function StructuralVariationThreeGenomeView({
         retryState.timer = null
       }
       setError(null)
-      setStatusText('')
+      const otherSlot = slot === 'top' ? 'bottom' : 'top'
+      if (!bufferRetryRef.current[otherSlot].timer) setStatusText('')
     } catch (e) {
       if (e?.name === 'AbortError') return
       if (token !== tokenRef.current) return
       const currentDataRef = slot === 'top' ? upperBufferDataRef : lowerBufferDataRef
-      if (isFetchNetworkError(e)) {
+      if (isRetryableSvRequestError(e) && retryState.attempt < SV_TRANSIENT_RETRY_LIMIT) {
+        const label = slot === 'bottom' ? 'third genome alignment' : 'second genome alignment'
         setStatusText(currentDataRef.current
-          ? 'Backend temporarily unavailable; keeping the last loaded SV region.'
-          : 'Backend unavailable. Start or restart the backend to load structural variation data.')
+          ? `The ${label} is temporarily unavailable; keeping the last loaded region and retrying.`
+          : `The ${label} is taking longer than expected; retrying automatically.`)
         setError(null)
-        if (!retryState.timer && retryState.attempt < SV_TRANSIENT_RETRY_LIMIT) {
+        if (!retryState.timer) {
           retryState.attempt += 1
           const delay = getSvTransientRetryDelay(retryState.attempt)
           retryState.timer = setTimeout(() => {
@@ -5494,10 +5518,15 @@ function StructuralVariationThreeGenomeView({
       if (slot === 'bottom') {
         setDataState(null)
         lastFetchKeyRef.current = ''
+        setStatusText(`The third genome alignment could not be loaded: ${e?.message || 'unknown error'}`)
+        setError(null)
         return
       }
       setError(e?.message || 'Failed to load structural variation data.')
     } finally {
+      if (inFlightFetchKeyRef.current === fetchKey) {
+        inFlightFetchKeyRef.current = ''
+      }
       if (abortRef.current === abortController) {
         abortRef.current = null
       }
@@ -6241,6 +6270,7 @@ function StructuralVariationThreeGenomeView({
   useEffect(() => {
     const registerRibbon = (element, slot) => {
       if (!element) return () => {}
+      const label = slot === 'top' ? 'second genome' : 'third genome'
 
       const windowsFromRibbonEvent = (detail) => {
         const { reference, alt } = detail ?? {}
@@ -6298,11 +6328,24 @@ function StructuralVariationThreeGenomeView({
         commitViewportChange(next.ref, next.top, next.bottom)
       }
 
+      const handleLoadingChange = (event) => {
+        setAlignmentTrackLoading((prev) => updateObjectSlot(prev, slot, Boolean(event.detail?.loading)))
+      }
+
+      const handleLoadingError = (event) => {
+        setAlignmentTrackLoading((prev) => updateObjectSlot(prev, slot, false))
+        setStatusText(`The ${label} alignment ribbon could not be loaded: ${event.detail?.message || 'unknown error'}`)
+      }
+
       element.addEventListener('viewport-change', handlePreview)
       element.addEventListener('viewport-change-end', handleCommit)
+      element.addEventListener('loading-change', handleLoadingChange)
+      element.addEventListener('loading-error', handleLoadingError)
       return () => {
         element.removeEventListener('viewport-change', handlePreview)
         element.removeEventListener('viewport-change-end', handleCommit)
+        element.removeEventListener('loading-change', handleLoadingChange)
+        element.removeEventListener('loading-error', handleLoadingError)
       }
     }
 
@@ -6312,7 +6355,15 @@ function StructuralVariationThreeGenomeView({
       cleanupUpper()
       cleanupLower()
     }
-  }, [pushPreviewViewport, commitViewportChange, viewRefWindow?.chrom])
+  }, [
+    pushPreviewViewport,
+    commitViewportChange,
+    viewRefWindow?.chrom,
+    selectedTopAlignmentId,
+    selectedBottomAlignmentId,
+    baseTopWindow?.chrom,
+    baseBottomWindow?.chrom,
+  ])
 
   useEffect(() => {
     const updateSelectionRectFromEvent = (event) => {
@@ -6426,9 +6477,23 @@ function StructuralVariationThreeGenomeView({
   const upperAlignmentKey = `${selectedTopAlignmentId}|${refAssembly}|${topAssembly}|${viewRefWindow?.chrom || ''}|upper`
   const lowerAlignmentKey = `${selectedBottomAlignmentId}|${refAssembly}|${bottomAssembly}|${viewRefWindow?.chrom || ''}|lower`
 
-  const canRenderUpperRibbon = Boolean(refSpecies && tgtSpecies && selectedTopAlignmentId && viewRefWindow)
+  // Wait for the target window before mounting a ribbon. Mounting it earlier
+  // starts a reference-only full-chromosome request which is immediately replaced
+  // when /api/sv/view supplies the target window.
+  const canRenderUpperRibbon = Boolean(
+    refSpecies
+    && tgtSpecies
+    && selectedTopAlignmentId
+    && viewRefWindow
+    && baseTopWindow?.chrom
+  )
   const hasLowerSection = Boolean(selectedBottomAlignmentId)
-  const canRenderLowerRibbon = Boolean(canRenderUpperRibbon && thirdSpecies && selectedBottomAlignmentId)
+  const canRenderLowerRibbon = Boolean(
+    canRenderUpperRibbon
+    && thirdSpecies
+    && selectedBottomAlignmentId
+    && baseBottomWindow?.chrom
+  )
   const legendSectionClass = isLight ? 'border-gray-200 bg-gray-50/90 text-gray-700' : 'border-gray-700 bg-[#152033] text-gray-300'
   const legendTitleClass = isLight ? 'text-gray-600' : 'text-gray-400'
   const legendItems = [
@@ -6557,6 +6622,13 @@ function StructuralVariationThreeGenomeView({
           </button>
         </div>
       </div>
+      {statusText && (upperBufferData || lowerBufferData) && (
+        <div className={`border-b px-3 py-1.5 text-xs ${
+          isLight ? 'border-gray-200 bg-amber-50 text-amber-800' : 'border-gray-700 bg-amber-950/30 text-amber-200'
+        }`}>
+          {statusText}
+        </div>
+      )}
 
       <div ref={bandSvgRef} className="flex-none overflow-visible flex flex-col pb-5">
         {error ? (
@@ -6632,7 +6704,7 @@ function StructuralVariationThreeGenomeView({
                   displayOrder="alt-top"
                 />
               )}
-              {alignmentTrackLoading.top && (
+              {(upperBufferLoading || alignmentTrackLoading.top) && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="flex items-center gap-3 rounded-lg px-4 py-2" style={{ backgroundColor: isLight ? 'rgba(255,255,255,0.88)' : 'rgba(15,23,42,0.82)' }}>
                     <div className={`h-5 w-5 animate-spin rounded-full border-[3px] border-t-transparent ${isLight ? 'border-sky-500' : 'border-sky-400'}`} />
@@ -6711,7 +6783,7 @@ function StructuralVariationThreeGenomeView({
                   displayOrder="reference-top"
                 />
               )}
-              {alignmentTrackLoading.bottom && (
+              {(lowerBufferLoading || alignmentTrackLoading.bottom) && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="flex items-center gap-3 rounded-lg px-4 py-2" style={{ backgroundColor: isLight ? 'rgba(255,255,255,0.88)' : 'rgba(15,23,42,0.82)' }}>
                     <div className={`h-5 w-5 animate-spin rounded-full border-[3px] border-t-transparent ${isLight ? 'border-sky-500' : 'border-sky-400'}`} />
@@ -7166,7 +7238,7 @@ function StructuralVariationChooser({
   const mutedClass = isLight ? 'text-gray-600' : 'text-gray-400'
   const fieldClass = 'flex min-w-0 flex-col gap-1'
   const fieldLabelClass = `h-4 text-xs font-semibold leading-4 ${mutedClass}`
-  const controlBaseClass = 'h-8 min-w-[220px] max-w-full rounded border px-2 text-sm leading-tight'
+  const controlBaseClass = 'h-8 min-w-[220px] max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded border py-0 pl-2 pr-8 text-sm leading-tight'
   const selectClass = `${controlBaseClass} ${
     isLight ? 'border-gray-300 bg-white text-gray-900' : 'border-gray-600 bg-slate-900 text-gray-100'
   }`
@@ -7666,7 +7738,7 @@ function StructuralVariationConfigPanel({ theme, catalog, outputDir, onChanged }
   const buttonClass = `inline-flex h-8 items-center justify-center rounded border px-2.5 text-xs leading-none transition-colors ${
     isLight ? 'border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100' : 'border-gray-600 bg-slate-800 text-gray-100 hover:bg-slate-700'
   }`
-  const selectClass = `h-8 min-w-[240px] rounded border px-2 text-sm leading-tight ${
+  const selectClass = `h-8 min-w-[240px] overflow-hidden text-ellipsis whitespace-nowrap rounded border py-0 pl-2 pr-8 text-sm leading-tight ${
     isLight ? 'border-gray-300 bg-white text-gray-900' : 'border-gray-600 bg-slate-900 text-gray-100'
   }`
 
@@ -8441,7 +8513,7 @@ function StructuralVariationView(props) {
         </div>
       ) : (
         <StructuralVariationThreeGenomeView
-          key={`javascript|${pairAlignmentId}|${thirdAlignmentId}|${getSvRegionKey(selectedAnchorRegion)}`}
+          key={`javascript|${pairAlignmentId}|${getSvRegionKey(selectedAnchorRegion)}`}
           {...props}
           selectedTopAlignmentId={pairAlignmentId}
           selectedBottomAlignmentId={thirdAlignmentId}

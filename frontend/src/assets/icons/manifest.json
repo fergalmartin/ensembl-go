@@ -1,6 +1,6 @@
 {
   "home": "icon_home.svg",
-  "species_selector": "icon_species_selector.svg",
+  "genome_selector": "icon_genome_selector.svg",
   "genome_browser": "icon_genome_browser.svg",
   "track_manager": "icon_track_manager.svg",
   "feature_explorer": "icon_feature_explorer.svg",

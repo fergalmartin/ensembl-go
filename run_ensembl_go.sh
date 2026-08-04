@@ -11,6 +11,7 @@ BACKEND_PORT=8000
 FRONTEND_PORT=5173
 BACKEND_PID=""
 FRONTEND_PID=""
+STARTED_SERVICE_PID=""
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -119,15 +120,103 @@ wait_for_service() {
   return 1
 }
 
+start_background_service() {
+  local working_dir="$1"
+  shift
+
+  # Put each long-running service in its own session/process group. Terminal
+  # Ctrl-C should reach this launcher and the foreground Electron process, not
+  # Uvicorn's reload child or Vite directly. Cleanup can then stop the complete
+  # service tree by signalling its process group.
+  (
+    cd "$working_dir" || exit 1
+    exec python3 -c '
+import os
+import sys
+
+os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])
+' "$@"
+  ) &
+  STARTED_SERVICE_PID=$!
+}
+
+service_group_is_running() {
+  local pid="$1"
+  [[ -n "$pid" ]] && kill -0 -- "-$pid" 2>/dev/null
+}
+
+service_process_is_running() {
+  local pid="$1"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+signal_background_service() {
+  local signal_name="$1"
+  local pid="$2"
+  if service_group_is_running "$pid"; then
+    kill "-$signal_name" -- "-$pid" 2>/dev/null || true
+  elif service_process_is_running "$pid"; then
+    # Covers the very short interval before the launcher calls setsid().
+    kill "-$signal_name" "$pid" 2>/dev/null || true
+  fi
+}
+
+service_has_exited() {
+  local pid="$1"
+  ! service_group_is_running "$pid" && ! service_process_is_running "$pid"
+}
+
+# Wait up to $2 tenths of a second for a signalled service to go away.
+await_service_exit() {
+  local pid="$1"
+  local attempts="$2"
+  local attempt
+  for ((attempt = 0; attempt < attempts; attempt += 1)); do
+    service_has_exited "$pid" && return 0
+    sleep 0.1
+  done
+  service_has_exited "$pid"
+}
+
+stop_background_service() {
+  local pid="$1"
+  local service="$2"
+
+  [[ -n "$pid" ]] || return 0
+  if service_has_exited "$pid"; then
+    wait "$pid" 2>/dev/null || true
+    return 0
+  fi
+
+  # SIGINT is the signal Ctrl-C used to deliver to these services directly, back
+  # when they shared the terminal's foreground process group; both Uvicorn and
+  # Vite exit on it in well under a second. They now have their own sessions so
+  # cleanup can reach the whole service tree, so cleanup sends that signal
+  # itself. Escalation is for a service that is genuinely wedged, not the
+  # normal path — a healthy shutdown never reaches SIGTERM.
+  signal_background_service INT "$pid"
+  if ! await_service_exit "$pid" 20; then
+    signal_background_service TERM "$pid"
+    if ! await_service_exit "$pid" 20; then
+      echo "$service ignored SIGINT and SIGTERM; forcing it to exit." >&2
+      signal_background_service KILL "$pid"
+      await_service_exit "$pid" 20
+    fi
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   local status=$?
   trap - EXIT
+  # A repeated Ctrl-C must not interrupt cleanup halfway through and orphan a
+  # reload worker. Cleanup is bounded, so ignoring it here cannot hang forever.
+  trap '' INT TERM
   echo
   echo "Stopping Ensembl Go development services..."
-  [[ -z "$FRONTEND_PID" ]] || kill "$FRONTEND_PID" 2>/dev/null || true
-  [[ -z "$BACKEND_PID" ]] || kill "$BACKEND_PID" 2>/dev/null || true
-  [[ -z "$FRONTEND_PID" ]] || wait "$FRONTEND_PID" 2>/dev/null || true
-  [[ -z "$BACKEND_PID" ]] || wait "$BACKEND_PID" 2>/dev/null || true
+  stop_background_service "$FRONTEND_PID" "Frontend"
+  stop_background_service "$BACKEND_PID" "Backend"
   exit "$status"
 }
 
@@ -178,20 +267,18 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 echo "Starting Ensembl Go backend with auto-reload..."
-(
-  cd "$SCRIPT_DIR/backend" || exit 1
-  exec python3 -m uvicorn main:app --reload --host 127.0.0.1 --port "$BACKEND_PORT"
-) &
-BACKEND_PID=$!
+start_background_service \
+  "$SCRIPT_DIR/backend" \
+  python3 -m uvicorn main:app --reload --host 127.0.0.1 --port "$BACKEND_PORT"
+BACKEND_PID="$STARTED_SERVICE_PID"
 
 wait_for_service "$BACKEND_PORT" "$BACKEND_PID" "Backend" || exit 1
 
 echo "Starting Ensembl Go frontend with hot reload..."
-(
-  cd "$SCRIPT_DIR/frontend" || exit 1
-  exec npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort
-) &
-FRONTEND_PID=$!
+start_background_service \
+  "$SCRIPT_DIR/frontend" \
+  npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort
+FRONTEND_PID="$STARTED_SERVICE_PID"
 
 wait_for_service "$FRONTEND_PORT" "$FRONTEND_PID" "Frontend" || exit 1
 

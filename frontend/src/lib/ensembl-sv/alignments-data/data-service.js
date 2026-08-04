@@ -62,7 +62,12 @@ class O {
         promise: a
       }), g.push(a);
     }
-    return await Promise.allSettled([...u, ...g]), this.#e.get(t);
+    const results = await Promise.allSettled([...u, ...g]);
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) {
+      throw failed.reason;
+    }
+    return this.#e.get(t);
   }
   #s({ start: t, end: s }) {
     return `${t}-${s}`;

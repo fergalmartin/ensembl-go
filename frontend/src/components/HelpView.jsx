@@ -7,7 +7,7 @@ const SECTION_ORDER = [
   'home',
   'configuration',
   'download',
-  'species_selector',
+  'genome_selector',
   'genome_browser',
   'feature_explorer',
   'alignment',
@@ -166,7 +166,7 @@ export default function HelpView({ theme = 'dark' }) {
             <li className="flex gap-3">
               <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-900/50 text-blue-200'}`}>3</span>
               <div className="space-y-2">
-                <div><IconTile buttonId="species_selector" label="Genome Selector" theme={theme} /></div>
+                <div><IconTile buttonId="genome_selector" label="Genome Selector" theme={theme} /></div>
                 <p>
                   In Genome Selector, tick Human and Mouse. If indices are missing, the app will start building them automatically.
                   Once selected, genomes are added to the top list so they are available across views.
@@ -272,7 +272,7 @@ export default function HelpView({ theme = 'dark' }) {
           </p>
         </SectionCard>
 
-        <SectionCard id="species_selector" title="Genome Selector view" icon={<AppButtonIcon buttonId="species_selector" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
+        <SectionCard id="genome_selector" title="Genome Selector view" icon={<AppButtonIcon buttonId="genome_selector" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
           <p>
             Genome Selector is where downloaded species become active for analysis. Ticking a species adds it to the top list shared by the app.
           </p>

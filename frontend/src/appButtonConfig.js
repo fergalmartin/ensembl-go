@@ -1,6 +1,6 @@
 export const DATA_VIEW_BUTTON_IDS = [
   'home',
-  'species_selector',
+  'genome_selector',
   'genome_browser',
   'track_manager',
   'feature_explorer',
@@ -30,7 +30,7 @@ export const DEFAULT_ACTIVE_APP_BUTTONS = [
 
 export const APP_BUTTON_META = {
   home: { id: 'home', label: 'Home', shortLabel: 'Home', kind: 'data_view', viewId: 'home' },
-  species_selector: { id: 'species_selector', label: 'Genome Selector', shortLabel: 'Genomes', kind: 'data_view', viewId: 'species_selector' },
+  genome_selector: { id: 'genome_selector', label: 'Genome Selector', shortLabel: 'Genomes', kind: 'data_view', viewId: 'genome_selector' },
   genome_browser: { id: 'genome_browser', label: 'Genome Browser', shortLabel: 'Browser', kind: 'data_view', viewId: 'genome_browser' },
   track_manager: { id: 'track_manager', label: 'Track Manager', shortLabel: 'Tracks', kind: 'data_view', viewId: 'track_manager' },
   feature_explorer: { id: 'feature_explorer', label: 'Feature Explorer', shortLabel: 'Features', kind: 'data_view', viewId: 'feature_explorer' },
@@ -49,11 +49,15 @@ export const APP_BUTTON_META = {
 
 export const normalizeActiveAppButtons = (candidate) => {
   const raw = Array.isArray(candidate) ? candidate : DEFAULT_ACTIVE_APP_BUTTONS
+  // Compatibility for configs saved before the Species Selector code name was
+  // aligned with the Genome Selector UI name.
+  const legacyAliases = { species_selector: 'genome_selector' }
   const allowed = new Set(APP_BUTTON_IDS)
   const seen = new Set()
   const normalized = []
 
-  for (const id of raw) {
+  for (const rawId of raw) {
+    const id = legacyAliases[rawId] || rawId
     if (allowed.has(id) && !seen.has(id)) {
       seen.add(id)
       normalized.push(id)

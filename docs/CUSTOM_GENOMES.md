@@ -104,6 +104,30 @@ the same model either way, and a gene-parented CDS (RefSeq prokaryote style) is 
 handled by the indexer, so neither forces a rewrite. Only a multi-block CDS does, because
 there the indexer's fallback draws one exon straight across the introns.
 
+Phase is what Feature Explorer translates from, so conversion keeps the 5'-most CDS block's
+source phase (a 5'-incomplete CDS must not be declared complete) and recomputes the rest in
+translation order; a hand-made annotation with no phase column is read as frame 0. See
+[PROTEIN_TRANSLATION.md](PROTEIN_TRANSLATION.md) for what the translation does with missing
+phase, duplicated CDS rows and organelle contigs of a genome with no taxid.
+
+### Removing a manually added genome
+
+Because those outputs land beside files the user owns, deleting a manual genome's data
+cannot work by directory: `backend/removal_rules.py` derives each candidate from a
+registered path and then makes it prove it is ours — an index has to be SQLite naming this
+annotation as its source, a converted annotation has to carry the `#!ensembl-go-converted`
+pragma `emit.py` wrote into it (which sits *after* every `##sequence-region`, so the whole
+comment block is scanned), a stats cache has to parse as ours. So the index, its lock,
+`.fai`/`.gzi`, tabix indexes, the converted GFF3 and the decompressed copy of a plain-gzip
+FASTA are removed, and the FASTA and annotation the user pointed at never are. A file both
+genomes are registered against keeps its sidecars, so removing one does not force the other
+to rebuild.
+
+`id_map.tsv` is only deleted when the import recorded writing it: the name is fixed, so two
+conversions in one directory would otherwise take turns deleting each other's map. New
+manual registrations record that provenance under `artifacts` on the `manual_species` entry;
+older ones fall back to the pragma.
+
 ### Where files are written
 
 Converted annotations, their tabix index and any `id_map.tsv` are written **beside the
@@ -167,8 +191,8 @@ Both are cheap to change later if you disagree.
 
 | Path | UI | Backend | What it does |
 |---|---|---|---|
-| **Manual genome** | [SpeciesSelectorView.jsx:2210](../frontend/src/components/SpeciesSelectorView.jsx#L2210) `addManualGenome` | *none* | Writes a record into `config.manual_species` / `config.active_species`. No file is read, opened, or checked. |
-| **Custom annotation** | [SpeciesSelectorView.jsx:1916](../frontend/src/components/SpeciesSelectorView.jsx#L1916) | [`POST /api/remote/custom-annotation`](../backend/main.py#L6425) | `shutil.copy2` the GFF3 into `<assembly>/datasets/custom/<label>/`, register in the manifest. |
+| **Manual genome** | [GenomeSelectorView.jsx:2210](../frontend/src/components/GenomeSelectorView.jsx#L2210) `addManualGenome` | *none* | Writes a record into `config.manual_species` / `config.active_species`. No file is read, opened, or checked. |
+| **Custom annotation** | [GenomeSelectorView.jsx:1916](../frontend/src/components/GenomeSelectorView.jsx#L1916) | [`POST /api/remote/custom-annotation`](../backend/main.py#L6425) | `shutil.copy2` the GFF3 into `<assembly>/datasets/custom/<label>/`, register in the manifest. |
 
 Neither path parses the file. The first time anything is actually read is when the genome
 browser asks for a region and [`_get_browse_db`](../backend/main.py#L8580) triggers
@@ -198,7 +222,7 @@ Two places hard-require a GFF3, so "genome only" is not reachable:
 
 - [main.py:6955](../backend/main.py#L6955) — `list_local_assemblies` skips any assembly
   without `files["gff3"]`: *"Local assemblies must have a GFF3 to be usable in Genome Selector."*
-- [SpeciesSelectorView.jsx:2210](../frontend/src/components/SpeciesSelectorView.jsx#L2210) —
+- [GenomeSelectorView.jsx:2210](../frontend/src/components/GenomeSelectorView.jsx#L2210) —
   `addManualGenome` refuses to submit without both FASTA and GFF3.
 
 `/api/browse/regions` already complements gene-derived regions with FASTA contigs
@@ -255,7 +279,7 @@ Plus these structural defects, all reproducible:
    Every unlabelled ncRNA displays as protein coding.
 
 7. **`.gtf` cannot even be selected.** `GFF3_EXTENSIONS`
-   ([SpeciesSelectorView.jsx:26](../frontend/src/components/SpeciesSelectorView.jsx#L26)) is
+   ([GenomeSelectorView.jsx:26](../frontend/src/components/GenomeSelectorView.jsx#L26)) is
    `['.gff3', '.gff3.gz', '.gff3.bgz']`; the backend's `GFF3_DOWNLOAD_SUFFIXES` allows
    `.gff` but not `.gtf`. Plain `.gff` files are pickable by the backend but not by the
    file browser.
@@ -508,8 +532,8 @@ Currently blocked in three places; all three are small changes.
 
 1. [main.py:6955](../backend/main.py#L6955) — allow an assembly with a FASTA and no GFF3.
    Mark it `has_annotation: false` in the record.
-2. [SpeciesSelectorView.jsx:2210](../frontend/src/components/SpeciesSelectorView.jsx#L2210)
-   and the disabled-state on the Add button ([:2816](../frontend/src/components/SpeciesSelectorView.jsx#L2816))
+2. [GenomeSelectorView.jsx:2210](../frontend/src/components/GenomeSelectorView.jsx#L2210)
+   and the disabled-state on the Add button ([:2816](../frontend/src/components/GenomeSelectorView.jsx#L2816))
    — require FASTA only.
 3. `_get_browse_db` / `browse_regions` / `browse_genes` — when no annotation is
    configured, return regions from the FASTA `.fai` alone and an empty gene list, instead
