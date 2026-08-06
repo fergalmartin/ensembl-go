@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FEATURE_COLORS } from './FeatureLegend'
+import { normalizeWheelDelta, wheelZoomFactor } from '../utils/browsingControls'
 
 const ROW_HEIGHT = 24
 const HEADER_HEIGHT = 34
@@ -946,8 +947,11 @@ export default function MultiAlignmentPanel({
         let currentZoom = zoomLevelRef.current
         let currentScrollX = scrollXRef.current
         const isPinch = Boolean(e.ctrlKey || e.metaKey)
-        const absX = Math.abs(Number(e.deltaX || 0))
-        const absY = Math.abs(Number(e.deltaY || 0))
+        // Normalised: Firefox and some Linux mice report deltaMode 1 (lines)
+        // with values around 3 rather than pixels around 100.
+        const { dx, dy } = normalizeWheelDelta(e, { pageHeight: window.innerHeight })
+        const absX = Math.abs(dx)
+        const absY = Math.abs(dy)
         const isVertical = absY > absX
         const isHorizontal = absX >= absY
 
@@ -958,14 +962,19 @@ export default function MultiAlignmentPanel({
             const currentCharWidth = BASE_CHAR_WIDTH * currentZoom
             const centerChar = (currentScrollX + localX) / Math.max(0.1, currentCharWidth)
             const sensitivity = isPinch ? 0.01 : 0.005
-            const zoomFactor = 1 - Number(e.deltaY || 0) * sensitivity
-            const nextZoom = clamp(currentZoom * zoomFactor, MIN_ZOOM, MAX_ZOOM)
+            // Divided, not multiplied: zoomLevel is a magnification, the
+            // reciprocal of the genomic span the other views zoom on. The old
+            // `1 - deltaY * sensitivity` went negative for a real mouse wheel
+            // (one ctrl notch gave -0.2), which the MIN_ZOOM clamp silently
+            // absorbed as a jump straight to minimum zoom.
+            const zoomFactor = wheelZoomFactor(dy, sensitivity)
+            const nextZoom = clamp(currentZoom / zoomFactor, MIN_ZOOM, MAX_ZOOM)
             const nextCharWidth = BASE_CHAR_WIDTH * nextZoom
             const nextMaxScroll = Math.max(0, visibleLength * nextCharWidth - Math.max(0, viewWidth - LABEL_WIDTH - 8))
             currentScrollX = clamp(centerChar * nextCharWidth - localX, 0, nextMaxScroll)
             currentZoom = nextZoom
         } else if (isHorizontal || e.shiftKey) {
-            const panDelta = Number(e.deltaX || 0) + (e.shiftKey ? Number(e.deltaY || 0) : 0)
+            const panDelta = dx + (e.shiftKey ? dy : 0)
             currentScrollX = clamp(currentScrollX + panDelta, 0, maxScroll)
         }
 

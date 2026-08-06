@@ -9,6 +9,39 @@ import useScreenshotTargets from '../hooks/useScreenshotTargets'
 import { rasterizeSvgMarkup } from '../utils/screenshotExport'
 import { getGenomeKey, genomeKeysMatch } from '../utils/genomeIdentity'
 import { getGenomeBrowserPanelSizing } from './genomeBrowserViewportLayout'
+import {
+    DRAG_AXIS_THRESHOLD_PX,
+    isTextEntryTarget,
+    isWheelHandled,
+    markWheelHandled,
+    pickNearestPanel,
+    readWheelEvent,
+    resolveBrowsingControls,
+    resolveDragAxis,
+    resolveWheelAction,
+} from '../utils/browsingControls'
+
+/**
+ * Things a drag must not be stolen from: controls that expect a click, and text
+ * a user may legitimately want to select.
+ */
+const DRAG_SCROLL_EXCLUDED_SELECTOR = [
+    'button',
+    'a',
+    'input',
+    'textarea',
+    'select',
+    'label',
+    'summary',
+    'option',
+    '[role="button"]',
+    '[role="radio"]',
+    '[role="tab"]',
+    '[role="checkbox"]',
+    '[role="slider"]',
+    '[contenteditable="true"]',
+    '[data-no-drag-scroll="true"]',
+].join(',')
 
 const IndexPreparingNotice = ({ isLight, state, detail }) => {
     const isError = state === 'error'
@@ -198,7 +231,11 @@ export default function GenomeBrowserView({
     const [hideInactiveMode, setHideInactiveMode] = useState(false)
     const [compressMode, setCompressMode] = useState(false)
     const [flattenMode, setFlattenMode] = useState(false)
-    const [adaptivePanelHeight, setAdaptivePanelHeight] = useState(false)
+    // null until the user presses the Adaptive button. Once they have, their choice
+    // sticks for the rest of the session — including across multi -> single -> multi
+    // — so we never re-enable something they deliberately turned off.
+    const [adaptivePanelHeightOverride, setAdaptivePanelHeightOverride] = useState(null)
+    const [panelContentHeights, setPanelContentHeights] = useState({})
     const [selectedScreenshotTarget, setSelectedScreenshotTarget] = useState(null)
 
     const [biotypeFilter, setBiotypeFilter] = useState({
@@ -224,6 +261,10 @@ export default function GenomeBrowserView({
     const linkModelRef = useRef(null)
     const linkApplyTimerRef = useRef(null)
     const wasActiveRef = useRef(isActive)
+    // Read by the gutter wheel router, which is attached to a container shared
+    // with the other views.
+    const isActiveRef = useRef(isActive)
+    isActiveRef.current = isActive
     const browserReadyStateRef = useRef(browserReadyState)
     const previousPanelParamRef = useRef({})
     const previousReloadRef = useRef({ ref: refReloadKey, tgt: tgtReloadKey })
@@ -442,6 +483,19 @@ export default function GenomeBrowserView({
         window.addEventListener('pointerdown', handlePointerDown, true)
         return () => window.removeEventListener('pointerdown', handlePointerDown, true)
     }, [getScreenshotTargetAtPoint, hasPanels, onScreenshotModeChange, screenshotMode, screenshotToggleButtonRef])
+
+    // Panels register themselves here so a wheel gesture that lands between them
+    // can still be routed to one. Held in a ref, not state: it changes on mount
+    // and unmount only, and must never trigger a re-render mid-gesture.
+    const browsingTargetsRef = useRef({})
+    const handleBrowsingTargetChange = useCallback((panelKey, descriptor) => {
+        if (!panelKey) return
+        if (!descriptor) {
+            delete browsingTargetsRef.current[panelKey]
+            return
+        }
+        browsingTargetsRef.current[panelKey] = descriptor
+    }, [])
 
     const handleScreenshotTargetChange = useCallback((panelKey, descriptor) => {
         if (!panelKey) return
@@ -1014,26 +1068,15 @@ export default function GenomeBrowserView({
         })
     }, [firstPanel, onRefViewportChange, isOverlayActive, linkedSet, panels])
 
-    const pendingPanelPositionChangeRef = useRef(null)
-    const panelPositionFrameRef = useRef(null)
+    // Broadcast to the linked panels synchronously. The source panel already
+    // coalesces its own pan/zoom to one update per animation frame, so deferring
+    // again here bought nothing and cost a frame: the dragged genome committed in
+    // frame N while every panel linked to it committed in frame N+1, which is
+    // exactly the "tracks drift out of step" wobble during a drag. Updating in the
+    // same tick lets React batch source and recipients into one render and paint.
     const handlePanelPositionChange = useCallback((panelKey, chrom, start, end, targetTrack, anchorRatio = null) => {
-        pendingPanelPositionChangeRef.current = [panelKey, chrom, start, end, targetTrack, anchorRatio]
-        if (panelPositionFrameRef.current !== null) return
-        panelPositionFrameRef.current = requestAnimationFrame(() => {
-            panelPositionFrameRef.current = null
-            const pending = pendingPanelPositionChangeRef.current
-            pendingPanelPositionChangeRef.current = null
-            if (pending) flushPanelPositionChange(...pending)
-        })
+        flushPanelPositionChange(panelKey, chrom, start, end, targetTrack, anchorRatio)
     }, [flushPanelPositionChange])
-
-    useEffect(() => () => {
-        if (panelPositionFrameRef.current !== null) {
-            cancelAnimationFrame(panelPositionFrameRef.current)
-            panelPositionFrameRef.current = null
-        }
-        pendingPanelPositionChangeRef.current = null
-    }, [])
 
     const handleLinkRegion = useCallback(async () => {
         if (panelCount < 2 || !firstPanel || linkingRegion) return
@@ -1217,15 +1260,236 @@ export default function GenomeBrowserView({
         return byPanel
     }, [allRegisteredTracks, panels])
 
+    // Stacking several genomes at a uniform band height leaves a lot of dead space
+    // under the sparser ones, so multi-genome defaults to adaptive.
+    const adaptivePanelHeight = adaptivePanelHeightOverride ?? (panelCount > 1)
     const panelSizing = getGenomeBrowserPanelSizing(panelCount, adaptivePanelHeight)
     const useAdaptivePanelHeight = panelSizing.usesContentHeight
     const fillSinglePanelHeight = panelSizing.fillsAvailableHeight
-    const panelHeight = panelSizing.fixedPanelHeight
+    const panelMinHeight = panelSizing.panelMinHeight
+    // Panels stretch to fill the window but are never capped by it: taller content
+    // grows the page so the app's own scrollbar is the single vertical scroller.
+    const growingPanelStyle = { flex: '1 0 auto', minHeight: 0 }
+
+    // With Adaptive off the panels keep a common height, but that height is the
+    // tallest genome's own content rather than a fixed band — same aligned look,
+    // without padding every panel out to a number nobody chose.
+    const sharedCanvasHeight = useMemo(() => {
+        if (useAdaptivePanelHeight || panelCount < 2) return 0
+        let tallest = 0
+        for (const panel of panels) {
+            tallest = Math.max(tallest, Number(panelContentHeights[panel.key]) || 0)
+        }
+        return tallest
+    }, [useAdaptivePanelHeight, panelCount, panels, panelContentHeights])
+
+    const handlePanelContentHeight = useCallback((panelKey, height) => {
+        setPanelContentHeights((prev) => (
+            prev[panelKey] === height ? prev : { ...prev, [panelKey]: height }
+        ))
+    }, [])
+
+    // Identity-stable: depend on the scheme id alone, and resolveBrowsingControls
+    // caches per id, so this survives `config` churning on every autosave. A new
+    // controls object mid-gesture would re-register the panel wheel listeners.
+    const browsingSchemeId = config?.browsing_control_scheme
+    const browsingControls = useMemo(
+        () => resolveBrowsingControls({ browsing_control_scheme: browsingSchemeId }),
+        [browsingSchemeId]
+    )
+    const browsingControlsRef = useRef(browsingControls)
+    browsingControlsRef.current = browsingControls
+
+    /**
+     * Fallback wheel handler for gestures that land between panels — the page
+     * padding either side, or the 2px divider — where no panel listener exists.
+     *
+     * Its first job is a bug fix independent of any control scheme: without it
+     * a ctrl+wheel there reaches Chromium unprevented and zooms the whole
+     * Electron window, which desyncs every canvas's backing-store DPR until the
+     * app is restarted.
+     */
+    useEffect(() => {
+        // Listen on the document, in the BUBBLE phase, so panel handlers always
+        // run first and this stays a pure fallback.
+        //
+        // Not on a resolved ancestor: the app's scroll container only becomes
+        // `overflow-y-auto` while this view is the active one, so resolving it
+        // once at mount (when the view is hidden) finds nothing. Resolve the
+        // content area per event instead, which also scopes the fallback to the
+        // app's own padding and excludes the header and other chrome.
+        const findContentHost = () => {
+            let node = screenshotPanelsRef.current?.parentElement
+            while (node && node !== document.body) {
+                const overflowY = window.getComputedStyle(node).overflowY
+                if (overflowY === 'auto' || overflowY === 'scroll') return node
+                node = node.parentElement
+            }
+            return null
+        }
+
+        const handleGutterWheel = (e) => {
+            // The document also carries the other views, so stand down unless the
+            // genome browser is the one on screen and the gesture is inside it.
+            if (!isActiveRef.current) return
+            const host = findContentHost()
+            if (!host || !host.contains(e.target)) return
+
+            // Unconditionally, and before anything else can bail out. This is
+            // what stops Chromium page-zooming the whole Electron window.
+            if (e.ctrlKey || e.metaKey) e.preventDefault()
+
+            // A panel marks every event it resolves, including ones it chose to
+            // do nothing with. Propagation alone cannot tell those apart, since
+            // page-scroll and no-op intents deliberately keep bubbling.
+            //
+            // Note this is the ONLY check: a point can be inside a panel's root
+            // yet outside its canvas container (the toolbar, the ruler), where
+            // no panel listener exists and this fallback must still act.
+            if (isWheelHandled(e)) return
+
+            const rects = []
+            for (const [panelKey, descriptor] of Object.entries(browsingTargetsRef.current)) {
+                const rect = descriptor?.getRootRect?.()
+                if (rect && rect.width > 0) {
+                    rects.push({ panelKey, top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right })
+                }
+            }
+            if (!rects.length) return
+
+            const wheel = readWheelEvent(e)
+            const intent = resolveWheelAction(wheel, browsingControlsRef.current, {})
+            if (intent.type !== 'zoom') return
+
+            const nearest = pickNearestPanel(e.clientY, e.clientX, rects)
+            const target = nearest && browsingTargetsRef.current[nearest.panelKey]
+            if (!target) return
+
+            e.preventDefault()
+            markWheelHandled(e)
+            target.applyWheelIntent(intent, { clientX: e.clientX, clientY: e.clientY })
+        }
+
+        document.addEventListener('wheel', handleGutterWheel, { passive: false })
+        return () => document.removeEventListener('wheel', handleGutterWheel)
+    }, [])
+
+    /**
+     * Drag-to-scroll everywhere the canvas does not already provide it.
+     *
+     * The canvas panels axis-lock their own drag, so up/down scrolls the page
+     * there. Everywhere else in the view — the per-panel control bar, the
+     * focused-gene info bar, the padding between panels — a drag did nothing but
+     * awkwardly select text. Scoped exactly like the wheel router above.
+     */
+    useEffect(() => {
+        const findContentHost = () => {
+            let node = screenshotPanelsRef.current?.parentElement
+            while (node && node !== document.body) {
+                const overflowY = window.getComputedStyle(node).overflowY
+                if (overflowY === 'auto' || overflowY === 'scroll') return node
+                node = node.parentElement
+            }
+            return null
+        }
+
+        // Modals and popovers sit inside this subtree but float above it; a drag
+        // there must not scroll the page underneath. Only `fixed` counts —
+        // `sticky` elements scroll with the content, so a toolbar that sticks is
+        // still a perfectly good place to grab.
+        const insideFloatingLayer = (start, host) => {
+            let node = start instanceof Element ? start : null
+            while (node && node !== host) {
+                if (window.getComputedStyle(node).position === 'fixed') return true
+                node = node.parentElement
+            }
+            return false
+        }
+
+        let drag = null
+        const bodyStyle = document.body.style
+
+        const stopDrag = () => {
+            if (!drag) return
+            const wasDragging = drag.dragging
+            if (wasDragging) {
+                bodyStyle.userSelect = drag.priorUserSelect
+                bodyStyle.cursor = drag.priorCursor
+                // Swallow the click this drag would otherwise synthesise.
+                window.addEventListener('click', (e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                }, { capture: true, once: true })
+            }
+            drag = null
+            window.removeEventListener('mousemove', handleMove)
+            window.removeEventListener('mouseup', stopDrag)
+        }
+
+        function handleMove(e) {
+            if (!drag) return
+            const dx = e.clientX - drag.startX
+            const dy = e.clientY - drag.startY
+
+            if (!drag.dragging) {
+                if (Math.abs(dx) <= DRAG_AXIS_THRESHOLD_PX && Math.abs(dy) <= DRAG_AXIS_THRESHOLD_PX) return
+                const axis = resolveDragAxis({ dx, dy, canScrollPage: true, currentAxis: null })
+                // Nothing here pans, so a sideways drag is left alone entirely
+                // rather than being swallowed.
+                if (axis !== 'y') { stopDrag(); return }
+                drag.dragging = true
+                drag.priorUserSelect = bodyStyle.userSelect
+                drag.priorCursor = bodyStyle.cursor
+                bodyStyle.userSelect = 'none'
+                bodyStyle.cursor = 'grabbing'
+                // A selection may already have started before the threshold.
+                window.getSelection?.()?.removeAllRanges?.()
+            }
+
+            e.preventDefault()
+            // 1:1 grab-and-drag, matching the canvas: dragging down reveals what
+            // is above.
+            drag.host.scrollTop = drag.startScrollTop - dy
+        }
+
+        const handleMouseDown = (e) => {
+            if (!isActiveRef.current || e.button !== 0 || drag) return
+            const host = findContentHost()
+            if (!host || !host.contains(e.target)) return
+            if (host.scrollHeight <= host.clientHeight + 1) return
+
+            const target = e.target instanceof Element ? e.target : null
+            // The canvas owns its own axis-locked drag, including the vertical
+            // half, so leave it alone.
+            if (target?.closest?.('[data-browser-canvas-surface="true"]')) return
+            if (isTextEntryTarget(target) || target?.closest?.(DRAG_SCROLL_EXCLUDED_SELECTOR)) return
+            if (insideFloatingLayer(target, host)) return
+
+            drag = {
+                host,
+                startX: e.clientX,
+                startY: e.clientY,
+                startScrollTop: host.scrollTop,
+                dragging: false,
+                priorUserSelect: '',
+                priorCursor: '',
+            }
+            window.addEventListener('mousemove', handleMove)
+            window.addEventListener('mouseup', stopDrag)
+        }
+
+        document.addEventListener('mousedown', handleMouseDown)
+        return () => {
+            document.removeEventListener('mousedown', handleMouseDown)
+            stopDrag()
+        }
+    }, [])
 
     return (
         <div
             ref={screenshotOverlayRootRef}
-            className={`relative w-full flex flex-col ${fillSinglePanelHeight ? 'h-full min-h-0' : ''}`}
+            className="relative w-full flex flex-col"
+            style={fillSinglePanelHeight ? { minHeight: '100%' } : undefined}
         >
             {isOverlayActive && (
                 <div className={`flex-none w-full px-4 py-2 flex items-center justify-between shadow-sm border-b z-10 ${isLight ? 'bg-indigo-50 border-indigo-200 text-indigo-900' : 'bg-indigo-900/40 border-indigo-800/50 text-indigo-100'}`}>
@@ -1282,10 +1546,10 @@ export default function GenomeBrowserView({
 
                             <button
                                 type="button"
-                                onClick={() => setAdaptivePanelHeight((prev) => !prev)}
+                                onClick={() => setAdaptivePanelHeightOverride(!adaptivePanelHeight)}
                                 className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
                                 style={browserActionButtonStyle(true, useAdaptivePanelHeight)}
-                                title="Toggles adaptive browser track height for multi-genome browsing"
+                                title="Let each browser shrink to exactly its track content instead of keeping a uniform band height"
                             >
                                 Adaptive
                             </button>
@@ -1463,10 +1727,11 @@ export default function GenomeBrowserView({
 
             <div
                 ref={screenshotPanelsRef}
-                className={`relative w-full flex flex-col ${fillSinglePanelHeight ? 'flex-1 min-h-0' : 'min-h-[220px]'} ${!hasPanels ? (isLight ? 'bg-white opacity-95' : 'bg-[#1E2938]') : ''}`}
+                className={`relative w-full flex flex-col ${fillSinglePanelHeight ? '' : 'min-h-[220px]'} ${!hasPanels ? (isLight ? 'bg-white opacity-95' : 'bg-[#1E2938]') : ''}`}
+                style={fillSinglePanelHeight ? growingPanelStyle : undefined}
             >
                 {!hasPanels ? (
-                    <div className="h-full w-full flex flex-col items-center justify-center p-6 bg-transparent">
+                    <div className="flex-1 min-h-[320px] w-full flex flex-col items-center justify-center p-6 bg-transparent">
                         <img
                             src="ensembl-e-blue.svg"
                             alt="Ensembl"
@@ -1493,22 +1758,22 @@ export default function GenomeBrowserView({
                         return (
                             <div
                                 key={panelKey}
-                                className={`w-full flex flex-col ${fillSinglePanelHeight ? 'flex-1 min-h-0' : ''}`}
+                                className="w-full flex flex-col"
+                                style={fillSinglePanelHeight ? growingPanelStyle : undefined}
                             >
                                 {idx > 0 && (
                                     <div className="w-full flex-none" style={{ height: '2px', backgroundColor: isLight ? '#adb5bd' : '#373a40' }} />
                                 )}
                                 <div
-                                    className={`w-full flex flex-col ${useAdaptivePanelHeight ? 'overflow-visible' : 'overflow-hidden'}`}
-                                    style={useAdaptivePanelHeight
-                                        ? {
-                                            minHeight: 0,
-                                            height: 'auto',
-                                        }
-                                        : {
-                                            minHeight: fillSinglePanelHeight ? 0 : (panelHeight || 220),
-                                            height: fillSinglePanelHeight ? '100%' : (panelHeight || '100%'),
-                                        }}
+                                    className="w-full flex flex-col overflow-visible"
+                                    style={{
+                                        ...growingPanelStyle,
+                                        // A floor only. The browser inside lays its tracks out at
+                                        // full height and overflows onto the page rather than into
+                                        // a nested scroll area.
+                                        minHeight: useAdaptivePanelHeight ? 0 : (panelMinHeight || 0),
+                                        height: 'auto',
+                                    }}
                                 >
                                     {isReady ? (
                                         <GenomeBrowser
@@ -1546,6 +1811,10 @@ export default function GenomeBrowserView({
                                             alignmentOverlay={panel.alignmentRole ? alignmentOverlay : null}
                                             onPositionChange={(chrom, start, end, targetTrack, anchorRatio) => handlePanelPositionChange(panelKey, chrom, start, end, targetTrack, anchorRatio)}
                                             onViewSync={(chrom, start, end) => { panelActualPositionsRef.current[panelKey] = { chrom, start, end } }}
+                                            minCanvasHeight={sharedCanvasHeight}
+                                            onContentHeightChange={(height) => handlePanelContentHeight(panelKey, height)}
+                                            browsingControls={browsingControls}
+                                            onBrowsingTargetChange={(descriptor) => handleBrowsingTargetChange(panelKey, descriptor)}
                                             externalPosition={
                                                 (effectiveLockPan || effectiveLockZoom) && syncSourcePanelKeyRef.current !== panelKey
                                                     ? (panelPositions[panelKey] || null)

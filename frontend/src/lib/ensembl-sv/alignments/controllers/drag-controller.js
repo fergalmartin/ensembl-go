@@ -1,4 +1,13 @@
 import { RULER_HEIGHT } from "../constants/constants.js";
+import {
+  DEFAULT_BROWSING_CONTROLS,
+  beginWheelGesture,
+  findNearestScrollable,
+  markWheelHandled,
+  readWheelEvent,
+  resolveDragAxis,
+  resolveWheelAction
+} from "../../../../utils/browsingControls.js";
 
 const MIN_VIEW_SPAN = 50;
 const MAX_VIEW_SPAN = 50000000;
@@ -8,8 +17,13 @@ class DragController {
     this.host = host;
     this.pointerId = null;
     this.wheelCommitTimeout = null;
+    this.wheelGesture = null;
     this.dragMode = null;
     this.dragStartX = null;
+    this.dragStartY = null;
+    this.dragAxis = null;
+    this.scroller = null;
+    this.startScrollTop = 0;
     this.dragStarted = false;
     this.referenceStart = null;
     this.referenceEnd = null;
@@ -55,6 +69,12 @@ class DragController {
 
     this.pointerId = event.pointerId;
     this.dragStartX = event.clientX;
+    this.dragStartY = event.clientY;
+    this.dragAxis = null;
+    // Resolved once per drag: crossing the shadow boundary on every pointermove
+    // would mean a getComputedStyle walk per frame.
+    this.scroller = findNearestScrollable(this.host);
+    this.startScrollTop = this.scroller ? this.scroller.scrollTop : 0;
     this.dragStarted = false;
     this.cacheViewport();
     this.dragMode = this.getDragMode(event);
@@ -70,6 +90,33 @@ class DragController {
     }
 
     const deltaX = event.clientX - this.dragStartX;
+    const deltaY = event.clientY - this.dragStartY;
+
+    // Axis-locked, matching the Genome Browser: sideways pans the alignment,
+    // up/down scrolls the page.
+    if (!this.dragAxis) {
+      const axis = resolveDragAxis({
+        dx: deltaX,
+        dy: deltaY,
+        canScrollPage: Boolean(this.scroller),
+        currentAxis: null
+      });
+      if (!axis) {
+        return;
+      }
+      this.dragAxis = axis;
+    }
+
+    if (this.dragAxis === "y") {
+      if (!this.scroller) {
+        return;
+      }
+      event.preventDefault();
+      // 1:1 grab-and-drag, so dragging down reveals what is above.
+      this.scroller.scrollTop = this.startScrollTop - deltaY;
+      return;
+    }
+
     if (!deltaX) {
       return;
     }
@@ -113,20 +160,28 @@ class DragController {
   }
 
   onWheel(event) {
-    const absDeltaX = Math.abs(event.deltaX);
-    const absDeltaY = Math.abs(event.deltaY);
-    const isPinch = event.ctrlKey;
-    const isVertical = absDeltaY > absDeltaX;
-    const isHorizontal = absDeltaX > absDeltaY;
-    const isZoomGesture = isPinch || (isVertical && absDeltaY > 0.5);
+    // Same resolution the React surfaces use, so the identical gesture does the
+    // identical thing whether the cursor is over this web component or the
+    // panel around it. It used to zoom about 4x faster here.
+    const controls = this.host.browsingControls || DEFAULT_BROWSING_CONTROLS;
+    const wheel = readWheelEvent(event, { pageHeight: window.innerHeight });
+    const gesture = beginWheelGesture(this.wheelGesture, wheel, wheel.ts || performance.now());
+    const intent = resolveWheelAction(wheel, controls, { canScrollPage: false, gesture });
+    markWheelHandled(event);
+    this.wheelGesture = { ...gesture, mode: intent.nextGestureMode || gesture.mode };
 
-    if (!isPinch && !isVertical && !isHorizontal) {
-      return;
+    if (intent.preventDefault) {
+      event.preventDefault();
+    }
+    if (intent.stopPropagation) {
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
     }
 
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation?.();
+    const isZoomGesture = intent.type === "zoom";
+    if (!isZoomGesture && intent.type !== "pan") {
+      return;
+    }
 
     const mode = this.getDragMode(event);
     const nextReference = isZoomGesture
@@ -136,7 +191,8 @@ class DragController {
           regionLength: this.host.regionLength,
           minStart: 1,
           clientX: event.clientX,
-          deltaY: event.deltaY
+          factor: intent.factor,
+          anchor: intent.anchor
         })
       : (mode === "alt")
         ? { start: this.host.start, end: this.host.end }
@@ -145,7 +201,7 @@ class DragController {
           end: this.host.end,
           regionLength: this.host.regionLength,
           scale: this.host.scale,
-          deltaX: event.deltaX,
+          deltaX: intent.dxPx,
           minStart: 1
         });
     const nextAlt = isZoomGesture
@@ -155,7 +211,8 @@ class DragController {
           regionLength: this.host.altRegionLength,
           minStart: 1,
           clientX: event.clientX,
-          deltaY: event.deltaY
+          factor: intent.factor,
+          anchor: intent.anchor
         })
       : (mode === "reference")
         ? { start: this.host.altStart, end: this.host.altEnd }
@@ -164,7 +221,7 @@ class DragController {
           end: this.host.altEnd,
           regionLength: this.host.altRegionLength,
           scale: this.host.altSequenceScale,
-          deltaX: event.deltaX,
+          deltaX: intent.dxPx,
           minStart: 1
         });
 
@@ -206,6 +263,9 @@ class DragController {
     this.pointerId = null;
     this.dragMode = null;
     this.dragStartX = null;
+    this.dragStartY = null;
+    this.dragAxis = null;
+    this.scroller = null;
     this.dragStarted = false;
     this.removePointerListeners();
   }
@@ -353,18 +413,17 @@ class DragController {
     };
   }
 
-  zoomViewport({ start, end, regionLength, minStart, clientX, deltaY }) {
+  zoomViewport({ start, end, regionLength, minStart, clientX, factor, anchor }) {
     if (!Number.isFinite(start) || !Number.isFinite(end)) {
       return { start, end };
     }
 
     const rect = this.host.getBoundingClientRect();
-    const anchorFraction = rect.width > 0
-      ? Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
-      : 0.5;
+    const anchorFraction = anchor === "center" || rect.width <= 0
+      ? 0.5
+      : Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     const span = Math.max(1, end - start);
-    const sensitivity = 0.005;
-    const zoomFactor = Math.max(0.05, 1 + deltaY * sensitivity);
+    const zoomFactor = Number.isFinite(factor) && factor > 0 ? factor : 1;
     const maxSpan = Number.isFinite(regionLength) && regionLength > minStart
       ? Math.min(MAX_VIEW_SPAN, Math.max(MIN_VIEW_SPAN, Math.round(regionLength) - minStart))
       : MAX_VIEW_SPAN;

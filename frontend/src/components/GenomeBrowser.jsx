@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react'
+import { useRef, useEffect, useId, useLayoutEffect, useState, useCallback, useMemo } from 'react'
 import iconPowerRaw from '../assets/icons/icon_power.svg?raw'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import iconAnchorRaw from '../assets/icons/icon_anchor.svg?raw'
@@ -35,10 +35,22 @@ import {
     queryGeneIntervalIndex,
     sameGeneRange,
 } from '../utils/geneIntervalIndex'
+import { getTranscriptExonSegments } from './genomeBrowserExonSegments'
+import {
+    DEFAULT_BROWSING_CONTROLS,
+    beginWheelGesture,
+    describeBrowsingControls,
+    isTextEntryTarget,
+    markWheelHandled,
+    readKeyEvent,
+    readWheelEvent,
+    resolveDragAxis,
+    resolveKeyAction,
+    resolveWheelAction,
+} from '../utils/browsingControls'
 import {
     SEQUENCE_TRACK_HEIGHT,
     getAnchoredContentPageScrollDelta,
-    getAnchoredContentScrollTop,
     getFeatureRowAnchor,
     getFeatureRowTargetY,
     shouldRenderViewportTranscriptStructures,
@@ -1428,6 +1440,41 @@ function collectGenesFromList(genes, start, end) {
     return queryGeneIntervalIndex(genes, start, end)
 }
 
+// ============ Page-level vertical scrolling ============
+// Browser panels never scroll internally, so bringing a track feature into view
+// means moving whichever ancestor owns the page scroll (falling back to the
+// window when the app is not inside its own scroll container).
+
+function getScrollerMetrics(scroller) {
+    const isWindowScroller = !scroller
+        || scroller === document.documentElement
+        || scroller === document.body
+    if (isWindowScroller) {
+        const doc = document.documentElement
+        const viewportHeight = window.innerHeight || doc?.clientHeight || 0
+        return {
+            isWindowScroller: true,
+            top: 0,
+            bottom: viewportHeight,
+            scrollTop: window.scrollY || doc?.scrollTop || 0,
+            maxScrollTop: Math.max(0, (doc?.scrollHeight || 0) - viewportHeight),
+        }
+    }
+    const rect = scroller.getBoundingClientRect()
+    return {
+        isWindowScroller: false,
+        top: rect.top,
+        bottom: rect.bottom,
+        scrollTop: scroller.scrollTop,
+        maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+    }
+}
+
+function scrollScrollerTo(scroller, metrics, top, behavior = 'smooth') {
+    if (metrics.isWindowScroller) window.scrollTo({ top, behavior })
+    else scroller.scrollTo({ top, behavior })
+}
+
 // ============ GenomeBrowser Component ============
 
 export default function GenomeBrowser({
@@ -1472,6 +1519,13 @@ export default function GenomeBrowser({
     screenshotTargetId = '',
     onScreenshotTargetChange = null,
     onViewSync = null,
+    // Shared band height for multi-genome layouts: the parent raises every panel
+    // to the tallest genome's natural height so the rows stay aligned.
+    minCanvasHeight = 0,
+    onContentHeightChange = null,
+    // Resolved gesture map from the user's "Genome Browser Controls" setting.
+    browsingControls = DEFAULT_BROWSING_CONTROLS,
+    onBrowsingTargetChange = null,
 }) {
     // Refs
     const rootRef = useRef(null)
@@ -1492,9 +1546,13 @@ export default function GenomeBrowser({
     const [viewHeight, setViewHeight] = useState(160)
     const [viewStart, setViewStart] = useState(0)        // Genomic coordinate of left edge
     const [viewEnd, setViewEnd] = useState(100000)        // Genomic coordinate of right edge
+    // `isDragging` state only drives the cursor and listener wiring. The move
+    // handler reads the refs instead, so the first mousemove after mousedown pans
+    // immediately rather than being dropped while React commits the state.
     const [isDragging, setIsDragging] = useState(false)
-    const [dragStartX, setDragStartX] = useState(0)
-    const [dragViewStart, setDragViewStart] = useState(0)
+    const isDraggingRef = useRef(false)
+    const dragStartXRef = useRef(0)
+    const dragViewStartRef = useRef(0)
 
     // Data state
     const [regions, setRegions] = useState([])
@@ -1559,6 +1617,16 @@ export default function GenomeBrowser({
     const onScreenshotTargetChangeRef = useRef(onScreenshotTargetChange)
     const onViewSyncRef = useRef(onViewSync)
     const onViewStateRef = useRef(onViewState)
+    const onContentHeightChangeRef = useRef(onContentHeightChange)
+    onContentHeightChangeRef.current = onContentHeightChange
+    // Mirrored into a ref and deliberately kept OUT of the wheel effect's
+    // dependency list, so changing the scheme never re-registers the listener
+    // (which mid-gesture would drop the rest of a trackpad fling).
+    const browsingControlsRef = useRef(browsingControls)
+    browsingControlsRef.current = browsingControls
+    const wheelGestureRef = useRef(null)
+    const onBrowsingTargetChangeRef = useRef(onBrowsingTargetChange)
+    onBrowsingTargetChangeRef.current = onBrowsingTargetChange
     selectedChromRef.current = selectedChrom
     viewWidthRef.current = viewWidth
     onTrackVisibilityChangeRef.current = onTrackVisibilityChange
@@ -1827,7 +1895,13 @@ export default function GenomeBrowser({
     const effectiveTrackAlign = isVerticalLayoutFlipped ? swapVerticalPlacement(trackAlign) : trackAlign
     const effectiveRulerHeight = isRulerCollapsed ? 0 : RULER_HEIGHT
     const effectiveSequenceTrackPosition = isVerticalLayoutFlipped ? swapVerticalPlacement(sequenceTrackPosition) : sequenceTrackPosition
-    const usesContentHeight = flattenTracks || adaptiveHeight
+    // Panels never scroll internally: the page-level scroller in GenomeBrowserView
+    // owns all vertical movement, so tracks always lay out at their natural height
+    // and grow the page rather than a nested scrollbar. "Adaptive"/"Flatten"
+    // therefore no longer affect scrolling — they only decide whether a panel may
+    // shrink below the uniform multi-genome band height, and how much trailing
+    // padding is drawn under the last track.
+    const compactPanelHeight = flattenTracks || adaptiveHeight
 
     // Drag-and-drop reordering
     const composeTrackOrder = useCallback((seqPosition, customIds) => {
@@ -5683,8 +5757,12 @@ export default function GenomeBrowser({
     const MIN_VIEW_SPAN = 50      // Minimum bp visible (max zoom in)
     const MAX_VIEW_SPAN = 50000000 // Maximum bp visible (max zoom out)
 
-    const MOMENTUM_FRICTION = 0.95
+    // Momentum is a short flick, not a glide: at 0.95 the view kept travelling for
+    // roughly a second after release, which reads as the tracks lagging the cursor.
+    const MOMENTUM_FRICTION = 0.86
     const MIN_VELOCITY = 0.5
+    // Ignore stale velocity: releasing after the cursor has settled must not fling.
+    const MOMENTUM_MAX_IDLE_MS = 60
 
     // Use refs to avoid stale closures
     const viewStartRef = useRef(viewStart)
@@ -5828,7 +5906,8 @@ export default function GenomeBrowser({
     // Momentum animation
     const startMomentum = useCallback(() => {
         if (animationRef.current) cancelAnimationFrame(animationRef.current)
-        let vel = velocityRef.current
+        const idleMs = performance.now() - lastTimeRef.current
+        let vel = idleMs > MOMENTUM_MAX_IDLE_MS ? 0 : velocityRef.current
         velocityRef.current = 0
 
         const animate = () => {
@@ -6184,7 +6263,7 @@ export default function GenomeBrowser({
         const visibleFocusBarHeight = selectedGene && !selectedGeneHiddenForLayout
             ? (focusBarHeight || 30)
             : 0
-        const alignTracksToBottom = effectiveTrackAlign === 'bottom' && !usesContentHeight
+        const alignTracksToBottom = effectiveTrackAlign === 'bottom' && !compactPanelHeight
         const focusBarCompensation = alignTracksToBottom ? visibleFocusBarHeight : 0
         const availableSpace = Math.max(160, viewHeight + focusBarCompensation)
         let RULER_Y = 0
@@ -6226,7 +6305,7 @@ export default function GenomeBrowser({
             : startY
 
         if (effectiveRulerPosition === 'bottom') {
-            RULER_Y = usesContentHeight
+            RULER_Y = compactPanelHeight
                 ? lastTrackY
                 : Math.max(lastTrackY, viewHeight - effectiveRulerHeight)
         }
@@ -6246,7 +6325,7 @@ export default function GenomeBrowser({
             customTrackLayouts,
             orderedTracks,
         }
-    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, hiddenStrands, selectedGeneHiddenByBiotype, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, isGeneHiddenByBiotype, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, shouldForceGeneBlockView, getEffectiveTranscriptLimit, flattenTracks, usesContentHeight, effectiveRulerHeight])
+    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, hiddenStrands, selectedGeneHiddenByBiotype, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, isGeneHiddenByBiotype, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, shouldForceGeneBlockView, getEffectiveTranscriptLimit, flattenTracks, compactPanelHeight, effectiveRulerHeight])
 
     const getSelectedGeneTranscriptHit = useCallback((mouseX, mouseY) => {
         if (!selectedGeneLayoutEntry || shouldForceGeneBlockView) return null
@@ -6354,34 +6433,35 @@ export default function GenomeBrowser({
 
         const container = containerRef.current
         const containerRect = container.getBoundingClientRect()
-        const viewportHeightPx = Math.max(
-            1,
-            window.innerHeight || document?.documentElement?.clientHeight || container.clientHeight || 1
-        )
-        const visibleViewportTop = clamp(0 - containerRect.top, 0, container.clientHeight)
-        const visibleViewportBottom = clamp(
-            container.clientHeight - Math.max(0, containerRect.bottom - viewportHeightPx),
-            0,
-            container.clientHeight
-        )
-        const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+        const scroller = findNearestScrollable(rootRef.current)
+        const scrollerMetrics = getScrollerMetrics(scroller)
+
         const topMarginPx = Math.max(0, Number(options.topMarginPx ?? marginPx))
         const bottomMarginPx = Math.max(0, Number(options.bottomMarginPx ?? marginPx))
-        const currentScrollTop = container.scrollTop
-        const geneTopInViewport = baseGeneY - currentScrollTop
-        const expandedGeneBottom = baseGeneY + totalGeneHeight
-        const geneBottomInViewport = geneTopInViewport + totalGeneHeight
-        const topAlignedRawScrollTop = currentScrollTop + (geneTopInViewport - (visibleViewportTop + topMarginPx))
-        const overflowPx = geneBottomInViewport + bottomMarginPx - visibleViewportBottom
-        const bottomFittedRawScrollTop = currentScrollTop + Math.max(0, overflowPx)
-        const targetScrollTop = Boolean(options.preferBottomVisible)
-            ? clamp(bottomFittedRawScrollTop, 0, maxScrollTop)
-            : clamp(topAlignedRawScrollTop, 0, maxScrollTop)
-        const needsMoreScrollableHeight = Boolean(options.preferBottomVisible) && (bottomFittedRawScrollTop > (maxScrollTop + 1))
+
+        // The gene's position in client space. The panel itself never scrolls, so
+        // this only moves when the surrounding page scroller moves.
+        const geneTopClientY = containerRect.top + baseGeneY
+        const geneBottomClientY = geneTopClientY + totalGeneHeight
+
+        // Park the gene just under whichever edge is lower: the panel's own top or
+        // the visible top of the scroll viewport.
+        const topAlignDelta = geneTopClientY - (Math.max(containerRect.top, scrollerMetrics.top) + topMarginPx)
+        const bottomFitDelta = Math.max(
+            0,
+            geneBottomClientY + bottomMarginPx - Math.min(containerRect.bottom, scrollerMetrics.bottom)
+        )
+        const rawScrollTop = scrollerMetrics.scrollTop
+            + (Boolean(options.preferBottomVisible) ? bottomFitDelta : topAlignDelta)
+
+        // Layout may still be growing (transcripts expanding); let the caller retry.
+        const needsMoreScrollableHeight = Boolean(options.preferBottomVisible)
+            && (rawScrollTop > (scrollerMetrics.maxScrollTop + 1))
         if (needsMoreScrollableHeight) {
             return false
         }
-        container.scrollTo({ top: targetScrollTop, behavior: 'smooth' })
+
+        scrollScrollerTo(scroller, scrollerMetrics, clamp(rawScrollTop, 0, scrollerMetrics.maxScrollTop))
         return true
     }, [layout, transcriptLayoutMetrics, genomicToScreen, getGeneRowCountForWidth, getGeneTotalHeight])
 
@@ -8291,6 +8371,12 @@ export default function GenomeBrowser({
         }
         return null
     }
+    const readAnchorScrollTop = (scrollElement) => (
+        scrollElement && scrollElement !== document.documentElement && scrollElement !== document.body
+            ? scrollElement.scrollTop
+            : (window.scrollY || document.documentElement?.scrollTop || 0)
+    )
+
     const applyAdaptiveScrollAnchor = useCallback(() => {
         const anchor = adaptiveScrollAnchorRef.current
         const root = rootRef.current
@@ -8299,6 +8385,14 @@ export default function GenomeBrowser({
             return false
         }
         if (performance.now() > anchor.expiresAt) {
+            adaptiveScrollAnchorRef.current = null
+            return false
+        }
+
+        // If anything other than this anchor moved the page — the user grabbing the
+        // scrollbar, a wheel over the margin — release it rather than fight them.
+        const scrollTopNow = readAnchorScrollTop(anchor.scrollElement)
+        if (anchor.lastScrollTop != null && Math.abs(scrollTopNow - anchor.lastScrollTop) > 0.5) {
             adaptiveScrollAnchorRef.current = null
             return false
         }
@@ -8313,6 +8407,7 @@ export default function GenomeBrowser({
             }
             anchor.rootTop = root.getBoundingClientRect().top
         }
+        anchor.lastScrollTop = readAnchorScrollTop(anchor.scrollElement)
         return true
     }, [])
 
@@ -8327,16 +8422,35 @@ export default function GenomeBrowser({
         adaptiveScrollAnchorFrameRef.current = requestAnimationFrame(tick)
     }, [applyAdaptiveScrollAnchor])
 
+    /**
+     * Drop both imperative scroll anchors immediately.
+     *
+     * The adaptive panel anchor pins the panel's top for 700ms on a rAF loop,
+     * and the transcript-row zoom anchor scrolls the page to keep the hovered
+     * row under the cursor. Either one left running while the page scrolls
+     * natively spends a frame or two fighting it, which reads as judder — and
+     * in the scroll-first schemes that happens on every single wheel event.
+     */
+    const releaseScrollAnchors = useCallback(() => {
+        adaptiveScrollAnchorRef.current = null
+        verticalZoomTrackAnchorRef.current = null
+        if (adaptiveScrollAnchorFrameRef.current !== null) {
+            cancelAnimationFrame(adaptiveScrollAnchorFrameRef.current)
+            adaptiveScrollAnchorFrameRef.current = null
+        }
+    }, [])
+
     const captureAdaptiveScrollAnchor = useCallback(() => {
-        if (!usesContentHeight || !rootRef.current) return
+        if (!rootRef.current) return
         const scrollElement = findNearestScrollable(rootRef.current) || document.scrollingElement || document.documentElement
         adaptiveScrollAnchorRef.current = {
             rootTop: rootRef.current.getBoundingClientRect().top,
             scrollElement,
+            lastScrollTop: readAnchorScrollTop(scrollElement),
             expiresAt: performance.now() + 700,
         }
         scheduleAdaptiveScrollAnchor()
-    }, [usesContentHeight, scheduleAdaptiveScrollAnchor])
+    }, [scheduleAdaptiveScrollAnchor])
 
     useEffect(() => {
         return () => {
@@ -8353,6 +8467,11 @@ export default function GenomeBrowser({
 
     const handleMouseDown = (e) => {
         e.preventDefault() // Prevent browser text-selection on drag
+        // preventDefault also suppresses the default focus, so take it
+        // explicitly or keyboard navigation never reaches the clicked panel.
+        // preventScroll matters: without it the page jumps and fights the
+        // adaptive scroll anchor.
+        containerRef.current?.focus({ preventScroll: true })
         setSidebarTooltip(null)
         dismissCustomTrackTooltip()
         hoveredSpliceRef.current = null
@@ -8447,8 +8566,11 @@ export default function GenomeBrowser({
         }
 
         setIsDragging(true)
-        setDragStartX(e.clientX)
-        setDragViewStart(viewStart)
+        isDraggingRef.current = true
+        dragStartXRef.current = e.clientX
+        // Anchor on the live viewport, not the last committed render: a pan that
+        // starts mid-flight would otherwise measure its progress from a stale start.
+        dragViewStartRef.current = viewStartRef.current
         dragStartYRef.current = e.clientY
         dragAxisRef.current = null
         const scrollTarget = findNearestScrollable(containerRef.current)
@@ -8528,7 +8650,7 @@ export default function GenomeBrowser({
             return
         }
 
-        if (canvas && !isDragging) {
+        if (canvas && !isDraggingRef.current) {
             const rect = canvas.getBoundingClientRect()
             const mouseX = e.clientX - rect.left
             const mouseY = e.clientY - rect.top
@@ -8613,7 +8735,7 @@ export default function GenomeBrowser({
             }
         }
 
-        if (!isDragging) return
+        if (!isDraggingRef.current) return
 
         if (spliceArcDragRef.current) {
             const drag = spliceArcDragRef.current
@@ -8642,22 +8764,25 @@ export default function GenomeBrowser({
             hoveredBigBedRef.current = null
             setHoveredBigBedFeature(null)
         }
-        const dx = dragStartX - e.clientX
+        const dx = dragStartXRef.current - e.clientX
         const dy = dragStartYRef.current - e.clientY
 
         // Lock to an axis once movement exceeds threshold
-        if (!dragAxisRef.current && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
-            const hasVerticalScroll = canVerticallyScrollContainer()
-            if (hasVerticalScroll && Math.abs(dy) >= Math.abs(dx) * 0.75) {
-                dragAxisRef.current = 'y'
-            } else {
-                dragAxisRef.current = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y'
+        if (!dragAxisRef.current) {
+            const axis = resolveDragAxis({
+                dx,
+                dy,
+                canScrollPage: canVerticallyScrollContainer(),
+                currentAxis: null,
+            })
+            if (axis) {
+                dragAxisRef.current = axis
+                suppressNextClickRef.current = true
             }
-            suppressNextClickRef.current = true
         }
 
         if (dragAxisRef.current === 'x' || !dragAxisRef.current) {
-            const bpDelta = viewStartRef.current - dragViewStart
+            const bpDelta = viewStartRef.current - dragViewStartRef.current
             const currentSpan = viewEndRef.current - viewStartRef.current
             const currentPerPx = currentSpan / Math.max(1, viewWidth - LHS_WIDTH)
             const pxPanApplied = isFlipped ? -bpDelta / currentPerPx : bpDelta / currentPerPx
@@ -8666,18 +8791,23 @@ export default function GenomeBrowser({
         }
 
         if (dragAxisRef.current === 'y' && scrollTargetRef.current) {
-            scrollTargetRef.current.scrollTop = dragScrollTopRef.current - dy * 2
+            // 1:1 grab-and-drag, matching the horizontal pan: the content follows
+            // the cursor, so dragging down reveals what is above.
+            scrollTargetRef.current.scrollTop = dragScrollTopRef.current + dy
         }
 
-        // Track velocity (only for horizontal momentum)
+        // Track velocity (only for horizontal momentum). Smoothed over a couple of
+        // samples and kept at true drag speed — amplifying it made the release
+        // overshoot where the cursor actually stopped.
         const now = performance.now()
         const dt = now - lastTimeRef.current
         if (dt > 0 && dt < 100) {
-            velocityRef.current = ((lastPosRef.current - e.clientX) / dt) * 16 * 3
+            const samplePxPerFrame = ((lastPosRef.current - e.clientX) / dt) * 16
+            velocityRef.current = (velocityRef.current * 0.4) + (samplePxPerFrame * 0.6)
         }
         lastPosRef.current = e.clientX
         lastTimeRef.current = now
-    }, [isDragging, dragStartX, dragViewStart, viewWidth, panByPx, layout, isFlipped, isSelectingRect, updateSelectionRectFromEvent, getTrackAtY, getTrackTooltip, getCustomTrackHover, getSeqBaseAtMouse, clickedSeqBase, dismissCustomTrackTooltip, queueCustomTrackTooltip, draggingTrack, clickedGeneTranscript, getSelectedGeneTranscriptHit, clearTranscriptPopupDismissTimer, scheduleTranscriptPopupDismiss, canVerticallyScrollContainer, captureAdaptiveScrollAnchor])
+    }, [viewWidth, panByPx, layout, isFlipped, isSelectingRect, updateSelectionRectFromEvent, getTrackAtY, getTrackTooltip, getCustomTrackHover, getSeqBaseAtMouse, clickedSeqBase, dismissCustomTrackTooltip, queueCustomTrackTooltip, draggingTrack, clickedGeneTranscript, getSelectedGeneTranscriptHit, clearTranscriptPopupDismissTimer, scheduleTranscriptPopupDismiss, canVerticallyScrollContainer, captureAdaptiveScrollAnchor])
 
     const handleMouseUp = useCallback(() => {
         if (isSelectingRect) {
@@ -8708,7 +8838,8 @@ export default function GenomeBrowser({
             return
         }
 
-        if (!isDragging) return
+        if (!isDraggingRef.current) return
+        isDraggingRef.current = false
         if (spliceArcDragRef.current) {
             spliceArcDragRef.current = null
             setIsDragging(false)
@@ -8720,7 +8851,7 @@ export default function GenomeBrowser({
         setIsDragging(false)
         dragAxisRef.current = null
         if (!wasVertical) startMomentum()
-    }, [isDragging, startMomentum, isSelectingRect, selectionRect, layout, showSequenceTrack, screenToViewCoord, animateToView])
+    }, [startMomentum, isSelectingRect, selectionRect, layout, showSequenceTrack, screenToViewCoord, animateToView])
 
     // While box-selecting, keep tracking even if cursor leaves this browser.
     useEffect(() => {
@@ -8750,7 +8881,9 @@ export default function GenomeBrowser({
     const handleContainerMouseLeave = useCallback(() => {
         // Do not auto-release while box-selecting; release is handled by global mouseup.
         if (isSelectingRect) return
-        if (isDragging) return
+        // Read the ref, not the state: leaving the panel in the first frame of a
+        // drag must not tear the drag down before the global listeners attach.
+        if (isDraggingRef.current) return
         setSidebarTooltip(null)
         dismissCustomTrackTooltip()
         if (hoveredVcfBlockRef.current) {
@@ -8771,7 +8904,7 @@ export default function GenomeBrowser({
         }
         scheduleTranscriptPopupDismiss(80)
         handleMouseUp()
-    }, [isSelectingRect, isDragging, handleMouseUp, dismissCustomTrackTooltip, scheduleTranscriptPopupDismiss])
+    }, [isSelectingRect, handleMouseUp, dismissCustomTrackTooltip, scheduleTranscriptPopupDismiss])
 
     useEffect(() => {
         if (draggingTrack || isDragging || isSelectingRect) {
@@ -8821,9 +8954,6 @@ export default function GenomeBrowser({
         if (!container) return
 
         const handleWheel = (e) => {
-            e.preventDefault()
-            e.stopPropagation()
-
             if (animationRef.current) {
                 cancelAnimationFrame(animationRef.current)
                 animationRef.current = null
@@ -8834,57 +8964,83 @@ export default function GenomeBrowser({
             const rect = container.getBoundingClientRect()
             const cursorX = e.clientX - rect.left
 
-            const isPinch = e.ctrlKey
-            const isVertical = Math.abs(e.deltaY) > Math.abs(e.deltaX)
-            const isHorizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY)
+            // Line/page deltas are normalised to pixels before any thresholding,
+            // or Firefox and Linux mice (deltaMode 1) are ~30x weaker.
+            const wheel = readWheelEvent(e, { pageHeight: rect.height || undefined })
+            const gesture = beginWheelGesture(wheelGestureRef.current, wheel, e.timeStamp)
 
-            if (isPinch || (isVertical && Math.abs(e.deltaY) > 0.5)) {
-                const sensitivity = e.ctrlKey ? 0.01 : 0.005
-                const zoomFactor = 1 + e.deltaY * sensitivity
+            const currentSpan = viewEndRef.current - viewStartRef.current
+            const intent = resolveWheelAction(wheel, browsingControlsRef.current, {
+                atMinZoom: currentSpan <= MIN_VIEW_SPAN + 1e-6,
+                atMaxZoom: currentSpan >= MAX_VIEW_SPAN - 1e-6,
+                canScrollPage: Boolean(findNearestScrollable(container)),
+                gesture,
+            })
 
-                const mouseY = e.clientY - rect.top + container.scrollTop
-                const targetTrack = getTrackAtY(mouseY)
+            wheelGestureRef.current = { ...gesture, mode: intent.nextGestureMode }
+            // Tell the view-level fallback listener this panel has seen the
+            // event, even when the outcome is "do nothing". Must happen before
+            // any early return.
+            markWheelHandled(e)
 
-                const now = performance.now()
-                const existingGeneAnchor = verticalZoomTrackAnchorRef.current
-                const hasActiveGeneAnchor = Boolean(existingGeneAnchor && now <= existingGeneAnchor.expiresAt)
-                if (hasActiveGeneAnchor) {
-                    // Layout changes can move the pointer over another track during
-                    // a rapid wheel gesture. Keep following the feature row where
-                    // the gesture began until wheel input pauses.
-                    existingGeneAnchor.expiresAt = now + 450
-                } else {
-                    const featureAnchor = getGeneFeatureVerticalAnchor(cursorX, mouseY, targetTrack)
-                    verticalZoomTrackAnchorRef.current = featureAnchor
-                        ? {
-                            ...featureAnchor,
-                            viewportY: e.clientY - rect.top,
-                            clientY: e.clientY,
-                            expiresAt: now + 450,
-                        }
-                        : null
-                }
+            if (intent.preventDefault) e.preventDefault()
+            if (intent.stopPropagation) e.stopPropagation()
+            if (intent.releaseScrollAnchors) releaseScrollAnchors()
 
-                if (verticalZoomTrackAnchorRef.current) {
-                    adaptiveScrollAnchorRef.current = null
-                    if (adaptiveScrollAnchorFrameRef.current !== null) {
-                        cancelAnimationFrame(adaptiveScrollAnchorFrameRef.current)
-                        adaptiveScrollAnchorFrameRef.current = null
-                    }
-                } else {
-                    captureAdaptiveScrollAnchor()
-                }
-                zoomAt(cursorX, zoomFactor, targetTrack)
-            } else if (!isPinch && isHorizontal && Math.abs(e.deltaX) > 0.5) {
+            // 'page_scroll' is handled by doing nothing at all: the event was
+            // not prevented, so the browser scrolls the ancestor scroller with
+            // its own inertia.
+            if (intent.type === 'page_scroll' || intent.type === 'none') return
+
+            if (intent.type === 'pan') {
                 verticalZoomTrackAnchorRef.current = null
-                captureAdaptiveScrollAnchor()
-                panByPx(e.deltaX * 2)
+                if (intent.captureScrollAnchor) captureAdaptiveScrollAnchor()
+                panByPx(intent.dxPx)
+                return
             }
+
+            if (intent.type !== 'zoom') return
+
+            const mouseY = e.clientY - rect.top + container.scrollTop
+            const targetTrack = getTrackAtY(mouseY)
+
+            const now = performance.now()
+            const existingGeneAnchor = verticalZoomTrackAnchorRef.current
+            const hasActiveGeneAnchor = Boolean(existingGeneAnchor && now <= existingGeneAnchor.expiresAt)
+            if (hasActiveGeneAnchor) {
+                // Layout changes can move the pointer over another track during
+                // a rapid wheel gesture. Keep following the feature row where
+                // the gesture began until wheel input pauses.
+                existingGeneAnchor.expiresAt = now + 450
+            } else {
+                const featureAnchor = getGeneFeatureVerticalAnchor(cursorX, mouseY, targetTrack)
+                verticalZoomTrackAnchorRef.current = featureAnchor
+                    ? {
+                        ...featureAnchor,
+                        viewportY: e.clientY - rect.top,
+                        clientY: e.clientY,
+                        expiresAt: now + 450,
+                    }
+                    : null
+            }
+
+            if (verticalZoomTrackAnchorRef.current) {
+                adaptiveScrollAnchorRef.current = null
+                if (adaptiveScrollAnchorFrameRef.current !== null) {
+                    cancelAnimationFrame(adaptiveScrollAnchorFrameRef.current)
+                    adaptiveScrollAnchorFrameRef.current = null
+                }
+            } else if (intent.captureScrollAnchor) {
+                captureAdaptiveScrollAnchor()
+            }
+
+            const anchorX = intent.anchor === 'center' ? (LHS_WIDTH + viewWidthRef.current) / 2 : cursorX
+            zoomAt(anchorX, intent.factor, targetTrack)
         }
 
         container.addEventListener('wheel', handleWheel, { passive: false })
         return () => container.removeEventListener('wheel', handleWheel)
-    }, [zoomAt, panByPx, getTrackAtY, getGeneFeatureVerticalAnchor, dismissCustomTrackTooltip, captureAdaptiveScrollAnchor])
+    }, [zoomAt, panByPx, getTrackAtY, getGeneFeatureVerticalAnchor, dismissCustomTrackTooltip, captureAdaptiveScrollAnchor, releaseScrollAnchors])
 
     // ============ Click Handler (gene selection & pill expansion) ============
 
@@ -9128,6 +9284,27 @@ export default function GenomeBrowser({
 
     // ============ Canvas Rendering ============
 
+    // The height this panel needs for its own tracks, independent of any shared
+    // band height handed down from the parent — so reporting it upward cannot feed
+    // back into itself. Quantised so a pan that nudges a row by a pixel does not
+    // renegotiate the shared height every frame.
+    const naturalCanvasHeight = useMemo(() => {
+        const { FORWARD_Y, REVERSE_Y, forwardBgHeight, reverseBgHeight, orderedTracks } = layout
+        const lastTrackY = orderedTracks.length
+            ? Math.max(...orderedTracks.map((track) => track.y + track.height))
+            : Math.max(FORWARD_Y + forwardBgHeight, REVERSE_Y + reverseBgHeight)
+        const alignTracksToBottom = effectiveTrackAlign === 'bottom' && !compactPanelHeight
+        // Use +10 padding unless flush alignment is requested
+        const bottomPadding = (alignTracksToBottom || compactPanelHeight) ? 0 : 10
+        const totalHeight = lastTrackY
+            + (effectiveRulerPosition === 'top' ? bottomPadding : effectiveRulerHeight + bottomPadding)
+        return Math.max(1, Math.ceil(totalHeight / 8) * 8)
+    }, [layout, effectiveTrackAlign, compactPanelHeight, effectiveRulerPosition, effectiveRulerHeight])
+
+    useEffect(() => {
+        onContentHeightChangeRef.current?.(naturalCanvasHeight)
+    }, [naturalCanvasHeight])
+
     useEffect(() => {
         const canvas = canvasRef.current
         if (!canvas) return
@@ -9135,20 +9312,13 @@ export default function GenomeBrowser({
         const ctx = canvas.getContext('2d')
         const dpr = window.devicePixelRatio || 1
 
-        // Calculate total height based on layout
-        const { FORWARD_Y, REVERSE_Y, SEQUENCE_Y, RULER_Y, forwardBgHeight, reverseBgHeight, seqBgHeight, customTrackLayouts, orderedTracks } = layout
+        const { FORWARD_Y, REVERSE_Y, SEQUENCE_Y, RULER_Y, forwardBgHeight, reverseBgHeight, seqBgHeight, customTrackLayouts } = layout
 
-        let lastTrackY = orderedTracks.length
-            ? Math.max(...orderedTracks.map((track) => track.y + track.height))
-            : Math.max(FORWARD_Y + forwardBgHeight, REVERSE_Y + reverseBgHeight)
-
-        const alignTracksToBottom = effectiveTrackAlign === 'bottom' && !usesContentHeight
-        // Use +10 padding unless flush alignment is requested
-        let bottomPadding = (alignTracksToBottom || usesContentHeight) ? 0 : 10
-        const totalHeight = lastTrackY + (effectiveRulerPosition === 'top' ? bottomPadding : effectiveRulerHeight + bottomPadding)
-        const canvasHeight = usesContentHeight
-            ? Math.max(1, totalHeight)
-            : Math.max(160, totalHeight, viewHeight)
+        // Deliberately independent of the measured container height: the container
+        // grows with the canvas, so feeding viewHeight back in would loop. The
+        // shared band height keeps sibling genomes the same size when the panels
+        // are not free to shrink to their own content.
+        const canvasHeight = Math.max(naturalCanvasHeight, Number(minCanvasHeight) || 0)
 
         // Resize the backing store only when dimensions actually change. Assigning
         // canvas.width/height clears and reallocates the high-DPI buffer.
@@ -9435,9 +9605,18 @@ export default function GenomeBrowser({
                     const txY = baseGeneY + txIdx * transcriptLayoutMetrics.rowPitch
                     const midY = txY + transcriptLayoutMetrics.midOffset
 
-                    // Intron line (spans full transcript)
-                    const rawTxX1 = genomicToScreen(tx.start)
-                    const rawTxX2 = genomicToScreen(tx.end)
+                    // Intron line (spans full transcript). Inclusive coordinates again:
+                    // the line has to reach the far edge of the last base so it meets the
+                    // terminal exon box instead of stopping one base short of it.
+                    const txPxPerBp = 1 / Math.max(1e-9, bpPerPx)
+                    const txBounds = getGenomicIntervalPixelBounds(
+                        tx.start,
+                        tx.end,
+                        txPxPerBp,
+                        viewSpan <= 1000 && txPxPerBp >= 2
+                    )
+                    const rawTxX1 = txBounds ? txBounds.x1 : genomicToScreen(tx.start)
+                    const rawTxX2 = txBounds ? txBounds.x2 : genomicToScreen(tx.end)
                     const txX1 = Math.min(rawTxX1, rawTxX2)
                     const txX2 = Math.max(rawTxX1, rawTxX2)
 
@@ -9501,52 +9680,21 @@ export default function GenomeBrowser({
                     for (const exon of exons) {
                         const exonStart = Number(exon.start)
                         const exonEnd = Number(exon.end)
-                        if (!Number.isFinite(exonStart) || !Number.isFinite(exonEnd) || exonEnd <= exonStart) continue
+                        const segments = getTranscriptExonSegments({ exonStart, exonEnd, cdsList })
+                        if (segments.length === 0) continue
 
-                        const overlaps = cdsList
-                            .map((cds) => {
-                                const cdsStart = Number(cds.start)
-                                const cdsEnd = Number(cds.end)
-                                if (!Number.isFinite(cdsStart) || !Number.isFinite(cdsEnd)) return null
-                                const s = Math.max(exonStart, cdsStart)
-                                const e = Math.min(exonEnd, cdsEnd)
-                                return e > s ? { start: s, end: e } : null
-                            })
-                            .filter(Boolean)
-                            .sort((a, b) => a.start - b.start)
-
-                        const segments = []
-                        let cursor = exonStart
-                        for (const coding of overlaps) {
-                            if (coding.start > cursor) {
-                                segments.push({ start: cursor, end: coding.start, coding: false })
-                            }
-                            segments.push({ start: coding.start, end: coding.end, coding: true })
-                            cursor = Math.max(cursor, coding.end)
-                        }
-                        if (cursor < exonEnd) {
-                            segments.push({ start: cursor, end: exonEnd, coding: false })
-                        }
-                        if (segments.length === 0) {
-                            segments.push({ start: exonStart, end: exonEnd, coding: false })
-                        }
-
-                        // At base-level zoom, snap pixel width to an integer so segment
-                        // edges land on the same grid as the sequence track bases.
-                        const segPxPerBp = 1 / bpPerPx
-                        const segPx = segPxPerBp >= 4 ? Math.round(segPxPerBp) : segPxPerBp
-                        const snappedSegScreen = (gpos) => {
-                            const op = genomicToOverlay(gpos)
-                            return isFlipped
-                                ? LHS_WIDTH + (viewEnd - op) * segPx
-                                : LHS_WIDTH + (op - viewStart) * segPx
-                        }
+                        // Exon coordinates are inclusive, so a segment has to cover its
+                        // last base too — getGenomicIntervalPixelBounds maps start..end
+                        // to [x(start), x(end + 1)). At base-level zoom it also snaps to
+                        // the same base grid as the sequence track.
+                        const segPxPerBp = 1 / Math.max(1e-9, bpPerPx)
+                        const snapSegToBaseGrid = viewSpan <= 1000 && segPxPerBp >= 2
 
                         for (const seg of segments) {
-                            const rawSx1 = snappedSegScreen(seg.start)
-                            const rawSx2 = snappedSegScreen(seg.end)
-                            const sx1 = Math.min(rawSx1, rawSx2)
-                            const sx2 = Math.max(rawSx1, rawSx2)
+                            const segBounds = getGenomicIntervalPixelBounds(seg.start, seg.end, segPxPerBp, snapSegToBaseGrid)
+                            if (!segBounds) continue
+                            const sx1 = segBounds.x1
+                            const sx2 = segBounds.x2
                             const segW = Math.max(1, sx2 - sx1)
                             const strokeInset = exonStrokeWidth / 2
                             const drawX = sx1 + strokeInset
@@ -9574,9 +9722,15 @@ export default function GenomeBrowser({
                         if (leftBoundaryHighlight || rightBoundaryHighlight) {
                             const lineTop = detailedExonY - 1
                             const lineBottom = detailedExonY + transcriptLayoutMetrics.exonHeight + 1
-                            const drawBoundaryLine = (bpCoord, spec) => {
-                                if (!spec) return
-                                const x = snappedSegScreen(bpCoord)
+                            // Splice boundaries sit on the outer edges of the first and last
+                            // bases, so the 3' line belongs at x(exonEnd + 1), not x(exonEnd).
+                            // The highlight specs are keyed by genomic coordinate while x1/x2
+                            // are visual, so swap them when the panel is flipped.
+                            const exonBounds = getGenomicIntervalPixelBounds(exonStart, exonEnd, segPxPerBp, snapSegToBaseGrid)
+                            const startEdgeX = isFlipped ? exonBounds?.x2 : exonBounds?.x1
+                            const endEdgeX = isFlipped ? exonBounds?.x1 : exonBounds?.x2
+                            const drawBoundaryLine = (x, spec) => {
+                                if (!spec || !Number.isFinite(x)) return
                                 if (x < LHS_WIDTH - 2 || x > viewWidth + 2) return
                                 const alpha = clamp(
                                     0.45 + spec.weight * 0.28 + (spec.clicked ? 0.12 : 0) + (spec.hovered ? 0.05 : 0),
@@ -9590,8 +9744,8 @@ export default function GenomeBrowser({
                                 ctx.lineTo(x, lineBottom)
                                 ctx.stroke()
                             }
-                            drawBoundaryLine(exonStart, leftBoundaryHighlight)
-                            drawBoundaryLine(exonEnd, rightBoundaryHighlight)
+                            drawBoundaryLine(startEdgeX, leftBoundaryHighlight)
+                            drawBoundaryLine(endEdgeX, rightBoundaryHighlight)
                         }
                     }
 
@@ -11477,7 +11631,7 @@ export default function GenomeBrowser({
             }
         }
 
-    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, usesContentHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight])
+    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight])
 
     useLayoutEffect(() => {
         const anchor = verticalZoomTrackAnchorRef.current
@@ -11494,33 +11648,22 @@ export default function GenomeBrowser({
             return
         }
 
-        if (usesContentHeight) {
-            const deltaY = getAnchoredContentPageScrollDelta({
-                containerTop: container.getBoundingClientRect().top,
-                contentY,
-                clientY: anchor.clientY,
-            })
-            if (Number.isFinite(deltaY) && Math.abs(deltaY) > 0.5) {
-                const scrollElement = findNearestScrollable(rootRef.current)
-                    || document.scrollingElement
-                    || document.documentElement
-                if (scrollElement && scrollElement !== document.documentElement && scrollElement !== document.body) {
-                    scrollElement.scrollTop += deltaY
-                } else {
-                    window.scrollBy(0, deltaY)
-                }
-            }
-        } else {
-            const targetScrollTop = getAnchoredContentScrollTop({
-                contentY,
-                viewportY: anchor.viewportY,
-                maxScrollTop: Math.max(0, container.scrollHeight - container.clientHeight),
-            })
-            if (Number.isFinite(targetScrollTop)) {
-                container.scrollTop = targetScrollTop
+        const deltaY = getAnchoredContentPageScrollDelta({
+            containerTop: container.getBoundingClientRect().top,
+            contentY,
+            clientY: anchor.clientY,
+        })
+        if (Number.isFinite(deltaY) && Math.abs(deltaY) > 0.5) {
+            const scrollElement = findNearestScrollable(rootRef.current)
+                || document.scrollingElement
+                || document.documentElement
+            if (scrollElement && scrollElement !== document.documentElement && scrollElement !== document.body) {
+                scrollElement.scrollTop += deltaY
+            } else {
+                window.scrollBy(0, deltaY)
             }
         }
-    }, [getGeneFeatureVerticalTargetY, usesContentHeight, viewStart, viewEnd])
+    }, [getGeneFeatureVerticalTargetY, viewStart, viewEnd])
 
     // Expose view state upward for shared sequence strip
     useEffect(() => {
@@ -11933,9 +12076,16 @@ export default function GenomeBrowser({
         const geneCenterY = baseGeneY + (totalGeneHeight / 2)
 
         const container = containerRef.current
-        const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
-        const targetScrollTop = clamp(geneCenterY - (container.clientHeight / 2), 0, maxScrollTop)
-        container.scrollTo({ top: targetScrollTop, behavior: 'smooth' })
+        const scroller = findNearestScrollable(rootRef.current)
+        const scrollerMetrics = getScrollerMetrics(scroller)
+        const geneCenterClientY = container.getBoundingClientRect().top + geneCenterY
+        const viewportCenterClientY = (scrollerMetrics.top + scrollerMetrics.bottom) / 2
+        const targetScrollTop = clamp(
+            scrollerMetrics.scrollTop + (geneCenterClientY - viewportCenterClientY),
+            0,
+            scrollerMetrics.maxScrollTop
+        )
+        scrollScrollerTo(scroller, scrollerMetrics, targetScrollTop)
         return true
     }, [layout, genomicToScreen, getGeneRowCountForWidth, getGeneTotalHeight, transcriptLayoutMetrics])
 
@@ -12029,6 +12179,117 @@ export default function GenomeBrowser({
             centerGeneVertically(selectedGene)
         })
     }, [selectedGene, isAligned, alignData, genomicToOverlay, animateToView, centerGeneVertically])
+
+    // ============ Keyboard navigation ============
+    //
+    // Bound to the panel element rather than the window, so keys can only act on
+    // the panel that actually has focus. A window-level binding (as in
+    // AlignmentPanel) fires while the view is off-screen or a modal is open.
+    //
+    // The key map is deliberately the same in every control scheme: schemes
+    // change pointer behaviour only. Making the keyboard scheme-dependent would
+    // leave Default users with no keyboard access at all.
+    const handleKeyDown = useCallback((e) => {
+        if (e.defaultPrevented) return
+        // The panel contains a search box and a track-label dialog whose keydowns
+        // bubble up to this container.
+        if (isTextEntryTarget(e.target)) return
+
+        const intent = resolveKeyAction(readKeyEvent(e))
+        if (intent.type === 'none') return
+        if (intent.preventDefault) e.preventDefault()
+
+        const currentStart = viewStartRef.current
+        const currentEnd = viewEndRef.current
+        const span = Math.max(1, currentEnd - currentStart)
+        const trackWidth = Math.max(1, viewWidth - LHS_WIDTH)
+
+        if (intent.type === 'pan') {
+            // At base-level zoom a "fine" step should be exactly one base,
+            // otherwise a percentage of the span.
+            const stepPx = (intent.fineStep && span <= 1000)
+                ? Math.sign(intent.dxFraction) * (trackWidth / span)
+                : intent.dxFraction * trackWidth
+            captureAdaptiveScrollAnchor()
+            panByPx(stepPx)
+            return
+        }
+
+        if (intent.type === 'zoom') {
+            zoomAt(LHS_WIDTH + trackWidth / 2, intent.factor, null)
+            return
+        }
+
+        if (intent.type === 'jump') {
+            if (onManualNavigate) onManualNavigate()
+            const maxEnd = Math.max(2, chromLength || currentEnd)
+            const [nextStart, nextEnd] = intent.edge === 'start'
+                ? clampView(1, 1 + span)
+                : clampView(maxEnd - span, maxEnd)
+            animateToView(nextStart, nextEnd, 400)
+            return
+        }
+
+        if (intent.type === 'reset') {
+            if (intent.scope === 'gene') {
+                handleRecenterSelectedGene()
+                return
+            }
+            if (onManualNavigate) onManualNavigate()
+            const maxEnd = Math.max(2, chromLength || currentEnd)
+            animateToView(1, maxEnd, 500)
+            return
+        }
+
+        if (intent.type === 'dismiss') {
+            if (selectedGene) {
+                setSelectedGene(null)
+                return
+            }
+            containerRef.current?.blur()
+        }
+    }, [
+        viewWidth, chromLength, selectedGene, panByPx, zoomAt, animateToView, clampView,
+        onManualNavigate, captureAdaptiveScrollAnchor, handleRecenterSelectedGene,
+    ])
+
+    // Published upward so GenomeBrowserView can route a wheel gesture that landed
+    // between panels (page padding, or the divider) to the nearest one. Follows
+    // the same descriptor-registration pattern as screenshotTargetDescriptor,
+    // which avoids forwardRef/useImperativeHandle entirely.
+    const browsingTargetDescriptor = useMemo(() => ({
+        containsNode: (node) => Boolean(node && rootRef.current?.contains(node)),
+        getRootRect: () => rootRef.current?.getBoundingClientRect() || null,
+        applyWheelIntent: (intent, point) => {
+            const container = containerRef.current
+            if (!container || intent?.type !== 'zoom') return
+            const rect = container.getBoundingClientRect()
+            const trackWidth = Math.max(1, rect.width - LHS_WIDTH)
+            // Anchoring on a cursor that is outside the panel horizontally would
+            // silently zoom about the far edge of the tracks, so centre instead.
+            const insideHorizontally = Number.isFinite(point?.clientX)
+                && point.clientX >= rect.left && point.clientX <= rect.right
+            const anchorX = (intent.anchor === 'cursor' && insideHorizontally)
+                ? point.clientX - rect.left
+                : LHS_WIDTH + trackWidth / 2
+            const targetTrack = Number.isFinite(point?.clientY)
+                ? getTrackAtY(point.clientY - rect.top + container.scrollTop)
+                : null
+            captureAdaptiveScrollAnchor()
+            zoomAt(anchorX, intent.factor, targetTrack)
+        },
+    }), [zoomAt, getTrackAtY, captureAdaptiveScrollAnchor])
+
+    useEffect(() => {
+        const notify = onBrowsingTargetChangeRef.current
+        if (typeof notify !== 'function') return undefined
+        notify(browsingTargetDescriptor)
+        return () => {
+            if (typeof onBrowsingTargetChangeRef.current === 'function') {
+                onBrowsingTargetChangeRef.current(null)
+            }
+        }
+    }, [browsingTargetDescriptor])
 
     // ============ Region sorting ============
     // Sort: numeric chroms first (chr1, 1, chr2...), then named sex/special (X, Y, MT) by length desc then alpha,
@@ -12480,11 +12741,20 @@ export default function GenomeBrowser({
 
     const showInitialLoadingOverlay = loadingRegions || (Boolean(selectedChrom) && !hasInitialViewportData)
 
+    // Screen-reader description of the active controls, generated from the same
+    // source as the settings cheat sheet so the two cannot drift apart.
+    const keyboardHintId = `${useId()}-browsing-controls`
+    const keyboardHintText = useMemo(() => (
+        describeBrowsingControls(browsingControls)
+            .map((row) => `${row.gesture}: ${row.action}.`)
+            .join(' ')
+    ), [browsingControls])
+
     return (
         <div
             ref={rootRef}
-            className={`relative flex flex-col ${usesContentHeight ? 'h-auto' : 'h-full'}`}
-            style={{ minHeight: usesContentHeight ? 0 : 160 }}
+            className="relative flex flex-col"
+            style={{ flex: '1 0 auto', minHeight: 0 }}
         >
 
             {isCustomTrackLabelModalOpen && (
@@ -12752,19 +13022,33 @@ export default function GenomeBrowser({
             {/* Selected Gene Info Bar (Top) */}
             {effectiveFocusBarPosition === 'top' && selectedGeneInfoBar}
 
-            {/* Canvas container */}
+            {/* Canvas container. It has no overflow of its own — note that
+                `overflow-x-hidden` alone would silently promote overflow-y back to
+                `auto` and re-create the inner scrollbar. */}
             <div
                 ref={containerRef}
-                className={`${usesContentHeight ? 'flex-none overflow-y-visible' : 'flex-grow overflow-y-auto'} relative overflow-x-hidden themed-scrollbar ${isLight ? 'themed-scrollbar-light' : 'themed-scrollbar-dark'}`}
+                // Marks the surface that owns its own axis-locked drag, so the
+                // view-level drag-to-scroll fallback stands down here.
+                data-browser-canvas-surface="true"
+                className="flex-grow relative overflow-visible outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70"
                 style={{
                     cursor: (isBoxSelectMode || isSelectingRect) ? 'crosshair' : (isDragging ? 'grabbing' : 'grab'),
                     backgroundColor: colors.bg
                 }}
+                // Focusable so keyboard navigation is scoped to the panel the
+                // user is actually on, and reachable by Tab.
+                tabIndex={0}
+                role="group"
+                aria-label={`${genomePillLabel || label || 'Genome'} browser${selectedChrom ? `, ${selectedChrom}` : ''}`}
+                aria-describedby={keyboardHintId}
+                onKeyDown={handleKeyDown}
                 onMouseDown={handleMouseDown}
                 onMouseMove={isDragging ? undefined : handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleContainerMouseLeave}
             >
+                <p id={keyboardHintId} className="sr-only">{keyboardHintText}</p>
+
                 <canvas
                     ref={canvasRef}
                     onClick={handleCanvasClick}

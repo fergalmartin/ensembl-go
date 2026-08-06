@@ -5,7 +5,6 @@ import {
   SEQUENCE_TRACK_HEIGHT,
   getGenomeBrowserPanelSizing,
   getAnchoredContentPageScrollDelta,
-  getAnchoredContentScrollTop,
   getFeatureRowAnchor,
   getFeatureRowTargetY,
   shouldRenderViewportTranscriptStructures,
@@ -15,20 +14,22 @@ test('sequence track height is fixed', () => {
   assert.equal(SEQUENCE_TRACK_HEIGHT, 36)
 })
 
-test('a single non-adaptive browser fills its allocated viewport without sizing from canvas content', () => {
+test('a single non-adaptive browser fills its allocated viewport without a minimum band height', () => {
   assert.deepEqual(getGenomeBrowserPanelSizing(1, false), {
     usesContentHeight: false,
     fillsAvailableHeight: true,
-    fixedPanelHeight: null,
+    panelMinHeight: null,
   })
 })
 
 test('multi-browser and adaptive layouts retain their explicit sizing modes', () => {
-  assert.equal(getGenomeBrowserPanelSizing(3, false).fixedPanelHeight, 390)
+  // Only a safety floor: the real uniform band height is negotiated at runtime
+  // from the tallest panel's content, so this must stay well under a real panel.
+  assert.equal(getGenomeBrowserPanelSizing(3, false).panelMinHeight, 200)
   assert.deepEqual(getGenomeBrowserPanelSizing(1, true), {
     usesContentHeight: true,
     fillsAvailableHeight: false,
-    fixedPanelHeight: null,
+    panelMinHeight: null,
   })
 })
 
@@ -108,12 +109,6 @@ test('a collapsed gene maps to the first corresponding row when detail appears',
 })
 
 test('scroll anchoring keeps the resolved feature row under the pointer', () => {
-  assert.equal(getAnchoredContentScrollTop({
-    contentY: 400,
-    viewportY: 150,
-    maxScrollTop: 600,
-  }), 250)
-
   assert.equal(getAnchoredContentPageScrollDelta({
     containerTop: 100,
     contentY: 400,

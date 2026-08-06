@@ -1,46 +1,11 @@
+/* The app owns its own layout: the shell is `h-screen` and every view scrolls
+   inside its own container. #root must therefore be exactly the viewport with no
+   box of its own — the Vite starter's `max-width: 1280px; margin: 0 auto;
+   padding: 2rem` left dead margins either side of the app (wheeling there hit the
+   document instead of the view's scroller) and pushed the shell 2rem past the
+   viewport, which produced a second, near-useless document scrollbar. */
 #root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
+  height: 100%;
 }
 
 @keyframes statsSankeyRefresh {

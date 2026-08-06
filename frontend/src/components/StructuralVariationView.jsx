@@ -3,12 +3,28 @@ import { API_BASE } from '../backendRuntime'
 import { getGenomeBrowserColor, normalizeGenomeBrowserColors } from '../genomeColorSchemes'
 import { getGenomeKey } from '../utils/genomeIdentity'
 import {
+  beginWheelGesture,
+  findNearestScrollable,
+  markWheelHandled,
+  readWheelEvent,
+  resolveBrowsingControls,
+  resolveDragAxis,
+  resolveWheelAction,
+} from '../utils/browsingControls'
+import {
   buildSvAuxTrackRenderWindow,
   getSvAuxTrackGeometryWidth,
   getSvAuxTrackMatrix,
   getSvAuxTrackTransform,
 } from '../utils/svAuxTrackTransform'
 import { resolveSvFeatureTrackGenomeIds, resolveSvFeatureWindowChrom } from '../utils/svFeatureTrackIdentity'
+import {
+  buildBrowserGeneSeedKey,
+  buildBrowserViewportSeedKey,
+  resolveAnchorRegionSeed,
+  shouldSeedFromBrowser,
+  shouldSeedFromBrowserViewport,
+} from './svViewportSeeding'
 import {
   buildAvailableSvAlignmentRows,
   buildSvGenomeOptions,
@@ -48,11 +64,31 @@ const BUFFER_PAD_RATIO  = 1.5
 const BUFFER_MARGIN_RATIO = 0.16
 const PREFETCH_DEBOUNCE_MS = 120
 const WHEEL_COMMIT_DEBOUNCE_MS = 180
-const WHEEL_ZOOM_SENSITIVITY = 0.0012
-const WHEEL_PINCH_SENSITIVITY = 0.0016
-const WHEEL_AXIS_DOMINANCE_RATIO = 1.35
-const WHEEL_MAX_CROSS_AXIS_FOR_ZOOM = 3
-const WHEEL_GESTURE_IDLE_MS = 140
+
+/**
+ * Feel parameters for every pan/zoom surface in this view — the alignment
+ * panel, the workspace, the gene bands, and the <ens-sv-alignments> web
+ * component, which used to have its own (4x faster) zoom rate.
+ */
+const SV_BROWSING_TUNING = Object.freeze({
+  zoomSensitivity: 0.0012,
+  pinchSensitivity: 0.0016,
+  panAmplification: 1.6,
+  zoomAtExtentHandoff: false,
+})
+
+/**
+ * Depends on the scheme id alone, never on `config` — that object gets a fresh
+ * identity on every 250ms autosave, and a new controls object would re-register
+ * the wheel listeners mid-gesture.
+ */
+function useBrowsingControls(config) {
+  const schemeId = config?.browsing_control_scheme
+  return useMemo(
+    () => resolveBrowsingControls({ browsing_control_scheme: schemeId }, SV_BROWSING_TUNING),
+    [schemeId]
+  )
+}
 const SV_EXTERNAL_VIEWPORT_EVENT_GUARD_MS = 400
 const RULER_TICK_COUNT = 6
 const ALIGNMENT_PANEL_HEIGHT = 168
@@ -3257,8 +3293,11 @@ function StructuralVariationPairView({
   const wheelCommitTimerRef = useRef(null)
   const previewFrameRef = useRef(null)
   const pendingPreviewRef = useRef({ ref: null, tgt: null, syncAlignment: false })
-  const alignmentWheelSessionRef = useRef({ mode: null, target: 'both', lastTime: 0 })
-  const featureWheelSessionRef = useRef({ mode: null, side: null, lastTime: 0 })
+  const alignmentWheelSessionRef = useRef({ gesture: null, target: 'both' })
+  const featureWheelSessionRef = useRef({ gesture: null, side: null })
+  const browsingControls = useBrowsingControls(config)
+  const browsingControlsRef = useRef(browsingControls)
+  useEffect(() => { browsingControlsRef.current = browsingControls }, [browsingControls])
   const featureBandDragRef = useRef(null)
   const displayRefWindowRef = useRef(null)
   const displayTgtWindowRef = useRef(null)
@@ -3850,6 +3889,9 @@ function StructuralVariationPairView({
     el.altGenomeId = tgtAssembly
     el.imageHeight = alignmentPanelHeight
     el.loadingStrategy = svLoadingMode
+    // The web component has no access to React config, so the resolved scheme
+    // is handed to it as a property.
+    el.browsingControls = browsingControls
     el.regionName = refWindow.chrom
     el.altRegionName = tgtWindow?.chrom || ''
     el.regionLength = alignmentRegionLength
@@ -3863,7 +3905,7 @@ function StructuralVariationPairView({
       el.altStart = 0
       el.altEnd = 0
     }
-  }, [getPairRuntimeEndpoints, refAssembly, tgtAssembly, alignmentPanelHeight, svLoadingMode, alignmentRegionLength, altRegionLength])
+  }, [getPairRuntimeEndpoints, refAssembly, tgtAssembly, alignmentPanelHeight, svLoadingMode, alignmentRegionLength, altRegionLength, browsingControls])
 
   const clearPendingViewportCommit = useCallback(() => {
     if (wheelCommitTimerRef.current) {
@@ -3976,74 +4018,57 @@ function StructuralVariationPairView({
       const currentTgtWindow = displayTgtWindowRef.current
       if (!currentRefWindow) return
 
-      const now = performance.now()
+      const wheel = readWheelEvent(e, { pageHeight: window.innerHeight })
       const session = alignmentWheelSessionRef.current
-      const absDeltaX = Math.abs(e.deltaX)
-      const absDeltaY = Math.abs(e.deltaY)
-      const isPinch = e.ctrlKey
-      if ((now - session.lastTime) > WHEEL_GESTURE_IDLE_MS) {
-        session.mode = null
-        session.target = 'both'
+      const gesture = beginWheelGesture(session.gesture, wheel, wheel.ts || performance.now())
+      if (!gesture.continues) session.target = 'both'
+
+      const intent = resolveWheelAction(wheel, browsingControlsRef.current, {
+        canScrollPage: Boolean(findNearestScrollable(e.target || panel)),
+        gesture,
+      })
+      markWheelHandled(e)
+      session.gesture = { ...gesture, mode: intent.nextGestureMode || gesture.mode }
+      if (intent.preventDefault) e.preventDefault()
+      if (intent.stopPropagation) {
+        e.stopPropagation()
+        e.stopImmediatePropagation?.()
       }
-      session.lastTime = now
-
-      const horizontalDominant = absDeltaX >= absDeltaY * WHEEL_AXIS_DOMINANCE_RATIO
-      const verticalDominant = absDeltaY >= absDeltaX * WHEEL_AXIS_DOMINANCE_RATIO
-      if (isPinch) {
-        session.mode = 'zoom'
-      } else if (!session.mode) {
-        if (horizontalDominant && absDeltaX > 0.5) {
-          session.mode = 'pan'
-        } else if (
-          verticalDominant
-          && absDeltaY > 0.5
-          && absDeltaX <= WHEEL_MAX_CROSS_AXIS_FOR_ZOOM
-        ) {
-          session.mode = 'zoom'
-        }
-      }
-
-      const zoomIntent = session.mode === 'zoom'
-      const panIntent = session.mode === 'pan'
-
-      if (!zoomIntent && !panIntent) return
-
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation?.()
+      if (intent.type !== 'zoom' && intent.type !== 'pan') return
 
       const rect = panel.getBoundingClientRect()
       if (rect.width <= 0) return
 
-      const anchorFraction = clamp((e.clientX - rect.left) / rect.width, 0, 1)
+      const anchorFraction = intent.anchor === 'center'
+        ? 0.5
+        : clamp((e.clientX - rect.left) / rect.width, 0, 1)
       const offsetY = e.clientY - rect.top
-      if (panIntent && session.target === 'both') {
+      if (intent.type === 'pan' && session.target === 'both') {
+        // A pan that starts over one of the two rulers moves only that genome.
         session.target = offsetY <= RULER_HEIGHT
           ? 'reference'
           : rect.height - offsetY <= RULER_HEIGHT
             ? 'alt'
             : 'both'
       }
-      const gestureTarget = panIntent ? session.target : 'both'
+      const gestureTarget = intent.type === 'pan' ? session.target : 'both'
 
       let nextRefWindow = currentRefWindow
       let nextTgtWindow = currentTgtWindow
 
-      if (zoomIntent) {
-        const sensitivity = isPinch ? WHEEL_PINCH_SENSITIVITY : WHEEL_ZOOM_SENSITIVITY
-        const zoomFactor = clamp(1 + (e.deltaY * sensitivity), 0.86, 1.14)
+      if (intent.type === 'zoom') {
         if (currentRefWindow) {
-          nextRefWindow = zoomWindowAround(currentRefWindow, zoomFactor, anchorFraction, 1, refChromSizeRef.current)
+          nextRefWindow = zoomWindowAround(currentRefWindow, intent.factor, anchorFraction, 1, refChromSizeRef.current)
         }
         if (currentTgtWindow) {
-          nextTgtWindow = zoomWindowAround(currentTgtWindow, zoomFactor, anchorFraction, 1, tgtChromSizeRef.current)
+          nextTgtWindow = zoomWindowAround(currentTgtWindow, intent.factor, anchorFraction, 1, tgtChromSizeRef.current)
         }
-      } else if (panIntent) {
+      } else {
         if (gestureTarget !== 'alt') {
-          nextRefWindow = panWindowByPixels(currentRefWindow, e.deltaX * 1.6, rect.width, 1, refChromSizeRef.current)
+          nextRefWindow = panWindowByPixels(currentRefWindow, intent.dxPx, rect.width, 1, refChromSizeRef.current)
         }
         if (gestureTarget !== 'reference' && currentTgtWindow) {
-          nextTgtWindow = panWindowByPixels(currentTgtWindow, e.deltaX * 1.6, rect.width, 1, tgtChromSizeRef.current)
+          nextTgtWindow = panWindowByPixels(currentTgtWindow, intent.dxPx, rect.width, 1, tgtChromSizeRef.current)
         }
       }
 
@@ -4070,34 +4095,36 @@ function StructuralVariationPairView({
       const currentTgtWindow = displayTgtWindowRef.current
       if (!currentRefWindow) return
 
-      event.preventDefault()
-      event.stopPropagation()
-      event.stopImmediatePropagation?.()
+      const wheel = readWheelEvent(event, { pageHeight: window.innerHeight })
+      const intent = resolveWheelAction(wheel, browsingControlsRef.current, {
+        canScrollPage: Boolean(findNearestScrollable(event.target || interactiveArea)),
+      })
+      markWheelHandled(event)
+      if (intent.preventDefault) event.preventDefault()
+      if (intent.stopPropagation) {
+        event.stopPropagation()
+        event.stopImmediatePropagation?.()
+      }
+      if (intent.type !== 'zoom' && intent.type !== 'pan') return
 
       const rect = interactiveArea.getBoundingClientRect()
       if (rect.width <= 0) return
-      const anchorFraction = clamp((event.clientX - rect.left) / rect.width, 0, 1)
-      const absDeltaX = Math.abs(event.deltaX)
-      const absDeltaY = Math.abs(event.deltaY)
-      const zoomIntent = event.ctrlKey || absDeltaY >= Math.max(0.5, absDeltaX * 0.75)
-      const panIntent = !zoomIntent && absDeltaX > 0.5
+      const anchorFraction = intent.anchor === 'center'
+        ? 0.5
+        : clamp((event.clientX - rect.left) / rect.width, 0, 1)
 
       let nextRefWindow = currentRefWindow
       let nextTgtWindow = currentTgtWindow
-      if (zoomIntent) {
-        const sensitivity = event.ctrlKey ? WHEEL_PINCH_SENSITIVITY : WHEEL_ZOOM_SENSITIVITY
-        const zoomFactor = clamp(1 + (event.deltaY * sensitivity), 0.86, 1.14)
-        nextRefWindow = zoomWindowAround(currentRefWindow, zoomFactor, anchorFraction, 1, refChromSizeRef.current)
+      if (intent.type === 'zoom') {
+        nextRefWindow = zoomWindowAround(currentRefWindow, intent.factor, anchorFraction, 1, refChromSizeRef.current)
         if (currentTgtWindow) {
-          nextTgtWindow = zoomWindowAround(currentTgtWindow, zoomFactor, anchorFraction, 1, tgtChromSizeRef.current)
-        }
-      } else if (panIntent) {
-        nextRefWindow = panWindowByPixels(currentRefWindow, event.deltaX * 1.6, rect.width, 1, refChromSizeRef.current)
-        if (currentTgtWindow) {
-          nextTgtWindow = panWindowByPixels(currentTgtWindow, event.deltaX * 1.6, rect.width, 1, tgtChromSizeRef.current)
+          nextTgtWindow = zoomWindowAround(currentTgtWindow, intent.factor, anchorFraction, 1, tgtChromSizeRef.current)
         }
       } else {
-        return
+        nextRefWindow = panWindowByPixels(currentRefWindow, intent.dxPx, rect.width, 1, refChromSizeRef.current)
+        if (currentTgtWindow) {
+          nextTgtWindow = panWindowByPixels(currentTgtWindow, intent.dxPx, rect.width, 1, tgtChromSizeRef.current)
+        }
       }
 
       pushPreviewViewport(nextRefWindow, nextTgtWindow)
@@ -4198,66 +4225,58 @@ function StructuralVariationPairView({
   }, [clearPendingViewportCommit, isBoxSelectMode, isSelectingRect])
 
   const handleFeatureBandWheel = useCallback((side, event, element = null) => {
-    event.preventDefault()
-    event.stopPropagation()
-    event.stopImmediatePropagation?.()
-    if (isBoxSelectMode || isSelectingRect) return
+    if (isBoxSelectMode || isSelectingRect) {
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation?.()
+      return
+    }
     const currentRefWindow = displayRefWindowRef.current
     const currentTgtWindow = displayTgtWindowRef.current
     if (side === 'reference' && !currentRefWindow) return
     if (side === 'target' && !currentTgtWindow) return
 
-    const now = performance.now()
+    const wheel = readWheelEvent(event, { pageHeight: window.innerHeight })
     const session = featureWheelSessionRef.current
-    const absDeltaX = Math.abs(event.deltaX)
-    const absDeltaY = Math.abs(event.deltaY)
-    const isPinch = event.ctrlKey
-    if ((now - session.lastTime) > WHEEL_GESTURE_IDLE_MS || session.side !== side) {
-      session.mode = null
-      session.side = side
-    }
-    session.lastTime = now
+    // Moving to the other band restarts the gesture, so a fling cannot carry a
+    // locked mode across from the band it started on.
+    const previous = session.side === side ? session.gesture : null
+    const gesture = beginWheelGesture(previous, wheel, wheel.ts || performance.now())
+    session.side = side
 
-    const horizontalDominant = absDeltaX >= absDeltaY * WHEEL_AXIS_DOMINANCE_RATIO
-    const verticalDominant = absDeltaY >= absDeltaX * WHEEL_AXIS_DOMINANCE_RATIO
-    if (isPinch) {
-      session.mode = 'zoom'
-    } else if (!session.mode) {
-      if (horizontalDominant && absDeltaX > 0.5) {
-        session.mode = 'pan'
-      } else if (
-        (verticalDominant && absDeltaY > 0.5 && absDeltaX <= WHEEL_MAX_CROSS_AXIS_FOR_ZOOM)
-        || absDeltaY > 0.5
-        || absDeltaX > 0.5
-      ) {
-        session.mode = 'zoom'
-      }
+    const intent = resolveWheelAction(wheel, browsingControlsRef.current, {
+      canScrollPage: Boolean(findNearestScrollable(event.target || element)),
+      gesture,
+    })
+    markWheelHandled(event)
+    session.gesture = { ...gesture, mode: intent.nextGestureMode || gesture.mode }
+    if (intent.preventDefault) event.preventDefault()
+    if (intent.stopPropagation) {
+      event.stopPropagation()
+      event.stopImmediatePropagation?.()
     }
-
-    const zoomIntent = session.mode === 'zoom'
-    const panIntent = session.mode === 'pan'
-    if (!zoomIntent && !panIntent) return
+    if (intent.type !== 'zoom' && intent.type !== 'pan') return
 
     const targetElement = element || event.currentTarget || event.target
     if (!targetElement?.getBoundingClientRect) return
     const rect = targetElement.getBoundingClientRect()
-    const anchorFraction = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
+    const anchorFraction = intent.anchor === 'center'
+      ? 0.5
+      : clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
     let nextRefWindow = currentRefWindow
     let nextTgtWindow = currentTgtWindow
 
-    if (zoomIntent) {
-      const sensitivity = isPinch ? WHEEL_PINCH_SENSITIVITY : WHEEL_ZOOM_SENSITIVITY
-      const zoomFactor = clamp(1 + (event.deltaY * sensitivity), 0.86, 1.14)
+    if (intent.type === 'zoom') {
       if (currentRefWindow) {
-        nextRefWindow = zoomWindowAround(currentRefWindow, zoomFactor, anchorFraction, 1, refChromSizeRef.current)
+        nextRefWindow = zoomWindowAround(currentRefWindow, intent.factor, anchorFraction, 1, refChromSizeRef.current)
       }
       if (currentTgtWindow) {
-        nextTgtWindow = zoomWindowAround(currentTgtWindow, zoomFactor, anchorFraction, 1, tgtChromSizeRef.current)
+        nextTgtWindow = zoomWindowAround(currentTgtWindow, intent.factor, anchorFraction, 1, tgtChromSizeRef.current)
       }
     } else if (side === 'reference' && currentRefWindow) {
-      nextRefWindow = panWindowByPixels(currentRefWindow, event.deltaX * 1.6, rect.width, 1, refChromSizeRef.current)
+      nextRefWindow = panWindowByPixels(currentRefWindow, intent.dxPx, rect.width, 1, refChromSizeRef.current)
     } else if (side === 'target' && currentTgtWindow) {
-      nextTgtWindow = panWindowByPixels(currentTgtWindow, event.deltaX * 1.6, rect.width, 1, tgtChromSizeRef.current)
+      nextTgtWindow = panWindowByPixels(currentTgtWindow, intent.dxPx, rect.width, 1, tgtChromSizeRef.current)
     }
 
     pushPreviewViewport(nextRefWindow, nextTgtWindow)
@@ -5158,6 +5177,8 @@ function StructuralVariationThreeGenomeView({
       topWindow: saved.topWindow || null,
       bottomWindow: getSvRuntimeAssembly(thirdSpecies) === saved.bottomAssembly ? (saved.bottomWindow || null) : null,
       seededRegionKey: saved.seededRegionKey || '',
+      seededBrowserKey: saved.seededBrowserKey || '',
+      regionSeedBrowserKey: saved.regionSeedBrowserKey || '',
     }
   })()
 
@@ -5188,6 +5209,19 @@ function StructuralVariationThreeGenomeView({
     bottom: { key: '', attempt: 0, timer: null },
   })
   const seededAnchorRegionKeyRef = useRef(restoredViewport?.seededRegionKey || '')
+  // What the genome browser last seeded this view with. Restored alongside the
+  // viewport so a remount does not re-seed from an unchanged browser position.
+  const seededBrowserKeyRef = useRef(restoredViewport?.seededBrowserKey || '')
+  // The browser seed that was in force when the anchor region was last applied,
+  // so the two can be told apart when they disagree.
+  const regionSeedBrowserKeyRef = useRef(restoredViewport?.regionSeedBrowserKey || '')
+  // Caps drift recovery at one attempt per region, so a chromosome name that
+  // never compares equal cannot re-apply the region forever.
+  const driftRecoveredRegionKeyRef = useRef('')
+  // Whether this mount restored a viewport. Latched for the lifetime of the
+  // mount: the browser's viewport must never override what the user was last
+  // looking at here, however long they spent in the genome browser in between.
+  const hadRestoredViewportRef = useRef(Boolean(restoredViewport?.refWindow))
   const featureTrackCacheRef = useRef({ reference: null, top: null, bottom: null })
   const featureTrackTokenRef = useRef({ reference: 0, top: 0, bottom: 0 })
   const featureTrackAbortRef = useRef({ reference: null, top: null, bottom: null })
@@ -5202,7 +5236,10 @@ function StructuralVariationThreeGenomeView({
   const refChromSizeRef = useRef(null)
   const topChromSizeRef = useRef(null)
   const bottomChromSizeRef = useRef(null)
-  const wheelSessionRef = useRef({ mode: null, lastTime: 0 })
+  const wheelSessionRef = useRef({ gesture: null })
+  const browsingControls = useBrowsingControls(config)
+  const browsingControlsRef = useRef(browsingControls)
+  useEffect(() => { browsingControlsRef.current = browsingControls }, [browsingControls])
   const prevBottomAlignmentIdRef = useRef('')
   const previewFrameRef = useRef(null)
   const pendingPreviewRef = useRef({ ref: null, top: null, bottom: null })
@@ -5349,7 +5386,28 @@ function StructuralVariationThreeGenomeView({
   useEffect(() => {
     if (!selectedAnchorRegion?.chrom) return
     const regionKey = `${selectedTopAlignmentId}|${getSvRegionKey(selectedAnchorRegion)}|${selectedAnchorRegion?.start || ''}-${selectedAnchorRegion?.end || ''}`
-    if (seededAnchorRegionKeyRef.current === regionKey) return
+
+    // Normally this only runs when the selected region changes. It also re-runs
+    // when the view has drifted onto a different chromosome from the one the
+    // region selector is showing, which is otherwise an inescapable state: the
+    // region is already "applied", so re-picking it does nothing, and the view
+    // keeps reporting an error about a chromosome the user never chose.
+    //
+    // Deliberately NOT applied when the genome browser seeded the view after
+    // the region was applied — navigating the browser to another locus and then
+    // opening this view is meant to follow the browser.
+    const seedReason = resolveAnchorRegionSeed({
+      regionKey,
+      seededRegionKey: seededAnchorRegionKeyRef.current,
+      regionChrom: normalizeSvChromToken(selectedAnchorRegion.chrom),
+      windowChrom: normalizeSvChromToken(viewRefWindow?.chrom),
+      seededBrowserKey: seededBrowserKeyRef.current,
+      regionSeedBrowserKey: regionSeedBrowserKeyRef.current,
+      driftRecoveredKey: driftRecoveredRegionKeyRef.current,
+    })
+    if (!seedReason) return
+    if (seedReason === 'drift') driftRecoveredRegionKeyRef.current = regionKey
+
     let cancelled = false
     const applyAnchorRegion = async () => {
       const next = await buildWindowForAnchorRegion(
@@ -5360,6 +5418,7 @@ function StructuralVariationThreeGenomeView({
       )
       if (cancelled || !next) return
       seededAnchorRegionKeyRef.current = regionKey
+      regionSeedBrowserKeyRef.current = seededBrowserKeyRef.current
       setStatusText('')
       if (wheelCommitTimerRef.current) {
         clearTimeout(wheelCommitTimerRef.current)
@@ -5383,8 +5442,20 @@ function StructuralVariationThreeGenomeView({
     viewRefWindow,
   ])
 
+  // Seed from the genome browser's focused gene.
+  //
+  // Guarded by a key that SURVIVES REMOUNTS via savedViewportRef. Without that,
+  // navigating away and back re-ran this effect and silently replaced the
+  // restored region with wherever the genome browser happened to be — usually
+  // chromosome 1 — while the region selector still displayed the old region.
+  // The third genome then failed with "reference chromosome '1' is not aligned"
+  // and never recovered, because the anchor-region seeder below considers the
+  // region already applied.
   useEffect(() => {
     if (!browserRefGene?.chrom) return
+    const key = buildBrowserGeneSeedKey(browserRefGene)
+    if (!shouldSeedFromBrowser({ seededKey: seededBrowserKeyRef.current, candidateKey: key })) return
+    seededBrowserKeyRef.current = key
     const geneSpan = Math.max(1, (browserRefGene.end || 0) - (browserRefGene.start || 0))
     const span = clamp(Math.round(geneSpan * 8), 120_000, 5_000_000)
     const center = Math.round(((browserRefGene.start || 0) + (browserRefGene.end || 0)) / 2)
@@ -5397,10 +5468,18 @@ function StructuralVariationThreeGenomeView({
     setPreviewBottomWindow(null)
   }, [browserRefGene])
 
+  // Seed from the genome browser's viewport. Same remount-surviving guard.
   useEffect(() => {
     if (browserRefGene?.chrom) return
     if (!browserRefViewport?.chrom || !Number.isFinite(browserRefViewport.start) || !Number.isFinite(browserRefViewport.end)) return
     if (browserRefViewport.end <= browserRefViewport.start) return
+    const key = buildBrowserViewportSeedKey(browserRefViewport)
+    if (!shouldSeedFromBrowserViewport({
+      seededKey: seededBrowserKeyRef.current,
+      candidateKey: key,
+      hasRestoredViewport: hadRestoredViewportRef.current,
+    })) return
+    seededBrowserKeyRef.current = key
     const next = constrainWindowToZoomLimits({
       chrom: browserRefViewport.chrom,
       start: Math.max(1, Math.round(browserRefViewport.start)),
@@ -5733,6 +5812,8 @@ function StructuralVariationThreeGenomeView({
       topAssembly,
       bottomAssembly,
       seededRegionKey: seededAnchorRegionKeyRef.current,
+      seededBrowserKey: seededBrowserKeyRef.current,
+      regionSeedBrowserKey: regionSeedBrowserKeyRef.current,
     }
   }, [viewRefWindow, viewTopWindow, viewBottomWindow, refAssembly, topAssembly, bottomAssembly]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -5898,6 +5979,9 @@ function StructuralVariationThreeGenomeView({
     el.altGenomeId = topAssembly
     el.imageHeight = alignmentPanelHeight
     el.loadingStrategy = svLoadingMode
+    // The web component has no access to React config, so the resolved scheme
+    // is handed to it as a property.
+    el.browsingControls = browsingControls
     el.displayOrder = 'alt-top'
     el.linkedViewports = true
     el.regionName = refWindow.chrom
@@ -5908,7 +5992,7 @@ function StructuralVariationThreeGenomeView({
     el.altRegionLength = topRegionLength
     el.altStart = topWindow?.start ?? 0
     el.altEnd = topWindow?.end ?? 0
-  }, [refAssembly, topAssembly, alignmentPanelHeight, svLoadingMode, alignmentRegionLength, topRegionLength, getUpperRuntimeEndpoints])
+  }, [refAssembly, topAssembly, alignmentPanelHeight, svLoadingMode, alignmentRegionLength, topRegionLength, getUpperRuntimeEndpoints, browsingControls])
 
   const syncLowerAlignmentViewport = useCallback((refWindow, bottomWindow) => {
     const el = lowerAlignmentsRef.current
@@ -5918,6 +6002,9 @@ function StructuralVariationThreeGenomeView({
     el.altGenomeId = bottomAssembly
     el.imageHeight = alignmentPanelHeight
     el.loadingStrategy = svLoadingMode
+    // The web component has no access to React config, so the resolved scheme
+    // is handed to it as a property.
+    el.browsingControls = browsingControls
     el.displayOrder = 'reference-top'
     el.linkedViewports = true
     el.regionName = refWindow.chrom
@@ -5928,7 +6015,7 @@ function StructuralVariationThreeGenomeView({
     el.altRegionLength = bottomRegionLength
     el.altStart = bottomWindow?.start ?? 0
     el.altEnd = bottomWindow?.end ?? 0
-  }, [refAssembly, bottomAssembly, alignmentPanelHeight, svLoadingMode, alignmentRegionLength, bottomRegionLength, getLowerRuntimeEndpoints])
+  }, [refAssembly, bottomAssembly, alignmentPanelHeight, svLoadingMode, alignmentRegionLength, bottomRegionLength, getLowerRuntimeEndpoints, browsingControls])
 
   useEffect(() => {
     syncUpperAlignmentViewport(viewRefWindow, baseTopWindow)
@@ -6036,62 +6123,50 @@ function StructuralVariationThreeGenomeView({
     if (side === 'top' && !currentTopWindow) return
     if (side === 'bottom' && !currentBottomWindow) return
 
-    const now = performance.now()
+    const wheel = readWheelEvent(event, { pageHeight: window.innerHeight })
     const session = wheelSessionRef.current
-    const absDeltaX = Math.abs(event.deltaX)
-    const absDeltaY = Math.abs(event.deltaY)
-    const isPinch = event.ctrlKey
-    if ((now - session.lastTime) > WHEEL_GESTURE_IDLE_MS) {
-      session.mode = null
+    const gesture = beginWheelGesture(session.gesture, wheel, wheel.ts || performance.now())
+    const intent = resolveWheelAction(wheel, browsingControlsRef.current, {
+      canScrollPage: Boolean(findNearestScrollable(event.target || element)),
+      gesture,
+    })
+    markWheelHandled(event)
+    session.gesture = { ...gesture, mode: intent.nextGestureMode || gesture.mode }
+    if (intent.preventDefault) event.preventDefault()
+    if (intent.stopPropagation) {
+      event.stopPropagation()
+      event.stopImmediatePropagation?.()
     }
-    session.lastTime = now
-
-    const horizontalDominant = absDeltaX >= absDeltaY * WHEEL_AXIS_DOMINANCE_RATIO
-    const verticalDominant = absDeltaY >= absDeltaX * WHEEL_AXIS_DOMINANCE_RATIO
-    if (isPinch) {
-      session.mode = 'zoom'
-    } else if (!session.mode) {
-      if (horizontalDominant && absDeltaX > 0.5) {
-        session.mode = 'pan'
-      } else if (
-        verticalDominant
-        && absDeltaY > 0.5
-        && absDeltaX <= WHEEL_MAX_CROSS_AXIS_FOR_ZOOM
-      ) {
-        session.mode = 'zoom'
-      }
-    }
+    if (intent.type !== 'zoom' && intent.type !== 'pan') return
 
     const targetElement = element || event.currentTarget || event.target
     if (!targetElement?.getBoundingClientRect) return
     const rect = targetElement.getBoundingClientRect()
-    const anchorFraction = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
+    const anchorFraction = intent.anchor === 'center'
+      ? 0.5
+      : clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
 
     let nextRefWindow = currentRefWindow
     let nextTopWindow = currentTopWindow
     let nextBottomWindow = currentBottomWindow
-    if (session.mode === 'zoom') {
-      const sensitivity = isPinch ? WHEEL_PINCH_SENSITIVITY : WHEEL_ZOOM_SENSITIVITY
-      const zoomFactor = clamp(1 + (event.deltaY * sensitivity), 0.86, 1.14)
+    if (intent.type === 'zoom') {
       if (currentRefWindow) {
-        nextRefWindow = zoomWindowAround(currentRefWindow, zoomFactor, anchorFraction, 1, refChromSizeRef.current)
+        nextRefWindow = zoomWindowAround(currentRefWindow, intent.factor, anchorFraction, 1, refChromSizeRef.current)
       }
       if (currentTopWindow) {
-        nextTopWindow = zoomWindowAround(currentTopWindow, zoomFactor, anchorFraction, 1, topChromSizeRef.current)
+        nextTopWindow = zoomWindowAround(currentTopWindow, intent.factor, anchorFraction, 1, topChromSizeRef.current)
       }
       if (currentBottomWindow) {
-        nextBottomWindow = zoomWindowAround(currentBottomWindow, zoomFactor, anchorFraction, 1, bottomChromSizeRef.current)
-      }
-    } else if (session.mode === 'pan') {
-      if (side === 'reference' && currentRefWindow) {
-        nextRefWindow = panWindowByPixels(currentRefWindow, event.deltaX * 1.6, rect.width, 1, refChromSizeRef.current)
-      } else if (side === 'top' && currentTopWindow) {
-        nextTopWindow = panWindowByPixels(currentTopWindow, event.deltaX * 1.6, rect.width, 1, topChromSizeRef.current)
-      } else if (side === 'bottom' && currentBottomWindow) {
-        nextBottomWindow = panWindowByPixels(currentBottomWindow, event.deltaX * 1.6, rect.width, 1, bottomChromSizeRef.current)
+        nextBottomWindow = zoomWindowAround(currentBottomWindow, intent.factor, anchorFraction, 1, bottomChromSizeRef.current)
       }
     } else {
-      return
+      if (side === 'reference' && currentRefWindow) {
+        nextRefWindow = panWindowByPixels(currentRefWindow, intent.dxPx, rect.width, 1, refChromSizeRef.current)
+      } else if (side === 'top' && currentTopWindow) {
+        nextTopWindow = panWindowByPixels(currentTopWindow, intent.dxPx, rect.width, 1, topChromSizeRef.current)
+      } else if (side === 'bottom' && currentBottomWindow) {
+        nextBottomWindow = panWindowByPixels(currentBottomWindow, intent.dxPx, rect.width, 1, bottomChromSizeRef.current)
+      }
     }
 
     externalViewportInteractionRef.current.activeUntil = performance.now() + SV_EXTERNAL_VIEWPORT_EVENT_GUARD_MS
@@ -6113,41 +6188,43 @@ function StructuralVariationThreeGenomeView({
       const currentBottomWindow = displayBottomWindowRef.current
       if (!currentRefWindow) return
 
-      event.preventDefault()
-      event.stopPropagation()
-      event.stopImmediatePropagation?.()
+      const wheel = readWheelEvent(event, { pageHeight: window.innerHeight })
+      const intent = resolveWheelAction(wheel, browsingControlsRef.current, {
+        canScrollPage: Boolean(findNearestScrollable(event.target || interactiveArea)),
+      })
+      markWheelHandled(event)
+      if (intent.preventDefault) event.preventDefault()
+      if (intent.stopPropagation) {
+        event.stopPropagation()
+        event.stopImmediatePropagation?.()
+      }
+      if (intent.type !== 'zoom' && intent.type !== 'pan') return
 
       const rect = interactiveArea.getBoundingClientRect()
       if (rect.width <= 0) return
-      const anchorFraction = clamp((event.clientX - rect.left) / rect.width, 0, 1)
-      const absDeltaX = Math.abs(event.deltaX)
-      const absDeltaY = Math.abs(event.deltaY)
-      const zoomIntent = event.ctrlKey || absDeltaY >= Math.max(0.5, absDeltaX * 0.75)
-      const panIntent = !zoomIntent && absDeltaX > 0.5
+      const anchorFraction = intent.anchor === 'center'
+        ? 0.5
+        : clamp((event.clientX - rect.left) / rect.width, 0, 1)
 
       let nextRefWindow = currentRefWindow
       let nextTopWindow = currentTopWindow
       let nextBottomWindow = currentBottomWindow
-      if (zoomIntent) {
-        const sensitivity = event.ctrlKey ? WHEEL_PINCH_SENSITIVITY : WHEEL_ZOOM_SENSITIVITY
-        const zoomFactor = clamp(1 + (event.deltaY * sensitivity), 0.86, 1.14)
-        nextRefWindow = zoomWindowAround(currentRefWindow, zoomFactor, anchorFraction, 1, refChromSizeRef.current)
+      if (intent.type === 'zoom') {
+        nextRefWindow = zoomWindowAround(currentRefWindow, intent.factor, anchorFraction, 1, refChromSizeRef.current)
         if (currentTopWindow) {
-          nextTopWindow = zoomWindowAround(currentTopWindow, zoomFactor, anchorFraction, 1, topChromSizeRef.current)
+          nextTopWindow = zoomWindowAround(currentTopWindow, intent.factor, anchorFraction, 1, topChromSizeRef.current)
         }
         if (currentBottomWindow) {
-          nextBottomWindow = zoomWindowAround(currentBottomWindow, zoomFactor, anchorFraction, 1, bottomChromSizeRef.current)
-        }
-      } else if (panIntent) {
-        nextRefWindow = panWindowByPixels(currentRefWindow, event.deltaX * 1.6, rect.width, 1, refChromSizeRef.current)
-        if (currentTopWindow) {
-          nextTopWindow = panWindowByPixels(currentTopWindow, event.deltaX * 1.6, rect.width, 1, topChromSizeRef.current)
-        }
-        if (currentBottomWindow) {
-          nextBottomWindow = panWindowByPixels(currentBottomWindow, event.deltaX * 1.6, rect.width, 1, bottomChromSizeRef.current)
+          nextBottomWindow = zoomWindowAround(currentBottomWindow, intent.factor, anchorFraction, 1, bottomChromSizeRef.current)
         }
       } else {
-        return
+        nextRefWindow = panWindowByPixels(currentRefWindow, intent.dxPx, rect.width, 1, refChromSizeRef.current)
+        if (currentTopWindow) {
+          nextTopWindow = panWindowByPixels(currentTopWindow, intent.dxPx, rect.width, 1, topChromSizeRef.current)
+        }
+        if (currentBottomWindow) {
+          nextBottomWindow = panWindowByPixels(currentBottomWindow, intent.dxPx, rect.width, 1, bottomChromSizeRef.current)
+        }
       }
 
       externalViewportInteractionRef.current.activeUntil = performance.now() + SV_EXTERNAL_VIEWPORT_EVENT_GUARD_MS
@@ -6183,6 +6260,32 @@ function StructuralVariationThreeGenomeView({
       const dragState = featureBandDragRef.current
       if (!dragState || event.pointerId !== dragState.pointerId) return
       const deltaX = event.clientX - dragState.startX
+      const deltaY = event.clientY - dragState.startY
+
+      // Axis-locked, exactly as in the Genome Browser: sideways pans the tracks,
+      // up/down scrolls the page. Same 5px threshold and vertical bias, so the
+      // two views feel identical under the hand.
+      if (!dragState.axis) {
+        const axis = resolveDragAxis({
+          dx: deltaX,
+          dy: deltaY,
+          canScrollPage: Boolean(dragState.scroller),
+          currentAxis: null,
+        })
+        if (!axis) return
+        dragState.axis = axis
+      }
+
+      if (dragState.axis === 'y') {
+        if (!dragState.scroller) return
+        dragState.dragging = true
+        event.preventDefault()
+        // 1:1 grab-and-drag: the content follows the cursor, so dragging down
+        // reveals what is above.
+        dragState.scroller.scrollTop = dragState.startScrollTop - deltaY
+        return
+      }
+
       if (!deltaX) return
       dragState.dragging = true
       event.preventDefault()
@@ -6206,7 +6309,9 @@ function StructuralVariationThreeGenomeView({
     const finishDrag = (event) => {
       const dragState = featureBandDragRef.current
       if (!dragState || event.pointerId !== dragState.pointerId) return
-      if (dragState.dragging) {
+      // A vertical drag only scrolled the page — there is no viewport change to
+      // commit, and committing one would broadcast a spurious external event.
+      if (dragState.dragging && dragState.axis !== 'y') {
         commitViewportChange(dragState.currentRefWindow, dragState.currentTopWindow, dragState.currentBottomWindow)
       }
       externalViewportInteractionRef.current.dragging = false
@@ -6248,10 +6353,15 @@ function StructuralVariationThreeGenomeView({
     clearPendingViewportCommit()
     externalViewportInteractionRef.current.dragging = true
     const rect = event.currentTarget.getBoundingClientRect()
+    const scroller = findNearestScrollable(event.currentTarget)
     featureBandDragRef.current = {
       side,
       pointerId: event.pointerId,
       startX: event.clientX,
+      startY: event.clientY,
+      axis: null,
+      scroller,
+      startScrollTop: scroller ? scroller.scrollTop : 0,
       width: Math.max(1, rect.width),
       startRefWindow,
       startTopWindow,

@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { FEATURE_COLORS } from './FeatureLegend'
+import { isTextEntryTarget, normalizeWheelDelta, wheelZoomFactor } from '../utils/browsingControls'
 
 const CHAR_HEIGHT = 16
 const ROW_HEIGHT = 24
@@ -813,6 +814,10 @@ export default function AlignmentPanel({
 
     // Mouse handlers for panning with momentum
     const handleMouseDown = (e) => {
+        // Take focus so the panel's own keyboard handler receives keys.
+        // preventScroll matters: without it, focusing jumps the page.
+        containerRef.current?.focus({ preventScroll: true })
+
         // Cancel any ongoing animation
         if (animationRef.current) {
             cancelAnimationFrame(animationRef.current)
@@ -888,15 +893,20 @@ export default function AlignmentPanel({
             let currentZoom = zoomLevelRef.current
             let currentScrollX = scrollXRef.current
 
+            // Normalised deltas: Firefox and some Linux mice report deltaMode 1
+            // (lines) with values around 3 rather than pixels around 100, which
+            // made this panel ~30x less responsive on those setups.
+            const { dx, dy } = normalizeWheelDelta(e, { pageHeight: window.innerHeight })
+
             // Gesture separation: prioritize dominant axis
             // If Ctrl key is pressed, it's a pinch zoom (browser convention) => Force Zoom
             // Otherwise, compare deltaX vs deltaY to decide Pan vs Zoom
             const isPinch = e.ctrlKey
-            const isVertical = Math.abs(e.deltaY) > Math.abs(e.deltaX)
-            const isHorizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY)
+            const isVertical = Math.abs(dy) > Math.abs(dx)
+            const isHorizontal = Math.abs(dx) > Math.abs(dy)
 
             // --- ZOOM: Apply if Pinch OR (Vertical dominant AND significant) ---
-            if (isPinch || (isVertical && Math.abs(e.deltaY) > 0.5)) {
+            if (isPinch || (isVertical && Math.abs(dy) > 0.5)) {
                 const currentCharWidth = BASE_CHAR_WIDTH * currentZoom
 
                 // Calculate zoom centered on cursor position
@@ -907,9 +917,19 @@ export default function AlignmentPanel({
                 // Sensitivity: pinch gestures (ctrlKey) use coarser deltas
                 const sensitivity = e.ctrlKey ? 0.01 : 0.005
 
-                // Apply zoom (negative deltaY = zoom in, positive = zoom out)
-                const zoomFactor = 1 - e.deltaY * sensitivity
-                const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, currentZoom * zoomFactor))
+                // Apply zoom (negative deltaY = zoom in, positive = zoom out).
+                //
+                // Divided, not multiplied: zoomLevel is a magnification, i.e.
+                // the reciprocal of the genomic span the other views zoom on,
+                // so the shared factor has to be inverted here.
+                //
+                // The old `1 - deltaY * sensitivity` went NEGATIVE for a real
+                // mouse wheel — Chromium sends deltaY ≈ ±120 per notch, so at
+                // the ctrl sensitivity of 0.01 one notch gave -0.2, and the
+                // resulting negative zoom was silently absorbed by the MIN_ZOOM
+                // clamp. One ctrl+wheel notch jumped straight to minimum zoom.
+                const zoomFactor = wheelZoomFactor(dy, sensitivity)
+                const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, currentZoom / zoomFactor))
                 const newCharWidth = BASE_CHAR_WIDTH * newZoom
 
                 // Adjust scroll to keep cursor position stable
@@ -918,11 +938,11 @@ export default function AlignmentPanel({
             }
 
             // --- PAN: Apply only if NOT Pinch AND Horizontal dominant AND significant ---
-            else if (!isPinch && isHorizontal && Math.abs(e.deltaX) > 0.5) {
+            else if (!isPinch && isHorizontal && Math.abs(dx) > 0.5) {
                 const currentCharWidth = BASE_CHAR_WIDTH * currentZoom
                 const currentMaxScroll = Math.max(0, visibleLength * currentCharWidth - viewWidth + 50)
 
-                let newScroll = currentScrollX + e.deltaX
+                let newScroll = currentScrollX + dx
 
                 // Apply resistance at edges
                 if (newScroll < 0) {
@@ -935,7 +955,7 @@ export default function AlignmentPanel({
                 currentScrollX = newScroll
 
                 // Set velocity for momentum (only when actually panning)
-                velocityRef.current = e.deltaX * VELOCITY_SCALE
+                velocityRef.current = dx * VELOCITY_SCALE
             }
 
             // Update refs immediately for next rapid event
@@ -957,11 +977,21 @@ export default function AlignmentPanel({
         }
     }, [visibleLength, viewWidth, startMomentumAnimation])
 
-    // Keyboard controls: arrow keys for scroll/zoom
+    // Keyboard controls: arrow keys for scroll/zoom.
+    //
+    // Bound to the panel element, NOT to window. As a window listener this fired
+    // while the panel was scrolled off-screen, while another view was mounted,
+    // and while a modal was open — arrow keys anywhere in the app silently moved
+    // an alignment the user could not see. Element scoping removes that whole
+    // class of bug rather than patching around it with focus guards.
     useEffect(() => {
+        const container = containerRef.current
+        if (!container) return undefined
+
         const handleKeyDown = (e) => {
-            // Only respond if alignment viewer is likely in focus (not typing in input)
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+            // Never shadow a text field or an OS/app shortcut.
+            if (isTextEntryTarget(e.target)) return
+            if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
 
             const scrollStep = viewWidth * 0.5  // Scroll by half viewport width
             const currentMaxScroll = Math.max(0, visibleLength * CHAR_WIDTH - viewWidth + 50)
@@ -1014,8 +1044,8 @@ export default function AlignmentPanel({
             }
         }
 
-        window.addEventListener('keydown', handleKeyDown)
-        return () => window.removeEventListener('keydown', handleKeyDown)
+        container.addEventListener('keydown', handleKeyDown)
+        return () => container.removeEventListener('keydown', handleKeyDown)
     }, [viewWidth, visibleLength, CHAR_WIDTH, zoomLevel])
 
     // Stats display
@@ -1133,7 +1163,13 @@ export default function AlignmentPanel({
             {/* Canvas viewport */}
             <div
                 ref={containerRef}
-                className="p-4 cursor-grab active:cursor-grabbing select-none relative overflow-hidden"
+                // Focusable so the element-scoped keyboard handler above can
+                // receive keys at all. focus-visible only, so mouse users never
+                // see a ring.
+                tabIndex={0}
+                role="group"
+                aria-label="Alignment viewer. Left and right arrows scroll, up and down zoom."
+                className="p-4 cursor-grab active:cursor-grabbing select-none relative overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}

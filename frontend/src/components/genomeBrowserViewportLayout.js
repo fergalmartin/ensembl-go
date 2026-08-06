@@ -1,5 +1,8 @@
 export const SEQUENCE_TRACK_HEIGHT = 36
-export const MULTI_BROWSER_PANEL_HEIGHT = 390
+// Bare safety floor for a genome that has nothing to draw. Uniform multi-genome
+// band height is negotiated from the tallest panel's real content instead of a
+// fixed number, so this should almost never bind.
+export const MIN_BROWSER_PANEL_HEIGHT = 200
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 
@@ -10,8 +13,10 @@ export function getGenomeBrowserPanelSizing(panelCount, adaptiveHeight) {
   return {
     usesContentHeight,
     fillsAvailableHeight,
-    fixedPanelHeight: !usesContentHeight && !fillsAvailableHeight
-      ? MULTI_BROWSER_PANEL_HEIGHT
+    // A floor, never a cap. Panels always grow to fit their tracks so the
+    // page-level scroller stays the only vertical scrollbar.
+    panelMinHeight: !usesContentHeight && !fillsAvailableHeight
+      ? MIN_BROWSER_PANEL_HEIGHT
       : null,
   }
 }
@@ -92,18 +97,6 @@ export function getFeatureRowTargetY({
 
   const safeOffset = clamp(Number(rowOffset) || 0, -pitch / 2, pitch / 2)
   return base + (rowIndex * pitch) + middle + safeOffset
-}
-
-export function getAnchoredContentScrollTop({
-  contentY,
-  viewportY,
-  maxScrollTop,
-}) {
-  const y = Number(contentY)
-  if (!Number.isFinite(y)) return null
-  const safeViewportY = Number.isFinite(Number(viewportY)) ? Number(viewportY) : 0
-  const safeMaxScrollTop = Math.max(0, Number(maxScrollTop) || 0)
-  return clamp(y - safeViewportY, 0, safeMaxScrollTop)
 }
 
 export function getAnchoredContentPageScrollDelta({

@@ -17,6 +17,14 @@ import {
     sanitizeHexColor,
     SECONDARY_GENOME_DEFAULT_COLOR,
 } from '../genomeColorSchemes'
+import {
+    BROWSING_CONTROL_DEVICES,
+    BROWSING_CONTROL_SCHEMES,
+    DEFAULT_BROWSING_CONTROL_SCHEME_ID,
+    describeBrowsingControls,
+    normalizeBrowsingControlSchemeId,
+    resolveBrowsingControls,
+} from '../utils/browsingControls'
 
 /**
  * PathInput — A file/directory path field with optional native "Browse" button.
@@ -578,10 +586,34 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
         }
     }
 
+    const browsingSchemeId = normalizeBrowsingControlSchemeId(config.browsing_control_scheme)
+    const browsingScheme = BROWSING_CONTROL_SCHEMES.find((s) => s.id === browsingSchemeId)
+        || BROWSING_CONTROL_SCHEMES[0]
+    const [browsingDevice, setBrowsingDevice] = useState('mouse')
+    const browsingCheatSheet = useMemo(
+        () => describeBrowsingControls(
+            resolveBrowsingControls({ browsing_control_scheme: browsingSchemeId }),
+            browsingDevice
+        ),
+        [browsingSchemeId, browsingDevice]
+    )
+
+    // Arrow keys move between options, as expected of a radio group.
+    const handleBrowsingSchemeKeyDown = (e) => {
+        const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
+            : (e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0)
+        if (!step) return
+        e.preventDefault()
+        const ids = BROWSING_CONTROL_SCHEMES.map((s) => s.id)
+        const nextIndex = (ids.indexOf(browsingSchemeId) + step + ids.length) % ids.length
+        updateField('browsing_control_scheme', ids[nextIndex])
+    }
+
     const handleReset = () => {
         onConfigChange({
             working_dir: '', ref_fasta: '', ref_gff: '', target_fasta: '', target_gff: '',
             homologies_file: '', output_dir: '', ref_index: '', target_index: '', default_light_mode: false, dim_non_selected_genes: true,
+            browsing_control_scheme: DEFAULT_BROWSING_CONTROL_SCHEME_ID,
             genome_browser_colors: buildDefaultGenomeBrowserColors(),
             active_app_buttons: DEFAULT_ACTIVE_APP_BUTTONS,
         })
@@ -1138,6 +1170,100 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
                         >
                             <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform shadow-sm ${config.show_fps_counter ? 'translate-x-6' : 'translate-x-1'}`} />
                         </button>
+                    </div>
+
+                    <div className={`my-4 ${divider}`} />
+
+                    <div>
+                        <p className={`text-sm font-semibold ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
+                            Browsing Controls
+                        </p>
+                        <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
+                            How the mouse, trackpad and keyboard pan and zoom the data tracks in the
+                            Genome Browser, Feature Explorer, Neighbourhood and Structural Variation views
+                        </p>
+
+                        <div
+                            role="radiogroup"
+                            aria-label="Browsing controls"
+                            className="mt-3 flex flex-wrap gap-2"
+                            onKeyDown={handleBrowsingSchemeKeyDown}
+                        >
+                            {BROWSING_CONTROL_SCHEMES.map((scheme) => {
+                                const selected = scheme.id === browsingSchemeId
+                                return (
+                                    <button
+                                        key={scheme.id}
+                                        type="button"
+                                        role="radio"
+                                        aria-checked={selected}
+                                        tabIndex={selected ? 0 : -1}
+                                        onClick={() => updateField('browsing_control_scheme', scheme.id)}
+                                        className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors border ${selected
+                                            ? (isLight
+                                                ? 'bg-[#0099ff] border-[#0099ff] text-white'
+                                                : 'bg-blue-500 border-blue-500 text-white')
+                                            : (isLight
+                                                ? 'bg-white border-gray-300 text-gray-600 hover:bg-gray-100'
+                                                : 'bg-[#1E2938] border-gray-600 text-gray-300 hover:bg-[#373a40]')
+                                            }`}
+                                    >
+                                        {scheme.label}
+                                    </button>
+                                )
+                            })}
+                        </div>
+
+                        <p className={`text-xs mt-3 leading-relaxed ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {browsingScheme.description}
+                        </p>
+
+                        {/* Generated from the same source the browser uses, so it
+                            can never drift from what the gestures actually do. */}
+                        <div
+                            role="tablist"
+                            aria-label="Input device"
+                            className={`mt-3 inline-flex rounded-md border p-0.5 ${isLight ? 'border-gray-300 bg-gray-100' : 'border-gray-600 bg-[#161d29]'}`}
+                        >
+                            {BROWSING_CONTROL_DEVICES.map((device) => {
+                                const selected = device.id === browsingDevice
+                                return (
+                                    <button
+                                        key={device.id}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={selected}
+                                        onClick={() => setBrowsingDevice(device.id)}
+                                        className={`text-xs px-3 py-1 rounded font-medium transition-colors ${selected
+                                            ? (isLight ? 'bg-white text-gray-800 shadow-sm' : 'bg-[#373a40] text-gray-100')
+                                            : (isLight ? 'text-gray-500 hover:text-gray-700' : 'text-gray-400 hover:text-gray-200')
+                                            }`}
+                                    >
+                                        {device.label}
+                                    </button>
+                                )
+                            })}
+                        </div>
+
+                        <dl className={`mt-2 rounded-lg border text-xs ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-[#161d29]'}`}>
+                            {browsingCheatSheet.map((row, idx) => (
+                                <div
+                                    key={row.gesture}
+                                    className={`flex gap-3 px-3 py-1.5 ${idx > 0 ? (isLight ? 'border-t border-gray-200' : 'border-t border-gray-700') : ''}`}
+                                >
+                                    <dt className={`w-56 shrink-0 font-medium ${isLight ? 'text-gray-600' : 'text-gray-300'}`}>
+                                        {row.gesture}
+                                    </dt>
+                                    <dd className={isLight ? 'text-gray-500' : 'text-gray-400'}>{row.action}</dd>
+                                </div>
+                            ))}
+                        </dl>
+
+                        {browsingDevice === 'trackpad' && (
+                            <p className={`text-xs mt-2 ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
+                                Keyboard shortcuts work the same on a trackpad — see the Mouse &amp; keyboard tab.
+                            </p>
+                        )}
                     </div>
                 </CollapsibleSection>
 

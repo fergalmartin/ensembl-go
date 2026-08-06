@@ -1,6 +1,19 @@
 import { useState, useEffect, useRef, useMemo, useCallback, Component } from 'react'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import { getGenomeKey } from '../utils/genomeIdentity'
+import {
+  markWheelHandled,
+  readWheelEvent,
+  resolveBrowsingControls,
+  resolveWheelAction,
+} from '../utils/browsingControls'
+
+/**
+ * The track is panned in raw pixels, so the genome browser's 2x wheel
+ * amplification would overshoot. 1 reproduces the rate this view has always
+ * used.
+ */
+const NEIGHBOURHOOD_BROWSING_TUNING = Object.freeze({ panAmplification: 1 })
 
 const GENE_WIDTH = 94
 const GENE_HEIGHT = 20
@@ -324,6 +337,7 @@ const DEFAULT_HOMOLOGY_FILTERS = { showRbh: true, showRegular: true, types: [], 
 
 function NeighbourhoodView({
   theme,
+  config = null,
   genomes = [],
   disabledByGenome = {},
   focusGeneByGenome = {},
@@ -351,6 +365,12 @@ function NeighbourhoodView({
   const isLight = theme === 'light'
   const sidePanelRef = useRef(null)
   const trackAreaRef = useRef(null)
+  const trackWheelHandlerRef = useRef(null)
+  const browsingSchemeId = config?.browsing_control_scheme
+  const browsingControls = useMemo(
+    () => resolveBrowsingControls({ browsing_control_scheme: browsingSchemeId }, NEIGHBOURHOOD_BROWSING_TUNING),
+    [browsingSchemeId]
+  )
   const dragStateRef = useRef(null)
   const selectionStateRef = useRef(null)
   const selectionRectRef = useRef(null)
@@ -843,29 +863,60 @@ function NeighbourhoodView({
   }, [getPanTargetForY, rowLayouts.rows, trackOffsetByGenome, selectDimArmed])
 
   const handleTrackWheel = useCallback((event) => {
-    if (!trackAreaRef.current) return
-    const rect = trackAreaRef.current.getBoundingClientRect()
+    const area = trackAreaRef.current
+    if (!area) return
+    const rect = area.getBoundingClientRect()
     const localY = event.clientY - rect.top
-    const dominantDelta = Math.abs(event.deltaX) >= Math.abs(event.deltaY) ? event.deltaX : event.deltaY
-    if (!Number.isFinite(dominantDelta) || Math.abs(dominantDelta) < 0.01) return
+
+    const wheel = readWheelEvent(event, { pageHeight: window.innerHeight })
+    const intent = resolveWheelAction(wheel, browsingControls, {
+      // This view has no zoom, so a scheme that binds the wheel to zoom pans
+      // instead. That is what the wheel did here before schemes existed.
+      canZoom: false,
+      canScrollPage: area.scrollHeight > area.clientHeight,
+    })
+    markWheelHandled(event)
+    if (intent.preventDefault) event.preventDefault()
+    if (intent.stopPropagation) event.stopPropagation()
+    if (intent.type !== 'pan') return
+
+    const shift = -intent.dxPx
     const target = getPanTargetForY(localY)
     if (target.scope === 'row' && target.genomeKey) {
       setTrackOffsetByGenome((prev) => ({
         ...prev,
-        [target.genomeKey]: Number(prev?.[target.genomeKey] || 0) - dominantDelta,
+        [target.genomeKey]: Number(prev?.[target.genomeKey] || 0) + shift,
       }))
-      event.preventDefault()
       return
     }
     setTrackOffsetByGenome((prev) => {
       const next = { ...prev }
       for (const row of rowLayouts.rows) {
-        next[row.genomeKey] = Number(prev?.[row.genomeKey] || 0) - dominantDelta
+        next[row.genomeKey] = Number(prev?.[row.genomeKey] || 0) + shift
       }
       return next
     })
-    event.preventDefault()
-  }, [getPanTargetForY, rowLayouts.rows])
+  }, [getPanTargetForY, rowLayouts.rows, browsingControls])
+
+  // React attaches its wheel listeners passively (React 17+), so a synthetic
+  // onWheel handler cannot preventDefault — the page scrolled away underneath
+  // the track while it panned. A native non-passive listener is the only way,
+  // reached through a ref so it never has to be re-registered.
+  const hasRows = rows.length > 0
+
+  useEffect(() => {
+    trackWheelHandlerRef.current = handleTrackWheel
+  }, [handleTrackWheel])
+
+  useEffect(() => {
+    const area = trackAreaRef.current
+    if (!area) return undefined
+    const onWheel = (event) => trackWheelHandlerRef.current?.(event)
+    area.addEventListener('wheel', onWheel, { passive: false })
+    return () => area.removeEventListener('wheel', onWheel)
+  // The track area unmounts entirely when no genomes are active, so this has to
+  // re-run when it comes back rather than binding once at mount.
+  }, [hasRows])
 
   const emitPairFocus = useCallback((refGenomeKey, targetGenomeKey, srcGene, tgtGene) => {
     if (!srcGene?.id || !tgtGene?.id) return
@@ -1483,7 +1534,6 @@ function NeighbourhoodView({
           className={`flex-1 w-full overflow-auto ${selectDimArmed ? 'cursor-crosshair' : ''}`}
           onMouseDown={handleTrackMouseDown}
           onClick={handleTrackAreaClick}
-          onWheel={handleTrackWheel}
         >
           <svg width="100%" height={rowLayouts.svgHeight} className="select-none">
             {rowLayouts.rows.map((row) => (

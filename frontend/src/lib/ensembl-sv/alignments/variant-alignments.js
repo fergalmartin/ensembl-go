@@ -50,6 +50,7 @@ export class VariantAlignments extends LitElement {
     linkedViewports: { type: Boolean },
     imageHeight: { type: Number },
     endpoints: { type: Object },
+    browsingControls: { attribute: false },
     data: { state: true }
   };
 
@@ -153,6 +154,7 @@ export class VariantAlignments extends LitElement {
         .altRegionLength=${this.altRegionLength}
         .displayOrder=${this.displayOrder}
         .imageHeight=${this.imageHeight}
+        .browsingControls=${this.browsingControls}
         @variant-click=${this.forwardVariantEvent}
       ></ens-sv-alignments-image>
     `;

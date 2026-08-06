@@ -77,6 +77,10 @@ import {
   normalizeGenomeBrowserColors,
 } from './genomeColorSchemes'
 import {
+  DEFAULT_BROWSING_CONTROL_SCHEME_ID,
+  normalizeBrowsingControlSchemeId,
+} from './utils/browsingControls'
+import {
   buildDefaultScreenshotName,
   buildDomNodeScreenshotSnapshot,
   measureScreenshotNode,
@@ -921,6 +925,7 @@ function App() {
     default_light_mode: false,
     dim_non_selected_genes: true,
     show_fps_counter: false,
+    browsing_control_scheme: DEFAULT_BROWSING_CONTROL_SCHEME_ID,
     sv_hide_inactive_tracks: false,
     genome_browser_colors: buildDefaultGenomeBrowserColors(),
     active_app_buttons: DEFAULT_ACTIVE_APP_BUTTONS,
@@ -1483,6 +1488,9 @@ function App() {
           next_previous_session_genomes: buildPreviousSessionGenomes(startupActiveSpecies),
           active_app_buttons: normalizeActiveAppButtons(recovered.active_app_buttons),
           genome_browser_colors: normalizeGenomeBrowserColors(recovered.genome_browser_colors),
+          // `recovered` includes the hand-editable Electron store, so a stale or
+          // invalid scheme id has to be coerced before it reaches the browser.
+          browsing_control_scheme: normalizeBrowsingControlSchemeId(recovered.browsing_control_scheme),
           target_fasta: '',
           target_gff: '',
           target_index: '',
@@ -5989,6 +5997,7 @@ function App() {
             <div className="h-full">
               <NeighbourhoodView
                 theme={theme}
+                config={config}
                 genomes={neighbourhoodGenomes}
                 disabledByGenome={neighbourhoodDisabledByGenome}
                 focusGeneByGenome={focusGeneByGenome}

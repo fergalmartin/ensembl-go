@@ -202,6 +202,9 @@ class VariantAlignmentsImage extends LitElement {
     displayOrder: { type: String },
     imageHeight: { type: Number },
     data: { type: Object },
+    // Resolved browsing-control scheme, set as a property by the React host.
+    // Never an attribute — it is a plain object.
+    browsingControls: { attribute: false },
     imageWidth: { state: true },
   };
 
@@ -229,6 +232,7 @@ class VariantAlignmentsImage extends LitElement {
     this.displayOrder = "reference-top";
     this.imageHeight = IMAGE_HEIGHT;
     this.data = null;
+    this.browsingControls = null;
     this.imageWidth = 0;
     this.scale = null;
     this.altSequenceScale = null;

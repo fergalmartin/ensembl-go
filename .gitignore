@@ -73,4 +73,6 @@ test-data/
 
 # --- Local tooling config ---
 # Personal settings. A shared .claude/settings.json, if added, should be tracked.
-.claude/settings.local.json
+.claude/
+docs/browsing-controls-handoff.md
+

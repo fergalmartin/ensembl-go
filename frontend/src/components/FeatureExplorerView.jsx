@@ -14,6 +14,13 @@ import {
 } from './featureExplorerTranscriptGeometry'
 import { buildTranscriptExonMap } from './featureExplorerExonUtils'
 
+import {
+  beginWheelGesture,
+  markWheelHandled,
+  readWheelEvent,
+  resolveBrowsingControls,
+  resolveWheelAction,
+} from '../utils/browsingControls'
 import { API_BASE } from '../backendRuntime'
 import useScreenshotTargets from '../hooks/useScreenshotTargets'
 import {
@@ -40,6 +47,17 @@ const BROWSER_COLORS = {
 }
 const TRANSCRIPT_TRACK_ROW_HEIGHT = 42
 const TRANSCRIPT_TRACK_MIN_VIEW_SPAN_BP = 24
+
+/**
+ * The transcript track spans one gene, not a chromosome, so the genome
+ * browser's rate would cross its whole zoom range in a couple of notches. These
+ * are the rates this view has always used; only the formula is now shared.
+ */
+const TRANSCRIPT_TRACK_BROWSING_TUNING = Object.freeze({
+  zoomSensitivity: 0.00195,
+  pinchSensitivity: 0.00195,
+  panAmplification: 1,
+})
 const TRANSCRIPT_TRACK_BASEBLOCK_MIN_PX_PER_BP = 1.1
 const TRANSCRIPT_TRACK_BASEBLOCK_MAX_SPAN_BP = 2200
 const TRANSCRIPT_TRACK_BASEBLOCK_MAX_COUNT = 1800
@@ -655,6 +673,11 @@ export default function FeatureExplorerView({
   const pendingViewRangeRafRef = useRef(0)
   const transcriptWheelHandlerRef = useRef(null)
   const transcriptWheelGestureRef = useRef({ lastTs: 0, kind: '', direction: 0, source: '', mode: '' })
+  const browsingSchemeId = config?.browsing_control_scheme
+  const browsingControls = useMemo(
+    () => resolveBrowsingControls({ browsing_control_scheme: browsingSchemeId }, TRANSCRIPT_TRACK_BROWSING_TUNING),
+    [browsingSchemeId]
+  )
   const transcriptSelectionRectRef = useRef(null)
   const transcriptVisibleSequenceReqRef = useRef(0)
   const featureExplorerRootRef = useRef(null)
@@ -1458,20 +1481,19 @@ export default function FeatureExplorerView({
   const handleTranscriptTrackWheel = useCallback((event) => {
     if (!longestTranscript) return
     if (isTranscriptBoxSelectMode || transcriptSelectionDragRef.current) return
-    const dominantVertical = Math.abs(Number(event?.deltaY || 0)) >= (Math.abs(Number(event?.deltaX || 0)) * 1.1)
-    const isPinchZoom = Boolean(event?.ctrlKey || event?.metaKey)
-    const dominantHorizontal = Math.abs(Number(event?.deltaX || 0)) > Math.abs(Number(event?.deltaY || 0))
-    const gestureTs = Number(event?.timeStamp || performance.now())
-    const deltaY = Number(event?.deltaY || 0)
-    const deltaX = Number(event?.deltaX || 0)
-    const gestureDirection = dominantHorizontal ? Math.sign(deltaX) : Math.sign(deltaY)
-    const gestureKind = isPinchZoom ? 'pinch' : (dominantVertical ? 'vertical' : (dominantHorizontal ? 'horizontal' : 'other'))
-    const previousGesture = transcriptWheelGestureRef.current || { lastTs: 0, kind: '', direction: 0, source: '', mode: '' }
-    const sameGesture = (
-      (gestureTs - Number(previousGesture.lastTs || 0)) < 180 &&
-      previousGesture.kind === gestureKind &&
-      (gestureKind === 'other' || previousGesture.direction === gestureDirection)
-    )
+
+    const wheel = readWheelEvent(event, { pageHeight: window.innerHeight })
+    const previousGesture = transcriptWheelGestureRef.current
+    const gesture = beginWheelGesture(previousGesture, wheel, wheel.ts || performance.now())
+    // The window-capture listener below tags where each gesture began. An
+    // inertial fling that started outside the panel must not be stolen by it
+    // once the pointer drifts over the track.
+    const source = (gesture.continues ? previousGesture?.source : '') || 'panel'
+    if (source === 'outside') {
+      transcriptWheelGestureRef.current = { ...gesture, source }
+      return
+    }
+
     // Read live refs — always current even before state has updated this frame
     const liveStart = liveTranscriptViewStartRef.current
     const liveEnd = liveTranscriptViewEndRef.current
@@ -1484,41 +1506,33 @@ export default function FeatureExplorerView({
     )
     const atFullExtent = !isZoomed || liveSpan >= (fullSpan - 1e-6)
     const atMinExtent = liveSpan <= (minSpan + 1e-6)
-    const gestureStartedOutsidePanel = sameGesture && previousGesture.source === 'outside'
 
-    if (dominantVertical || isPinchZoom) {
-      if (gestureStartedOutsidePanel) {
-        return
-      }
+    const intent = resolveWheelAction(wheel, browsingControls, {
+      atMinZoom: atMinExtent,
+      atMaxZoom: atFullExtent,
+      canScrollPage: true,
+      gesture,
+    })
+    markWheelHandled(event)
+    transcriptWheelGestureRef.current = {
+      ...gesture,
+      mode: intent.nextGestureMode || gesture.mode,
+      source,
+    }
+    if (intent.preventDefault) event.preventDefault()
+    if (intent.stopPropagation) event.stopPropagation()
 
-      const zoomDirection = Math.sign(deltaY)
-      const atZoomLimit = zoomDirection > 0 ? atFullExtent : atMinExtent
-      const currentMode = sameGesture ? previousGesture.mode : ''
-      const nextMode = currentMode || (atZoomLimit ? 'scroll' : 'zoom')
-
-      transcriptWheelGestureRef.current = {
-        lastTs: gestureTs,
-        kind: gestureKind,
-        direction: gestureDirection,
-        source: previousGesture.source || 'panel',
-        mode: nextMode,
-      }
-
-      if (nextMode === 'scroll') {
-        return
-      }
-
-      event.preventDefault()
-      event.stopPropagation()
-      const anchor = trackClientXToGenomicCoord(event.clientX, event.target)
+    if (intent.type === 'zoom') {
+      const effectiveStart = liveStart ?? fullTranscriptViewStart
+      const zoomSpan = clamp(liveSpan, minSpan, fullSpan)
+      const anchor = intent.anchor === 'center'
+        ? effectiveStart + (zoomSpan / 2)
+        : trackClientXToGenomicCoord(event.clientX, event.target)
       if (!Number.isFinite(anchor)) return
       stopTranscriptZoomAnimation()
-      const zoomSpan = clamp(liveSpan, minSpan, fullSpan)
-      const zoomScale = Math.exp(clamp(Number(event.deltaY) * 0.00195, -0.5, 0.5))
-      let nextSpan = clamp(zoomSpan * zoomScale, minSpan, fullSpan)
+      let nextSpan = clamp(zoomSpan * intent.factor, minSpan, fullSpan)
       if (!Number.isFinite(nextSpan) || nextSpan <= 0) nextSpan = zoomSpan
       if (Math.abs(nextSpan - zoomSpan) < 1e-6) return
-      const effectiveStart = liveStart ?? fullTranscriptViewStart
       const anchorRatio = clamp((anchor - effectiveStart) / zoomSpan, 0, 1)
       let nextStart = anchor - (anchorRatio * nextSpan)
       let nextEnd = nextStart + nextSpan
@@ -1530,34 +1544,18 @@ export default function FeatureExplorerView({
         nextEnd = fullTranscriptViewEnd
         nextStart = nextEnd - nextSpan
       }
-      transcriptWheelGestureRef.current = {
-        lastTs: gestureTs,
-        kind: gestureKind,
-        direction: gestureDirection,
-        source: previousGesture.source || 'panel',
-        mode: 'zoom',
-      }
       setTranscriptViewRangeImmediate(nextStart, nextEnd)
       return
     }
-    if (dominantHorizontal && isZoomed) {
-      if (gestureStartedOutsidePanel) {
-        return
-      }
-      transcriptWheelGestureRef.current = {
-        lastTs: gestureTs,
-        kind: gestureKind,
-        direction: gestureDirection,
-        source: previousGesture.source || 'panel',
-        mode: 'pan',
-      }
-      event.preventDefault()
-      event.stopPropagation()
+
+    if (intent.type === 'pan') {
+      // Nothing to pan to while the whole gene is in view.
+      if (!isZoomed) return
       stopTranscriptZoomAnimation()
       const bpPerPx = liveSpan / Math.max(1, trackInnerWidth)
       // Negate for reverse-strand genes so panning direction matches visual orientation
       const strandFactor = reverseOrientation ? -1 : 1
-      const shiftBp = strandFactor * deltaX * bpPerPx
+      const shiftBp = strandFactor * intent.dxPx * bpPerPx
       const effectiveStart = liveStart ?? fullTranscriptViewStart
       const effectiveEnd = liveEnd ?? fullTranscriptViewEnd
       setTranscriptViewRangeImmediate(effectiveStart + shiftBp, effectiveEnd + shiftBp)
@@ -1565,7 +1563,6 @@ export default function FeatureExplorerView({
   }, [
     longestTranscript,
     isTranscriptBoxSelectMode,
-    resolveTranscriptTrackSurfaceRect,
     trackClientXToGenomicCoord,
     stopTranscriptZoomAnimation,
     fullTranscriptViewEnd,
@@ -1573,6 +1570,7 @@ export default function FeatureExplorerView({
     reverseOrientation,
     trackInnerWidth,
     setTranscriptViewRangeImmediate,
+    browsingControls,
   ])
 
   // Keep the ref pointing at the latest handler so the listener never needs re-registration
@@ -1592,33 +1590,16 @@ export default function FeatureExplorerView({
     const onWindowWheelCapture = (event) => {
       const viewport = transcriptTrackViewportRef.current
       if (!viewport) return
-      const dominantVertical = Math.abs(Number(event?.deltaY || 0)) >= (Math.abs(Number(event?.deltaX || 0)) * 1.1)
-      const isPinchZoom = Boolean(event?.ctrlKey || event?.metaKey)
-      const dominantHorizontal = Math.abs(Number(event?.deltaX || 0)) > Math.abs(Number(event?.deltaY || 0))
-      const gestureTs = Number(event?.timeStamp || performance.now())
-      const gestureKind = isPinchZoom ? 'pinch' : (dominantVertical ? 'vertical' : (dominantHorizontal ? 'horizontal' : 'other'))
-      const gestureDirection = dominantHorizontal
-        ? Math.sign(Number(event?.deltaX || 0))
-        : Math.sign(Number(event?.deltaY || 0))
-      const previousGesture = transcriptWheelGestureRef.current || { lastTs: 0, kind: '', direction: 0, source: '', mode: '' }
-      const sameGesture = (
-        (gestureTs - Number(previousGesture.lastTs || 0)) < 180 &&
-        previousGesture.kind === gestureKind &&
-        (gestureKind === 'other' || previousGesture.direction === gestureDirection)
-      )
-      if (sameGesture) {
-        transcriptWheelGestureRef.current = {
-          ...previousGesture,
-          lastTs: gestureTs,
-        }
+      const wheel = readWheelEvent(event, { pageHeight: window.innerHeight })
+      const previousGesture = transcriptWheelGestureRef.current
+      const gesture = beginWheelGesture(previousGesture, wheel, wheel.ts || performance.now())
+      if (gesture.continues) {
+        transcriptWheelGestureRef.current = { ...previousGesture, ...gesture }
         return
       }
       transcriptWheelGestureRef.current = {
-        lastTs: gestureTs,
-        kind: gestureKind,
-        direction: gestureDirection,
+        ...gesture,
         source: viewport.contains(event.target) ? 'panel' : 'outside',
-        mode: '',
       }
     }
     window.addEventListener('wheel', onWindowWheelCapture, { passive: true, capture: true })

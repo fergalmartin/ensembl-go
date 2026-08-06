@@ -5340,6 +5340,10 @@ DEFAULT_CONFIG = {
     "default_light_mode": False,
     "dim_non_selected_genes": True,
     "show_fps_counter": False,
+    # How pan/zoom gestures behave in the genome browser. One of the ids in
+    # frontend/src/utils/browsingControls.js; unknown values fall back to
+    # "default" on the frontend, so no server-side validation is needed.
+    "browsing_control_scheme": "default",
     "sv_hide_inactive_tracks": False,
     "enable_sv_rust_render_bar": False,
     # Paths of SV alignment config files the user has attached. Persisted so a
@@ -5942,6 +5946,7 @@ class ConfigUpdate(BaseModel):
     default_light_mode: Optional[bool] = None
     dim_non_selected_genes: Optional[bool] = None
     show_fps_counter: Optional[bool] = None
+    browsing_control_scheme: Optional[str] = None
     sv_hide_inactive_tracks: Optional[bool] = None
     enable_sv_rust_render_bar: Optional[bool] = None
     active_species: Optional[List[Dict[str, Any]]] = None
