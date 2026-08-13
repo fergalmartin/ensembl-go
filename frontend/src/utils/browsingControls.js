@@ -353,6 +353,37 @@ export function isWheelHandled(event) {
 }
 
 /**
+ * Where the current wheel gesture began.
+ *
+ * A gesture that starts on chrome — a control bar, the page margins — is the
+ * user scrolling the page. Once the page moves, the track canvas slides under
+ * the stationary cursor and would otherwise start swallowing the rest of the
+ * gesture as a zoom. Latching the origin for the length of the gesture keeps a
+ * scroll a scroll all the way through.
+ */
+// Slightly more generous than the gesture-continuation window, so a brief
+// stutter mid-scroll doesn't re-classify the gesture as starting on the canvas.
+const WHEEL_ORIGIN_IDLE_MS = WHEEL_GESTURE_IDLE_MS + 120
+const wheelGestureOrigin = { fromChrome: false, until: 0 }
+
+export function noteWheelGestureOrigin(event, fromChrome) {
+    const now = Number(event?.timeStamp)
+    const stamp = Number.isFinite(now) ? now : performance.now()
+    // A pause longer than the idle window means this is a new gesture.
+    if (stamp > wheelGestureOrigin.until) {
+        wheelGestureOrigin.fromChrome = Boolean(fromChrome)
+    }
+    wheelGestureOrigin.until = stamp + WHEEL_ORIGIN_IDLE_MS
+    return wheelGestureOrigin.fromChrome
+}
+
+export function isWheelGestureFromChrome(event) {
+    const now = Number(event?.timeStamp)
+    const stamp = Number.isFinite(now) ? now : performance.now()
+    return wheelGestureOrigin.fromChrome && stamp <= wheelGestureOrigin.until
+}
+
+/**
  * Nearest ancestor that can actually scroll vertically, or null.
  *
  * Whether a surface can page-scroll is a property of where it sits in the
@@ -450,7 +481,7 @@ const pageScrollIntent = () => ({
 /**
  * @param wheel   from `readWheelEvent`
  * @param controls from `resolveBrowsingControls`
- * @param context { atMinZoom, atMaxZoom, canScrollPage, gesture }
+ * @param context { atMaxZoom, canScrollPage, gesture }
  */
 export function resolveWheelAction(wheel, controls, context = {}) {
     const resolved = controls || DEFAULT_BROWSING_CONTROLS
@@ -493,11 +524,15 @@ export function resolveWheelAction(wheel, controls, context = {}) {
     // Zoom.
     const zoomDelta = Math.abs(wheel.dy) >= Math.abs(wheel.dx) ? wheel.dy : wheel.dx
     const zoomingOut = zoomDelta > 0
-    const atExtent = zoomingOut ? context.atMaxZoom === true : context.atMinZoom === true
 
-    // Already at the zoom limit: hand over to page scrolling rather than letting
-    // the wheel go dead. Latched, so a trackpad fling that began as a hand-off
-    // keeps scrolling instead of flickering back into zoom mid-gesture.
+    // Zoomed all the way out: hand over to page scrolling rather than letting the
+    // wheel go dead. Latched, so a trackpad fling that began as a hand-off keeps
+    // scrolling instead of flickering back into zoom mid-gesture.
+    //
+    // Outward only. At the zoom-IN limit the user is pushing down to the sequence
+    // and will usually overshoot by a few notches; turning those into a page
+    // scroll drags the window off the base they were aiming at. Better that the
+    // extra notches do nothing, since there is nothing further in to show.
     //
     // Only for unmodified gestures. Holding Ctrl is an explicit request to zoom,
     // and silently scrolling the page instead would be surprising.
@@ -505,7 +540,7 @@ export function resolveWheelAction(wheel, controls, context = {}) {
     const handingOff = resolved.zoomAtExtentHandoff
         && unmodified
         && context.canScrollPage !== false
-        && (atExtent || context.gesture?.mode === 'scroll')
+        && ((zoomingOut && context.atMaxZoom === true) || context.gesture?.mode === 'scroll')
     if (handingOff) return pageScrollIntent()
 
     const sensitivity = wheel.ctrl ? resolved.pinchSensitivity : resolved.zoomSensitivity

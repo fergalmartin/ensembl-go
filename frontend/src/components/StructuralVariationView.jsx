@@ -18,6 +18,7 @@ import {
   getSvAuxTrackTransform,
 } from '../utils/svAuxTrackTransform'
 import { resolveSvFeatureTrackGenomeIds, resolveSvFeatureWindowChrom } from '../utils/svFeatureTrackIdentity'
+import useDelayedFlag from '../hooks/useDelayedFlag'
 import {
   buildBrowserGeneSeedKey,
   buildBrowserViewportSeedKey,
@@ -2044,7 +2045,9 @@ function StructuralVariationSignalTracks({
     displayBins,
     fetchRevision,
   ])
-  const loading = signalFetchPlans.length > 0
+  // Debounced like the alignment and gene overlays: a bigwig refetch on every
+  // pan is usually too quick to be worth announcing.
+  const loading = useDelayedFlag(signalFetchPlans.length > 0)
   const viewportTransform = useMemo(
     () => getSvAuxTrackTransform(renderWindow, displayWindow || viewWindow, plotWidth, geometryWidth),
     [renderWindow, displayWindow, viewWindow, plotWidth, geometryWidth],
@@ -2766,6 +2769,7 @@ function StructuralVariationDataTracks({
   const [clickedFeature, setClickedFeature] = useState(null)
   const [copyToast, setCopyToast] = useState('')
   const [loading, setLoading] = useState(false)
+  const showLoading = useDelayedFlag(loading)
   const [fetchRevision, setFetchRevision] = useState(0)
   const cacheRef = useRef(new Map())
   const fetchSetRef = useRef(new Set())
@@ -3248,7 +3252,7 @@ function StructuralVariationDataTracks({
           {copyToast}
         </div>
       )}
-      {loading && (
+      {showLoading && (
         <div
           className="pointer-events-none absolute right-2 top-1 text-[10px] font-semibold"
           style={{ color: muted }}
@@ -5261,6 +5265,14 @@ function StructuralVariationThreeGenomeView({
   const [featureTrackData, setFeatureTrackData] = useState({ reference: [], top: [], bottom: [] })
   const [featureTrackLoading, setFeatureTrackLoading] = useState({ reference: false, top: false, bottom: false })
   const [alignmentTrackLoading, setAlignmentTrackLoading] = useState({ top: false, bottom: false })
+  // Panning and zooming refetch constantly, and most of those land in a few tens
+  // of milliseconds — often for data outside the current window. Debounced so a
+  // spinner only appears for work slow enough to be worth reporting.
+  const showUpperAlignmentLoading = useDelayedFlag(upperBufferLoading || alignmentTrackLoading.top)
+  const showLowerAlignmentLoading = useDelayedFlag(lowerBufferLoading || alignmentTrackLoading.bottom)
+  const showTopGenesLoading = useDelayedFlag(featureTrackLoading.top)
+  const showReferenceGenesLoading = useDelayedFlag(featureTrackLoading.reference)
+  const showBottomGenesLoading = useDelayedFlag(featureTrackLoading.bottom)
   const [hideInactiveFeatureTracks, setHideInactiveFeatureTracks] = useState(Boolean(config?.sv_hide_inactive_tracks))
   const [compactTracks, setCompactTracks] = useState(false)
   const [showBigWigTracks, setShowBigWigTracks] = useState(false)
@@ -6759,7 +6771,7 @@ function StructuralVariationThreeGenomeView({
                 pillColor={topGenomeColor}
                 window={displayTopWindow}
                 entries={featureTrackData.top}
-                loading={featureTrackLoading.top}
+                loading={showTopGenesLoading}
                 genomeId={topBrowseGenomeId}
                 sequenceGenomeId={topBrowseGenomeId}
                 hideInactiveTracks={hideInactiveFeatureTracks}
@@ -6814,7 +6826,7 @@ function StructuralVariationThreeGenomeView({
                   displayOrder="alt-top"
                 />
               )}
-              {(upperBufferLoading || alignmentTrackLoading.top) && (
+              {showUpperAlignmentLoading && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="flex items-center gap-3 rounded-lg px-4 py-2" style={{ backgroundColor: isLight ? 'rgba(255,255,255,0.88)' : 'rgba(15,23,42,0.82)' }}>
                     <div className={`h-5 w-5 animate-spin rounded-full border-[3px] border-t-transparent ${isLight ? 'border-sky-500' : 'border-sky-400'}`} />
@@ -6846,7 +6858,7 @@ function StructuralVariationThreeGenomeView({
                 pillColor={referenceGenomeColor}
                 window={displayRefWindow}
                 entries={featureTrackData.reference}
-                loading={featureTrackLoading.reference}
+                loading={showReferenceGenesLoading}
                 genomeId={referenceBrowseGenomeId}
                 sequenceGenomeId={referenceBrowseGenomeId}
                 hideInactiveTracks={hideInactiveFeatureTracks}
@@ -6893,7 +6905,7 @@ function StructuralVariationThreeGenomeView({
                   displayOrder="reference-top"
                 />
               )}
-              {(lowerBufferLoading || alignmentTrackLoading.bottom) && (
+              {showLowerAlignmentLoading && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="flex items-center gap-3 rounded-lg px-4 py-2" style={{ backgroundColor: isLight ? 'rgba(255,255,255,0.88)' : 'rgba(15,23,42,0.82)' }}>
                     <div className={`h-5 w-5 animate-spin rounded-full border-[3px] border-t-transparent ${isLight ? 'border-sky-500' : 'border-sky-400'}`} />
@@ -6927,7 +6939,7 @@ function StructuralVariationThreeGenomeView({
                 pillColor={bottomGenomeColor}
                 window={displayBottomWindow}
                 entries={featureTrackData.bottom}
-                loading={featureTrackLoading.bottom}
+                loading={showBottomGenesLoading}
                 genomeId={bottomBrowseGenomeId}
                 sequenceGenomeId={bottomBrowseGenomeId}
                 hideInactiveTracks={hideInactiveFeatureTracks}

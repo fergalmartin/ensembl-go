@@ -299,6 +299,19 @@ test('zooming IN at the maximum span still zooms', () => {
   assert.equal(intent.type, 'zoom')
 })
 
+test('zooming IN at the minimum span does not hand off to page scrolling', () => {
+  // Overshooting by a few notches while pushing down to the sequence must not
+  // yank the page; the extra notches are simply inert.
+  const intent = resolveWheelAction(wheel({ dy: -40 }), controlsFor('default'), { atMinZoom: true })
+  assert.equal(intent.type, 'zoom')
+  assert.equal(intent.preventDefault, true)
+})
+
+test('zooming OUT at the minimum span still zooms rather than scrolling', () => {
+  const intent = resolveWheelAction(wheel({ dy: 40 }), controlsFor('default'), { atMinZoom: true })
+  assert.equal(intent.type, 'zoom')
+})
+
 test('the hand-off does not fire when there is nowhere to scroll', () => {
   const intent = resolveWheelAction(wheel({ dy: 40 }), controlsFor('default'), { atMaxZoom: true, canScrollPage: false })
   assert.equal(intent.type, 'zoom')

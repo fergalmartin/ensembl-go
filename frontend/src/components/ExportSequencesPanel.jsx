@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react'
 import FileBrowserModal from './FileBrowserModal'
 
 import { API_BASE } from '../backendRuntime'
+import { mergeTranscriptFeatureAvailability } from '../utils/transcriptSequenceFeatures'
 
 // radio inputs are forced to w-4 (16px); gap-2 = 8px → text starts at 24px = ml-6
 const RADIO_INDENT = 'ml-6'
@@ -50,52 +51,11 @@ function makeTimestamp() {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
 }
 
+// The drawer's sequence viewer greys out the same options from the same rules,
+// so the availability logic lives in one place. Exports offer a feature if any
+// selected transcript can produce records for it.
 function computeFeatureAvailability(txList) {
-  const result = {
-    genomic: false, transcript: false, cds: false,
-    exons: false, utr5: false, utr3: false, introns: false,
-  }
-  for (const tx of txList) {
-    const exons   = Array.isArray(tx?.exons)    ? tx.exons    : []
-    const cdsList = Array.isArray(tx?.cds_list) ? tx.cds_list : []
-    const utrs    = Array.isArray(tx?.utrs)     ? tx.utrs     : []
-
-    const txStart = Number(tx?.start)
-    const txEnd   = Number(tx?.end)
-    if (Number.isFinite(txStart) && Number.isFinite(txEnd)) result.genomic = true
-
-    if (exons.length > 0)  { result.transcript = true; result.exons = true }
-    if (exons.length >= 2)   result.introns = true
-    if (cdsList.length > 0)  result.cds = true
-
-    for (const utr of utrs) {
-      const ft = String(utr?.feature_type || '').toLowerCase()
-      if (ft.includes('five') || ft.includes('5_prime') || ft.includes('5prime')) result.utr5 = true
-      if (ft.includes('three') || ft.includes('3_prime') || ft.includes('3prime')) result.utr3 = true
-    }
-
-    // Implicit UTR: infer from exon vs CDS extent when no explicit UTR records
-    if ((!result.utr5 || !result.utr3) && cdsList.length > 0 && exons.length > 0) {
-      const strand = String(tx?.strand || '+')
-      const validNum = (n) => Number.isFinite(Number(n)) && Number(n) > 0
-      const cdsCoords  = cdsList.flatMap((c) => [Number(c.start), Number(c.end)]).filter(validNum)
-      const exonCoords = exons.flatMap((e)  => [Number(e.start), Number(e.end)]).filter(validNum)
-      if (cdsCoords.length > 0 && exonCoords.length > 0) {
-        const cdsMin  = Math.min(...cdsCoords)
-        const cdsMax  = Math.max(...cdsCoords)
-        const exonMin = Math.min(...exonCoords)
-        const exonMax = Math.max(...exonCoords)
-        if (strand === '+') {
-          if (exonMin < cdsMin) result.utr5 = true
-          if (exonMax > cdsMax) result.utr3 = true
-        } else {
-          if (exonMax > cdsMax) result.utr5 = true
-          if (exonMin < cdsMin) result.utr3 = true
-        }
-      }
-    }
-  }
-  return result
+  return mergeTranscriptFeatureAvailability(txList)
 }
 
 function buildSuggestedFilename(geneId, selectedKeys, compress) {

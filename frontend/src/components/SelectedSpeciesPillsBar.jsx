@@ -186,7 +186,11 @@ export default function SelectedSpeciesPillsBar({
                             const displayAssembly = (isSelected || isSemiSelected)
                                 ? assemblyName
                                 : formatAssembly(assemblyName)
-                            const pillLabel = displayAssembly ? `${displayName} - ${displayAssembly}` : displayName
+                            // A transparent pill has no colour to knock the cross out
+                            // of, so fall back to the surface behind it.
+                            const removeGlyphColor = bgClass === 'transparent'
+                                ? (isLight ? '#ffffff' : '#1E2938')
+                                : bgClass
                             const datasetBadge = species.dataset_release_short_label || formatDatasetReleaseShortLabel(species)
                             const tooltipProps = [
                                 species.scientific_name,
@@ -256,17 +260,26 @@ export default function SelectedSpeciesPillsBar({
                                     <button
                                         onClick={() => handlePillClick(species)}
                                         onMouseDown={(event) => event.stopPropagation()}
-                                        className="text-xs px-3 py-1.5 rounded-full transition-all duration-200 border font-medium flex items-center"
+                                        className="text-xs px-3 py-1.5 rounded-full transition-all duration-200 border font-medium flex items-center gap-1.5"
                                         style={{
                                             backgroundColor: bgClass,
                                             color: textClass,
                                             borderColor: borderClass,
                                             minWidth: isSelected ? 'auto' : '110px',
                                             maxWidth: isSelected ? '320px' : '180px',
+                                            // Room for the remove disc, which sits inside the
+                                            // pill rather than hanging off its corner.
+                                            paddingLeft: onRemoveSpecies ? 28 : undefined,
                                         }}
                                         title={tooltipProps}
                                     >
-                                        <span className="truncate">{pillLabel}</span>
+                                        {/* Name carries the weight, assembly rides along
+                                            lighter — the pill reads as one label without the
+                                            two halves competing. */}
+                                        <span className="truncate font-semibold">{displayName}</span>
+                                        {displayAssembly && (
+                                            <span className="truncate font-normal opacity-75">{displayAssembly}</span>
+                                        )}
                                     </button>
                                     {onRemoveSpecies && (
                                         <button
@@ -276,16 +289,29 @@ export default function SelectedSpeciesPillsBar({
                                                 e.stopPropagation()
                                                 onRemoveSpecies(species)
                                             }}
-                                            className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border transition-opacity opacity-0 group-hover/pill:opacity-100 flex items-center justify-center ${isLight
-                                                ? 'bg-white border-gray-300 text-gray-500 hover:text-red-600 hover:border-red-300'
-                                                : 'bg-gray-800 border-gray-500 text-gray-300 hover:text-red-400 hover:border-red-400'
-                                                }`}
+                                            // Always on rather than revealed on hover: a control
+                                            // that only exists under the cursor is one nobody
+                                            // finds. Filled in the pill's own text colour with
+                                            // the cross knocked out in its background, so it
+                                            // stays legible whatever the pill's state.
+                                            className="absolute left-[7px] w-[17px] h-[17px] rounded-full flex items-center justify-center transition-opacity hover:opacity-80"
+                                            style={{
+                                                // Centred on the pill, not on the wrapper: the
+                                                // wrapper carries bottom padding for the dataset
+                                                // badge, so a plain 50% sits high.
+                                                top: 0,
+                                                bottom: 8,
+                                                marginTop: 'auto',
+                                                marginBottom: 'auto',
+                                                backgroundColor: textClass,
+                                                color: removeGlyphColor,
+                                            }}
                                             title="Remove genome from list"
                                             aria-label="Remove genome from list"
                                         >
-                                            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-                                                <line x1="2" y1="2" x2="8" y2="8" />
-                                                <line x1="8" y1="2" x2="2" y2="8" />
+                                            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                                <line x1="2.4" y1="2.4" x2="7.6" y2="7.6" />
+                                                <line x1="7.6" y1="2.4" x2="2.4" y2="7.6" />
                                             </svg>
                                         </button>
                                     )}

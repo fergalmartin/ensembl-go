@@ -9522,6 +9522,35 @@ class ExportSequencesResponse(BaseModel):
     errors: List[str]
 
 
+class TranscriptSequencesRequest(BaseModel):
+    genome: str = "reference"
+    gene_id: str = ""
+    transcript_id: str
+    # Any of the export feature types; omitted means "everything available".
+    feature_types: Optional[List[str]] = None
+    reverse_complement: bool = False
+
+
+class TranscriptSequenceRecord(BaseModel):
+    feature_type: str
+    header: str
+    sequence: str
+    length: int
+    unit: str = "bp"
+    # 1-based ordinal in 5'→3' order, for the types that yield one record per
+    # feature (exons, introns). None for the single-record types.
+    rank: Optional[int] = None
+
+
+class TranscriptSequencesResponse(BaseModel):
+    transcript_id: str
+    # feature_type -> whether this transcript can offer it at all, so the caller
+    # can show the unavailable ones greyed rather than hiding them.
+    available: Dict[str, bool]
+    records: List[TranscriptSequenceRecord]
+    errors: List[str] = []
+
+
 class SaveExportRequest(BaseModel):
     directory: str
     filename: str
@@ -16049,6 +16078,8 @@ _FEATURE_SLUGS: Dict[str, str] = {
     "utr5":       "5primeutr",
     "utr3":       "3primeutr",
     "introns":    "introns",
+    "protein":    "protein",
+    "utr":        "utr",
 }
 
 
@@ -16120,17 +16151,23 @@ def _build_fasta_header(
     header_fields: Dict[str, bool],
     biotype: str,
     canonical_info: str,
+    rank: Optional[int] = None,
+    length_unit: str = "bp",
 ) -> str:
     parts: List[str] = [f">{tx_id}"]
     if gene_id and gene_id != tx_id:
         parts.append(f"gene={gene_id}")
     parts.append(f"feature={feature_name}")
+    # Rank is its own field rather than a suffix on the feature name, so the
+    # feature stays greppable as "exon" and the ordinal is machine-readable.
+    if rank is not None and header_fields.get("exon_number", True):
+        parts.append(f"{feature_name}_rank:{rank}")
     if header_fields.get("location"):
         parts.append(f"{chrom}:{g_start}-{g_end}")
     if header_fields.get("strand"):
         parts.append(f"strand={'forward' if strand == '+' else 'reverse'}")
     if header_fields.get("length"):
-        parts.append(f"len={seq_len}bp")
+        parts.append(f"len={seq_len}{length_unit}")
     if header_fields.get("biotype") and biotype:
         parts.append(f"biotype={biotype}")
     if header_fields.get("canonical_status") and canonical_info:
@@ -16174,6 +16211,7 @@ def _extract_feature_records(
     biotype: str,
     canonical_info: str,
     tx_genomic_span: Optional[Tuple[int, int]] = None,
+    genome: str = "reference",
 ) -> List[str]:
     """Return a list of FASTA record strings (header + wrapped sequence) for one feature type."""
     records: List[str] = []
@@ -16226,9 +16264,18 @@ def _extract_feature_records(
             seq = _fetch_oriented_piece(fasta, chrom, exon["start"], exon["end"], strand)
             if not seq:
                 continue
-            fname = f"exon_{i}" if include_num else "exon"
-            hdr = _build_fasta_header(tx_id, gene_id, fname, chrom, int(exon["start"]), int(exon["end"]), strand, len(seq), header_fields, biotype, canonical_info)
+            hdr = _build_fasta_header(tx_id, gene_id, "exon", chrom, int(exon["start"]), int(exon["end"]), strand, len(seq), header_fields, biotype, canonical_info, rank=i if include_num else None)
             records.append(f"{hdr}\n{_wrap_sequence(seq)}")
+
+    elif feature_type == "utr":
+        # Both ends under one heading, 5' first: a reader asking for "the UTR"
+        # wants whichever this transcript has, in reading order.
+        for side in ("utr5", "utr3"):
+            records.extend(_extract_feature_records(
+                fasta, chrom, strand, exons, cds_list, utrs,
+                side, tx_id, gene_id, header_fields, biotype, canonical_info,
+                tx_genomic_span=tx_genomic_span, genome=genome,
+            ))
 
     elif feature_type in ("utr5", "utr3"):
         # Prefer explicit UTR annotations; fall back to computed intervals.
@@ -16259,11 +16306,208 @@ def _extract_feature_records(
             seq = _fetch_oriented_piece(fasta, chrom, intron["start"], intron["end"], strand)
             if not seq:
                 continue
-            fname = f"intron_{i}" if include_num else "intron"
-            hdr = _build_fasta_header(tx_id, gene_id, fname, chrom, int(intron["start"]), int(intron["end"]), strand, len(seq), header_fields, biotype, canonical_info)
+            hdr = _build_fasta_header(tx_id, gene_id, "intron", chrom, int(intron["start"]), int(intron["end"]), strand, len(seq), header_fields, biotype, canonical_info, rank=i if include_num else None)
             records.append(f"{hdr}\n{_wrap_sequence(seq)}")
 
+    elif feature_type == "protein":
+        if not cds_list:
+            return []
+        # Same translator the Feature Explorer's protein track uses, so an
+        # organelle gene is not read with the nuclear code here and the
+        # mitochondrial one there.
+        table, molecule, _resolved = _resolve_translation_table(genome or "reference", chrom)
+        seq, _layout, _table = _translate_transcript(
+            fasta, chrom, strand, cds_list, table=table, molecule=molecule,
+        )
+        if not seq:
+            return []
+        g_start = min(int(c["start"]) for c in cds_list)
+        g_end   = max(int(c["end"])   for c in cds_list)
+        hdr = _build_fasta_header(tx_id, gene_id, "protein", chrom, g_start, g_end, strand, len(seq), header_fields, biotype, canonical_info, length_unit="aa")
+        records.append(f"{hdr}\n{_wrap_sequence(seq)}")
+
     return records
+
+
+#: Every feature type the record extractor can produce, in the order a reader
+#: would want them offered.
+_ALL_FEATURE_TYPES: List[str] = [
+    "genomic", "transcript", "cds", "protein", "utr", "exons", "introns",
+]
+
+#: The record extractor yields a record per feature for these; everything else
+#: is a single concatenated record.
+_RANKED_FEATURE_TYPES = frozenset({"exons", "introns"})
+
+
+def _available_feature_types(
+    exons: List[Dict[str, Any]],
+    cds_list: List[Dict[str, Any]],
+    utrs: List[Dict[str, Any]],
+    strand: str,
+    has_span: bool,
+) -> Dict[str, bool]:
+    """Which feature types this transcript can offer, from annotation alone.
+
+    Deliberately free of sequence reads: the caller needs this to grey out the
+    options it cannot show, and waiting on the FASTA for that would be absurd.
+    """
+    def _utr_available(kind: str) -> bool:
+        predicate = _is_five_prime_utr if kind == "utr5" else _is_three_prime_utr
+        if any(predicate(u) for u in utrs):
+            return True
+        # No explicit annotation: the same fallback the extractor itself uses.
+        return bool(_compute_utr_intervals(exons, cds_list, strand, kind))
+
+    five_prime = _utr_available("utr5")
+    three_prime = _utr_available("utr3")
+
+    return {
+        "genomic":    bool(has_span or exons),
+        "transcript": bool(exons),
+        "cds":        bool(cds_list),
+        "protein":    bool(cds_list),
+        "utr5":       five_prime,
+        "utr3":       three_prime,
+        # The viewer offers one combined UTR entry; either end is enough.
+        "utr":        five_prime or three_prime,
+        "exons":      bool(exons),
+        "introns":    len(exons) >= 2,
+    }
+
+
+def _canonical_info_for_header(tx_data: Dict[str, Any]) -> str:
+    """The "[canonical, MANE-select]" note a FASTA header carries.
+
+    MANE status arrives as a GFF tag far more often than as a `mane_status`
+    field, so read both — keying off the field alone dropped the note from every
+    MANE transcript.
+    """
+    parts: List[str] = []
+    if tx_data.get("is_canonical"):
+        parts.append("canonical")
+
+    raw_tags = tx_data.get("tags", [])
+    if isinstance(raw_tags, str):
+        tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    elif isinstance(raw_tags, list):
+        tags = [str(t) for t in raw_tags]
+    else:
+        tags = []
+    mane_text = " ".join([str(tx_data.get("mane_status", "") or ""), *tags]).lower()
+    if "mane" in mane_text and "select" in mane_text:
+        parts.append("MANE-select")
+    return ", ".join(parts)
+
+
+def _split_fasta_record(record: str) -> Tuple[str, str]:
+    """Split one ``header\\nwrapped sequence`` record into its two halves."""
+    header, _, body = record.partition("\n")
+    return header, body
+
+
+@app.post("/api/feature_explorer/transcript_sequences", response_model=TranscriptSequencesResponse)
+async def transcript_sequences(payload: TranscriptSequencesRequest):
+    """Feature sequences for one transcript, returned rather than written to disk.
+
+    Shares `_extract_feature_records` with /api/feature_explorer/export, so what
+    a viewer shows and what an export writes are the same bytes.
+    """
+    genome = str(payload.genome or "reference").strip() or "reference"
+    gene_id = str(payload.gene_id or "").strip()
+    tx_id = str(payload.transcript_id or "").strip()
+    if not tx_id:
+        raise HTTPException(status_code=400, detail="transcript_id must not be empty")
+
+    requested = [str(f).strip() for f in (payload.feature_types or _ALL_FEATURE_TYPES)]
+    requested = [f for f in requested if f in set(_ALL_FEATURE_TYPES)]
+    if not requested:
+        raise HTTPException(status_code=400, detail="feature_types must name at least one known type")
+
+    db_path = await run_in_threadpool(_get_browse_db, genome)
+
+    def _run():
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, chrom, start, end, strand, data FROM transcripts WHERE id = ?",
+            (tx_id,),
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Transcript {tx_id} not found in this genome's index")
+
+        chrom = str(row["chrom"] or "")
+        strand = str(row["strand"] or "+")
+        tx_start = int(row["start"] or 0)
+        tx_end = int(row["end"] or 0)
+        try:
+            tx_data = json.loads(row["data"]) if row["data"] else {}
+        except Exception:
+            tx_data = {}
+
+        exons    = _normalize_interval_list(tx_data.get("exons",    []), "exon", strand)
+        cds_list = _normalize_interval_list(tx_data.get("cds_list", []), "cds",  strand)
+        utrs     = _normalize_interval_list(tx_data.get("utrs",     []), "utr",  strand)
+        biotype  = str(tx_data.get("biotype", "") or "")
+
+        canonical_info = _canonical_info_for_header(tx_data)
+
+        available = _available_feature_types(
+            exons, cds_list, utrs, strand, bool(tx_start and tx_end)
+        )
+
+        # Every field on: this is a viewer, and the header is the only place the
+        # coordinates and rank are carried.
+        header_fields = {
+            "exon_number": True, "location": True, "strand": True,
+            "length": True, "biotype": True, "canonical_status": True,
+        }
+        tx_span = (tx_start, tx_end) if tx_start and tx_end else None
+        fasta = _get_browse_fasta(genome)
+
+        records: List[TranscriptSequenceRecord] = []
+        errors: List[str] = []
+        for feature_type in requested:
+            if not available.get(feature_type):
+                continue
+            try:
+                raw = _extract_feature_records(
+                    fasta, chrom, strand, exons, cds_list, utrs,
+                    feature_type, tx_id, gene_id, header_fields, biotype, canonical_info,
+                    tx_genomic_span=tx_span,
+                    genome=genome,
+                )
+                # Amino acids have no complement; reversing one would be noise
+                # dressed up as a sequence.
+                if payload.reverse_complement and feature_type != "protein":
+                    raw = _apply_orientations(raw, ["rev"])
+            except Exception as exc:
+                errors.append(f"{feature_type}: {exc}")
+                continue
+
+            ranked = feature_type in _RANKED_FEATURE_TYPES
+            for index, record in enumerate(raw, 1):
+                header, body = _split_fasta_record(record)
+                records.append(TranscriptSequenceRecord(
+                    feature_type=feature_type,
+                    header=header,
+                    sequence=body,
+                    length=len(body.replace("\n", "")),
+                    unit="aa" if feature_type == "protein" else "bp",
+                    rank=index if ranked else None,
+                ))
+
+        return TranscriptSequencesResponse(
+            transcript_id=tx_id,
+            available=available,
+            records=records,
+            errors=errors,
+        )
+
+    return await run_in_threadpool(_run)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -16288,7 +16532,7 @@ async def export_sequences(payload: ExportSequencesRequest):
 
     transcript_ids = [str(t).strip() for t in (payload.transcript_ids or []) if str(t).strip()]
     feature_types  = [str(f).strip() for f in (payload.feature_types or [])  if str(f).strip()]
-    valid_features = {"genomic", "transcript", "cds", "exons", "utr5", "utr3", "introns"}
+    valid_features = {"genomic", "transcript", "cds", "exons", "utr", "utr5", "utr3", "introns", "protein"}
     feature_types  = [f for f in feature_types if f in valid_features]
     orientations   = [str(o).strip() for o in (payload.orientations or ["fwd"]) if str(o).strip() in ("fwd", "rev")]
     if not orientations:
@@ -16353,13 +16597,7 @@ async def export_sequences(payload: ExportSequencesRequest):
             biotype  = str(tx_data.get("biotype", "") or "")
 
             # Canonical / MANE label for header
-            canonical_parts: List[str] = []
-            if tx_data.get("is_canonical"):
-                canonical_parts.append("canonical")
-            mane = str(tx_data.get("mane_status", "") or "").lower()
-            if "select" in mane:
-                canonical_parts.append("MANE-select")
-            canonical_info = ", ".join(canonical_parts)
+            canonical_info = _canonical_info_for_header(tx_data)
 
             tx_span = (tx_start, tx_end) if tx_start and tx_end else None
 
@@ -16370,6 +16608,7 @@ async def export_sequences(payload: ExportSequencesRequest):
                         fasta, chrom, strand, exons, cds_list, utrs,
                         ft, tx_id, gene_id, header_fields, biotype, canonical_info,
                         tx_genomic_span=tx_span,
+                        genome=genome,
                     )
                     recs = _apply_orientations(recs, orientations)
                     if recs:

@@ -80,6 +80,38 @@ test('gene footer moves beneath the last visible transcript when expanded', () =
   assert.equal(footer.controlY, 135)
 })
 
+// Hiding transcripts and hover ghosts change how many rows are actually drawn,
+// which the transcript limit alone can't express. The caller passes the real
+// count so the footer stays pinned under the last drawn row.
+test('an explicit visible count overrides the one derived from the transcript limit', () => {
+  const args = {
+    gene: { id: 'gene-1', start: 100, end: 500, strand: '+' },
+    txs: [{ id: 'tx-1' }, { id: 'tx-2' }, { id: 'tx-3' }],
+    getEffectiveTranscriptLimit: () => 3,
+    genomicToScreen: (pos) => pos,
+    baseGeneY: 20,
+    transcriptLayoutMetrics: { rowPitch: 42, midOffset: 13 },
+    lhsWidth: 48,
+    viewWidth: 800,
+  }
+
+  const withOneHidden = getGeneFooterGeometry({ ...args, visibleTranscriptCount: 2 })
+  assert.equal(withOneHidden.visibleTranscriptCount, 2)
+  assert.equal(withOneHidden.controlY, 93)
+
+  // A ghost row pushes the footer down by one pitch, past the previewed row.
+  const withGhost = getGeneFooterGeometry({ ...args, visibleTranscriptCount: 4 })
+  assert.equal(withGhost.controlY, 177)
+
+  // Nonsense overrides fall back to the limit rather than collapsing the footer.
+  for (const bad of [0, -2, null, undefined, NaN]) {
+    assert.equal(
+      getGeneFooterGeometry({ ...args, visibleTranscriptCount: bad }).visibleTranscriptCount,
+      3
+    )
+  }
+})
+
 test('gene footer uses the visual left edge for either strand and flipped views', () => {
   for (const strand of ['+', '-']) {
     const normal = getGeneFooterGeometry({

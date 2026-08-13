@@ -31,6 +31,10 @@ export function getGeneFooterGeometry({
   gene,
   txs,
   getEffectiveTranscriptLimit,
+  // Actual drawn row count, when the caller already knows it. The transcript
+  // limit alone can't tell: hidden transcripts and hover ghosts move the last
+  // row, and the footer has to sit under whatever was really drawn.
+  visibleTranscriptCount: visibleTranscriptCountOverride,
   genomicToScreen,
   baseGeneY,
   transcriptLayoutMetrics,
@@ -43,11 +47,10 @@ export function getGeneFooterGeometry({
   const rawEndX = genomicToScreen(gene.end)
   if (!Number.isFinite(rawStartX) || !Number.isFinite(rawEndX)) return null
 
-  const visibleTranscriptCount = getVisibleTranscriptCount(
-    gene,
-    txs,
-    getEffectiveTranscriptLimit,
-  )
+  const overrideCount = Math.floor(Number(visibleTranscriptCountOverride))
+  const visibleTranscriptCount = Number.isFinite(overrideCount) && overrideCount > 0
+    ? overrideCount
+    : getVisibleTranscriptCount(gene, txs, getEffectiveTranscriptLimit)
   const rowPitch = Number(transcriptLayoutMetrics?.rowPitch || 0)
   const midOffset = Number(transcriptLayoutMetrics?.midOffset || 0)
   const lastTranscriptMidY = (
@@ -149,6 +152,7 @@ export function buildGeneLabelCandidate({
   viewWidth,
   txs,
   getEffectiveTranscriptLimit,
+  visibleTranscriptCount,
   measureTextWidth,
   lhsWidth,
   order = 0,
@@ -191,6 +195,7 @@ export function buildGeneLabelCandidate({
       gene,
       txs,
       getEffectiveTranscriptLimit,
+      visibleTranscriptCount,
       genomicToScreen,
       baseGeneY,
       transcriptLayoutMetrics,

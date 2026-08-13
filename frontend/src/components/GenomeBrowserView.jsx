@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { flushSync } from 'react-dom'
 import GenomeBrowser from './GenomeBrowser'
+import FocusGeneDrawer, { FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from './FocusGeneDrawer'
 import ScreenshotExportModal from './ScreenshotExportModal'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
 
@@ -8,7 +10,7 @@ import { getGenomeBrowserColor, normalizeGenomeBrowserColors } from '../genomeCo
 import useScreenshotTargets from '../hooks/useScreenshotTargets'
 import { rasterizeSvgMarkup } from '../utils/screenshotExport'
 import { getGenomeKey, genomeKeysMatch } from '../utils/genomeIdentity'
-import { getGenomeBrowserPanelSizing } from './genomeBrowserViewportLayout'
+import { alignBandToBar, getGenomeBrowserPanelSizing } from './genomeBrowserViewportLayout'
 import {
     DRAG_AXIS_THRESHOLD_PX,
     isTextEntryTarget,
@@ -19,6 +21,7 @@ import {
     resolveBrowsingControls,
     resolveDragAxis,
     resolveWheelAction,
+    noteWheelGestureOrigin,
 } from '../utils/browsingControls'
 
 /**
@@ -257,6 +260,13 @@ export default function GenomeBrowserView({
     const [browserReadyState, setBrowserReadyState] = useState({})
     const [clearFocusEpoch, setClearFocusEpoch] = useState(0)
 
+    // Focus-gene drawer. The view model lives here rather than in each browser
+    // panel so one drawer can drive whichever panel the user last focused.
+    const [focusTranscriptViews, setFocusTranscriptViews] = useState({})
+    const [focusTranscriptData, setFocusTranscriptData] = useState({})
+    const [focusPanelOrder, setFocusPanelOrder] = useState([])
+    const [focusDrawerOpen, setFocusDrawerOpen] = useState(true)
+
     const tracksStateRef = useRef({})
     const linkModelRef = useRef(null)
     const linkApplyTimerRef = useRef(null)
@@ -328,6 +338,402 @@ export default function GenomeBrowserView({
     const panelCount = panels.length
     const hasPanels = panelCount > 0
     const anyGeneSelected = panels.some((panel) => Boolean(selectedGenes[panel.key]))
+
+    // --- Focus drawer plumbing ------------------------------------------------
+
+    // What the user set up for a gene outlives unfocusing it: the browser keeps
+    // drawing that ordering and those hidden transcripts whether the gene holds
+    // focus or not. State rather than a ref, because the panels render from it.
+    // Keyed per panel so the same gene in two genomes stays independent.
+    const [geneTranscriptViews, setGeneTranscriptViews] = useState({})
+
+    const rememberGeneView = useCallback((panelKey, geneId, view) => {
+        if (!panelKey || !geneId) return
+        setGeneTranscriptViews((prev) => {
+            const panelViews = prev[panelKey] || {}
+            const next = {
+                order: view?.order ?? null,
+                hidden: view?.hidden ?? [],
+                expanded: view?.expanded ?? null,
+            }
+            const current = panelViews[geneId]
+            if (current && JSON.stringify(current) === JSON.stringify(next)) return prev
+            return { ...prev, [panelKey]: { ...panelViews, [geneId]: next } }
+        })
+    }, [])
+
+    const handlePanelGeneSelect = useCallback((panelKey, gene) => {
+        setSelectedGenes((prev) => ({ ...prev, [panelKey]: gene || null }))
+        const geneId = String(gene?.id || '').trim()
+        setFocusTranscriptViews((prev) => {
+            const current = prev[panelKey]
+            if (!geneId) {
+                if (!current) return prev
+                const next = { ...prev }
+                delete next[panelKey]
+                return next
+            }
+            if (current?.geneId === geneId) return prev
+            const remembered = geneTranscriptViews[panelKey]?.[geneId]
+            return {
+                ...prev,
+                [panelKey]: {
+                    geneId,
+                    order: remembered?.order ?? null,
+                    hidden: remembered?.hidden ?? [],
+                    // null defers to whatever the panel already had expanded, so
+                    // focusing an already-expanded gene does not collapse it.
+                    expanded: remembered?.expanded ?? null,
+                    ghostId: null,
+                    hoverId: null,
+                    pinnedId: null,
+                },
+            }
+        })
+        setFocusPanelOrder((prev) => {
+            const without = prev.filter((key) => key !== panelKey)
+            return geneId ? [panelKey, ...without] : without
+        })
+        // A fresh focus always presents the drawer open, whatever the user did
+        // with the collapse arrow last time.
+        if (geneId) setFocusDrawerOpen(true)
+    }, [geneTranscriptViews])
+
+    // Addressed by gene id rather than "whatever is focused", so the canvas
+    // controls can act on any gene. Keeps the live drawer view in step when the
+    // gene being edited happens to be the focused one.
+    const handleGeneTranscriptViewChange = useCallback((panelKey, geneId, patch) => {
+        const id = String(geneId || '').trim()
+        if (!id) return
+        setGeneTranscriptViews((prev) => {
+            const panelViews = prev[panelKey] || {}
+            const current = panelViews[id] || { order: null, hidden: [], expanded: null }
+            const next = { ...current, ...patch }
+            if (JSON.stringify(current) === JSON.stringify(next)) return prev
+            return { ...prev, [panelKey]: { ...panelViews, [id]: next } }
+        })
+        setFocusTranscriptViews((prev) => {
+            const current = prev[panelKey]
+            if (!current || current.geneId !== id) return prev
+            return { ...prev, [panelKey]: { ...current, ...patch } }
+        })
+    }, [])
+
+    // Where each panel says its pinned transcript's row sits, in panel-local
+    // pixels. Kept per panel so switching focus genes does not align to a
+    // reading taken from the panel the user just left.
+    const [focusRowGeometry, setFocusRowGeometry] = useState({})
+
+    const handleFocusRowGeometryChange = useCallback((panelKey, geometry) => {
+        setFocusRowGeometry((prev) => {
+            const current = prev[panelKey] || null
+            if (!geometry) {
+                if (!current) return prev
+                const next = { ...prev }
+                delete next[panelKey]
+                return next
+            }
+            const unchanged = current
+                && current.transcriptId === geometry.transcriptId
+                && Math.abs(current.offsetTop - geometry.offsetTop) < 0.5
+                && Math.abs(current.height - geometry.height) < 0.5
+                && current.resolved === geometry.resolved
+            if (unchanged) return prev
+            return { ...prev, [panelKey]: geometry }
+        })
+    }, [])
+
+    const handleFocusTranscriptsChange = useCallback((panelKey, payload) => {
+        setFocusTranscriptData((prev) => {
+            if (!payload) {
+                if (!prev[panelKey]) return prev
+                const next = { ...prev }
+                delete next[panelKey]
+                return next
+            }
+            return { ...prev, [panelKey]: payload }
+        })
+    }, [])
+
+    const handleFocusTranscriptViewChange = useCallback((panelKey, patch) => {
+        setFocusTranscriptViews((prev) => {
+            const current = prev[panelKey]
+            if (!current) return prev
+            const next = { ...current, ...patch }
+            const unchanged = Object.keys(patch).every((key) => (
+                Array.isArray(patch[key])
+                    ? JSON.stringify(patch[key]) === JSON.stringify(current[key])
+                    : patch[key] === current[key]
+            ))
+            if (unchanged) return prev
+            rememberGeneView(panelKey, next.geneId, next)
+            return { ...prev, [panelKey]: next }
+        })
+    }, [rememberGeneView])
+
+    useEffect(() => {
+        if (!clearFocusEpoch) return
+        setFocusTranscriptViews({})
+        setFocusTranscriptData({})
+        setFocusPanelOrder([])
+        // The next gene the user focuses should slide out open, not as a rail.
+        setFocusDrawerOpen(true)
+    }, [clearFocusEpoch])
+
+    // Panels the user has actually focused a gene in, most recent first.
+    const focusDrawerEntries = useMemo(() => {
+        const byKey = new Map(panels.map((panel) => [panel.key, panel]))
+        const keys = [
+            ...focusPanelOrder.filter((key) => byKey.has(key)),
+            ...panels.map((panel) => panel.key).filter((key) => !focusPanelOrder.includes(key)),
+        ]
+        return keys
+            .map((key) => {
+                const panel = byKey.get(key)
+                const data = focusTranscriptData[key]
+                if (!panel || !data?.gene) return null
+                return {
+                    panelKey: key,
+                    label: panel.label,
+                    // The sequence endpoint is keyed by genome, not by panel.
+                    genomeParam: panel.genomeParam,
+                    pillLabel: panel.genomePillLabel || panel.label,
+                    color: getGenomeBrowserColor(genomeBrowserColors, panel.index),
+                    gene: data.gene,
+                    transcripts: data.transcripts,
+                    loading: data.loading,
+                    // Fallback for a view that has not set `expanded` yet.
+                    panelExpanded: Boolean(data.expanded),
+                }
+            })
+            .filter(Boolean)
+    }, [panels, focusPanelOrder, focusTranscriptData, genomeBrowserColors])
+
+    const [focusDrawerPanelKey, setFocusDrawerPanelKey] = useState('')
+    // Which transcript has its metadata/sequence detail open, if any.
+    const [detailTranscriptId, setDetailTranscriptId] = useState('')
+    const activeFocusPanelKey = focusDrawerEntries.some((entry) => entry.panelKey === focusDrawerPanelKey)
+        ? focusDrawerPanelKey
+        : (focusDrawerEntries[0]?.panelKey || '')
+
+    // The drawer hangs off its gene's focus bar rather than the top of the view,
+    // so it reads as sliding out of that panel. Measured from the DOM because
+    // the offset depends on every panel's rendered height above it.
+    const [focusDrawerAlign, setFocusDrawerAlign] = useState({ top: 0, height: 0 })
+    useEffect(() => {
+        const host = screenshotOverlayRootRef.current
+        if (!host || !activeFocusPanelKey) {
+            setFocusDrawerAlign({ top: 0, height: 0 })
+            return undefined
+        }
+        const measure = () => {
+            const bar = host.querySelector(`[data-focus-bar="true"][data-focus-panel-key="${CSS.escape(activeFocusPanelKey)}"]`)
+            if (!bar) return
+            const barRect = bar.getBoundingClientRect()
+            const snapped = alignBandToBar({
+                barTop: barRect.top,
+                barHeight: barRect.height,
+                hostTop: host.getBoundingClientRect().top,
+            })
+            if (!snapped) return
+            setFocusDrawerAlign((prev) => (
+                prev.top === snapped.top && prev.height === snapped.height ? prev : snapped
+            ))
+        }
+        measure()
+        // Panels grow and shrink as transcripts expand, which moves the bars.
+        const observer = new ResizeObserver(measure)
+        observer.observe(host)
+        window.addEventListener('resize', measure)
+        return () => {
+            observer.disconnect()
+            window.removeEventListener('resize', measure)
+        }
+    }, [activeFocusPanelKey, focusDrawerEntries, focusTranscriptViews])
+
+    // --- Pinned transcript alignment -----------------------------------------
+    //
+    // Clicking a transcript in the drawer brings its row in the browser level
+    // with its identifier. The drawer and the panels sit in the same scroller,
+    // so scrolling moves both together and can never close the gap between them
+    // on its own: the drawer's anchor has to shift by the gap as well. Shifting
+    // the anchor and scrolling by the same amount makes the drawer look like it
+    // is standing still while the browser travels up or down to meet it.
+    const [focusDrawerPinOffset, setFocusDrawerPinOffset] = useState(0)
+    const activePinnedId = String(focusTranscriptViews[activeFocusPanelKey]?.pinnedId || '')
+    const activePinGeometry = focusRowGeometry[activeFocusPanelKey] || null
+
+    const findPanelScroller = useCallback((from) => {
+        let node = from
+        while (node && node !== document.body) {
+            const overflowY = window.getComputedStyle(node).overflowY
+            if ((overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 1) {
+                return node
+            }
+            node = node.parentElement
+        }
+        return null
+    }, [])
+
+    // The drawer's anchor and the scroller have to move by the same amount on
+    // the same frame, or the drawer visibly drifts before settling. React holds
+    // the final anchor from the outset and a transform carries the drawer back
+    // to where it was, decaying to nothing — so a re-render part-way through
+    // cannot undo the move, which writing `top` every frame would risk.
+    const pinAnimationRef = useRef(null)
+
+    const stopPinAnimation = useCallback(() => {
+        const running = pinAnimationRef.current
+        if (!running) return
+        cancelAnimationFrame(running.frame)
+        if (running.drawer) running.drawer.style.transform = ''
+        pinAnimationRef.current = null
+    }, [])
+
+    useEffect(() => stopPinAnimation, [stopPinAnimation])
+
+    const movePinAlignment = useCallback((panel, from, to) => {
+        stopPinAnimation()
+        const distance = to - from
+        if (!distance) return
+
+        const scroller = findPanelScroller(panel)
+        const drawer = screenshotOverlayRootRef.current?.querySelector('[data-focus-drawer="true"]')
+        const scrollTo = (value) => {
+            if (!scroller) return
+            scroller.scrollTop = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, value))
+        }
+        if (!scroller || !drawer) {
+            setFocusDrawerPinOffset(to)
+            if (scroller) scrollTo(scroller.scrollTop + distance)
+            else window.scrollBy(0, distance)
+            return
+        }
+
+        // Flushed, so the new anchor and the transform that cancels it land in
+        // the same paint. Left to batch, React commits the anchor a frame early
+        // and the drawer jumps the whole distance before sliding back.
+        flushSync(() => setFocusDrawerPinOffset(to))
+        drawer.style.transform = `translateY(${-distance}px)`
+
+        const scrollFrom = scroller.scrollTop
+        const duration = Math.min(520, Math.max(220, Math.abs(distance) * 1.5))
+        const started = performance.now()
+        const step = (now) => {
+            const t = Math.min(1, (now - started) / duration)
+            const eased = 1 - ((1 - t) ** 3)
+            scrollTo(scrollFrom + (distance * eased))
+            if (t < 1) {
+                drawer.style.transform = `translateY(${-distance * (1 - eased)}px)`
+                pinAnimationRef.current = { frame: requestAnimationFrame(step), drawer }
+                return
+            }
+            drawer.style.transform = ''
+            pinAnimationRef.current = null
+        }
+        pinAnimationRef.current = { frame: requestAnimationFrame(step), drawer }
+    }, [findPanelScroller, stopPinAnimation])
+
+    // Letting the pin go — or switching panel, or collapsing the drawer — undoes
+    // both halves together, so the drawer again looks still while the browser
+    // returns to where it was.
+    //
+    // Keyed on the panel rather than the transcript: moving the pin to another
+    // row in the same list must NOT unwind first. Doing that scrolled the
+    // browser all the way back and then most of the way forward again for what
+    // is usually a small net move, which reads as an overshoot and a correction.
+    // The alignment below travels straight from wherever it is to where it needs
+    // to be instead.
+    const pinSignature = (activePinnedId && focusDrawerOpen) ? activeFocusPanelKey : ''
+    const appliedPinSignatureRef = useRef('')
+    const pinOffsetRef = useRef(0)
+    pinOffsetRef.current = focusDrawerPinOffset
+    useEffect(() => {
+        if (pinSignature === appliedPinSignatureRef.current) return
+        appliedPinSignatureRef.current = pinSignature
+        const offset = pinOffsetRef.current
+        if (!offset) return
+        const panel = screenshotOverlayRootRef.current?.querySelector('[data-browser-canvas-surface="true"]')
+        if (panel) movePinAlignment(panel, offset, 0)
+        else setFocusDrawerPinOffset(0)
+    }, [pinSignature, movePinAlignment])
+
+    const focusDrawerAlignTopRef = useRef(0)
+    focusDrawerAlignTopRef.current = focusDrawerAlign.top
+
+    useEffect(() => {
+        if (!activePinnedId || !focusDrawerOpen) return undefined
+        if (!activePinGeometry || activePinGeometry.transcriptId !== activePinnedId) return undefined
+        // A gene still drawn as a block reports its block, not a row. Aligning to
+        // that would haul the drawer to a position the re-framing is about to
+        // invalidate, so wait until the panel is back at transcript zoom.
+        if (!activePinGeometry.resolved) return undefined
+
+        // Re-framing the gene animates the layout for the best part of a second,
+        // reshaping the row geometry on every frame. Settling first means one
+        // scroll at the end rather than a scroll per frame.
+        let timer = null
+        const attempt = () => {
+            // Releasing the previous pin animates the drawer back to its anchor.
+            // Measuring while that is still running reads a position the row is
+            // about to leave, which is what left every pin after the first a few
+            // pixels out.
+            if (pinAnimationRef.current) {
+                timer = setTimeout(attempt, 60)
+                return
+            }
+            const host = screenshotOverlayRootRef.current
+            const row = host?.querySelector(`[data-drawer-transcript-row="${CSS.escape(activePinnedId)}"]`)
+            const panel = host?.querySelector(
+                `[data-browser-canvas-surface="true"][data-focus-panel-key="${CSS.escape(activeFocusPanelKey)}"]`
+            )
+            if (!row || !panel) return
+
+            const rowRect = row.getBoundingClientRect()
+            const rowCentre = rowRect.top + (rowRect.height / 2)
+            const transcriptCentre = panel.getBoundingClientRect().top
+                + activePinGeometry.offsetTop
+                + (activePinGeometry.height / 2)
+
+            const residual = Math.round(transcriptCentre - rowCentre)
+            if (Math.abs(residual) < 1) return
+            // The drawer cannot be anchored above the top of the panels, and the
+            // offset has to record what was actually applied — otherwise a clamped
+            // shift keeps asking for more and never settles.
+            const previous = pinOffsetRef.current
+            const applied = Math.max(previous + residual, -focusDrawerAlignTopRef.current)
+            if (applied === previous) return
+            movePinAlignment(panel, previous, applied)
+        }
+        timer = setTimeout(attempt, 80)
+        return () => { if (timer) clearTimeout(timer) }
+    }, [activePinnedId, activePinGeometry, activeFocusPanelKey, focusDrawerOpen, movePinAlignment])
+
+    // How much of a panel's right edge the drawer covers, so gene framing can
+    // aim for the middle of what stays visible. A panel that does not hold the
+    // focus still frames for the open width, because clicking a gene there both
+    // moves the drawer to it and opens it.
+    const focusDrawerInsetFor = useCallback((panelKey) => {
+        if (!focusDrawerEntries.some((entry) => entry.panelKey === panelKey)) return 0
+        if (activeFocusPanelKey !== panelKey) return 0
+        if (!focusDrawerOpen) return FOCUS_DRAWER_RAIL_WIDTH
+        // Deliberately blind to the transcript detail. Someone reading metadata
+        // is not reading the track, and re-framing the gene every time that
+        // panel opens or closes would shuffle the browser under them for nothing.
+        return FOCUS_DRAWER_WIDTH
+    }, [focusDrawerEntries, activeFocusPanelKey, focusDrawerOpen])
+
+    // Switching to another panel's focus gene brings that panel's bar to the
+    // drawer, rather than leaving the user to find where the drawer jumped to.
+    const previousFocusPanelKeyRef = useRef('')
+    useEffect(() => {
+        const previous = previousFocusPanelKeyRef.current
+        previousFocusPanelKeyRef.current = activeFocusPanelKey
+        if (!activeFocusPanelKey || !previous || previous === activeFocusPanelKey) return
+        const host = screenshotOverlayRootRef.current
+        const bar = host?.querySelector(`[data-focus-bar="true"][data-focus-panel-key="${CSS.escape(activeFocusPanelKey)}"]`)
+        bar?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, [activeFocusPanelKey])
     const anyFocusedGene = useMemo(() => {
         if (anyGeneSelected) return true
         for (const gene of Object.values(externalFocusGenesByGenome || {})) {
@@ -1342,11 +1748,12 @@ export default function GenomeBrowserView({
             // A panel marks every event it resolves, including ones it chose to
             // do nothing with. Propagation alone cannot tell those apart, since
             // page-scroll and no-op intents deliberately keep bubbling.
-            //
-            // Note this is the ONLY check: a point can be inside a panel's root
-            // yet outside its canvas container (the toolbar, the ruler), where
-            // no panel listener exists and this fallback must still act.
             if (isWheelHandled(e)) return
+
+            // The control bars are chrome, not track surface. A gesture there is
+            // the user scrolling the page past them, never a zoom.
+            const target = e.target instanceof Element ? e.target : null
+            if (target?.closest?.('[data-browser-controls="true"]')) return
 
             const rects = []
             for (const [panelKey, descriptor] of Object.entries(browsingTargetsRef.current)) {
@@ -1362,16 +1769,34 @@ export default function GenomeBrowserView({
             if (intent.type !== 'zoom') return
 
             const nearest = pickNearestPanel(e.clientY, e.clientX, rects)
-            const target = nearest && browsingTargetsRef.current[nearest.panelKey]
-            if (!target) return
+            // The page margins either side of the panels — where the scrollbar
+            // lives — belong to the page scroller. Only gestures over a panel's
+            // own width fall through to zoom.
+            if (!nearest?.insideHorizontally) return
+            const panel = browsingTargetsRef.current[nearest.panelKey]
+            if (!panel) return
 
             e.preventDefault()
             markWheelHandled(e)
-            target.applyWheelIntent(intent, { clientX: e.clientX, clientY: e.clientY })
+            panel.applyWheelIntent(intent, { clientX: e.clientX, clientY: e.clientY })
         }
 
+        // Capture phase, so it records where a gesture began before any panel
+        // gets a chance to act on it.
+        const handleWheelOrigin = (e) => {
+            if (!isActiveRef.current) return
+            const target = e.target instanceof Element ? e.target : null
+            const onTrackSurface = Boolean(target?.closest?.('[data-browser-canvas-surface="true"]'))
+                && !target?.closest?.('[data-browser-controls="true"]')
+            noteWheelGestureOrigin(e, !onTrackSurface)
+        }
+
+        document.addEventListener('wheel', handleWheelOrigin, { capture: true, passive: true })
         document.addEventListener('wheel', handleGutterWheel, { passive: false })
-        return () => document.removeEventListener('wheel', handleGutterWheel)
+        return () => {
+            document.removeEventListener('wheel', handleWheelOrigin, { capture: true })
+            document.removeEventListener('wheel', handleGutterWheel)
+        }
     }, [])
 
     /**
@@ -1508,6 +1933,7 @@ export default function GenomeBrowserView({
             )}
 
             <div
+                data-browser-controls="true"
                 className="flex items-center justify-between px-4 py-2 border-b flex-none"
                 style={{
                     backgroundColor: isLight ? '#f1f3f5' : '#1E2938',
@@ -1822,7 +2248,15 @@ export default function GenomeBrowserView({
                                             }
                                             lockPan={effectiveLockPan}
                                             lockZoom={effectiveLockZoom}
-                                            onGeneSelect={(gene) => setSelectedGenes((prev) => ({ ...prev, [panelKey]: gene || null }))}
+                                            onGeneSelect={(gene) => handlePanelGeneSelect(panelKey, gene)}
+                                            focusTranscriptView={focusTranscriptViews[panelKey] || null}
+                                            geneTranscriptViews={geneTranscriptViews[panelKey] || null}
+                                            focusDrawerInset={focusDrawerInsetFor(panelKey)}
+                                            focusDrawerInsetOnFocus={FOCUS_DRAWER_WIDTH}
+                                            onFocusTranscriptsChange={(payload) => handleFocusTranscriptsChange(panelKey, payload)}
+                                            onFocusTranscriptViewChange={(patch) => handleFocusTranscriptViewChange(panelKey, patch)}
+                                            onFocusRowGeometryChange={(geometry) => handleFocusRowGeometryChange(panelKey, geometry)}
+                                            onGeneTranscriptViewChange={(geneId, patch) => handleGeneTranscriptViewChange(panelKey, geneId, patch)}
                                             navigateToGene={navigateGenes[panelKey] || null}
                                             onManualNavigate={handleManualBrowserNavigate}
                                             clearFocusEpoch={clearFocusEpoch}
@@ -1869,6 +2303,37 @@ export default function GenomeBrowserView({
                 onSave={handleScreenshotSave}
                 onClose={handleScreenshotModalClose}
             />
+
+            {hasPanels && (
+            <FocusGeneDrawer
+                theme={theme}
+                open={focusDrawerOpen}
+                onToggle={() => setFocusDrawerOpen((prev) => {
+                    // Collapsing hides the list the pin belongs to, so the
+                    // highlight it holds in the browser has nothing left to
+                    // point at. Let it go rather than stranding it.
+                    if (prev) {
+                        setDetailTranscriptId('')
+                        handleFocusTranscriptViewChange(activeFocusPanelKey, {
+                            pinnedId: null, hoverId: null, ghostId: null,
+                        })
+                    }
+                    return !prev
+                })}
+                onDismiss={handleClearFocusedGenes}
+                entries={focusDrawerEntries}
+                activePanelKey={activeFocusPanelKey}
+                onActivePanelChange={setFocusDrawerPanelKey}
+                view={focusTranscriptViews[activeFocusPanelKey] || null}
+                onViewChange={(patch) => handleFocusTranscriptViewChange(activeFocusPanelKey, patch)}
+                showPanelSwitcher={panelCount > 1}
+                alignTop={focusDrawerAlign.top + focusDrawerPinOffset}
+                alignHeight={focusDrawerAlign.height}
+                genome={focusDrawerEntries.find((entry) => entry.panelKey === activeFocusPanelKey)?.genomeParam || 'reference'}
+                detailTranscriptId={detailTranscriptId}
+                onDetailTranscriptChange={setDetailTranscriptId}
+            />
+            )}
         </div>
     )
 }

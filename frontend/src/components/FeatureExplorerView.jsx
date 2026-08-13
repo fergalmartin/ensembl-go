@@ -22,6 +22,7 @@ import {
   resolveWheelAction,
 } from '../utils/browsingControls'
 import { API_BASE } from '../backendRuntime'
+import { computeTranscriptMetadata } from '../utils/transcriptSequenceFeatures'
 import useScreenshotTargets from '../hooks/useScreenshotTargets'
 import {
   buildDefaultScreenshotName,
@@ -301,22 +302,6 @@ function moveId(order, sourceId, targetId, position = 'before') {
   return next
 }
 
-function featureLength(feature) {
-  const start = Number(feature?.start)
-  const end = Number(feature?.end)
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0
-  if (end < start) return 0
-  return (end - start) + 1
-}
-
-function sumFeatureLengths(features) {
-  return (Array.isArray(features) ? features : []).reduce((sum, feature) => sum + featureLength(feature), 0)
-}
-
-function overlaps(aStart, aEnd, bStart, bEnd) {
-  return aStart <= bEnd && bStart <= aEnd
-}
-
 function reverseComplement(seq) {
   const map = { A: 'T', C: 'G', G: 'C', T: 'A', N: 'N' }
   return String(seq || '')
@@ -325,80 +310,6 @@ function reverseComplement(seq) {
     .reverse()
     .map((base) => map[base] || 'N')
     .join('')
-}
-
-function isProteinCodingBiotype(biotype) {
-  const value = String(biotype || '').toLowerCase()
-  return value.includes('protein_coding')
-}
-
-function computeTranscriptMetadata(tx) {
-  const exons = Array.isArray(tx?.exons) ? tx.exons : []
-  const cdsList = Array.isArray(tx?.cds_list) ? tx.cds_list : []
-  const utrs = Array.isArray(tx?.utrs) ? tx.utrs : []
-  const strand = String(tx?.strand || '+')
-
-  const transcriptLength = sumFeatureLengths(exons)
-  const cdsLength = sumFeatureLengths(cdsList)
-
-  let fivePrimeUtrLength = 0
-  let threePrimeUtrLength = 0
-  for (const utr of utrs) {
-    const ftype = String(utr?.feature_type || '').toLowerCase()
-    const len = featureLength(utr)
-    if (ftype.includes('five') || ftype.includes('5_prime')) fivePrimeUtrLength += len
-    else if (ftype.includes('three') || ftype.includes('3_prime')) threePrimeUtrLength += len
-  }
-
-  if ((fivePrimeUtrLength + threePrimeUtrLength) === 0 && cdsList.length > 0 && exons.length > 0) {
-    const cdsStart = Math.min(...cdsList.map((cds) => Number(cds.start)).filter(Number.isFinite))
-    const cdsEnd = Math.max(...cdsList.map((cds) => Number(cds.end)).filter(Number.isFinite))
-    if (Number.isFinite(cdsStart) && Number.isFinite(cdsEnd)) {
-      for (const exon of exons) {
-        const exonStart = Number(exon?.start)
-        const exonEnd = Number(exon?.end)
-        if (!Number.isFinite(exonStart) || !Number.isFinite(exonEnd) || exonEnd < exonStart) continue
-        const leftLen = exonStart < cdsStart ? Math.max(0, (Math.min(exonEnd, cdsStart - 1) - exonStart) + 1) : 0
-        const rightLen = exonEnd > cdsEnd ? Math.max(0, (exonEnd - Math.max(exonStart, cdsEnd + 1)) + 1) : 0
-        if (strand === '-') {
-          fivePrimeUtrLength += rightLen
-          threePrimeUtrLength += leftLen
-        } else {
-          fivePrimeUtrLength += leftLen
-          threePrimeUtrLength += rightLen
-        }
-      }
-    }
-  }
-
-  const cdsExonCount = exons.filter((exon) => {
-    const exonStart = Number(exon?.start)
-    const exonEnd = Number(exon?.end)
-    if (!Number.isFinite(exonStart) || !Number.isFinite(exonEnd)) return false
-    return cdsList.some((cds) => {
-      const cdsStart = Number(cds?.start)
-      const cdsEnd = Number(cds?.end)
-      if (!Number.isFinite(cdsStart) || !Number.isFinite(cdsEnd)) return false
-      return overlaps(exonStart, exonEnd, cdsStart, cdsEnd)
-    })
-  }).length
-
-  const translationLength = cdsLength >= 3 ? Math.max(Math.floor(cdsLength / 3) - 1, 0) : 0
-
-  return {
-    id: String(tx?.id || ''),
-    version: String(tx?.version || ''),
-    biotype: String(tx?.biotype || ''),
-    transcriptLength,
-    exonCount: exons.length,
-    cdsLength,
-    translationLength,
-    cdsExonCount,
-    fivePrimeUtrLength,
-    threePrimeUtrLength,
-    hasCds: cdsList.length > 0,
-    isProteinCoding: isProteinCodingBiotype(tx?.biotype),
-  }
 }
 
 function getCodonIntervals(tx) {
@@ -1505,10 +1416,8 @@ export default function FeatureExplorerView({
       (Math.abs(liveStart - fullTranscriptViewStart) > 1 || Math.abs((liveEnd ?? fullTranscriptViewEnd) - fullTranscriptViewEnd) > 1)
     )
     const atFullExtent = !isZoomed || liveSpan >= (fullSpan - 1e-6)
-    const atMinExtent = liveSpan <= (minSpan + 1e-6)
 
     const intent = resolveWheelAction(wheel, browsingControls, {
-      atMinZoom: atMinExtent,
       atMaxZoom: atFullExtent,
       canScrollPage: true,
       gesture,
