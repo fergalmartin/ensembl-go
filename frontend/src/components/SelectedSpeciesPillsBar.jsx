@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useHorizontalPillScroll from './useHorizontalPillScroll'
-import { formatDatasetReleaseShortLabel, getGenomeKey } from '../utils/genomeIdentity'
+import { getGenomeKey } from '../utils/genomeIdentity'
+import GenomePill, { genomePillLabels } from './GenomePill'
 
 function formatScientificName(species) {
     if (species.display_name) return species.display_name
@@ -191,13 +192,10 @@ export default function SelectedSpeciesPillsBar({
                             const removeGlyphColor = bgClass === 'transparent'
                                 ? (isLight ? '#ffffff' : '#1E2938')
                                 : bgClass
-                            const datasetBadge = species.dataset_release_short_label || formatDatasetReleaseShortLabel(species)
-                            const tooltipProps = [
-                                species.scientific_name,
-                                assemblyName,
-                                species.assembly,
-                                datasetBadge ? `dataset: ${datasetBadge}` : '',
-                            ].filter(Boolean).join(' | ')
+                            // For a non-Ensembl genome the badge names the provider
+                            // rather than its release, so the release only survives
+                            // in the tooltip — where both are always spelled out.
+                            const { badge: datasetBadge, badgeTooltip, pillTooltip: tooltipProps } = genomePillLabels(species)
 
                             return (
                                 <div
@@ -246,41 +244,23 @@ export default function SelectedSpeciesPillsBar({
                                             : undefined,
                                         }}
                                     >
-                                    {datasetBadge && (
-                                        <span
-                                            className={`absolute right-2 bottom-0 z-10 max-w-[7.5rem] truncate rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none border shadow-sm ${isLight
-                                                ? 'bg-white text-gray-800 border-gray-300'
-                                                : 'bg-gray-900 text-gray-100 border-gray-500'
-                                                }`}
-                                            title={`Dataset ${datasetBadge}`}
-                                        >
-                                            {datasetBadge}
-                                        </span>
-                                    )}
-                                    <button
+                                    <GenomePill
+                                        displayName={displayName}
+                                        displayAssembly={displayAssembly}
+                                        badge={datasetBadge}
+                                        badgeTooltip={badgeTooltip}
+                                        tooltip={tooltipProps}
+                                        isLight={isLight}
+                                        backgroundColor={bgClass}
+                                        textColor={textClass}
+                                        borderColor={borderClass}
+                                        minWidth={isSelected ? 'auto' : '110px'}
+                                        maxWidth={isSelected ? '320px' : '180px'}
+                                        // Room for the remove disc, which sits inside the
+                                        // pill rather than hanging off its corner.
+                                        paddingLeft={onRemoveSpecies ? 28 : undefined}
                                         onClick={() => handlePillClick(species)}
-                                        onMouseDown={(event) => event.stopPropagation()}
-                                        className="text-xs px-3 py-1.5 rounded-full transition-all duration-200 border font-medium flex items-center gap-1.5"
-                                        style={{
-                                            backgroundColor: bgClass,
-                                            color: textClass,
-                                            borderColor: borderClass,
-                                            minWidth: isSelected ? 'auto' : '110px',
-                                            maxWidth: isSelected ? '320px' : '180px',
-                                            // Room for the remove disc, which sits inside the
-                                            // pill rather than hanging off its corner.
-                                            paddingLeft: onRemoveSpecies ? 28 : undefined,
-                                        }}
-                                        title={tooltipProps}
-                                    >
-                                        {/* Name carries the weight, assembly rides along
-                                            lighter — the pill reads as one label without the
-                                            two halves competing. */}
-                                        <span className="truncate font-semibold">{displayName}</span>
-                                        {displayAssembly && (
-                                            <span className="truncate font-normal opacity-75">{displayAssembly}</span>
-                                        )}
-                                    </button>
+                                    />
                                     {onRemoveSpecies && (
                                         <button
                                             type="button"

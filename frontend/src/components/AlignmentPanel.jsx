@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { FEATURE_COLORS } from './FeatureLegend'
 import { isTextEntryTarget, normalizeWheelDelta, wheelZoomFactor } from '../utils/browsingControls'
+import { monoFont } from '../utils/typography'
 
 const CHAR_HEIGHT = 16
 const ROW_HEIGHT = 24
@@ -453,7 +454,7 @@ export default function AlignmentPanel({
         // At min zoom (0.02), characters are 0.2px wide, so need very wide spacing
         const tickSpacing = zoomLevel < 0.05 ? 500 : zoomLevel < 0.1 ? 250 : zoomLevel < 0.2 ? 100 : zoomLevel < 0.5 ? 50 : 10
         ctx.fillStyle = isLight ? '#4b5563' : '#4a5568'  // grey-600 for light
-        ctx.font = '11px monospace'
+        ctx.font = monoFont(11)
         // Align to 1-based multiples of tickSpacing (10, 20, 30...) rather than
         // 0-based multiples (0, 10, 20... → "1, 11, 21...").
         // Ticks use the same +LABEL_W offset as all sequence content so they align
@@ -469,7 +470,7 @@ export default function AlignmentPanel({
         // Draw reference row
         const refY = HEADER_HEIGHT
         ctx.fillStyle = isLight ? '#374151' : '#718096'  // grey-700 for light
-        ctx.font = '12px monospace'
+        ctx.font = monoFont(12)
         ctx.textAlign = 'left'
         ctx.textBaseline = 'alphabetic'
         ctx.fillText(refTag, 5, refY + 16)
@@ -509,7 +510,7 @@ export default function AlignmentPanel({
             ctx.save()
             ctx.textAlign = 'center'
             ctx.textBaseline = 'middle'
-            ctx.font = '12px monospace'
+            ctx.font = monoFont(12)
             for (let i = startPos; i < endPos; i++) {
                 const x = 40 + (i - startPos) * CHAR_WIDTH
                 const base = refSeq[i] || ''
@@ -605,7 +606,7 @@ export default function AlignmentPanel({
             ctx.save()
             ctx.textAlign = 'center'
             ctx.textBaseline = 'middle'
-            ctx.font = '12px monospace'
+            ctx.font = monoFont(12)
             for (let i = startPos; i < endPos; i++) {
                 const x = 40 + (i - startPos) * CHAR_WIDTH
                 const refBase = refSeq[i] || ''
@@ -673,7 +674,7 @@ export default function AlignmentPanel({
             ctx.save()
             ctx.textAlign = 'center'
             ctx.textBaseline = 'middle'
-            ctx.font = '12px monospace'
+            ctx.font = monoFont(12)
             for (let i = startPos; i < endPos; i++) {
                 const x = 40 + (i - startPos) * CHAR_WIDTH
                 const base = tgtSeq[i] || ''

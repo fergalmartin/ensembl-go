@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react'
+import { FONT_MONO } from '../utils/typography'
 import TranscriptSplicingHeatmap from './TranscriptSplicingHeatmap'
 import FeatureExplorerExonsPanel from './FeatureExplorerExonsPanel'
 import FeatureExplorerSequencesPanel from './FeatureExplorerSequencesPanel'
@@ -32,16 +33,17 @@ import {
 } from '../utils/screenshotExport'
 const BROWSER_COLORS = {
   light: {
-    rulerLine: '#dee2e6',
-    rulerText: '#495057',
-    tickMajor: '#adb5bd',
+    // Same greys as the genome browser ruler, sampled from www.ensembl.org.
+    rulerLine: '#787878',
+    rulerText: '#787878',
+    tickMajor: '#787878',
     exonProteinCoding: '#3366cc',
     intronLine: '#868e96',
   },
   dark: {
-    rulerLine: '#373a40',
-    rulerText: '#909296',
-    tickMajor: '#5c5f66',
+    rulerLine: '#8b8b8b',
+    rulerText: '#8b8b8b',
+    tickMajor: '#8b8b8b',
     exonProteinCoding: '#5b8def',
     intronLine: '#5c5f66',
   },
@@ -442,7 +444,7 @@ function TranscriptRuler({
         x2={axisRight}
         y2={axisY}
         stroke={palette.rulerLine}
-        strokeWidth="1.2"
+        strokeWidth="1"
       />
 
       {fractions.map((fraction) => {
@@ -455,7 +457,7 @@ function TranscriptRuler({
               x2={x}
               y2={axisY - 9}
               stroke={palette.tickMajor}
-              strokeWidth="1.1"
+              strokeWidth="1"
             />
             <line
               x1={x}
@@ -463,14 +465,14 @@ function TranscriptRuler({
               x2={x}
               y2={axisY + 9}
               stroke={palette.tickMajor}
-              strokeWidth="1.1"
+              strokeWidth="1"
             />
             <text
               x={x}
               y={14}
               textAnchor="middle"
               fontSize="12"
-              fontFamily="Inter, system-ui, sans-serif"
+              fontFamily={FONT_MONO}
               fill={palette.rulerText}
             >
               {formatCoord(topCoordForFraction(fraction))}
@@ -480,7 +482,7 @@ function TranscriptRuler({
               y={66}
               textAnchor="middle"
               fontSize="12"
-              fontFamily="Inter, system-ui, sans-serif"
+              fontFamily={FONT_MONO}
               fill={palette.rulerText}
             >
               {formatCoord(offsetForFraction(fraction))}
@@ -2682,7 +2684,7 @@ export default function FeatureExplorerView({
                                 fontSize={Math.max(8.4, Math.min(12.4, bw * 0.78))}
                                 fill={isLight ? '#111827' : '#f3f4f6'}
                                 textAnchor="middle"
-                                fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+                                fontFamily={FONT_MONO}
                                 pointerEvents="none"
                               >
                                 {baseLabel}

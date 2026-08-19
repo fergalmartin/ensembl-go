@@ -14,7 +14,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import pysam
 import requests
 from Bio.Seq import Seq
+from annotation.cooperative import CooperativeYielder
 from genome_identity import (
+    annotation_name_stem,
     genome_key as provider_aware_genome_key,
     normalize_provider,
     normalize_source_database,
@@ -366,6 +368,12 @@ def clean_species_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "provider": provider,
         "source_database": normalize_source_database(raw.get("source_database"), provider, assembly),
         "gca": str(raw.get("gca") or assembly or "").strip(),
+        # Kept so assembly metadata can be looked up under the accession the
+        # registry actually knows: ENA has no record of a GCF, but every RefSeq
+        # genome names its GCA twin here.
+        "equivalent_accessions": [
+            str(v).strip() for v in (raw.get("equivalent_accessions") or []) if str(v).strip()
+        ],
         "assembly_key": str(raw.get("assembly_key") or assembly_key or "").strip(),
         "selection_key": selected_key,
         "dataset_release_key": dataset_release_key,
@@ -443,6 +451,30 @@ def is_writable_dir(path: Path) -> bool:
         return False
 
 
+def _stats_cache_candidates(annotation_path: Path) -> List[Path]:
+    """Cache filenames for an annotation, best name first.
+
+    The stem used to be whatever was left after stripping ``.gff3``, so a
+    RefSeq ``…genomic.gff`` produced ``…genomic.gff.stats.v1.json``. Keeping the
+    older name as a fallback means an upgrade does not silently discard a
+    structural section that took minutes to compute.
+    """
+    stem = annotation_name_stem(annotation_path.name)
+    legacy_stem = re.sub(r"\.gff3(\.(?:gz|bgz))?$", "", annotation_path.name, flags=re.IGNORECASE) or "genome"
+    names = [f"{stem}.stats.v1.json"]
+    if legacy_stem != stem:
+        names.append(f"{legacy_stem}.stats.v1.json")
+    return [annotation_path.parent / name for name in names]
+
+
+def _preferred_stats_cache_path(annotation_path: Path) -> Path:
+    candidates = _stats_cache_candidates(annotation_path)
+    for candidate in candidates[1:]:
+        if candidate.exists() and not candidates[0].exists():
+            return candidate
+    return candidates[0]
+
+
 def choose_stats_cache_path(
     species: Dict[str, Any],
     output_dir: str,
@@ -463,8 +495,7 @@ def choose_stats_cache_path(
             try:
                 gff_resolved = Path(gff3).expanduser().resolve()
                 if gff_resolved.is_file() and str(gff_resolved).startswith(str(local_dir)):
-                    prefix = re.sub(r"\.gff3(\.(?:gz|bgz))?$", "", gff_resolved.name, flags=re.IGNORECASE) or "genome"
-                    release_candidate = gff_resolved.parent / f"{prefix}.stats.v1.json"
+                    release_candidate = _preferred_stats_cache_path(gff_resolved)
                     if is_writable_dir(release_candidate.parent):
                         return release_candidate
             except Exception:
@@ -483,8 +514,7 @@ def choose_stats_cache_path(
 
     if gff3:
         gff_path = Path(gff3).expanduser().resolve()
-        prefix = re.sub(r"\.gff3(\.(?:gz|bgz))?$", "", gff_path.name, flags=re.IGNORECASE) or "genome"
-        preferred = gff_path.parent / f"{prefix}.stats.v1.json"
+        preferred = _preferred_stats_cache_path(gff_path)
         if is_writable_dir(preferred.parent):
             return preferred
 
@@ -1014,12 +1044,109 @@ def compute_homology_stats(homology_path: str) -> Dict[str, Any]:
     }
 
 
-def compute_fasta_assembly_stats(fasta_path: str) -> Dict[str, Any]:
-    path = Path(fasta_path).expanduser().resolve()
+def _lengths_from_fai(fasta_path: Path) -> List[int]:
+    """Sequence lengths from the FASTA index, which is a few lines per sequence."""
+    fai = Path(str(fasta_path) + ".fai")
+    if not fai.is_file():
+        return []
+    lengths: List[int] = []
+    try:
+        with open(fai, "r", encoding="utf-8") as handle:
+            for line in handle:
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) < 2:
+                    continue
+                try:
+                    value = int(fields[1])
+                except ValueError:
+                    continue
+                if value > 0:
+                    lengths.append(value)
+    except OSError:
+        return []
+    return lengths
+
+
+def _lengths_from_metadata(metadata_path: str) -> List[int]:
+    """Sequence lengths from the assembly/sequence report downloaded with the genome.
+
+    NCBI ships a ``sequence_report.json``; Ensembl an ``assembly_report.txt``.
+    Both list every sequence with its length in a file measured in kilobytes.
+    """
+    token = str(metadata_path or "").strip()
+    if not token:
+        return []
+    path = Path(token).expanduser()
+    if not path.is_file():
+        return []
+    lengths: List[int] = []
+    name = path.name.lower()
+    try:
+        if name.endswith((".json", ".jsonl")):
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read().strip()
+            records: List[Any] = []
+            if text.startswith("["):
+                records = json.loads(text)
+            elif text.startswith("{"):
+                payload = json.loads(text)
+                if isinstance(payload, dict):
+                    for key in ("reports", "sequence_reports", "sequences"):
+                        if isinstance(payload.get(key), list):
+                            records = payload[key]
+                            break
+                    else:
+                        records = [payload]
+            else:
+                records = [json.loads(line) for line in text.splitlines() if line.strip()]
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                for key in ("length", "sequence_length", "seq_length"):
+                    value = record.get(key)
+                    if value is None:
+                        continue
+                    try:
+                        parsed = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if parsed > 0:
+                        lengths.append(parsed)
+                    break
+        else:
+            with open_maybe_gz(path) as handle:
+                header: List[str] = []
+                for raw in handle:
+                    line = raw.rstrip("\n")
+                    if line.startswith("#"):
+                        stripped = line.lstrip("#").strip()
+                        if "Sequence-Length" in stripped:
+                            header = [c.strip().lower() for c in stripped.split("\t")]
+                        continue
+                    if not line.strip():
+                        continue
+                    fields = line.split("\t")
+                    index = header.index("sequence-length") if "sequence-length" in header else 8
+                    if len(fields) <= index:
+                        continue
+                    try:
+                        parsed = int(str(fields[index]).strip())
+                    except ValueError:
+                        continue
+                    if parsed > 0:
+                        lengths.append(parsed)
+    except Exception:
+        return []
+    return lengths
+
+
+def _lengths_by_scanning_fasta(path: Path) -> List[int]:
     lengths: List[int] = []
     current_len: Optional[int] = None
+    yielder = CooperativeYielder()
     with open_maybe_gz(path) as handle:
         for raw_line in handle:
+            yielder.tick()
             line = raw_line.strip()
             if not line:
                 continue
@@ -1034,6 +1161,29 @@ def compute_fasta_assembly_stats(fasta_path: str) -> Dict[str, Any]:
             current_len += len(line)
     if current_len is not None and current_len > 0:
         lengths.append(current_len)
+    return lengths
+
+
+def compute_fasta_assembly_stats(fasta_path: str, metadata_path: str = "") -> Dict[str, Any]:
+    """Assembly-level sizes for a genome.
+
+    Reading the whole FASTA to add up sequence lengths took minutes on a human
+    genome, and every one of those minutes was spent re-deriving something two
+    small files already state exactly: the FASTA index, and the assembly report
+    downloaded alongside the genome. Both are consulted first, so opening this
+    is instant for any genome that has been indexed or downloaded, and the scan
+    survives only as the fallback for a genome that has neither.
+    """
+    path = Path(fasta_path).expanduser().resolve()
+
+    source = "fasta_index"
+    lengths = _lengths_from_fai(path)
+    if not lengths:
+        source = "assembly_report"
+        lengths = _lengths_from_metadata(metadata_path)
+    if not lengths:
+        source = "fasta_scan"
+        lengths = _lengths_by_scanning_fasta(path)
 
     lengths.sort(reverse=True)
     contig_count = len(lengths)
@@ -1058,6 +1208,7 @@ def compute_fasta_assembly_stats(fasta_path: str) -> Dict[str, Any]:
         "longest_sequence": longest,
         "n50": n50,
         "l50": l50,
+        "source": source,
     }
 
 

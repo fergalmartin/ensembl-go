@@ -7,10 +7,19 @@ const DEFAULT_COLLISION_GAP_Y = 1
 const DEFAULT_MIN_GENE_WIDTH_PX = 8
 const DEFAULT_FOOTER_EDGE_GUTTER_PX = 6
 
-export const GENE_FOOTER_LABEL_BASELINE_OFFSET = 14
-export const GENE_FOOTER_CONTROL_TOP_OFFSET = 18
+/**
+ * Footer offsets are measured down from the mid-line of the last drawn
+ * transcript row, so they have to clear the bottom of the exon block that sits
+ * on that mid-line (EXON_HEIGHT / 2 = 6px).
+ *
+ * The label baseline is that 6px, plus a 2px gap, plus the cap height of the
+ * 11px label (~8px) — anything less and the capitals of a gene symbol butt
+ * straight up against the block, which is what 14 used to do.
+ */
+export const GENE_FOOTER_LABEL_BASELINE_OFFSET = 16
+export const GENE_FOOTER_CONTROL_TOP_OFFSET = 20
 export const TRANSCRIPT_FOOTER_CONTROL_HEIGHT = 16
-export const GENE_FOOTER_TRACK_OVERFLOW = 6
+export const GENE_FOOTER_TRACK_OVERFLOW = 8
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -53,12 +62,17 @@ export function getGeneFooterGeometry({
     : getVisibleTranscriptCount(gene, txs, getEffectiveTranscriptLimit)
   const rowPitch = Number(transcriptLayoutMetrics?.rowPitch || 0)
   const midOffset = Number(transcriptLayoutMetrics?.midOffset || 0)
+  const exonHeight = Number(transcriptLayoutMetrics?.exonHeight || 0)
+  // The same arithmetic as the last row's mid-line, evaluated at row 0. Anything
+  // marking the head of a gene — the note bubble does — needs it, and deriving it
+  // here is what stops a second copy of the row maths drifting from this one.
+  const firstTranscriptMidY = Number(baseGeneY) + midOffset
   const lastTranscriptMidY = (
     Number(baseGeneY)
     + ((visibleTranscriptCount - 1) * rowPitch)
     + midOffset
   )
-  if (!Number.isFinite(lastTranscriptMidY)) return null
+  if (!Number.isFinite(lastTranscriptMidY) || !Number.isFinite(firstTranscriptMidY)) return null
 
   const rawLeft = Math.min(rawStartX, rawEndX)
   const minX = Number(lhsWidth) + edgeGutterPx
@@ -73,6 +87,11 @@ export function getGeneFooterGeometry({
     labelY: lastTranscriptMidY + GENE_FOOTER_LABEL_BASELINE_OFFSET,
     controlY: lastTranscriptMidY + GENE_FOOTER_CONTROL_TOP_OFFSET,
     lastTranscriptMidY,
+    firstTranscriptMidY,
+    // Top of the first row's exon block: where the gene starts, as far as
+    // anything drawn above it is concerned. Independent of how many rows the
+    // gene shows, unlike everything else here.
+    topY: firstTranscriptMidY - (exonHeight / 2),
     visibleTranscriptCount,
   }
 }

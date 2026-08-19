@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from . import biotype as biotype_rules
+from .cooperative import each
 from .dialect import (
     BARE_ATTRIBUTE_KEY,
     GTF,
@@ -354,7 +355,7 @@ def _index_nodes(nodes: Sequence[_Node]) -> Dict[str, List[_Node]]:
     whole loci.
     """
     index: Dict[str, List[_Node]] = {}
-    for node in nodes:
+    for node in each(nodes):
         if node.role == ROLE_CHILD or not node.raw_id:
             continue
         index.setdefault(node.raw_id, []).append(node)
@@ -412,7 +413,7 @@ def _link(nodes: Sequence[_Node], issues: IssueCollector) -> Dict[str, List[_Nod
                 increment=len(candidates) - 1,
             )
 
-    for node in nodes:
+    for node in each(nodes):
         for parent_key in node.parent_keys:
             if not parent_key:
                 continue
@@ -530,11 +531,11 @@ def _resolve_unknown_roles(nodes: Sequence[_Node]) -> None:
     """
     by_uid = {node.uid: node for node in nodes}
     parent_of: Dict[int, _Node] = {}
-    for node in nodes:
+    for node in each(nodes):
         for child in node.child_nodes:
             parent_of[child.uid] = node
 
-    for node in nodes:
+    for node in each(nodes):
         if node.role != ROLE_UNKNOWN:
             continue
         child_roles = {child.role for child in node.child_nodes}
@@ -861,7 +862,7 @@ def normalize_annotation(
     transcript_nodes = [n for n in nodes if n.role == ROLE_TRANSCRIPT]
 
     parent_of: Dict[int, _Node] = {}
-    for node in nodes:
+    for node in each(nodes):
         for child in node.child_nodes:
             parent_of[child.uid] = node
 
@@ -877,7 +878,7 @@ def normalize_annotation(
         if node.raw_id:
             gene_by_raw_id.setdefault(node.raw_id, []).append(node)
 
-    for node in transcript_nodes:
+    for node in each(transcript_nodes):
         if parent_of.get(node.uid) is not None:
             continue
         gene_hint = ""
@@ -897,7 +898,7 @@ def normalize_annotation(
     genes: List[Gene] = []
     gene_by_uid: Dict[int, Gene] = {}
 
-    for gene_index, node in enumerate(gene_nodes):
+    for gene_index, node in enumerate(each(gene_nodes)):
         clean_id = strip_gene_prefix(node.raw_id) or _synthesise_gene_id(node, used_gene_ids)
         used_gene_ids.add(clean_id)
         gene = Gene(
@@ -927,7 +928,7 @@ def normalize_annotation(
 
     # Transcripts with a resolved gene parent.
     orphan_transcripts: List[_Node] = []
-    for transcript_index, node in enumerate(transcript_nodes):
+    for transcript_index, node in enumerate(each(transcript_nodes)):
         parent = parent_of.get(node.uid)
         gene = gene_by_uid.get(parent.uid) if parent is not None else None
         if gene is None:
@@ -950,7 +951,7 @@ def normalize_annotation(
     # Rule 1: a transcript with no gene gets one synthesised around it. Where a
     # GTF `gene_id` groups several transcripts, they share the synthesised gene.
     synthetic_by_key: Dict[str, Gene] = {}
-    for node in orphan_transcripts:
+    for node in each(orphan_transcripts):
         # A GTF `gene_id` groups isoforms into one locus. Without one, each
         # transcript becomes its own gene, keyed so two transcripts sharing a
         # name on different regions do not merge.
@@ -994,7 +995,7 @@ def normalize_annotation(
     # Rule 2: a gene with no transcript children gets one spanning it, so the
     # locus stays visible in the browser. Any exon/CDS rows parented directly on
     # the gene (RefSeq prokaryote style) become that transcript's children.
-    for node in gene_nodes:
+    for node in each(gene_nodes):
         gene = gene_by_uid.get(node.uid)
         if gene is None or gene.transcripts:
             continue
@@ -1019,7 +1020,7 @@ def normalize_annotation(
         gene.transcripts.append(transcript)
 
     # Finalise biotypes, spans and canonical flags.
-    for gene in genes:
+    for gene in each(genes):
         for transcript in gene.transcripts:
             resolved, rule = biotype_rules.resolve_transcript_biotype(
                 explicit=transcript.source_biotype,
@@ -1066,7 +1067,7 @@ def normalize_annotation(
     result.genes = genes
     result.seqids = sorted({gene.seqid for gene in genes})
 
-    for gene in genes:
+    for gene in each(genes):
         for tag in gene.inferred:
             result.inference_counts[tag] = result.inference_counts.get(tag, 0) + 1
         for transcript in gene.transcripts:

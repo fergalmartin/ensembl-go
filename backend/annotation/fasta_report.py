@@ -14,6 +14,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Dict, IO, List, Optional, Tuple
 
+from .cooperative import CooperativeYielder
 from .dialect import detect_compression
 from .issues import ERROR, WARNING, Issue, IssueCollector
 
@@ -202,9 +203,11 @@ def scan_fasta(
     bytes_read = 0
     progress_every = 64 * 1024 * 1024
     next_progress = progress_every
+    yielder = CooperativeYielder()
 
     with _open_binary(path, compression) as handle:
         for raw in handle:
+            yielder.tick()
             bytes_read += len(raw)
             if progress_callback and bytes_read >= next_progress:
                 progress_callback(bytes_read, report.file_size_bytes)
@@ -418,8 +421,10 @@ def read_sequence_lengths(
     length = 0
     bytes_read = 0
     next_progress = 16 * 1024 * 1024
+    yielder = CooperativeYielder()
     with _open_binary(path, compression) as handle:
         for raw in handle:
+            yielder.tick()
             bytes_read += len(raw)
             if raw.startswith(b">"):
                 if name:

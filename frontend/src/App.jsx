@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
+import { FONT_MONO } from './utils/typography'
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -50,6 +51,7 @@ import GenomeBrowserView from './components/GenomeBrowserView'
 import HomeView from './components/HomeView'
 import HelpView from './components/HelpView'
 import TrackManagerView from './components/TrackManagerView'
+import NotesView from './components/NotesView'
 import MultiAlignmentSidebar from './components/MultiAlignmentSidebar'
 import MultiAlignmentPanel from './components/MultiAlignmentPanel'
 import SaveAlignmentModal from './components/SaveAlignmentModal'
@@ -790,7 +792,7 @@ function FpsCounter() {
       position: 'fixed', top: 6, left: 6, zIndex: 9999,
       padding: '2px 7px', borderRadius: 4,
       background: 'rgba(0,0,0,0.72)', color,
-      fontFamily: 'monospace', fontSize: 11, fontWeight: 700,
+      fontFamily: FONT_MONO, fontSize: 11, fontWeight: 700,
       lineHeight: 1.5, pointerEvents: 'none', userSelect: 'none',
     }}>
       {fps} fps
@@ -3181,6 +3183,7 @@ function App() {
     structural_variation: 'Structural Variation',
     homology: 'Homology',
     stats: 'Statistics',
+    notes: 'Notes',
     download: 'Download',
     configuration: 'Configuration',
     help: 'Help',
@@ -3197,6 +3200,7 @@ function App() {
     structural_variation: 'Inspect structural variation and chain-based syntenic mappings between two genomes',
     homology: 'Query homology TSV files for cross-species gene matches',
     stats: 'Compare annotation, structural, homology, and assembly summary statistics across selected genomes',
+    notes: 'Browse and manage every note you have written, across all your genomes',
     download: 'Download genomes, annotations and homologies locally',
     configuration: 'Set up genome paths and index files',
     help: 'Read guidance and workflow notes for each view',
@@ -4865,6 +4869,11 @@ function App() {
   // never from any other non-primary genome. Symbol/ID mode looks for the same gene
   // symbol/ID in each missing genome; Homology mode looks up the best Compara hit.
   useEffect(() => {
+    // Focus is shared between views, but cross-genome completion belongs to the
+    // Neighbourhood view. Without this guard, selecting a gene in Genome Browser
+    // searched every other active genome even though the user had not linked them.
+    if (currentView !== 'neighbourhood') return
+
     const enabledGenomes = neighbourhoodGenomes.filter((species) => {
       const key = speciesItemKey(species)
       return key && !neighbourhoodDisabledByGenome?.[key]
@@ -4953,7 +4962,7 @@ function App() {
 
     run()
     return () => { cancelled = true }
-  }, [neighbourhoodGenomes, neighbourhoodDisabledByGenome, focusGeneByGenome, neighbourhoodUseHomology, handleGenomeFocusGeneSelect, handleNeighbourhoodResolveGenome])
+  }, [currentView, neighbourhoodGenomes, neighbourhoodDisabledByGenome, focusGeneByGenome, neighbourhoodUseHomology, handleGenomeFocusGeneSelect, handleNeighbourhoodResolveGenome])
 
   // Independent cleanup: drop any genome from the "no hit" list as soon as it has a
   // focus gene from any source (auto-resolved or chosen directly by the user), or once
@@ -5126,6 +5135,12 @@ function App() {
     }
     return semi
   }, [config?.active_species, selectedSpeciesKeysForView])
+  // The active genomes as an ordered list: the overview colours its pills by
+  // position in it, the same way the browser colours its panels.
+  const statsActiveGenomeKeys = useMemo(
+    () => [...selectedSpeciesKeysForView],
+    [selectedSpeciesKeysForView],
+  )
   const topBarSpecies = useMemo(() => {
     const active = Array.isArray(config?.active_species) ? config.active_species : []
     const fullyActiveKeys = new Set(contextFullyActiveSpecies.map((species) => speciesItemKey(species)))
@@ -5875,7 +5890,7 @@ function App() {
       {/* Main content container with flex-grow to fill remaining height */}
       <div
         ref={setMainContentNode}
-        className={`relative flex-grow w-full p-6 ${(currentView === 'genome_browser' || currentView === 'alignment' || currentView === 'structural_variation') ? `overflow-y-auto overflow-x-hidden themed-scrollbar ${isLight ? 'themed-scrollbar-light' : 'themed-scrollbar-dark'}` : 'overflow-hidden'}`}
+        className={`relative flex-grow w-full ${currentView === 'notes' ? 'py-6 pl-6 pr-0' : 'p-6'} ${(currentView === 'genome_browser' || currentView === 'alignment' || currentView === 'structural_variation') ? `overflow-y-auto overflow-x-hidden themed-scrollbar ${isLight ? 'themed-scrollbar-light' : 'themed-scrollbar-dark'}` : 'overflow-hidden'}`}
       >
         {shouldRenderFallbackContentWrapper ? (
           <div ref={setActiveViewContentNode} className="h-full">
@@ -6075,6 +6090,9 @@ function App() {
               <StatsView
                 theme={theme}
                 config={config}
+                onConfigChange={handleConfigurationChange}
+                listedGenomes={topBarSpecies}
+                activeGenomeKeys={statsActiveGenomeKeys}
               />
             </div>
           ) : currentView === 'structural_variation' ? (
@@ -6145,6 +6163,20 @@ function App() {
                 theme={theme}
               />
             </div>
+          ) : currentView === 'notes' ? (
+            /* ========== NOTES VIEW ========== */
+            <div className="h-full">
+              <NotesView
+                theme={theme}
+                config={config}
+                topBarSpecies={topBarSpecies}
+                activeSpecies={dedupeSpeciesList(config?.active_species || [])}
+                onGenomeFocusGeneSelect={handleGenomeFocusGeneSelect}
+                onNavigateToBrowser={() => setCurrentView('genome_browser')}
+                onAddGenome={handleSpeciesPillToggle}
+                onRedownloadGenome={() => setCurrentView('download')}
+              />
+            </div>
           ) : currentView === 'track_manager' ? (
             /* ========== TRACK MANAGER VIEW ========== */
             <div className="h-full">
@@ -6178,7 +6210,6 @@ function App() {
                 allowBackgroundPrep={currentView !== 'download'}
                 alignmentOverlay={null}
                 onClearAlignmentOverlay={() => { }}
-                onToggleSpecies={handleSpeciesPillToggle}
                 onRefGeneSelect={handleRefGeneSelect}
                 onTgtGeneSelect={handleTgtGeneSelect}
                 onRefViewportChange={setBrowserRefViewport}

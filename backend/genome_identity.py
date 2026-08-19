@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Iterable, Iterator, List, Optional, Tuple
 
@@ -213,3 +214,17 @@ def is_metadata_filename(filename: Any) -> bool:
 def genome_manifest_filename(assembly: Any) -> str:
     accession = str(assembly or "").strip() or "genome"
     return f"{accession}.genome_manifest.json"
+
+
+#: Annotation extensions stripped when naming a file derived from an annotation,
+#: so a GTF does not produce `<name>.gtf.gz.gff3.index.db` and a RefSeq `.gff`
+#: does not produce `<name>.gff.stats.v1.json`.
+_ANNOTATION_SUFFIX_RE = re.compile(
+    r"\.(?:ensembl\.)?(gff3|gff|gtf|gff2)(\.(?:gz|bgz))?$", re.IGNORECASE
+)
+
+
+def annotation_name_stem(filename: Any, fallback: str = "genome") -> str:
+    """`braker.gtf.gz` -> `braker`; the stem derived files are named from."""
+    name = Path(str(filename or "")).name
+    return _ANNOTATION_SUFFIX_RE.sub("", name) or fallback

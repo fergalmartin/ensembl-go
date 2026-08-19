@@ -64,6 +64,7 @@ from assembly_report import (
 from genome_identity import (
     DEFAULT_PROVIDER,
     NCBI_PROVIDER,
+    annotation_name_stem,
     genome_key as build_provider_aware_genome_key,
     genome_key_candidates,
     genome_manifest_filename,
@@ -104,6 +105,7 @@ from stats_utils import (
 )
 from trackhub_registry import list_tracks_for_genomes
 from annotation import (
+    CooperativeYielder,
     IdentifierError,
     build_annotation_report,
     convert_annotation,
@@ -1633,8 +1635,15 @@ def create_gff_index(gff_path: str, db_path: str):
             for item in source
         ]
 
+    # An index build runs for minutes on a large annotation, on a worker thread
+    # inside the API process. Without this it starves the event loop for its
+    # whole duration and the rest of the app looks hung — the very thing moving
+    # the build off the request path was meant to avoid.
+    yielder = CooperativeYielder()
+
     with open_maybe_gz(gff_path, 'r') as f:
         for line in f:
+            yielder.tick()
             if line.startswith('#'): continue
             parts = line.strip().split('\t')
             if len(parts) < 9: continue
@@ -1791,6 +1800,7 @@ def create_gff_index(gff_path: str, db_path: str):
     tx_batch = []
     
     for t_id, data in transcripts_data.items():
+        yielder.tick()
         parts = data['parts']
         parent_gene = gene_coords_map.get(data['parent'])
         parent_gene_biotype = parent_gene[4] if parent_gene else ""
@@ -1894,6 +1904,7 @@ def create_gff_index(gff_path: str, db_path: str):
     genes_with_transcripts = {data['parent'] for data in transcripts_data.values()}
     synthetic_batch = []
     for g_id, (chrom, g_start, g_end, strand, biotype) in gene_coords_map.items():
+        yielder.tick()
         if g_id in genes_with_transcripts:
             continue
         bucket = gene_child_features.get(g_id, new_child_bucket())
@@ -4744,18 +4755,9 @@ def _resolve_index_path(gff_path: str, output_dir: str, fallback_name: str) -> P
     return managed / fallback_name
 
 
-#: Annotation extensions stripped when naming a derived index file, so a GTF
-#: does not produce `<name>.gtf.gz.gff3.index.db`.
-_ANNOTATION_SUFFIX_RE = re.compile(
-    r"\.(?:ensembl\.)?(gff3|gff|gtf|gff2)(\.(?:gz|bgz))?$", re.IGNORECASE
-)
-
-
 def _index_basename_for_annotation(gff_path: str) -> str:
     """`braker.gtf.gz` -> `braker.gff3.index.db`."""
-    name = Path(gff_path).name
-    prefix = _ANNOTATION_SUFFIX_RE.sub("", name) or "genome"
-    return f"{prefix}.gff3.index.db"
+    return f"{annotation_name_stem(Path(gff_path).name)}.gff3.index.db"
 
 
 class SingleIndexRequest(BaseModel):
@@ -4802,17 +4804,26 @@ def queue_index_build(gff_path: str, db_path: str) -> Tuple[str, str]:
     the build: it is called from request handlers that must answer immediately,
     including the browse endpoints, which report "not ready yet" rather than
     holding a connection open for the minutes a large annotation takes.
+
+    A build already running for the same annotation is reused even when it is
+    writing to a differently named index file. The selector and the browse path
+    do not always name the target identically, and parsing a multi-gigabyte GFF3
+    twice at once to produce two equivalent indexes helps nobody.
     """
     normalized_target = _normalize_fs_path(db_path)
+    normalized_gff = _normalize_fs_path(gff_path)
     with _index_tasks_guard:
         for tid, task in _index_tasks.items():
-            if task.get("db_path") == normalized_target and task.get("status") in {"queued", "running"}:
+            if task.get("status") not in {"queued", "running"}:
+                continue
+            if task.get("db_path") == normalized_target or task.get("gff_path") == normalized_gff:
                 return tid, str(task.get("status") or "queued")
 
         task_id = str(uuid.uuid4())
         _index_tasks[task_id] = {
             "status": "queued",
             "db_path": normalized_target,
+            "gff_path": normalized_gff,
             "index_path": None,
             "error": None,
             "queued_at": now_iso(),
@@ -4921,10 +4932,25 @@ def _trim_validation_tasks() -> None:
 
 def _run_validation_task(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     kind = str(payload.get("kind") or "")
+    # The file-reading phases hand the interpreter back from inside their own
+    # loops. The phases that work on what was read — building gene models,
+    # summarising — have no such loop to hook, so they yield here, on the
+    # progress reports they already make. See annotation/cooperative.py.
+    yielder = CooperativeYielder()
+
     if kind == "genome":
         def _progress(read_bytes: int, total_bytes: int) -> None:
+            yielder.tick()
             percent = (read_bytes / float(total_bytes) * 100.0) if total_bytes else 0.0
-            _update_validation_task(task_id, progress=round(min(percent, 99.9), 1))
+            # Name the stage as well as the percentage: without it the panel
+            # keeps showing "Starting" for the several minutes a whole genome
+            # takes to read, which reads as a stall rather than as progress.
+            _update_validation_task(
+                task_id,
+                stage="scanning_genome",
+                message="Reading genome sequences",
+                progress=round(min(percent, 99.9), 1),
+            )
 
         report = scan_fasta(str(payload["fasta_path"]), progress_callback=_progress)
         return report.as_dict()
@@ -4936,6 +4962,7 @@ def _run_validation_task(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any
             message: str,
             counters: Dict[str, int],
         ) -> None:
+            yielder.tick()
             _update_validation_task(
                 task_id,
                 stage=stage,
@@ -4959,6 +4986,7 @@ def _run_validation_task(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any
             message: str,
             counters: Dict[str, int],
         ) -> None:
+            yielder.tick()
             _update_validation_task(
                 task_id,
                 stage=stage,
@@ -4984,6 +5012,7 @@ def _run_validation_task(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any
         message: str,
         counters: Dict[str, int],
     ) -> None:
+        yielder.tick()
         _update_validation_task(
             task_id,
             stage=stage,
@@ -5375,6 +5404,7 @@ DEFAULT_CONFIG = {
         "structural_variation",
         "homology",
         "stats",
+        "notes",
         "download",
         "configuration",
         "help",
@@ -6936,6 +6966,36 @@ def _merge_download_manifest(
     _write_genome_manifest(assembly_dir, manifest)
 
 
+async def _download_then_warm_assembly_metadata(url: str, dest: Path, task_id: str, accessions: List[str]) -> None:
+    """Run a download, then fetch the registry metadata for what was downloaded.
+
+    Assembly metadata is a small, static record, but fetching it takes a network
+    round trip. Doing it here means it is already in the cache by the time the
+    user opens a genome's overview, rather than being the one thing they wait on.
+    Entirely best-effort: nothing here can fail a download.
+    """
+    await download_manager.download_file(url, dest, task_id)
+    task = download_manager.tasks.get(task_id)
+    if not task or str(getattr(task, "status", "")) != "completed":
+        return
+    try:
+        await run_in_threadpool(_warm_assembly_metadata, accessions)
+    except Exception:
+        pass
+
+
+def _warm_assembly_metadata(accessions: List[str]) -> None:
+    for accession in accessions:
+        token = str(accession or "").strip()
+        if not token:
+            continue
+        try:
+            if fetch_ena_metadata(token, _ENA_METADATA_CACHE_PATH).get("status") == "ready":
+                return
+        except Exception:
+            continue
+
+
 @app.post("/api/remote/download")
 async def start_download(request: DownloadRequest):
     """Start a background download task."""
@@ -7013,7 +7073,12 @@ async def start_download(request: DownloadRequest):
         destination=str(dest),
     )
     download_manager.tasks[task_id] = task
-    asyncio.create_task(download_manager.download_file(request.url, dest, task_id))
+    warm_accessions = [request.assembly] + [
+        str(v).strip() for v in (request.equivalent_accessions or []) if str(v).strip()
+    ]
+    asyncio.create_task(
+        _download_then_warm_assembly_metadata(request.url, dest, task_id, warm_accessions)
+    )
 
     # Auto-fetch metadata when core genome files are requested.
     if request.file_type in {"fasta", "gff3"}:
@@ -7074,7 +7139,11 @@ async def start_download(request: DownloadRequest):
                         destination=str(metadata_dest),
                     )
                     download_manager.tasks[metadata_task_id] = metadata_task
-                    asyncio.create_task(download_manager.download_file(metadata_file.url, metadata_dest, metadata_task_id))
+                    asyncio.create_task(
+                        _download_then_warm_assembly_metadata(
+                            metadata_file.url, metadata_dest, metadata_task_id, warm_accessions
+                        )
+                    )
         except Exception:
             # Metadata is best-effort and must never block requested downloads.
             pass
@@ -8344,6 +8413,9 @@ class StatsGenomeInput(BaseModel):
     dataset_release_date: str = ""
     dataset_release_label: str = ""
     dataset_release_short_label: str = ""
+    # Carried so assembly metadata can be looked up under the GCA a RefSeq
+    # genome is equivalent to; ENA has no record of a GCF accession.
+    equivalent_accessions: List[str] = []
     files: Dict[str, str] = {}
 
 
@@ -8531,6 +8603,102 @@ def _stats_section_status_from_parts(has_data: bool, has_error: bool, has_missin
     return "missing"
 
 
+def _manifest_equivalent_accessions(species: Dict[str, Any]) -> List[str]:
+    """Accessions this assembly is also published under, from its download manifest."""
+    assembly = str(species.get("assembly") or species.get("gca") or "").strip()
+    fasta = str((species.get("files") or {}).get("fasta") or "").strip()
+    if not assembly or not fasta:
+        return []
+    try:
+        fasta_path = Path(fasta).expanduser().resolve()
+    except OSError:
+        return []
+    # `<assembly dir>/assembly/<file>` for a managed download, or the assembly
+    # directory itself for the flatter layouts older versions produced.
+    for candidate_dir in (fasta_path.parent.parent, fasta_path.parent):
+        manifest = _load_genome_manifest(candidate_dir, assembly)
+        values = [str(v).strip() for v in (manifest.get("equivalent_accessions") or []) if str(v).strip()]
+        if values:
+            return values
+    return []
+
+
+def _fetch_assembly_metadata_for_species(species: Dict[str, Any]) -> Dict[str, Any]:
+    """Assembly metadata for a genome, under whichever accession the registry knows.
+
+    ENA indexes assemblies by GCA. A RefSeq genome is a GCF, which ENA has never
+    heard of, so asking under its own accession always came back empty — the
+    equivalent GCA recorded at download time is the accession that resolves.
+    """
+    equivalents = list(species.get("equivalent_accessions") or [])
+    if not equivalents:
+        # The saved genome record does not always carry them, but the manifest
+        # written at download time always does.
+        equivalents = _manifest_equivalent_accessions(species)
+
+    candidates: List[str] = []
+    for value in [species.get("gca"), species.get("assembly")] + equivalents:
+        token = str(value or "").strip()
+        if token and token not in candidates:
+            candidates.append(token)
+
+    last: Dict[str, Any] = {
+        "status": "missing",
+        "message": "No assembly accession provided.",
+        "data": None,
+        "source": "none",
+    }
+    for accession in candidates:
+        result = fetch_ena_metadata(accession, _ENA_METADATA_CACHE_PATH)
+        if result.get("status") == "ready":
+            if accession != str(species.get("gca") or "").strip():
+                result = {**result, "accession": accession, "message": (
+                    result.get("message") or ""
+                ) or f"Metadata for the equivalent assembly {accession}."}
+            return result
+        last = result
+    return last
+
+
+def _stats_species_with_index(species: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill in an annotation index the caller's record does not know about.
+
+    Stats read ``files.index`` straight from the record the client sent, and that
+    record is the snapshot taken when the genome was registered — so it is empty
+    for every genome whose index was built afterwards, which is every RefSeq
+    download. Left alone, annotation stats report "missing" and a structural
+    generation run gives up the instant it starts, both for a genome whose index
+    is sitting right beside its GFF3.
+    """
+    files = dict(species.get("files") or {})
+    gff = str(files.get("gff3") or "").strip()
+    if not gff:
+        return species
+    saved = str(files.get("index") or "").strip()
+    if saved and os.path.exists(saved):
+        return species
+    resolved = _resolve_annotation_index(
+        gff,
+        cfg,
+        str(species.get("assembly") or species.get("gca") or "").strip(),
+    )
+    # Only an index that already exists is any use here. Browsing can name a
+    # path that has yet to be built because the browser polls until it lands;
+    # stats have nothing to poll on, and would report a genome as ready and then
+    # fail to read it.
+    if not resolved or not os.path.exists(resolved):
+        return species
+    files["index"] = resolved
+    return {**species, "files": files}
+
+
+def _clean_stats_genomes(raw_genomes: Iterable[Any], cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [
+        _stats_species_with_index(clean_species_record(g.model_dump()), cfg)
+        for g in (raw_genomes or [])
+    ]
+
+
 def _compute_stats_summary_sync(
     genomes: List[Dict[str, Any]],
     sections: List[str],
@@ -8642,7 +8810,10 @@ def _compute_stats_summary_sync(
                 fasta_fresh = bool(fasta_cached) and fingerprints_equal(previous_fingerprints, fingerprints, _STATS_ASSEMBLY_DEPS)
                 if not fasta_fresh:
                     try:
-                        cached_assembly["fasta"] = compute_fasta_assembly_stats(str(fasta_fp.get("path")))
+                        cached_assembly["fasta"] = compute_fasta_assembly_stats(
+                            str(fasta_fp.get("path")),
+                            str((fingerprints.get("metadata") or {}).get("path") or ""),
+                        )
                         cache_dirty = True
                     except Exception as exc:
                         has_error = True
@@ -8653,7 +8824,7 @@ def _compute_stats_summary_sync(
                 has_missing = True
 
             try:
-                ena_info = fetch_ena_metadata(species.get("gca"), _ENA_METADATA_CACHE_PATH)
+                ena_info = _fetch_assembly_metadata_for_species(species)
                 cached_assembly["ena"] = ena_info
                 cache_dirty = True
                 if ena_info.get("status") == "ready":
@@ -8868,7 +9039,8 @@ async def stats_summary(request: StatsSummaryRequest):
     if structural_profile != STRUCTURAL_PROFILE:
         raise HTTPException(status_code=400, detail=f"Unsupported structural profile: {structural_profile}")
 
-    genomes = [clean_species_record(g.model_dump()) for g in (request.genomes or [])]
+    config = load_config()
+    genomes = _clean_stats_genomes(request.genomes, config)
     if not genomes:
         return {
             "sections": sections,
@@ -8877,7 +9049,6 @@ async def stats_summary(request: StatsSummaryRequest):
             "aggregates": {"annotation": {}, "structural": {}, "homology": {}},
         }
 
-    config = load_config()
     output_dir = str(config.get("output_dir") or "")
     return await run_in_threadpool(_compute_stats_summary_sync, genomes, sections, structural_profile, output_dir)
 
@@ -8888,7 +9059,8 @@ async def stats_generate_structural(request: StructuralStatsGenerateRequest):
     if structural_profile != STRUCTURAL_PROFILE:
         raise HTTPException(status_code=400, detail=f"Unsupported structural profile: {structural_profile}")
 
-    genomes = [clean_species_record(g.model_dump()) for g in (request.genomes or [])]
+    config = load_config()
+    genomes = _clean_stats_genomes(request.genomes, config)
     if not genomes:
         raise HTTPException(status_code=400, detail="No genomes provided.")
 
@@ -8929,7 +9101,6 @@ async def stats_generate_structural(request: StructuralStatsGenerateRequest):
             "genomes_by_key": genomes_by_key,
         }
 
-    config = load_config()
     output_dir = str(config.get("output_dir") or "")
     asyncio.create_task(
         _run_structural_stats_task(
@@ -9065,6 +9236,15 @@ def _find_species_for_gff(cfg: Dict[str, Any], gff_path: str) -> Optional[Dict[s
     return None
 
 
+def _browse_index_for(gff_path: str, db_path: str, cfg: Dict[str, Any], species: Optional[Dict[str, Any]]) -> str:
+    """The index to browse ``gff_path`` with: the saved one, or one from disk."""
+    saved = str(db_path or "").strip()
+    if saved and os.path.exists(saved):
+        return saved
+    assembly = str((species or {}).get("assembly") or (species or {}).get("gca") or "").strip()
+    return _resolve_annotation_index(gff_path, cfg, assembly) or saved
+
+
 def _resolve_browse_genome_context(genome: str) -> Dict[str, Any]:
     cfg = load_config()
     token = str(genome or "reference").strip() or "reference"
@@ -9074,22 +9254,24 @@ def _resolve_browse_genome_context(genome: str) -> Dict[str, Any]:
     if legacy in {"reference", "target"}:
         if legacy == "reference":
             gff_path = str(cfg.get("ref_gff") or "").strip()
+            species = _find_species_for_gff(cfg, gff_path)
             return {
                 "request": token,
                 "cache_key": "reference",
-                "db_path": str(cfg.get("ref_index") or "").strip(),
+                "db_path": _browse_index_for(gff_path, str(cfg.get("ref_index") or "").strip(), cfg, species),
                 "gff_path": gff_path,
                 "fasta_path": str(cfg.get("ref_fasta") or "").strip(),
-                "species": _find_species_for_gff(cfg, gff_path),
+                "species": species,
             }
         gff_path = str(cfg.get("target_gff") or "").strip()
+        species = _find_species_for_gff(cfg, gff_path)
         return {
             "request": token,
             "cache_key": "target",
-            "db_path": str(cfg.get("target_index") or "").strip(),
+            "db_path": _browse_index_for(gff_path, str(cfg.get("target_index") or "").strip(), cfg, species),
             "gff_path": gff_path,
             "fasta_path": str(cfg.get("target_fasta") or "").strip(),
-            "species": _find_species_for_gff(cfg, gff_path),
+            "species": species,
         }
 
     species = next((s for s in active_species if _active_species_item_key(s) == token), None)
@@ -9143,7 +9325,7 @@ def _resolve_browse_genome_context(genome: str) -> Dict[str, Any]:
     return {
         "request": token,
         "cache_key": token,
-        "db_path": db_path,
+        "db_path": _browse_index_for(gff_path, db_path, cfg, species),
         "gff_path": gff_path,
         "fasta_path": fasta_path,
         "species": species,
@@ -9788,6 +9970,92 @@ def _resolve_gene_description_for_db(db_path: str, gene_id: str, current_descrip
 INDEX_BUILDING_STATUS = 425
 
 
+#: Index paths recovered from disk for annotations whose saved entry has none,
+#: keyed by annotation path. Only successful lookups are remembered: a genome
+#: that has no index yet must keep looking, or it would never notice the build
+#: landing next to its GFF.
+_RECOVERED_INDEX_PATHS: Dict[str, str] = {}
+_RECOVERED_INDEX_GUARD = threading.Lock()
+
+
+def _index_build_error_for(gff_path: str, db_path: str) -> str:
+    """The error from the last finished build of this annotation, if it failed.
+
+    Browsing queues a build for an annotation that has no index, and the browser
+    polls until it lands. An annotation the indexer cannot read would turn that
+    into an endless rebuild loop, so a failure has to be reported rather than
+    retried on every poll.
+    """
+    normalized_gff = _normalize_fs_path(gff_path)
+    normalized_db = _normalize_fs_path(db_path)
+    latest: Optional[Dict[str, Any]] = None
+    with _index_tasks_guard:
+        for task in _index_tasks.values():
+            if task.get("status") not in {"success", "failed"}:
+                continue
+            if task.get("gff_path") != normalized_gff and task.get("db_path") != normalized_db:
+                continue
+            completed = str(task.get("completed_at") or "")
+            if latest is None or completed >= str(latest.get("completed_at") or ""):
+                latest = task
+    if latest is None or latest.get("status") != "failed":
+        return ""
+    return str(latest.get("error") or "The annotation index could not be built.")
+
+
+def _resolve_annotation_index(gff_path: str, cfg: Dict[str, Any], assembly: str = "") -> str:
+    """Find, or name, the index for an annotation whose saved entry has none.
+
+    A genome's ``files`` block is a snapshot taken when it was registered, so a
+    genome activated before its index existed carries an empty ``index`` for
+    ever: the build finishes, the file lands beside the GFF, and browsing still
+    reports a genome with no genes. RefSeq downloads hit this every time, since
+    the annotation arrives with no index and the browser is usually the next
+    place the user goes.
+
+    Reading the directory keeps browsing honest about what is actually on disk.
+    When nothing is there yet, naming the path the build would write lets
+    :func:`_get_browse_db` queue it and answer "still building" — which the
+    browser already polls on — instead of "no annotation".
+    """
+    # Guard on the raw value: _normalize_fs_path("") resolves to the working
+    # directory, which exists, and would send everything below off hunting for
+    # an index for a genome that has no annotation at all.
+    if not str(gff_path or "").strip():
+        return ""
+    normalized_gff = _normalize_fs_path(gff_path)
+    if not os.path.exists(normalized_gff):
+        return ""
+
+    with _RECOVERED_INDEX_GUARD:
+        remembered = _RECOVERED_INDEX_PATHS.get(normalized_gff, "")
+    if remembered and os.path.exists(remembered):
+        return remembered
+
+    found = _resolve_local_gff_index(normalized_gff, assembly)
+    if found:
+        with _RECOVERED_INDEX_GUARD:
+            _RECOVERED_INDEX_PATHS[normalized_gff] = found
+        return found
+
+    # Nothing built yet. Point at whatever build is already in flight for this
+    # annotation, so a build started from the selector and one queued by the
+    # browser converge on the same file.
+    with _index_tasks_guard:
+        for task in _index_tasks.values():
+            if task.get("status") in {"queued", "running"} and task.get("gff_path") == normalized_gff:
+                return str(task.get("db_path") or "")
+
+    try:
+        return str(_resolve_index_path(
+            normalized_gff,
+            str(cfg.get("output_dir") or ""),
+            _index_basename_for_annotation(normalized_gff),
+        ))
+    except Exception:
+        return ""
+
+
 def _get_browse_db(genome: str) -> str:
     """Resolve the SQLite index path for a given genome from config.
 
@@ -9809,6 +10077,12 @@ def _get_browse_db(genome: str) -> str:
     if gff and os.path.exists(gff):
         if _is_existing_index_usable(db, gff):
             return _normalize_fs_path(db)
+        build_error = _index_build_error_for(gff, db)
+        if build_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"The annotation index for the {genome} genome could not be built: {build_error}",
+            )
         try:
             queue_index_build(gff, db)
         except Exception as exc:
@@ -16916,6 +17190,631 @@ def _ensure_track_registry_sidecar(config: Optional[Dict[str, Any]] = None) -> N
 
 
 _track_registry_lock = threading.Lock()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  User Notes — free-text annotations the user attaches to a feature
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Sibling of the track registry above, and deliberately built from the same
+# parts: the same sidecar-first path resolution, the same tolerant load, the
+# same mkstemp/os.replace write. Two divergences, both because a note is prose
+# the user typed rather than a file path they can re-add — see _load_user_notes
+# and _quarantine_unparseable_notes_store.
+#
+# The store is keyed by (kind, genome_key, id) rather than by gene, so notes on
+# transcripts or regions need no migration when they arrive.
+
+OUTPUT_DIR_USER_NOTES_FILENAME = "user_notes.json"
+DEFAULT_USER_NOTES_FILE = CACHE_DIR / OUTPUT_DIR_USER_NOTES_FILENAME
+USER_NOTES_FILE = DEFAULT_USER_NOTES_FILE
+USER_NOTES_STORE_VERSION = 2
+MAX_NOTE_TITLE_CHARS = 200
+MAX_NOTE_BODY_CHARS = 200_000
+MAX_NOTE_TAGS = 20
+MAX_NOTE_TAG_CHARS = 50
+TODO_STATUSES = {"backlog", "next", "in_progress", "waiting", "blocked", "completed", "abandoned"}
+TODO_PRIORITIES = {"low", "medium", "high"}
+
+_user_notes_lock = threading.Lock()
+
+
+def _utc_now_iso() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _new_note_id() -> str:
+    return f"note_{uuid.uuid4().hex[:12]}"
+
+
+def _normalize_note_genome_key(value: Any) -> str:
+    """The lookup key is the assembly, not the dataset release.
+
+    Gene stable ids survive an annotation release (ENSG… is the same gene in
+    Ensembl 115 and 116), so keying notes by the full selection key would make
+    every note vanish the moment the user updated their genome — the worst
+    possible failure for text they wrote themselves.
+    """
+    return strip_dataset_release_from_selection_key(value)
+
+
+def _normalize_note_target(raw: Any) -> Dict[str, str]:
+    data = raw if isinstance(raw, dict) else {}
+    kind = str(data.get("kind") or "gene").strip() or "gene"
+    genome_key = _normalize_note_genome_key(data.get("genome_key"))
+    target_id = str(data.get("id") or "").strip()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="target.id is required")
+    if not genome_key:
+        raise HTTPException(status_code=400, detail="target.genome_key is required")
+    return {
+        "kind": kind,
+        "genome_key": genome_key,
+        "id": target_id,
+        "label": str(data.get("label") or "").strip(),
+        # Provenance only. Which release the note was written against can be
+        # worth knowing later; it is never used to find the note again.
+        "genome_selection_key": str(data.get("genome_selection_key") or "").strip(),
+    }
+
+
+def _normalize_todo_status(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    return token if token in TODO_STATUSES else "backlog"
+
+
+def _normalize_todo_priority(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    if token == "normal":
+        return "medium"
+    if token == "urgent":
+        return "high"
+    return token if token in TODO_PRIORITIES else "medium"
+
+
+def _normalize_todo_order(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _normalize_note_tags(value: Any, *, strict: bool = False) -> List[str]:
+    """Trim and case-insensitively deduplicate a note's short tag phrases."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        if strict:
+            raise HTTPException(status_code=400, detail="tags must be a list")
+        return []
+
+    tags: List[str] = []
+    seen: Set[str] = set()
+    for raw in value:
+        source = raw if isinstance(raw, str) else str(raw or "")
+        invalid = "," in source or any(ord(char) < 32 or ord(char) == 127 for char in source)
+        token = " ".join(source.split()).strip()
+        if invalid or not token:
+            if strict:
+                raise HTTPException(status_code=400, detail="tags cannot be empty or contain commas or control characters")
+            continue
+        if len(token) > MAX_NOTE_TAG_CHARS:
+            if strict:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"tags cannot exceed {MAX_NOTE_TAG_CHARS} characters",
+                )
+            token = token[:MAX_NOTE_TAG_CHARS].rstrip()
+        key = token.lower()
+        if key in seen:
+            continue
+        if len(tags) >= MAX_NOTE_TAGS:
+            if strict:
+                raise HTTPException(status_code=400, detail=f"a note can have at most {MAX_NOTE_TAGS} tags")
+            break
+        seen.add(key)
+        tags.append(token)
+    return tags
+
+
+def _normalize_note_record(raw: Any) -> Optional[Dict[str, Any]]:
+    """Coerce one stored record. Returns None for anything unusable."""
+    if not isinstance(raw, dict):
+        return None
+    note_id = str(raw.get("id") or "").strip()
+    if not note_id:
+        return None
+    target = raw.get("target")
+    if not isinstance(target, dict):
+        return None
+    target_id = str(target.get("id") or "").strip()
+    genome_key = _normalize_note_genome_key(target.get("genome_key"))
+    if not target_id or not genome_key:
+        return None
+    created_at = str(raw.get("created_at") or "").strip() or _utc_now_iso()
+    updated_at = str(raw.get("updated_at") or "").strip() or created_at
+    status = _normalize_todo_status(raw.get("status"))
+    completed = bool(raw.get("completed", False)) or status == "completed"
+    if completed:
+        status = "completed"
+    tags = _normalize_note_tags(raw.get("tags"))
+    return {
+        "id": note_id,
+        "target": {
+            "kind": str(target.get("kind") or "gene").strip() or "gene",
+            "genome_key": genome_key,
+            "id": target_id,
+            "label": str(target.get("label") or "").strip(),
+            "genome_selection_key": str(target.get("genome_selection_key") or "").strip(),
+        },
+        "title": str(raw.get("title") or "")[:MAX_NOTE_TITLE_CHARS],
+        "body": str(raw.get("body") or "")[:MAX_NOTE_BODY_CHARS],
+        "tags": tags,
+        "tags_updated_at": (str(raw.get("tags_updated_at") or "").strip() or updated_at) if tags else "",
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "archived": bool(raw.get("archived", False)),
+        "archived_at": str(raw.get("archived_at") or "").strip() if bool(raw.get("archived", False)) else "",
+        "status": status,
+        "priority": _normalize_todo_priority(raw.get("priority")),
+        "completed": completed,
+        "completed_at": (str(raw.get("completed_at") or "").strip() or updated_at) if completed else "",
+        "todo_order": _normalize_todo_order(raw.get("todo_order")),
+    }
+
+
+def _note_target_matches(note: Dict[str, Any], kind: str, genome_key: str, target_id: str) -> bool:
+    target = note.get("target") or {}
+    if kind and str(target.get("kind") or "") != kind:
+        return False
+    if genome_key and str(target.get("genome_key") or "") != _normalize_note_genome_key(genome_key):
+        return False
+    if target_id and str(target.get("id") or "") != target_id:
+        return False
+    return True
+
+
+def _output_dir_user_notes_store_path(output_dir: Any) -> Optional[Path]:
+    output_dir_text = str(output_dir or "").strip()
+    if not output_dir_text:
+        return None
+    try:
+        return _resolve_local_data_root(output_dir_text) / OUTPUT_DIR_USER_NOTES_FILENAME
+    except Exception:
+        return None
+
+
+def _user_notes_store_paths_for_config(config: Optional[Dict[str, Any]] = None) -> List[Path]:
+    cfg = config or {}
+    paths: List[Path] = []
+    use_output_sidecar = str(USER_NOTES_FILE) == str(DEFAULT_USER_NOTES_FILE)
+    sidecar = _output_dir_user_notes_store_path(cfg.get("output_dir")) if use_output_sidecar else None
+    if sidecar:
+        paths.append(sidecar)
+    paths.append(USER_NOTES_FILE)
+
+    out: List[Path] = []
+    seen: Set[str] = set()
+    for path in paths:
+        try:
+            resolved = str(path.expanduser().resolve())
+        except Exception:
+            resolved = str(path)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        out.append(path)
+    return out
+
+
+def _quarantine_unparseable_notes_store(path: Path) -> None:
+    """Move a store we cannot read aside before anything overwrites it.
+
+    The track registry just writes over a corrupt file — losing it costs the
+    user a few clicks to re-add their tracks. Here the same bytes are the only
+    copy of something they wrote, so they get renamed, not replaced.
+    """
+    try:
+        if not path.exists() or path.stat().st_size == 0:
+            return
+        path.rename(path.with_name(f"{path.name}.corrupt-{int(time.time())}"))
+    except Exception:
+        pass
+
+
+def _load_user_notes_from_path(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("notes"), list):
+            return data
+    except Exception:
+        _quarantine_unparseable_notes_store(path)
+        return None
+    # Parsed, but not a store — same treatment as unparseable.
+    _quarantine_unparseable_notes_store(path)
+    return None
+
+
+def _merge_user_note_lists(*note_lists: Any) -> List[Dict[str, Any]]:
+    """Union by note id, keeping whichever copy was edited last."""
+    merged: Dict[str, Dict[str, Any]] = {}
+    for notes in note_lists:
+        for raw in (notes or []):
+            note = _normalize_note_record(raw)
+            if not note:
+                continue
+            existing = merged.get(note["id"])
+            if existing is None or note["updated_at"] >= existing["updated_at"]:
+                merged[note["id"]] = note
+    return sorted(merged.values(), key=lambda n: n["updated_at"], reverse=True)
+
+
+def _load_user_notes(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Merge every store we can read rather than picking a winner.
+
+    The track registry returns the first populated store it finds. Doing that
+    here would hide every note written under a previous output_dir the moment
+    the user repointed it. Notes are cheap to merge and expensive to lose.
+    """
+    cfg = config or load_config()
+    collected: List[Any] = []
+    for path in _user_notes_store_paths_for_config(cfg):
+        store = _load_user_notes_from_path(path)
+        if store:
+            collected.append(store.get("notes"))
+    return {"version": USER_NOTES_STORE_VERSION, "notes": _merge_user_note_lists(*collected)}
+
+
+def _primary_user_notes_store_path(config: Optional[Dict[str, Any]] = None) -> Path:
+    cfg = config or {}
+    use_output_sidecar = str(USER_NOTES_FILE) == str(DEFAULT_USER_NOTES_FILE)
+    sidecar = _output_dir_user_notes_store_path(cfg.get("output_dir")) if use_output_sidecar else None
+    return sidecar or USER_NOTES_FILE
+
+
+def _save_user_notes(store: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> None:
+    cfg = config or load_config()
+    path = _primary_user_notes_store_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(store, f, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
+def _ensure_user_notes_sidecar(config: Optional[Dict[str, Any]] = None) -> None:
+    cfg = config or load_config()
+    sidecar = _output_dir_user_notes_store_path(cfg.get("output_dir"))
+    if not sidecar:
+        return
+    store = _load_user_notes(cfg)
+    if not store.get("notes") and sidecar.exists():
+        return
+    try:
+        _save_user_notes(store, cfg)
+    except Exception:
+        pass
+
+
+class NoteTargetModel(BaseModel):
+    kind: str = "gene"
+    genome_key: str = ""
+    id: str = ""
+    label: str = ""
+    genome_selection_key: str = ""
+
+
+class UserNoteModel(BaseModel):
+    id: str
+    target: NoteTargetModel
+    title: str = ""
+    body: str = ""
+    tags: List[str] = []
+    tags_updated_at: str = ""
+    created_at: str
+    updated_at: str
+    archived: bool = False
+    archived_at: str = ""
+    status: str = "backlog"
+    priority: str = "medium"
+    completed: bool = False
+    completed_at: str = ""
+    todo_order: int = 0
+
+
+class UserNoteCreateRequest(BaseModel):
+    target: NoteTargetModel
+    title: str = ""
+    body: str = ""
+    tags: List[str] = []
+    status: str = "backlog"
+    priority: str = "medium"
+    completed: bool = False
+    todo_order: int = 0
+
+
+class UserNoteUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    tags: Optional[List[str]] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    completed: Optional[bool] = None
+    todo_order: Optional[int] = None
+    # The updated_at the client last saw. Omit to force-write.
+    updated_at: Optional[str] = None
+
+
+class UserNoteArchiveRequest(BaseModel):
+    archived: bool = True
+
+
+class UserNoteBulkDeleteRequest(BaseModel):
+    note_ids: List[str] = []
+
+
+class UserNotesResponse(BaseModel):
+    notes: List[UserNoteModel]
+
+
+class UserNotesIndexEntry(BaseModel):
+    kind: str
+    genome_key: str
+    target_id: str
+    label: str = ""
+    count: int
+    updated_at: str
+
+
+class UserNotesIndexResponse(BaseModel):
+    entries: List[UserNotesIndexEntry]
+
+
+@app.get("/api/notes", response_model=UserNotesResponse)
+async def list_user_notes(kind: str = "", genome_key: str = "", target_id: str = ""):
+    """Notes, most recently edited first. Every filter is optional and narrowing."""
+    def _run():
+        config = load_config()
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+        _ensure_user_notes_sidecar(config)
+        notes = [
+            note for note in store.get("notes", [])
+            if _note_target_matches(note, kind.strip(), genome_key.strip(), target_id.strip())
+        ]
+        return {"notes": notes}
+
+    return await run_in_threadpool(_run)
+
+
+@app.get("/api/notes/index", response_model=UserNotesIndexResponse)
+async def user_notes_index(kind: str = "gene", genome_key: str = ""):
+    """One row per annotated feature: how many notes it has, and when it last changed.
+
+    This is all the genome browser canvas needs to decide where to draw a note
+    bubble. Pulling the notes themselves would ship every body the user has ever
+    written just to place a 14px mark.
+    """
+    def _run():
+        config = load_config()
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+        grouped: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        for note in store.get("notes", []):
+            # Archived notes remain browseable in the Notes view, but do not
+            # advertise themselves as active annotations in the genome canvas.
+            if bool(note.get("archived", False)):
+                continue
+            if not _note_target_matches(note, kind.strip(), genome_key.strip(), ""):
+                continue
+            target = note.get("target") or {}
+            key = (
+                str(target.get("kind") or ""),
+                str(target.get("genome_key") or ""),
+                str(target.get("id") or ""),
+            )
+            entry = grouped.get(key)
+            if entry is None:
+                grouped[key] = {
+                    "kind": key[0],
+                    "genome_key": key[1],
+                    "target_id": key[2],
+                    "label": str(target.get("label") or ""),
+                    "count": 1,
+                    "updated_at": note.get("updated_at") or "",
+                }
+                continue
+            entry["count"] += 1
+            if (note.get("updated_at") or "") > entry["updated_at"]:
+                entry["updated_at"] = note.get("updated_at") or ""
+                # The freshest note carries the most current symbol for the feature.
+                entry["label"] = str(target.get("label") or "") or entry["label"]
+        entries = sorted(grouped.values(), key=lambda e: e["updated_at"], reverse=True)
+        return {"entries": entries}
+
+    return await run_in_threadpool(_run)
+
+
+@app.post("/api/notes", response_model=UserNoteModel)
+async def create_user_note(request: UserNoteCreateRequest):
+    """Create a note. Ids are minted here so a client bug cannot choose one."""
+    target = _normalize_note_target(request.target.model_dump())
+    title = str(request.title or "")[:MAX_NOTE_TITLE_CHARS]
+    tags = _normalize_note_tags(request.tags, strict=True)
+    if target["kind"] == "todo" and not title.strip():
+        raise HTTPException(status_code=400, detail="A todo title is required")
+
+    def _run():
+        config = load_config()
+        now = _utc_now_iso()
+        status = _normalize_todo_status(request.status)
+        completed = bool(request.completed) or status == "completed"
+        if completed:
+            status = "completed"
+        note = {
+            "id": _new_note_id(),
+            "target": target,
+            "title": title,
+            "body": str(request.body or "")[:MAX_NOTE_BODY_CHARS],
+            "tags": tags,
+            "tags_updated_at": now if tags else "",
+            "created_at": now,
+            "updated_at": now,
+            "archived": False,
+            "archived_at": "",
+            "status": status,
+            "priority": _normalize_todo_priority(request.priority),
+            "completed": completed,
+            "completed_at": now if completed else "",
+            "todo_order": int(request.todo_order or 0),
+        }
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+            store["notes"] = [note] + list(store.get("notes", []))
+            _save_user_notes(store, config)
+        return note
+
+    return await run_in_threadpool(_run)
+
+
+@app.put("/api/notes/{note_id}/archive", response_model=UserNoteModel)
+async def set_user_note_archived(note_id: str, request: UserNoteArchiveRequest):
+    """Move a note into or out of the archive without changing its text."""
+    def _run():
+        config = load_config()
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+            notes = list(store.get("notes", []))
+            idx = next((i for i, n in enumerate(notes) if n.get("id") == note_id), None)
+            if idx is None:
+                raise HTTPException(status_code=404, detail=f"Note not found: {note_id}")
+            updated = dict(notes[idx])
+            now = _utc_now_iso()
+            updated["archived"] = bool(request.archived)
+            updated["archived_at"] = now if request.archived else ""
+            # Archive state participates in cross-store merge ordering and in
+            # the client's compare-and-swap token just like any other edit.
+            updated["updated_at"] = now
+            notes[idx] = updated
+            store["notes"] = notes
+            _save_user_notes(store, config)
+        return updated
+
+    return await run_in_threadpool(_run)
+
+
+@app.post("/api/notes/bulk-delete")
+async def bulk_delete_user_notes(request: UserNoteBulkDeleteRequest):
+    """Permanently delete an explicit set of note ids in one atomic write."""
+    requested = list(dict.fromkeys(str(note_id or "").strip() for note_id in request.note_ids))
+    requested = [note_id for note_id in requested if note_id]
+
+    def _run():
+        config = load_config()
+        wanted = set(requested)
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+            notes = list(store.get("notes", []))
+            deleted = [note["id"] for note in notes if note.get("id") in wanted]
+            if deleted:
+                store["notes"] = [note for note in notes if note.get("id") not in wanted]
+                _save_user_notes(store, config)
+        return {"deleted": deleted, "count": len(deleted)}
+
+    return await run_in_threadpool(_run)
+
+
+@app.put("/api/notes/{note_id}", response_model=UserNoteModel)
+async def update_user_note(note_id: str, request: UserNoteUpdateRequest):
+    """Update a note's title or body.
+
+    `updated_at` is a compare-and-swap against what the client last saw. It is
+    what stops one window's autosave from silently overwriting an edit made in
+    another — or in the file itself.
+    """
+    def _run():
+        config = load_config()
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+            notes = list(store.get("notes", []))
+            idx = next((i for i, n in enumerate(notes) if n.get("id") == note_id), None)
+            if idx is None:
+                raise HTTPException(status_code=404, detail=f"Note not found: {note_id}")
+            current = notes[idx]
+            expected = (request.updated_at or "").strip()
+            if expected and expected != current.get("updated_at"):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "This note changed somewhere else since you loaded it.",
+                        "note": current,
+                    },
+                )
+            updated = dict(current)
+            if request.title is not None:
+                next_title = str(request.title)[:MAX_NOTE_TITLE_CHARS]
+                if str((current.get("target") or {}).get("kind") or "") == "todo" and not next_title.strip():
+                    raise HTTPException(status_code=400, detail="A todo title is required")
+                updated["title"] = next_title
+            if request.body is not None:
+                updated["body"] = str(request.body)[:MAX_NOTE_BODY_CHARS]
+            if request.tags is not None:
+                tags = _normalize_note_tags(request.tags, strict=True)
+                if tags != list(current.get("tags") or []):
+                    updated["tags"] = tags
+                    updated["tags_updated_at"] = _utc_now_iso()
+            if request.status is not None:
+                status = _normalize_todo_status(request.status)
+                completed = status == "completed"
+                updated["status"] = status
+                updated["completed"] = completed
+                updated["completed_at"] = _utc_now_iso() if completed else ""
+            if request.priority is not None:
+                updated["priority"] = _normalize_todo_priority(request.priority)
+            if request.completed is not None:
+                completed = bool(request.completed)
+                updated["completed"] = completed
+                updated["completed_at"] = _utc_now_iso() if completed else ""
+                if completed:
+                    updated["status"] = "completed"
+                elif updated.get("status") == "completed":
+                    updated["status"] = "in_progress"
+            if request.todo_order is not None:
+                updated["todo_order"] = int(request.todo_order)
+            updated["updated_at"] = _utc_now_iso()
+            notes[idx] = updated
+            store["notes"] = notes
+            _save_user_notes(store, config)
+        return updated
+
+    return await run_in_threadpool(_run)
+
+
+@app.delete("/api/notes/{note_id}")
+async def delete_user_note(note_id: str):
+    def _run():
+        config = load_config()
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+            notes = list(store.get("notes", []))
+            remaining = [n for n in notes if n.get("id") != note_id]
+            if len(remaining) == len(notes):
+                raise HTTPException(status_code=404, detail=f"Note not found: {note_id}")
+            store["notes"] = remaining
+            _save_user_notes(store, config)
+        return {"deleted": note_id}
+
+    return await run_in_threadpool(_run)
 
 
 DEFAULT_SPLICE_SETTINGS: Dict[str, Any] = {

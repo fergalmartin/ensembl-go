@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  GENE_FOOTER_CONTROL_TOP_OFFSET,
+  GENE_FOOTER_LABEL_BASELINE_OFFSET,
   buildGeneLabelCandidate,
   getGeneFooterGeometry,
   getTranscriptBoundaryTrails,
@@ -56,7 +58,8 @@ test('buildGeneLabelCandidate left-aligns the name beneath the visible transcrip
 
   assert.equal(candidate.text, 'GENE1')
   assert.equal(candidate.x, 100)
-  assert.equal(candidate.y, 79)
+  // trackY 36 + padding 16 + midOffset 13 = 65, the mid-line of the only row.
+  assert.equal(candidate.y, 65 + GENE_FOOTER_LABEL_BASELINE_OFFSET)
   assert.equal(candidate.textAlign, 'left')
 })
 
@@ -76,8 +79,40 @@ test('gene footer moves beneath the last visible transcript when expanded', () =
 
   assert.equal(footer.x, 100)
   assert.equal(footer.visibleTranscriptCount, 3)
-  assert.equal(footer.labelY, 131)
-  assert.equal(footer.controlY, 135)
+  // baseGeneY 20 + 2 pitches of 42 + midOffset 13 = 117, the third row's mid-line.
+  assert.equal(footer.labelY, 117 + GENE_FOOTER_LABEL_BASELINE_OFFSET)
+  assert.equal(footer.controlY, 117 + GENE_FOOTER_CONTROL_TOP_OFFSET)
+})
+
+// The label is drawn with an alphabetic baseline, so its capitals reach
+// GENE_FOOTER_LABEL_CAP_ASCENT_PX above that baseline. The exon block on the
+// row's mid-line reaches EXON_HEIGHT / 2 below it. Those two must not meet.
+test('the gene symbol clears the bottom of the exon block above it', () => {
+  const EXON_HALF_HEIGHT = 6
+  const CAP_ASCENT = 8 // 11px Lato capitals, measured on a canvas
+
+  const footer = getGeneFooterGeometry({
+    gene: { id: 'gene-1', start: 100, end: 500, strand: '+' },
+    txs: [{ id: 'tx-1' }],
+    getEffectiveTranscriptLimit: () => 1,
+    genomicToScreen: (pos) => pos,
+    baseGeneY: 20,
+    transcriptLayoutMetrics: { rowPitch: 42, midOffset: 13 },
+    lhsWidth: 48,
+    viewWidth: 800,
+  })
+
+  const rowMidY = 20 + 13
+  const blockBottom = rowMidY + EXON_HALF_HEIGHT
+  const labelCapTop = footer.labelY - CAP_ASCENT
+  assert.ok(
+    labelCapTop >= blockBottom + 1,
+    `label caps start at ${labelCapTop}, block ends at ${blockBottom}`,
+  )
+
+  // ...and the descenders still clear the transcript-count control below.
+  const LABEL_DESCENT = 3
+  assert.ok(footer.labelY + LABEL_DESCENT <= footer.controlY)
 })
 
 // Hiding transcripts and hover ghosts change how many rows are actually drawn,
@@ -97,11 +132,11 @@ test('an explicit visible count overrides the one derived from the transcript li
 
   const withOneHidden = getGeneFooterGeometry({ ...args, visibleTranscriptCount: 2 })
   assert.equal(withOneHidden.visibleTranscriptCount, 2)
-  assert.equal(withOneHidden.controlY, 93)
+  assert.equal(withOneHidden.controlY, 75 + GENE_FOOTER_CONTROL_TOP_OFFSET)
 
   // A ghost row pushes the footer down by one pitch, past the previewed row.
   const withGhost = getGeneFooterGeometry({ ...args, visibleTranscriptCount: 4 })
-  assert.equal(withGhost.controlY, 177)
+  assert.equal(withGhost.controlY, 159 + GENE_FOOTER_CONTROL_TOP_OFFSET)
 
   // Nonsense overrides fall back to the limit rather than collapsing the footer.
   for (const bad of [0, -2, null, undefined, NaN]) {
@@ -110,6 +145,53 @@ test('an explicit visible count overrides the one derived from the transcript li
       3
     )
   }
+})
+
+// The footer hangs off the last drawn row, so every offset it reports moves as
+// rows are shown or hidden. The head of the gene does not — anything marking it
+// (the note bubble does) has to stay put while the rows behind it change.
+test('the top of the gene is where row zero starts, whatever the rows below do', () => {
+  const args = {
+    gene: { id: 'gene-1', start: 100, end: 500, strand: '+' },
+    txs: [{ id: 'tx-1' }, { id: 'tx-2' }, { id: 'tx-3' }],
+    getEffectiveTranscriptLimit: () => 3,
+    genomicToScreen: (pos) => pos,
+    baseGeneY: 20,
+    transcriptLayoutMetrics: { rowPitch: 42, midOffset: 13, exonHeight: 12 },
+    lhsWidth: 48,
+    viewWidth: 800,
+  }
+
+  const footer = getGeneFooterGeometry(args)
+  // baseGeneY 20 + midOffset 13 = 33, the first row's mid-line; the block above
+  // it reaches half an exon height further up.
+  assert.equal(footer.firstTranscriptMidY, 33)
+  assert.equal(footer.topY, 33 - 6)
+
+  for (const visibleTranscriptCount of [1, 2, 3, 5]) {
+    const other = getGeneFooterGeometry({ ...args, visibleTranscriptCount })
+    assert.equal(other.topY, footer.topY, `topY moved at ${visibleTranscriptCount} rows`)
+    assert.equal(other.firstTranscriptMidY, footer.firstTranscriptMidY)
+  }
+
+  // The footer, by contrast, is expected to travel.
+  assert.ok(getGeneFooterGeometry({ ...args, visibleTranscriptCount: 5 }).controlY > footer.controlY)
+})
+
+test('a gene laid out without an exon height still reports a usable top', () => {
+  const footer = getGeneFooterGeometry({
+    gene: { id: 'gene-1', start: 100, end: 500, strand: '+' },
+    txs: [{ id: 'tx-1' }],
+    getEffectiveTranscriptLimit: () => 1,
+    genomicToScreen: (pos) => pos,
+    baseGeneY: 20,
+    transcriptLayoutMetrics: { rowPitch: 42, midOffset: 13 },
+    lhsWidth: 48,
+    viewWidth: 800,
+  })
+
+  assert.equal(footer.topY, 33)
+  assert.ok(Number.isFinite(footer.topY))
 })
 
 test('gene footer uses the visual left edge for either strand and flipped views', () => {

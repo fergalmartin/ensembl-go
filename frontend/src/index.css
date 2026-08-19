@@ -1,5 +1,36 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Ensembl brand typefaces.
+
+   The Ensembl style guide specifies Lato for body copy / UI chrome and IBM Plex
+   Mono for sequences, numbers and text inside visualisations. Both are bundled
+   from @fontsource rather than pulled from a CDN because the app ships with a
+   strict CSP (`font-src 'self' data:`) and has to work offline in Electron.
+
+   Only the latin subsets and the weights the style guide actually uses are
+   imported, to keep the bundle small.
+   --------------------------------------------------------------------------- */
+@import "@fontsource/lato/latin-300.css";
+@import "@fontsource/lato/latin-300-italic.css";
+@import "@fontsource/lato/latin-400.css";
+@import "@fontsource/lato/latin-400-italic.css";
+@import "@fontsource/lato/latin-700.css";
+@import "@fontsource/lato/latin-900.css";
+@import "@fontsource/ibm-plex-mono/latin-300.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-400-italic.css";
+@import "@fontsource/ibm-plex-mono/latin-600.css";
+
+/* The two font stacks below are copied verbatim from www.ensembl.org so that
+   metric fallbacks match the site exactly. Tailwind derives `font-sans` /
+   `font-mono` and the document default font from these tokens, so setting them
+   here re-points every utility class and the base body text in one place. */
+@theme {
+    --font-sans: Lato, "Helvetica Neue", Helvetica, Roboto, Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", "Liberation Mono", Courier, monospace;
+}
+
 /* Additional global styles */
 html,
 body {
@@ -97,4 +128,87 @@ body {
 .no-number-spin::-webkit-inner-spin-button {
     -webkit-appearance: none;
     margin: 0;
+}
+
+/* Notes uses one grid for Todo, genome cards, and their shared detail panel.
+   The panel can therefore occupy the same row as the item that opened it,
+   while every preview card shares the narrower left column. */
+.notes-source-card,
+.notes-detail-panel {
+    grid-column: 1;
+}
+
+@media (min-width: 1024px) {
+    .notes-workspace-grid {
+        transition: grid-template-columns 180ms ease;
+    }
+
+    .notes-workspace-idle,
+    .notes-workspace-recent-expanded {
+        position: relative;
+    }
+
+    .notes-workspace-idle {
+        grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+    }
+
+    .notes-workspace-open,
+    .notes-workspace-recent-expanded {
+        grid-template-columns: minmax(460px, 0.9fr) minmax(480px, 1.3fr);
+    }
+
+    .notes-source-card {
+        grid-column: 1;
+    }
+
+    .notes-workspace-open .notes-detail-slot {
+        grid-column: 2;
+        grid-row: var(--notes-detail-row, 1);
+    }
+
+    /* Recent activity can be much taller than Todo. Keep the idle panel out of
+       the row sizing so the left-hand cards retain their regular 12px rhythm. */
+    .notes-workspace-idle .notes-detail-slot,
+    .notes-workspace-recent-expanded .notes-detail-slot {
+        position: absolute;
+        top: 1.25rem;
+        bottom: 0;
+        right: 1.5rem;
+        transition: width 180ms ease;
+    }
+
+    .notes-workspace-idle .notes-detail-slot {
+        width: clamp(340px, 34vw, 420px);
+    }
+
+    .notes-workspace-recent-expanded .notes-detail-slot {
+        width: max(480px, 55vw);
+    }
+
+    .notes-workspace-idle .notes-detail-panel,
+    .notes-workspace-recent-expanded .notes-detail-panel {
+        position: sticky;
+        top: 0;
+        width: 100%;
+        max-height: calc(100vh - 220px);
+    }
+
+    /* Once the panel reaches the Notes viewport edge, detach it from the
+       workspace's lower boundary so CSS sticky cannot push its header away. */
+    .notes-workspace-idle.notes-detail-following .notes-detail-panel,
+    .notes-workspace-recent-expanded.notes-detail-following .notes-detail-panel {
+        position: fixed;
+        top: var(--notes-detail-fixed-top, 220px);
+        right: 1.5rem;
+        z-index: 40;
+        max-height: calc(100vh - var(--notes-detail-fixed-top, 220px));
+    }
+
+    .notes-workspace-idle.notes-detail-following .notes-detail-panel {
+        width: clamp(340px, 34vw, 420px);
+    }
+
+    .notes-workspace-recent-expanded.notes-detail-following .notes-detail-panel {
+        width: max(480px, 55vw);
+    }
 }

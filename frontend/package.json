@@ -12,6 +12,8 @@
     "test:unit": "node --test tests/*.test.js"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/lato": "^5.3.0",
     "d3": "^7.9.0",
     "lit": "^3.3.1",
     "react": "^19.2.0",

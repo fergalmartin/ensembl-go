@@ -12,6 +12,7 @@ Public surface used by the API layer:
     build_annotation_report(..) -> AnnotationReport
 """
 
+from .cooperative import CooperativeYielder, yielding_enabled  # noqa: F401
 from .dialect import (  # noqa: F401
     BARE_ATTRIBUTE_KEY,
     DialectInfo,
@@ -48,6 +49,8 @@ from .report import AnnotationReport, Issue, build_annotation_report  # noqa: F4
 __all__ = [
     "CONVERTED_SUFFIX",
     "ConversionResult",
+    "CooperativeYielder",
+    "yielding_enabled",
     "IdentifierAudit",
     "IdentifierError",
     "MODE_GENERATE",

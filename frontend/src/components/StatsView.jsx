@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE } from '../backendRuntime'
+import GenomeAnalysisOverview from './GenomeAnalysisOverview'
 import {
   getGenomeKey,
   normalizeGenomeProvider,
@@ -57,7 +58,6 @@ const STRUCTURAL_PLOT_COLOR_SCALE = [
 ]
 
 const SUMMARY_CORE_SECTIONS = ['annotation', 'structural', 'homology']
-const SUMMARY_ALL_SECTIONS = ['annotation', 'structural', 'homology', 'assembly']
 const STRUCTURAL_SELECTABLE_STATUSES = new Set(['missing', 'stale', 'error'])
 const STRUCTURAL_PENDING_STATUSES = new Set(['missing', 'stale', 'error', 'computing'])
 
@@ -2440,67 +2440,20 @@ function HomologyScatter({ records, isLight, zoomRange, onZoomRange }) {
   )
 }
 
-function AssemblyInfoPanel({ records, isLight }) {
-  return (
-    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-      {records.map((record) => {
-        const info = record.assembly_info || {}
-        const fasta = info.fasta || null
-        const metadata = info.ena || null
-        const status = (record.statuses || {}).assembly || 'missing'
-        return (
-          <div
-            key={`assembly-${record.genome_key}`}
-            className={`rounded-lg border p-3 ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-900/40'}`}
-          >
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className={`text-xs font-semibold ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>{genomeLabel(record)}</div>
-              <div className={`text-[10px] uppercase ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>{status}</div>
-            </div>
-            <div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                <div className={isLight ? 'text-gray-500' : 'text-gray-400'}>Contigs/scaffolds</div>
-                <div className={isLight ? 'text-gray-700' : 'text-gray-200'}>{formatInt(fasta?.contig_count)}</div>
-                <div className={isLight ? 'text-gray-500' : 'text-gray-400'}>Total bases</div>
-                <div className={isLight ? 'text-gray-700' : 'text-gray-200'}>{formatInt(fasta?.total_bases)}</div>
-                <div className={isLight ? 'text-gray-500' : 'text-gray-400'}>Longest sequence</div>
-                <div className={isLight ? 'text-gray-700' : 'text-gray-200'}>{formatInt(fasta?.longest_sequence)}</div>
-                <div className={isLight ? 'text-gray-500' : 'text-gray-400'}>N50 / L50</div>
-                <div className={isLight ? 'text-gray-700' : 'text-gray-200'}>
-                  {formatInt(fasta?.n50)} / {formatInt(fasta?.l50)}
-                </div>
-              </div>
-              <div className={`mt-2 text-[11px] ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                Assembly metadata source: {metadata?.source || 'none'} {metadata?.message ? `- ${metadata.message}` : ''}
-              </div>
-              <div className={`grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-1 ${isLight ? 'text-gray-600' : 'text-gray-300'}`}>
-                <div>Accession</div>
-                <div>{metadata?.data?.accession || record.gca || '—'}</div>
-                <div>Assembly name</div>
-                <div>{metadata?.data?.assembly_name || '—'}</div>
-                <div>Tax ID</div>
-                <div>{metadata?.data?.tax_id || '—'}</div>
-                <div>Assembly level</div>
-                <div>{metadata?.data?.assembly_level || '—'}</div>
-                <div>Submitter</div>
-                <div>{metadata?.data?.submitter || '—'}</div>
-                <div>Release</div>
-                <div>{metadata?.data?.first_public || '—'}</div>
-              </div>
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-export default function StatsView({ theme = 'dark', config }) {
+export default function StatsView({
+  theme = 'dark',
+  config,
+  onConfigChange = null,
+  // The genomes the top bar is showing, and which of them this view has switched
+  // on. Defaulted so the view still stands up on its own.
+  listedGenomes = null,
+  activeGenomeKeys = null,
+}) {
   const isLight = theme === 'light'
   const panelClass = isLight ? 'bg-white border border-gray-200 shadow-sm' : 'bg-gray-800 border border-gray-700'
   const subtleClass = isLight ? 'bg-gray-50 border border-gray-200' : 'bg-gray-900/40 border border-gray-700'
 
-  const [mode, setMode] = useState('annotation')
+  const [mode, setMode] = useState('overview')
   const [annotationBasis, setAnnotationBasis] = useState('genes')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -2514,10 +2467,9 @@ export default function StatsView({ theme = 'dark', config }) {
   const [annotationZoom, setAnnotationZoom] = useState(null)
   const [homologyZoom, setHomologyZoom] = useState(null)
   const requestSeqRef = useRef(0)
-  const summarySections = useMemo(
-    () => (mode === 'assembly' ? SUMMARY_ALL_SECTIONS : SUMMARY_CORE_SECTIONS),
-    [mode]
-  )
+  // Assembly metadata is read by the overview, per genome; the summary here only
+  // ever needs the sections the remaining tabs plot.
+  const summarySections = SUMMARY_CORE_SECTIONS
 
   const genomes = useMemo(() => {
     return (config?.active_species || []).map((item) => normalizeGenomeInput(item))
@@ -2794,6 +2746,16 @@ export default function StatsView({ theme = 'dark', config }) {
     enqueueStructuralKeys([key])
   }
 
+  // Analyses are stored in the same place the genome selector stores them, so a
+  // report produced in either view is already there for the other.
+  const handleAnalysisStored = useCallback((updater) => {
+    if (!onConfigChange) return
+    onConfigChange((prev) => ({
+      ...prev,
+      genome_analysis_reports: updater(prev?.genome_analysis_reports || {}),
+    }))
+  }, [onConfigChange])
+
   const modeButton = (id, label) => {
     const active = mode === id
     return (
@@ -2816,7 +2778,8 @@ export default function StatsView({ theme = 'dark', config }) {
       <div className="h-full overflow-y-auto pr-1">
         <div className={`${panelClass} rounded-xl p-5`}>
           <div className={`text-sm ${isLight ? 'text-gray-600' : 'text-gray-300'}`}>
-            Activate one or more genomes to view annotation, structural, homology, and assembly statistics.
+            Activate one or more genomes to analyse them and to view annotation, structural,
+            homology, and assembly statistics.
           </div>
         </div>
       </div>
@@ -2855,18 +2818,33 @@ export default function StatsView({ theme = 'dark', config }) {
         )}
 
         <div className="flex items-center gap-2">
+          {modeButton('overview', 'Overview')}
           {modeButton('annotation', 'Annotation')}
           {modeButton('structural', 'Structural')}
           {modeButton('homology', 'Homology')}
-          {modeButton('assembly', 'Assembly')}
         </div>
 
         <div className={`${subtleClass} rounded-xl p-3`}>
-          {loading && records.length === 0 && (
+          {loading && records.length === 0 && mode !== 'overview' && (
             <div className="flex items-center justify-center py-16">
               <div className={`w-8 h-8 border-4 border-t-transparent rounded-full animate-spin mr-3 ${isLight ? 'border-[#0099ff]' : 'border-blue-500'}`} />
               <span className={isLight ? 'text-gray-600' : 'text-gray-300'}>Loading stats summary...</span>
             </div>
+          )}
+
+          {/* The overview reads the stored analysis reports rather than the
+              stats summary, so it renders straight away and does not wait on
+              the section fetch the other tabs need. */}
+          {mode === 'overview' && (
+            <GenomeAnalysisOverview
+              genomes={listedGenomes || config?.active_species || []}
+              theme={theme}
+              activeGenomeKeys={activeGenomeKeys}
+              genomeColors={config?.genome_browser_colors}
+              analysisReports={config?.genome_analysis_reports || {}}
+              fileOverrides={config?.genome_file_overrides || {}}
+              onAnalysisStored={handleAnalysisStored}
+            />
           )}
 
           {records.length > 0 && mode === 'annotation' && (
@@ -2988,13 +2966,6 @@ export default function StatsView({ theme = 'dark', config }) {
                 zoomRange={homologyZoom}
                 onZoomRange={setHomologyZoom}
               />
-            </div>
-          )}
-
-          {records.length > 0 && mode === 'assembly' && (
-            <div className="space-y-2">
-              <div className={`text-sm font-semibold ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>Assembly info</div>
-              <AssemblyInfoPanel records={records} isLight={isLight} />
             </div>
           )}
         </div>

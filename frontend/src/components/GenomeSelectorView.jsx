@@ -5,6 +5,7 @@ import AppButtonIcon from './AppButtonIcon'
 import ScreenshotExportModal from './ScreenshotExportModal'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
 import ValidationReportPanel from './ValidationReportPanel'
+import { runGenomeAnalysis } from '../utils/genomeAnalysisRunner'
 import ProgressGlyph from './ProgressGlyph'
 import { API_BASE } from '../backendRuntime'
 import {
@@ -1422,6 +1423,14 @@ function CustomAnnotationModal({
     )
 }
 
+// The locally installed genomes as of the last time this view was open. It is
+// unmounted on every view switch, so without this the list is rebuilt from
+// scratch each visit and the page sits empty until the scan answers — which is
+// exactly when the user is least able to wait, because whatever made the
+// backend slow is the thing they came here to check on.
+let lastScannedAssemblies = null
+let lastScannedOutputDir = ''
+
 export default function GenomeSelectorView({
     config,
     onConfigChange,
@@ -1443,10 +1452,10 @@ export default function GenomeSelectorView({
         setScreenshotRootNode(node)
     }, [])
 
-    const [assemblies, setAssemblies] = useState([])
+    const [assemblies, setAssemblies] = useState(() => lastScannedAssemblies || [])
     const [loading, setLoading] = useState(false)
-    const assembliesLoadedRef = useRef(false)
-    const assembliesOutputDirRef = useRef('')
+    const assembliesLoadedRef = useRef(!!lastScannedAssemblies)
+    const assembliesOutputDirRef = useRef(lastScannedOutputDir)
     const [search, setSearch] = useState('')
     const [page, setPage] = useState(1)
     const [expandedRows, setExpandedRows] = useState(new Set())
@@ -1543,41 +1552,30 @@ export default function GenomeSelectorView({
             },
         }))
         try {
-            const endpoint = kind === 'genome'
-                ? `${API_BASE}/api/custom/validate-genome`
-                : `${API_BASE}/api/custom/validate-annotation`
-            const res = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
+            // Shared with the stats overview, so both views produce the same
+            // report and store it under the same key. Progress is reported on
+            // every poll; large assemblies take a while.
+            return await runGenomeAnalysis({
+                kind,
+                body,
+                onUpdate: (payload) => {
+                    setValidation((prev) => ({
+                        ...prev,
+                        [slot]: {
+                            kind,
+                            status: payload.status,
+                            progress: payload.progress,
+                            stage: payload.stage,
+                            message: payload.message,
+                            counters: payload.counters || {},
+                            report: payload.report,
+                            error: payload.error,
+                            analysed_at: payload.completed_at || '',
+                            ...targetContext,
+                        },
+                    }))
+                },
             })
-            const started = await res.json()
-            if (!res.ok) throw new Error(started?.detail || 'Failed to start analysis')
-
-            // Poll until the scan finishes; large assemblies report progress.
-            for (;;) {
-                await new Promise((resolve) => setTimeout(resolve, 300))
-                const poll = await fetch(`${API_BASE}/api/custom/validation/${started.task_id}`)
-                const payload = await poll.json()
-                if (!poll.ok) throw new Error(payload?.detail || 'Analysis lookup failed')
-
-                setValidation((prev) => ({
-                    ...prev,
-                    [slot]: {
-                        kind,
-                        status: payload.status,
-                        progress: payload.progress,
-                        stage: payload.stage,
-                        message: payload.message,
-                        counters: payload.counters || {},
-                        report: payload.report,
-                        error: payload.error,
-                        analysed_at: payload.completed_at || '',
-                        ...targetContext,
-                    },
-                }))
-                if (payload.status === 'success' || payload.status === 'failed') return payload
-            }
         } catch (error) {
             setValidation((prev) => ({
                 ...prev,
@@ -1673,9 +1671,11 @@ export default function GenomeSelectorView({
         if (assembliesOutputDirRef.current !== outputDir) {
             assembliesOutputDirRef.current = outputDir
             assembliesLoadedRef.current = false
+            lastScannedAssemblies = null
             setAssemblies([])
         }
         if (!outputDir) {
+            lastScannedAssemblies = null
             setAssemblies([])
             setLoading(false)
             assembliesLoadedRef.current = true
@@ -1694,7 +1694,10 @@ export default function GenomeSelectorView({
                         .map((instance) => normalizeGenomeRecord(instance))
                     return { ...normalized, dataset_instances: datasetInstances }
                 })
-                setAssemblies(assemblies.filter((item) => !pendingIds.has(itemKey(item)) && !pendingIds.has(item.assembly_key)))
+                const visible = assemblies.filter((item) => !pendingIds.has(itemKey(item)) && !pendingIds.has(item.assembly_key))
+                lastScannedAssemblies = visible
+                lastScannedOutputDir = outputDir
+                setAssemblies(visible)
 	            }
 	            else {
 	                console.warn('Failed to refresh local assemblies:', res.statusText)

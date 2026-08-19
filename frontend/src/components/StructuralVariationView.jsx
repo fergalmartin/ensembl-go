@@ -18,6 +18,14 @@ import {
   getSvAuxTrackTransform,
 } from '../utils/svAuxTrackTransform'
 import { resolveSvFeatureTrackGenomeIds, resolveSvFeatureWindowChrom } from '../utils/svFeatureTrackIdentity'
+import {
+  RULER_FONT_SIZE,
+  RULER_LABEL_GAP,
+  formatRulerCoord,
+  rulerGeometry,
+  rulerTicks,
+} from './genomeBrowserRuler'
+import { FONT_MONO } from '../utils/typography'
 import useDelayedFlag from '../hooks/useDelayedFlag'
 import {
   buildBrowserGeneSeedKey,
@@ -91,7 +99,6 @@ function useBrowsingControls(config) {
   )
 }
 const SV_EXTERNAL_VIEWPORT_EVENT_GUARD_MS = 400
-const RULER_TICK_COUNT = 6
 const ALIGNMENT_PANEL_HEIGHT = 168
 const ALIGNMENT_PANEL_COMPACT_HEIGHT = 132
 const SV_DATA_TRACK_HEIGHT = 24
@@ -4669,38 +4676,45 @@ function StructuralVariationPairView({
   }, [displayTgtWindow, tgtSpan, plotLeft, plotWidth])
 
   // ── Band SVG rendering helpers ─────────────────────────────────────────────
+  // Same treatment as the genome browser's ruler (see genomeBrowserRuler.js):
+  // a 1px tick per round coordinate with the coordinate set beside it in mono,
+  // rather than a centred label straddling a tick.
   const renderRuler = (window, bandY, isRef) => {
     if (!window) return null
-    const span  = Math.max(1, window.end - window.start)
-    const toX   = isRef ? toRefX : toTgtX
-    const rawStep = span / RULER_TICK_COUNT
-    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)))
-    const nicedStep = Math.ceil(rawStep / magnitude) * magnitude
-    const firstTick = Math.ceil(window.start / nicedStep) * nicedStep
-    const ticks = []
-    for (let pos = firstTick; pos <= window.end; pos += nicedStep) {
-      const x = clamp(toX(pos), plotLeft + 1, plotRight - 1)
-      ticks.push(
+    const toX = isRef ? toRefX : toTgtX
+    const rulerTop = bandY + BAND_HEIGHT
+    const geometry = rulerGeometry({ top: rulerTop, height: RULER_HEIGHT, position: 'bottom' })
+    const { ticks: tickCoords } = rulerTicks({
+      start: window.start,
+      end: window.end,
+      widthPx: Math.max(1, plotRight - plotLeft),
+      fontSize: RULER_FONT_SIZE,
+    })
+    const stroke = isLight ? '#787878' : '#8b8b8b'
+    return tickCoords.map((pos) => {
+      const x = toX(pos)
+      if (x < plotLeft || x > plotRight) return null
+      return (
         <g key={`tick-${isRef ? 'r' : 't'}-${pos}`}>
           <line
-            x1={x} y1={bandY + BAND_HEIGHT}
-            x2={x} y2={bandY + BAND_HEIGHT + 5}
-            stroke={isLight ? '#7ea2c9' : '#4a79aa'}
+            x1={x} y1={geometry.tickStart}
+            x2={x} y2={geometry.tickEnd}
+            stroke={stroke}
             strokeWidth="1"
           />
           <text
-            x={x}
-            y={bandY + BAND_HEIGHT + RULER_HEIGHT - 2}
-            textAnchor="middle"
-            fontSize="10"
-            fill={isLight ? '#4a6a8a' : '#64748b'}
+            x={x + RULER_LABEL_GAP}
+            y={geometry.labelBaseline}
+            textAnchor="start"
+            fontSize={RULER_FONT_SIZE}
+            fontFamily={FONT_MONO}
+            fill={stroke}
           >
-            {formatCoord(pos)}
+            {formatRulerCoord(pos)}
           </text>
         </g>
       )
-    }
-    return ticks
+    })
   }
 
   const renderGeneTracks = (genes, window, trackY, isRef) => {

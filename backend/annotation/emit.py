@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .cooperative import each
 from .model import Block, Gene, Transcript
 
 #: Column 2 of every emitted row, so converted files are self-identifying.
@@ -235,7 +236,7 @@ def write_canonical_gff3(
 ) -> str:
     """Write ``genes`` as canonical GFF3 to ``output_path``; return the path."""
     rows: List[_Row] = []
-    for gene in genes:
+    for gene in each(genes):
         rows.extend(_rows_for_gene(gene))
     rows.sort(key=lambda r: r.sort_key)
 
@@ -260,7 +261,7 @@ def write_canonical_gff3(
                 " ({0})".format(dialect) if dialect else "",
             )
         )
-        for index, row in enumerate(rows):
+        for index, row in enumerate(each(rows)):
             handle.write(row.render())
             handle.write("\n")
             if progress_callback and ((index + 1) % 1000 == 0 or index + 1 == len(rows)):

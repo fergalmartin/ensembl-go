@@ -2265,6 +2265,23 @@ function LocalGenomesList({
 // ---------------------------------------------------------------------------
 // Main DownloadView
 // ---------------------------------------------------------------------------
+
+// What the catalogue looked like the last time this view was open. The view is
+// unmounted when the user switches away, so without this every visit started
+// from an empty list and a spinner, and stayed there until the backend answered
+// — which, with a long GFF3 analysis running, could be a very long time. The
+// genomes were already fetched this session; showing them straight away and
+// refreshing behind the list costs nothing and never leaves the page blank.
+const sessionCatalogue = {
+    groups: null,
+    species: null,
+    refSeqGroups: null,
+    status: null,
+    localAssemblies: null,
+    ncbiBrowse: new Map(),
+    ncbiSearch: new Map(),
+}
+
 export default function DownloadView({
     config,
     theme,
@@ -2283,16 +2300,17 @@ export default function DownloadView({
         setScreenshotRootNode(node)
     }, [])
 
-    const [groups, setGroups] = useState([])
-    const [allSpecies, setAllSpecies] = useState([])
+    const [groups, setGroups] = useState(() => sessionCatalogue.groups || [])
+    const [allSpecies, setAllSpecies] = useState(() => sessionCatalogue.species || [])
     const [ncbiSpecies, setNcbiSpecies] = useState([])
-    const [localAssemblies, setLocalAssemblies] = useState([])
-    const [loading, setLoading] = useState(true)
+    const [localAssemblies, setLocalAssemblies] = useState(() => sessionCatalogue.localAssemblies || [])
+    // Only the first visit of a session has nothing to show.
+    const [loading, setLoading] = useState(() => !sessionCatalogue.species)
     const [activeProvider, setActiveProvider] = useState('ensembl')
     const [ncbiLoading, setNcbiLoading] = useState(false)
     const [activeRefSeqGroup, setActiveRefSeqGroup] = useState('All genomes')
     const [activeRefSeqSubGroup, setActiveRefSeqSubGroup] = useState(null)
-    const [refSeqGroups, setRefSeqGroups] = useState([])
+    const [refSeqGroups, setRefSeqGroups] = useState(() => sessionCatalogue.refSeqGroups || [])
     const [refSeqGroupsLoading, setRefSeqGroupsLoading] = useState(false)
     const [ncbiCurrentPageToken, setNcbiCurrentPageToken] = useState(null)
     const [ncbiNextPageToken, setNcbiNextPageToken] = useState(null)
@@ -2310,7 +2328,7 @@ export default function DownloadView({
     const [downloading, setDownloading] = useState(false)
     const [deletingLocalGenomes, setDeletingLocalGenomes] = useState(false)
     const [statusMsg, setStatusMsg] = useState(null)
-    const [catalogStatus, setCatalogStatus] = useState(null)
+    const [catalogStatus, setCatalogStatus] = useState(() => sessionCatalogue.status)
 	    const [refreshingCatalog, setRefreshingCatalog] = useState(false)
 	    const seenFailedTaskIdsRef = useRef(new Set())
 	    const seenWarningTaskIdsRef = useRef(new Set())
@@ -2320,8 +2338,8 @@ export default function DownloadView({
     const lastCatalogFingerprintRef = useRef('')
     // null until the first status reply, so a normal mount does not look like an arrival.
     const catalogueWasAvailableRef = useRef(null)
-    const ncbiBrowseCacheRef = useRef(new Map())
-    const ncbiSearchCacheRef = useRef(new Map())
+    const ncbiBrowseCacheRef = useRef(sessionCatalogue.ncbiBrowse)
+    const ncbiSearchCacheRef = useRef(sessionCatalogue.ncbiSearch)
 
     // Panel collapse state
     const [speciesCollapsed, setSpeciesCollapsed] = useState(false)
@@ -2344,6 +2362,7 @@ export default function DownloadView({
 
     const fetchLocalAssemblies = useCallback(async () => {
         if (!config?.output_dir) {
+            sessionCatalogue.localAssemblies = null
             setLocalAssemblies([])
             return
         }
@@ -2352,6 +2371,7 @@ export default function DownloadView({
             if (res.ok) {
                 const data = await res.json()
                 const assemblies = (Array.isArray(data) ? data : []).map((item) => normalizeGenomeRecord(item))
+                sessionCatalogue.localAssemblies = assemblies
                 setLocalAssemblies(assemblies)
                 const localTypeByKey = new Map()
                 for (const entry of assemblies) {
@@ -2413,10 +2433,13 @@ export default function DownloadView({
             }
         })
 
-        setGroups([
+        const nextGroups = [
             { name: 'Models', count: modelsCount },
             ...fetchedGroups,
-        ])
+        ]
+        sessionCatalogue.groups = nextGroups
+        sessionCatalogue.species = fetchedSpecies
+        setGroups(nextGroups)
         setAllSpecies(fetchedSpecies)
     }, [])
 
@@ -2424,7 +2447,12 @@ export default function DownloadView({
         const query = search.trim()
         if (activeProvider !== 'ncbi') return
 
-        setNcbiLoading(true)
+        // A page already fetched this session is served from the cache below, so
+        // only an actual round trip is worth a spinner.
+        const willFetch = query
+            ? !ncbiSearchCacheRef.current.has(`search:${query.toLowerCase()}`)
+            : !ncbiBrowseCacheRef.current.has(`browse:${activeRefSeqGroup}:${pageToken || ''}`)
+        setNcbiLoading(willFetch)
         try {
             if (!query) {
                 const tokenParam = pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''
@@ -2473,16 +2501,18 @@ export default function DownloadView({
         const res = await fetch(`${API_BASE}/api/remote/catalog/status`)
         if (!res.ok) throw new Error('Failed to load catalogue status')
         const data = await res.json()
+        sessionCatalogue.status = data
         setCatalogStatus(data)
         return data
     }, [])
 
     const fetchRefSeqGroups = useCallback(async () => {
-        setRefSeqGroupsLoading(true)
+        setRefSeqGroupsLoading(!sessionCatalogue.refSeqGroups)
         try {
             const res = await fetch(`${API_BASE}/api/remote/groups?provider=ncbi`)
             const data = await res.json().catch(() => ([]))
-            setRefSeqGroups(Array.isArray(data) ? data : [])
+            sessionCatalogue.refSeqGroups = Array.isArray(data) ? data : []
+            setRefSeqGroups(sessionCatalogue.refSeqGroups)
         } catch (error) {
             console.warn('Failed to refresh RefSeq groups:', error)
         } finally {
@@ -2492,7 +2522,10 @@ export default function DownloadView({
 
     useEffect(() => {
         const init = async () => {
-            setLoading(true)
+            // Revisiting the view refreshes behind whatever is already on screen;
+            // only a first, empty mount is allowed to show the spinner.
+            const hasCachedSpecies = !!sessionCatalogue.species
+            if (!hasCachedSpecies) setLoading(true)
             try {
                 const [status] = await Promise.all([
                     fetchCatalogStatus(),
@@ -2500,7 +2533,7 @@ export default function DownloadView({
                 ])
                 lastCatalogFingerprintRef.current = String(status?.current_catalog_fingerprint || '')
             } catch (e) { console.error('Failed to load data', e) }
-            finally { setLoading(false) }
+            finally { if (!hasCachedSpecies) setLoading(false) }
         }
         init()
     }, [fetchCatalogStatus, fetchRemoteCatalogData])
@@ -2517,7 +2550,6 @@ export default function DownloadView({
 
     useEffect(() => {
         if (activeProvider !== 'ncbi') return undefined
-        setNcbiLoading(true)
         const timer = window.setTimeout(() => {
             fetchNcbiSearchResults()
         }, 200)

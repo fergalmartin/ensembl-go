@@ -1,7 +1,8 @@
 import { useMemo, useRef, useEffect, useCallback, useState } from 'react'
 import { buildTranscriptSegments } from './featureExplorerTranscriptGeometry'
 import { API_BASE } from '../backendRuntime'
-import iconPowerRaw from '../assets/icons/icon_power.svg?raw'
+import { monoFont, sansFont } from '../utils/typography'
+import { drawPowerGlyph } from '../utils/powerGlyph'
 
 const PLOT_PAD_X = 2
 const BAND_HEIGHT = 30
@@ -19,7 +20,8 @@ const LAYOUT_GAP_BP = 1000
 const MAX_DISPLAYED_ROWS = 10
 const CHEVRON_SPACING_PX = 18
 const SEQ_TRACK_HEIGHT = 36
-const TOGGLE_RADIUS = 11
+const TOGGLE_RADIUS = 11 // hit radius; the glyph drawn inside it is smaller
+const TOGGLE_ICON_SIZE = 16
 const SEQ_FETCH_THRESHOLD = 1000
 const PLACEHOLDER_H = 22
 const SEQUENCE_ANNOTATION_FETCH_THRESHOLD = 2000
@@ -31,12 +33,6 @@ const _extractPathData = (svgRaw) => {
   if (typeof svgRaw !== 'string') return ''
   const m = svgRaw.match(/<path[^>]*\sd=(['"])(.*?)\1/i)
   return m?.[2] || ''
-}
-const POWER_ICON_PATH_D = _extractPathData(iconPowerRaw)
-let _powerIconPath = null
-function getPowerIconPath() {
-  if (!_powerIconPath && POWER_ICON_PATH_D) _powerIconPath = new Path2D(POWER_ICON_PATH_D)
-  return _powerIconPath
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -346,7 +342,7 @@ function drawBand(ctx, y, h, pillText, resolvedGenomeColor, win, scaleX, colors,
   }
   ctx.fill()
   ctx.fillStyle = '#ffffff'
-  ctx.font = '600 10px system-ui,sans-serif'
+  ctx.font = sansFont(10, 600)
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
   ctx.fillText(pillText, plotLeft + 20, y + 18.5)
@@ -372,7 +368,7 @@ function drawRuler(ctx, y, h, win, scaleX, colors, clipLeft, plotRight) {
   ctx.strokeStyle = colors.rulerTick
   ctx.lineWidth = 1
   ctx.fillStyle = colors.rulerText
-  ctx.font = '10px system-ui,sans-serif'
+  ctx.font = sansFont(10)
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
 
@@ -403,7 +399,7 @@ function drawTranscriptLane(ctx, opts) {
   ctx.fillStyle = colors.laneLabelBg
   ctx.fillRect(plotLeft, laneY, TRACK_LABEL_WIDTH, laneHeight)
   ctx.fillStyle = colors.laneLabelText
-  ctx.font = '600 10px system-ui,sans-serif'
+  ctx.font = sansFont(10, 600)
   ctx.textAlign = 'left'
   ctx.textBaseline = 'middle'
   ctx.fillText(laneLabel, plotLeft + 4, laneY + laneHeight / 2)
@@ -552,7 +548,7 @@ function drawTranscriptLane(ctx, opts) {
   }
 
   if (allowLabels) {
-    ctx.font = '9px system-ui,sans-serif'
+    ctx.font = sansFont(9)
     ctx.textAlign = 'center'
     ctx.textBaseline = 'alphabetic'
     ctx.fillStyle = colors.label
@@ -582,7 +578,7 @@ function drawSequenceLane(ctx, { laneY, laneHeight, laneLabel, scaleX, colors, p
   ctx.fillStyle = colors.laneLabelBg
   ctx.fillRect(plotLeft, laneY, TRACK_LABEL_WIDTH, laneHeight)
   ctx.fillStyle = colors.laneLabelText
-  ctx.font = '600 10px system-ui,sans-serif'
+  ctx.font = sansFont(10, 600)
   ctx.textAlign = 'left'
   ctx.textBaseline = 'middle'
   ctx.fillText(laneLabel, plotLeft + 4, laneY + laneHeight / 2)
@@ -659,7 +655,7 @@ function drawSequenceLane(ctx, { laneY, laneHeight, laneLabel, scaleX, colors, p
 
     if (pxPerBp >= 10) {
       ctx.fillStyle = (boxStyle.filled || comparisonBoxStyle.filled) ? colors.sequenceFilledText : colors.sequenceGapText
-      ctx.font = pxPerBp >= 14 ? '12px monospace' : '9px monospace'
+      ctx.font = pxPerBp >= 14 ? monoFont(12) : monoFont(9)
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.fillText(base.toUpperCase(), bxL + bxW / 2, seqBoxT + seqBoxH / 2)
@@ -669,31 +665,19 @@ function drawSequenceLane(ctx, { laneY, laneHeight, laneLabel, scaleX, colors, p
   ctx.restore()
 }
 
+// Matches the genome browser's sidebar toggles: a bare stroked glyph that takes
+// the genome's colour when the track is on, rather than a filled disc.
 function drawToggleButton(ctx, x, y, isHidden, activeColor, isLight) {
   const active = !isHidden
-  const iconColor = active ? '#ffffff' : (isLight ? '#475569' : '#e2e8f0')
-  ctx.fillStyle = active ? activeColor : (isLight ? '#cbd5e1' : '#334155')
-  ctx.beginPath()
-  ctx.arc(x, y, TOGGLE_RADIUS, 0, 2 * Math.PI)
-  ctx.fill()
+  const iconColor = active ? activeColor : (isLight ? '#94a3b8' : '#6b7280')
+  if (drawPowerGlyph(ctx, x, y, { size: TOGGLE_ICON_SIZE, color: iconColor })) return
 
-  const powerPath = getPowerIconPath()
-  if (powerPath) {
-    const iconSize = 18
-    ctx.save()
-    ctx.translate(Math.round(x - iconSize / 2), Math.round(y - iconSize / 2))
-    ctx.scale(iconSize / 32, iconSize / 32)
-    ctx.fillStyle = iconColor
-    ctx.fill(powerPath)
-    ctx.restore()
-    return
-  }
-  // Fallback ring+stem
+  // Fallback where Path2D is unavailable.
   ctx.strokeStyle = iconColor
-  ctx.lineWidth = 2
+  ctx.lineWidth = 1.8
   ctx.lineCap = 'round'
   ctx.beginPath()
-  ctx.arc(x, y + 0.6, 5.8, Math.PI * 0.2, Math.PI * 1.8)
+  ctx.arc(x, y + 1.2, (TOGGLE_ICON_SIZE / 2) - 1.7, -Math.PI * 0.34, Math.PI * 1.34)
   ctx.stroke()
   ctx.beginPath()
   ctx.moveTo(x, y - 7.4)
@@ -708,7 +692,7 @@ function drawHiddenLane(ctx, { laneY, laneHeight, laneLabel, laneBackground, col
   ctx.fillStyle = colors.laneLabelBg
   ctx.fillRect(plotLeft, laneY, TRACK_LABEL_WIDTH, laneHeight)
   ctx.fillStyle = colors.laneLabelText
-  ctx.font = '600 10px system-ui,sans-serif'
+  ctx.font = sansFont(10, 600)
   ctx.textAlign = 'left'
   ctx.textBaseline = 'middle'
   ctx.fillText(laneLabel, plotLeft + 4, laneY + laneHeight / 2)

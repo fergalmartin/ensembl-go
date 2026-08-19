@@ -14,6 +14,7 @@ const SECTION_ORDER = [
   'neighbourhood',
   'homology',
   'stats',
+  'notes',
   'tips',
 ]
 
@@ -343,6 +344,28 @@ export default function HelpView({ theme = 'dark' }) {
           <p>
             Structural metrics are generated on demand and cached with each genome so repeated sessions load quickly.
             Assembly cards combine local FASTA-derived values with ENA metadata when an assembly accession is available.
+          </p>
+        </SectionCard>
+
+        <SectionCard id="notes" title="Notes view" icon={<AppButtonIcon buttonId="notes" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
+          <p>
+            Notes are free text you attach to a gene. Write them in the Genome Browser — the focus drawer has a Notes section
+            under its transcript list — and read them all back here, grouped by genome and by the gene they belong to.
+          </p>
+          <p>
+            A gene that carries notes is marked in the browser with a speech bubble at its left edge, once you are zoomed in far
+            enough to see transcripts. Clicking that bubble focuses the gene and opens its notes.
+          </p>
+          <p>
+            Notes are filed per assembly rather than per download, so updating a genome to a newer annotation release keeps them.
+            The same gene in a different genome has its own notes. Everything is saved as you type, into a
+            <span className="font-mono"> user_notes.json </span> file beside your other local data.
+          </p>
+          <p>
+            Notes and Todo tasks can carry reusable tags. The tag editor suggests popular, recently used, and alphabetical choices;
+            choose <span className="font-semibold">Tags</span> from the right-panel title to see active and archived usage by genome
+            or Todo list. That same title switches between Recent activity, Last viewed, Last edited, and Tags. Select one or more
+            tags to filter both notes and tasks, choosing whether results must match all selected tags or any of them.
           </p>
         </SectionCard>
 

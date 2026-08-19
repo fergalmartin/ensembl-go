@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FEATURE_COLORS } from './FeatureLegend'
 import { normalizeWheelDelta, wheelZoomFactor } from '../utils/browsingControls'
+import { monoFont } from '../utils/typography'
 
 const ROW_HEIGHT = 24
 const HEADER_HEIGHT = 34
@@ -576,7 +577,7 @@ export default function MultiAlignmentPanel({
 
         const tickSpacing = zoomLevel < 0.05 ? 500 : zoomLevel < 0.1 ? 250 : zoomLevel < 0.2 ? 100 : zoomLevel < 0.5 ? 50 : 10
         ctx.fillStyle = subText
-        ctx.font = '11px monospace'
+        ctx.font = monoFont(11)
         const firstTick = Math.ceil((startPos + 1) / tickSpacing) * tickSpacing - 1
         for (let i = firstTick; i < endPos; i += tickSpacing) {
             const x = xStart + (i - startPos) * charWidth
@@ -591,7 +592,7 @@ export default function MultiAlignmentPanel({
             const coveredStart = hasCoverageWindow ? Math.max(0, Math.min(row.coveredColumnStart, row.coveredColumnEnd)) : null
             const coveredEnd = hasCoverageWindow ? Math.max(row.coveredColumnStart, row.coveredColumnEnd) : null
             ctx.fillStyle = text
-            ctx.font = '12px monospace'
+            ctx.font = monoFont(12)
             ctx.textAlign = 'left'
             ctx.textBaseline = 'alphabetic'
             ctx.fillText(row.tag, 5, y + 16)
@@ -631,7 +632,7 @@ export default function MultiAlignmentPanel({
                 ctx.save()
                 ctx.textAlign = 'center'
                 ctx.textBaseline = 'middle'
-                ctx.font = '12px monospace'
+                ctx.font = monoFont(12)
                 for (let i = startPos; i < endPos; i += 1) {
                     const x = xStart + (i - startPos) * charWidth
                     const base = row.sequence?.[i] || ''
@@ -736,7 +737,7 @@ export default function MultiAlignmentPanel({
             ctx.save()
             ctx.textAlign = 'center'
             ctx.textBaseline = 'middle'
-            ctx.font = '12px monospace'
+            ctx.font = monoFont(12)
             for (let i = startPos; i < endPos; i += 1) {
                 const x = xStart + (i - startPos) * charWidth
                 const a = rowA.sequence?.[i] || ''
@@ -789,7 +790,7 @@ export default function MultiAlignmentPanel({
 
         const drawCnsRow = (y) => {
             ctx.fillStyle = isLight ? '#374151' : '#94a3b8'
-            ctx.font = '12px monospace'
+            ctx.font = monoFont(12)
             ctx.textAlign = 'left'
             ctx.textBaseline = 'alphabetic'
             ctx.fillText('CNS', 5, y + 16)
@@ -848,7 +849,7 @@ export default function MultiAlignmentPanel({
             ctx.save()
             ctx.textAlign = 'center'
             ctx.textBaseline = 'middle'
-            ctx.font = '12px monospace'
+            ctx.font = monoFont(12)
             for (let i = startPos; i < endPos; i += 1) {
                 const x = xStart + (i - startPos) * charWidth
                 const marker = getCnsMarker(i)

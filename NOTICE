@@ -26,6 +26,9 @@ its own terms, including:
     uvicorn, pydantic, pysam, Biopython, requests and pyBigWig
   - JavaScript packages listed in frontend/package.json, including React, D3
     and Lit
+  - The Lato and IBM Plex Mono typefaces, bundled via @fontsource and used under
+    the SIL Open Font License 1.1 (see node_modules/@fontsource/lato/LICENSE and
+    node_modules/@fontsource/ibm-plex-mono/LICENSE)
   - MAFFT, when bundled into a packaged build (BSD licence; see the LICENSE
     file placed alongside the bundled binaries)
 

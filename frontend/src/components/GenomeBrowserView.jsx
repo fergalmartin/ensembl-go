@@ -1,7 +1,9 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { flushSync } from 'react-dom'
 import GenomeBrowser from './GenomeBrowser'
-import FocusGeneDrawer, { FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from './FocusGeneDrawer'
+import FocusGeneDrawer, { FOCUS_DRAWER_DETAIL_WIDTH, FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from './FocusGeneDrawer'
+import AssemblyInfoDrawer from './AssemblyInfoDrawer'
+import { hasAssemblyMetadata } from '../utils/assemblyMetadataRows'
 import ScreenshotExportModal from './ScreenshotExportModal'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
 
@@ -9,7 +11,13 @@ import { API_BASE } from '../backendRuntime'
 import { getGenomeBrowserColor, normalizeGenomeBrowserColors } from '../genomeColorSchemes'
 import useScreenshotTargets from '../hooks/useScreenshotTargets'
 import { rasterizeSvgMarkup } from '../utils/screenshotExport'
-import { getGenomeKey, genomeKeysMatch } from '../utils/genomeIdentity'
+import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch } from '../utils/genomeIdentity'
+import {
+    DEFAULT_NOTE_SORT_MODE,
+    buildGeneNoteTarget,
+    normalizeNoteGenomeKey,
+} from '../utils/geneNotes'
+import useNoteStore from '../hooks/useNoteStore'
 import { alignBandToBar, getGenomeBrowserPanelSizing } from './genomeBrowserViewportLayout'
 import {
     DRAG_AXIS_THRESHOLD_PX,
@@ -23,6 +31,10 @@ import {
     resolveWheelAction,
     noteWheelGestureOrigin,
 } from '../utils/browsingControls'
+
+/** Shared empties, so a panel with no notes hands its children a stable prop. */
+const EMPTY_NOTE_COUNTS = Object.freeze({})
+const EMPTY_NOTE_LIST = Object.freeze([])
 
 /**
  * Things a drag must not be stolen from: controls that expect a click, and text
@@ -208,7 +220,6 @@ export default function GenomeBrowserView({
     config,
     isActive = true,
     allowBackgroundPrep = false,
-    onToggleSpecies,
     onRefGeneSelect,
     onTgtGeneSelect,
     onRefViewportChange,
@@ -265,7 +276,9 @@ export default function GenomeBrowserView({
     const [focusTranscriptViews, setFocusTranscriptViews] = useState({})
     const [focusTranscriptData, setFocusTranscriptData] = useState({})
     const [focusPanelOrder, setFocusPanelOrder] = useState([])
-    const [focusDrawerOpen, setFocusDrawerOpen] = useState(true)
+    // Per panel, because every genome carries its own drawer now. Absent means
+    // open: a gene that has just taken focus should present its transcripts.
+    const [focusDrawerOpenByPanel, setFocusDrawerOpenByPanel] = useState({})
 
     const tracksStateRef = useRef({})
     const linkModelRef = useRef(null)
@@ -394,9 +407,10 @@ export default function GenomeBrowserView({
             const without = prev.filter((key) => key !== panelKey)
             return geneId ? [panelKey, ...without] : without
         })
-        // A fresh focus always presents the drawer open, whatever the user did
-        // with the collapse arrow last time.
-        if (geneId) setFocusDrawerOpen(true)
+        // A fresh focus always presents that panel's drawer open, whatever the
+        // user did with its collapse arrow last time.
+        if (geneId) setFocusDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
+        else setDetailTranscriptByPanel((prev) => ({ ...prev, [panelKey]: '' }))
     }, [geneTranscriptViews])
 
     // Addressed by gene id rather than "whatever is focused", so the canvas
@@ -457,6 +471,15 @@ export default function GenomeBrowserView({
 
     const handleFocusTranscriptViewChange = useCallback((panelKey, patch) => {
         setFocusTranscriptViews((prev) => {
+            // Taking a pin in one genome releases whatever another was holding:
+            // alignment brings one row level with its identifier, and it cannot
+            // do that for two genomes at once.
+            if (patch.pinnedId) {
+                for (const key of Object.keys(prev)) {
+                    if (key === panelKey || !prev[key]?.pinnedId) continue
+                    prev = { ...prev, [key]: { ...prev[key], pinnedId: null, ghostId: null, hoverId: null } }
+                }
+            }
             const current = prev[panelKey]
             if (!current) return prev
             const next = { ...current, ...patch }
@@ -477,7 +500,10 @@ export default function GenomeBrowserView({
         setFocusTranscriptData({})
         setFocusPanelOrder([])
         // The next gene the user focuses should slide out open, not as a rail.
-        setFocusDrawerOpen(true)
+        setFocusDrawerOpenByPanel({})
+        setDetailTranscriptByPanel({})
+        setNotesPanelOpenByPanel({})
+        setOpenNoteIdByPanel({})
     }, [clearFocusEpoch])
 
     // Panels the user has actually focused a gene in, most recent first.
@@ -509,60 +535,6 @@ export default function GenomeBrowserView({
             .filter(Boolean)
     }, [panels, focusPanelOrder, focusTranscriptData, genomeBrowserColors])
 
-    const [focusDrawerPanelKey, setFocusDrawerPanelKey] = useState('')
-    // Which transcript has its metadata/sequence detail open, if any.
-    const [detailTranscriptId, setDetailTranscriptId] = useState('')
-    const activeFocusPanelKey = focusDrawerEntries.some((entry) => entry.panelKey === focusDrawerPanelKey)
-        ? focusDrawerPanelKey
-        : (focusDrawerEntries[0]?.panelKey || '')
-
-    // The drawer hangs off its gene's focus bar rather than the top of the view,
-    // so it reads as sliding out of that panel. Measured from the DOM because
-    // the offset depends on every panel's rendered height above it.
-    const [focusDrawerAlign, setFocusDrawerAlign] = useState({ top: 0, height: 0 })
-    useEffect(() => {
-        const host = screenshotOverlayRootRef.current
-        if (!host || !activeFocusPanelKey) {
-            setFocusDrawerAlign({ top: 0, height: 0 })
-            return undefined
-        }
-        const measure = () => {
-            const bar = host.querySelector(`[data-focus-bar="true"][data-focus-panel-key="${CSS.escape(activeFocusPanelKey)}"]`)
-            if (!bar) return
-            const barRect = bar.getBoundingClientRect()
-            const snapped = alignBandToBar({
-                barTop: barRect.top,
-                barHeight: barRect.height,
-                hostTop: host.getBoundingClientRect().top,
-            })
-            if (!snapped) return
-            setFocusDrawerAlign((prev) => (
-                prev.top === snapped.top && prev.height === snapped.height ? prev : snapped
-            ))
-        }
-        measure()
-        // Panels grow and shrink as transcripts expand, which moves the bars.
-        const observer = new ResizeObserver(measure)
-        observer.observe(host)
-        window.addEventListener('resize', measure)
-        return () => {
-            observer.disconnect()
-            window.removeEventListener('resize', measure)
-        }
-    }, [activeFocusPanelKey, focusDrawerEntries, focusTranscriptViews])
-
-    // --- Pinned transcript alignment -----------------------------------------
-    //
-    // Clicking a transcript in the drawer brings its row in the browser level
-    // with its identifier. The drawer and the panels sit in the same scroller,
-    // so scrolling moves both together and can never close the gap between them
-    // on its own: the drawer's anchor has to shift by the gap as well. Shifting
-    // the anchor and scrolling by the same amount makes the drawer look like it
-    // is standing still while the browser travels up or down to meet it.
-    const [focusDrawerPinOffset, setFocusDrawerPinOffset] = useState(0)
-    const activePinnedId = String(focusTranscriptViews[activeFocusPanelKey]?.pinnedId || '')
-    const activePinGeometry = focusRowGeometry[activeFocusPanelKey] || null
-
     const findPanelScroller = useCallback((from) => {
         let node = from
         while (node && node !== document.body) {
@@ -575,6 +547,410 @@ export default function GenomeBrowserView({
         return null
     }, [])
 
+    // Which transcript has its metadata/sequence detail open, per panel.
+    const [detailTranscriptByPanel, setDetailTranscriptByPanel] = useState({})
+    // Each drawer's X clears only its own genome. The browser watches for the
+    // epoch to change, so a per-panel counter added to the global one lets one
+    // panel be cleared without disturbing the others.
+    const [panelClearEpochs, setPanelClearEpochs] = useState({})
+
+    const detailTranscriptRef = useRef({})
+    detailTranscriptRef.current = detailTranscriptByPanel
+    const detailScrollMemoryRef = useRef({})
+    // How far the transcript list is lifted so the detail's own transcript sits at
+    // the top of it. Cleared when the detail closes.
+    const [detailListShiftByPanel, setDetailListShiftByPanel] = useState({})
+
+    // Opening the detail should show it from the top. Left alone it opens
+    // wherever the reader happened to be, which for a transcript low in the list
+    // means landing in the middle of a sequence with no idea what it belongs to.
+    // Closing it puts them back where they were, on the highlighted transcript.
+    const handleDetailTranscriptChange = useCallback((panelKey, transcriptId) => {
+        const wasOpen = Boolean(detailTranscriptRef.current[panelKey])
+        const willOpen = Boolean(transcriptId)
+        setDetailTranscriptByPanel((prev) => ({ ...prev, [panelKey]: transcriptId }))
+        // The detail and the notes share one wide slot. If both were ever open
+        // the drawer's own width and the coverage the assembly drawer clears
+        // would disagree, and the two panels would sit on top of each other.
+        if (willOpen) setNotesPanelOpenByPanel((prev) => (prev[panelKey] ? { ...prev, [panelKey]: false } : prev))
+        if (willOpen === wasOpen) return
+
+        const wrapper = screenshotOverlayRootRef.current?.querySelector(
+            `[data-focus-panel-wrapper="${CSS.escape(panelKey)}"]`
+        )
+        const drawer = wrapper?.querySelector('[data-focus-drawer="true"]')
+        const scroller = drawer ? findPanelScroller(drawer) : null
+        if (!drawer || !scroller) return
+        const scrollTo = (value) => {
+            scroller.scrollTop = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, value))
+        }
+
+        if (willOpen) {
+            detailScrollMemoryRef.current[panelKey] = scroller.scrollTop
+            const above = drawer.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+            // Only when its top has gone past — no need to move a detail that is
+            // already showing from the beginning.
+            if (above < 0) scrollTo(scroller.scrollTop + above)
+
+            // Bring the transcript the detail is about to the top of the list, so
+            // it is obvious which of twenty identifiers the panel is describing.
+            // Deferred a frame: the drawer widens and the list offset drops as the
+            // detail opens, and the row's position is only settled after that.
+            requestAnimationFrame(() => {
+                const row = wrapper.querySelector(
+                    `[data-drawer-transcript-row="${CSS.escape(transcriptId)}"]`
+                )
+                const list = wrapper.querySelector('[data-focus-drawer-list="true"]')
+                if (!row || !list) return
+                const shift = Math.round(row.getBoundingClientRect().top - list.getBoundingClientRect().top)
+                setDetailListShiftByPanel((prev) => ({ ...prev, [panelKey]: Math.max(0, shift) }))
+            })
+            return
+        }
+
+        setDetailListShiftByPanel((prev) => (prev[panelKey] ? { ...prev, [panelKey]: 0 } : prev))
+        const remembered = detailScrollMemoryRef.current[panelKey]
+        delete detailScrollMemoryRef.current[panelKey]
+        if (Number.isFinite(remembered)) scrollTo(remembered)
+    }, [findPanelScroller])
+
+    const handleClearPanelFocus = useCallback((panelKey) => {
+        setPanelClearEpochs((prev) => ({ ...prev, [panelKey]: (prev[panelKey] || 0) + 1 }))
+        setDetailTranscriptByPanel((prev) => ({ ...prev, [panelKey]: '' }))
+        handlePanelGeneSelect(panelKey, null)
+    }, [handlePanelGeneSelect])
+
+    // ── Gene notes ──────────────────────────────────────────────────────────
+    //
+    // The notes themselves live in the app-wide store (hooks/useNoteStore.jsx),
+    // shared with the Notes view. What stays here is the drawer's own state:
+    // which panel has the notes pane out, which note it is showing, how it is
+    // sorted. Per panel, like every neighbouring map, so the same gene in two
+    // genomes stays independent.
+
+    const noteStore = useNoteStore()
+
+    // panelKey -> bool. Shares the drawer's wide slot with the transcript detail.
+    const [notesPanelOpenByPanel, setNotesPanelOpenByPanel] = useState({})
+    const [openNoteIdByPanel, setOpenNoteIdByPanel] = useState({})
+    const [noteSortByPanel, setNoteSortByPanel] = useState({})
+    // panelKey -> the gene whose notes the reader has explicitly asked to see.
+    // Set before that gene takes focus, so the focus change can tell "open the
+    // notes on this gene" apart from "look at this gene".
+    const notesOpenIntentRef = useRef({})
+    // panelKey -> the gene id this panel was last showing, so a focus change is
+    // something we can detect rather than infer.
+    const focusedGeneIdRef = useRef({})
+
+    /**
+     * The assembly key a panel's notes are filed under.
+     *
+     * Taken from `panel.key` rather than `panel.genomeParam`: that falls back to
+     * the positional 'reference'/'target', and notes filed under a slot would
+     * silently re-attach themselves to whatever genome occupied it next.
+     */
+    const notesGenomeKeyFor = useCallback(
+        (panel) => normalizeNoteGenomeKey(getAssemblyGenomeKey(panel?.key || '')),
+        []
+    )
+
+    // Which gene each panel currently has focused, as a string the effects below
+    // can depend on without re-firing whenever an unrelated gene field changes.
+    const focusedGeneSignature = useMemo(
+        () => panels.map((panel) => `${panel.key}:${selectedGenes[panel.key]?.id || ''}`).join('|'),
+        [panels, selectedGenes]
+    )
+
+    const { notesForGene, geneNoteCountsForGenome: geneNoteCountsFor } = noteStore
+
+    // Memoized rather than derived inside the render loop: the drawer memoizes
+    // its sorted list and its summary rows on these arrays, and handing it a
+    // fresh one every render would defeat both.
+    const notesByPanel = useMemo(() => {
+        const out = {}
+        for (const panel of panels) {
+            const geneId = String(selectedGenes[panel.key]?.id || '').trim()
+            const genomeKey = notesGenomeKeyFor(panel)
+            out[panel.key] = (geneId && genomeKey) ? notesForGene(genomeKey, geneId) : EMPTY_NOTE_LIST
+        }
+        return out
+    }, [panels, selectedGenes, notesGenomeKeyFor, notesForGene])
+
+    const noteCountsByPanel = useMemo(() => {
+        const out = {}
+        for (const panel of panels) {
+            const genomeKey = notesGenomeKeyFor(panel)
+            out[panel.key] = genomeKey ? geneNoteCountsFor(genomeKey) : EMPTY_NOTE_COUNTS
+        }
+        return out
+    }, [panels, notesGenomeKeyFor, geneNoteCountsFor])
+
+    // --- Panel plumbing ------------------------------------------------------
+
+    const handleNoteCreate = useCallback((panelKey) => {
+        const panel = panels.find((candidate) => candidate.key === panelKey)
+        const genomeKey = notesGenomeKeyFor(panel)
+        const gene = selectedGenes[panelKey]
+        const geneId = String(gene?.id || '').trim()
+        if (!genomeKey || !geneId) return
+
+        const target = buildGeneNoteTarget({
+            genomeKey,
+            selectionKey: panel?.key || '',
+            geneId,
+            geneLabel: gene?.name || '',
+        })
+        // The id comes back on this tick, so the editor opens on the new note
+        // straight away rather than after a round trip. `onIdAssigned` re-points
+        // it once the server's id lands, and clears it if the create failed.
+        const { tempId } = noteStore.createNote(target, {
+            onIdAssigned: (fromId, toId) => {
+                setOpenNoteIdByPanel((prev) => (prev[panelKey] === fromId ? { ...prev, [panelKey]: toId } : prev))
+            },
+        })
+        setOpenNoteIdByPanel((prev) => ({ ...prev, [panelKey]: tempId }))
+        setNotesPanelOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
+        handleDetailTranscriptChange(panelKey, '')
+        handleFocusTranscriptViewChange(panelKey, {
+            pinnedId: null,
+            ghostId: null,
+            hoverId: null,
+        })
+        setFocusDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
+    }, [panels, selectedGenes, notesGenomeKeyFor, handleDetailTranscriptChange, handleFocusTranscriptViewChange, noteStore])
+
+    const handleNoteDelete = useCallback((panelKey, noteId) => {
+        // Deleting is leaving the editor, not navigating to an empty editor
+        // state. Return to the gene drawer's transcript list and note previews.
+        setOpenNoteIdByPanel((prev) => ({ ...prev, [panelKey]: '' }))
+        setNotesPanelOpenByPanel((prev) => ({ ...prev, [panelKey]: false }))
+        noteStore.deleteNote(noteId)
+    }, [noteStore])
+
+    const handleNotesPanelToggle = useCallback((panelKey) => {
+        setNotesPanelOpenByPanel((prev) => {
+            const opening = !prev[panelKey]
+            if (opening) {
+                // Routed through the detail handler rather than just clearing the
+                // flag: that is what restores the remembered scroll position and
+                // drops the list's lift, which a bare setState would leave behind.
+                handleDetailTranscriptChange(panelKey, '')
+            } else {
+                const openId = openNoteIdByPanel[panelKey]
+                if (openId) noteStore.saveNote(openId)
+                setOpenNoteIdByPanel((all) => ({ ...all, [panelKey]: '' }))
+            }
+            return { ...prev, [panelKey]: opening }
+        })
+    }, [handleDetailTranscriptChange, noteStore, openNoteIdByPanel])
+
+    const handleOpenNoteChange = useCallback((panelKey, noteId) => {
+        setOpenNoteIdByPanel((prev) => {
+            const previous = prev[panelKey]
+            if (previous && previous !== noteId) noteStore.saveNote(previous)
+            return { ...prev, [panelKey]: noteId }
+        })
+    }, [noteStore])
+
+    /** The canvas bubble: focus already arrives via onGeneSelect, so only open. */
+    const handleOpenGeneNotes = useCallback((panelKey, geneId = '') => {
+        // Registered before the gene arrives, because focusing it is what
+        // normally closes the notes panel — see the effect below.
+        if (geneId) notesOpenIntentRef.current[panelKey] = String(geneId)
+        setNotesPanelOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
+        setOpenNoteIdByPanel((prev) => ({ ...prev, [panelKey]: '' }))
+        setFocusDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
+        handleDetailTranscriptChange(panelKey, '')
+    }, [handleDetailTranscriptChange])
+
+    const saveNoteRef = useRef(noteStore.saveNote)
+    useEffect(() => {
+        saveNoteRef.current = noteStore.saveNote
+    }, [noteStore.saveNote])
+
+    /**
+     * Focusing a different gene puts the drawer back to just the gene.
+     *
+     * The wide notes panel is something the reader asks for, not something the
+     * next gene inherits because the last one had it open. Clicking a gene or one
+     * of its transcripts is a request to look at that gene, not to read notes on
+     * it — so the drawer opens at its normal width and the notes stay a click
+     * away, under the notes control.
+     *
+     * The note bubble is the one exception: clicking it *is* the request, and it
+     * says so in advance through `notesOpenIntentRef`.
+     *
+     * Saved on the way out, blanks discarded — the same thing closing the panel
+     * does. Leaving a gene is leaving its note, and a note nobody typed into is
+     * not worth keeping just because the reader left by a different door.
+     */
+    useEffect(() => {
+        for (const panel of panels) {
+            const key = panel.key
+            const focusedId = String(selectedGenes[key]?.id || '').trim()
+            if (focusedGeneIdRef.current[key] === focusedId) continue
+            focusedGeneIdRef.current[key] = focusedId
+
+            const openId = openNoteIdByPanel[key]
+            if (openId) {
+                saveNoteRef.current(openId)
+                setOpenNoteIdByPanel((prev) => ({ ...prev, [key]: '' }))
+            }
+
+            if (focusedId && notesOpenIntentRef.current[key] === focusedId) {
+                delete notesOpenIntentRef.current[key]
+                continue
+            }
+            delete notesOpenIntentRef.current[key]
+            setNotesPanelOpenByPanel((prev) => (prev[key] ? { ...prev, [key]: false } : prev))
+        }
+    }, [focusedGeneSignature, panels, selectedGenes, openNoteIdByPanel])
+
+
+    const isFocusDrawerOpen = useCallback(
+        (panelKey) => focusDrawerOpenByPanel[panelKey] !== false,
+        [focusDrawerOpenByPanel]
+    )
+
+    // Only one transcript can be pinned at a time, across every panel. Alignment
+    // scrolls the page to bring a row level with its identifier, and two rows in
+    // different genomes cannot both be met at once — so a second pin replaces the
+    // first rather than fighting it.
+    const activePinPanelKey = useMemo(() => {
+        for (const entry of focusDrawerEntries) {
+            if (String(focusTranscriptViews[entry.panelKey]?.pinnedId || '')) return entry.panelKey
+        }
+        return ''
+    }, [focusDrawerEntries, focusTranscriptViews])
+
+    // The drawer hangs off its gene's focus bar rather than the top of the view,
+    // so it reads as sliding out of that panel. Measured from the DOM because
+    // the offset depends on every panel's rendered height above it.
+    const [focusDrawerAlignByPanel, setFocusDrawerAlignByPanel] = useState({})
+    // The scroll area is padded, and a sticky header offsets from inside that
+    // padding — which left the band floating below the app's top bar instead of
+    // sitting under it. Measured rather than assumed, so it tracks the layout.
+    const [focusDrawerStickyInset, setFocusDrawerStickyInset] = useState(0)
+    // The assembly drawer hangs off the toolbar its genome pill sits in, the
+    // same way the focus drawer hangs off the gene-of-focus bar.
+    const [assemblyDrawerAlignByPanel, setAssemblyDrawerAlignByPanel] = useState({})
+    useEffect(() => {
+        const host = screenshotOverlayRootRef.current
+        if (!host) return undefined
+        // Measured against the panel the drawer lives in, not the view: each
+        // drawer is clamped to its own genome's box so it can never reach over
+        // the track above or below it.
+        const measureBands = (selector) => {
+            const next = {}
+            for (const bar of host.querySelectorAll(selector)) {
+                const panelKey = bar.getAttribute('data-focus-panel-key')
+                const wrapper = bar.closest('[data-focus-panel-wrapper]')
+                if (!panelKey || !wrapper) continue
+                const snapped = alignBandToBar({
+                    barTop: bar.getBoundingClientRect().top,
+                    barHeight: bar.getBoundingClientRect().height,
+                    hostTop: wrapper.getBoundingClientRect().top,
+                })
+                if (snapped) next[panelKey] = snapped
+            }
+            return next
+        }
+        const keepIfSame = (prev, next) => {
+            const sameKeys = Object.keys(prev).length === Object.keys(next).length
+                && Object.keys(next).every((key) => prev[key]
+                    && prev[key].top === next[key].top
+                    && prev[key].height === next[key].height)
+            return sameKeys ? prev : next
+        }
+        const measure = () => {
+            const scroller = findPanelScroller(host)
+            if (scroller) {
+                const padding = Math.round(parseFloat(window.getComputedStyle(scroller).paddingTop) || 0)
+                setFocusDrawerStickyInset((prev) => (prev === padding ? prev : padding))
+            }
+            const focusBands = measureBands('[data-focus-bar="true"][data-focus-panel-key]')
+            const toolbarBands = measureBands('[data-browser-toolbar="true"][data-focus-panel-key]')
+            setFocusDrawerAlignByPanel((prev) => keepIfSame(prev, focusBands))
+            setAssemblyDrawerAlignByPanel((prev) => keepIfSame(prev, toolbarBands))
+        }
+        measure()
+        // Panels grow and shrink as transcripts expand, which moves the bars.
+        const observer = new ResizeObserver(measure)
+        observer.observe(host)
+        window.addEventListener('resize', measure)
+        return () => {
+            observer.disconnect()
+            window.removeEventListener('resize', measure)
+        }
+    }, [focusDrawerEntries, focusTranscriptViews, findPanelScroller])
+
+    // --- Assembly drawer ------------------------------------------------------
+    //
+    // The genome pill in a panel's toolbar toggles a drawer carrying what the
+    // registry says about that assembly — the same fields the stats view lists.
+    // The pill is a toggle and nothing else: it does not change colour or state,
+    // so the drawer is the only thing that says whether it is out.
+    const [assemblyDrawerOpenByPanel, setAssemblyDrawerOpenByPanel] = useState({})
+    const [assemblyInfoByPanel, setAssemblyInfoByPanel] = useState({})
+
+    const handleGenomePillClick = useCallback((panelKey) => {
+        setAssemblyDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: !prev[panelKey] }))
+    }, [])
+
+    const closeAssemblyDrawer = useCallback((panelKey) => {
+        setAssemblyDrawerOpenByPanel((prev) => (prev[panelKey] ? { ...prev, [panelKey]: false } : prev))
+    }, [])
+
+    // Read on demand rather than up front: this is a cache read for a genome
+    // that has been analysed and a first computation for one that has not, and
+    // most sessions never open the drawer at all. Held per panel once fetched,
+    // so re-opening is instant.
+    const openAssemblyPanelKeys = useMemo(
+        () => panels.map((panel) => panel.key).filter((key) => assemblyDrawerOpenByPanel[key]),
+        [panels, assemblyDrawerOpenByPanel],
+    )
+
+    // Which genomes have a read in flight or already answered. A ref rather than
+    // state on purpose: recording the attempt must not re-run this effect, or it
+    // tears down the request it just started before the response arrives.
+    const assemblyRequestsRef = useRef(new Set())
+
+    useEffect(() => {
+        for (const panelKey of openAssemblyPanelKeys) {
+            if (assemblyRequestsRef.current.has(panelKey)) continue
+            const panel = panels.find((item) => item.key === panelKey)
+            if (!panel?.species) continue
+            assemblyRequestsRef.current.add(panelKey)
+            const settle = (info) => {
+                // A read that came back with nothing is worth trying again the
+                // next time the drawer opens rather than cached for the session:
+                // the report may simply not have been downloaded yet.
+                if (!hasAssemblyMetadata(info)) assemblyRequestsRef.current.delete(panelKey)
+                setAssemblyInfoByPanel((prev) => ({ ...prev, [panelKey]: { info, loading: false } }))
+            }
+            fetch(`${API_BASE}/api/stats/summary`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ genomes: [panel.species], sections: ['assembly'] }),
+            })
+                .then((res) => (res.ok ? res.json() : null))
+                .then((data) => settle(((data?.records || [])[0] || {}).assembly_info || {}))
+                .catch(() => settle({}))
+        }
+    }, [openAssemblyPanelKeys, panels])
+
+    // --- Pinned transcript alignment -----------------------------------------
+    //
+    // Clicking a transcript in the drawer brings its row in the browser level
+    // with its identifier. The drawer and the panels sit in the same scroller,
+    // so scrolling moves both together and can never close the gap between them
+    // on its own: the drawer's anchor has to shift by the gap as well. Shifting
+    // the anchor and scrolling by the same amount makes the drawer look like it
+    // is standing still while the browser travels up or down to meet it.
+    const [focusDrawerPinOffset, setFocusDrawerPinOffset] = useState(0)
+    const activePinnedId = String(focusTranscriptViews[activePinPanelKey]?.pinnedId || '')
+    const activePinGeometry = focusRowGeometry[activePinPanelKey] || null
+
     // The drawer's anchor and the scroller have to move by the same amount on
     // the same frame, or the drawer visibly drifts before settling. React holds
     // the final anchor from the outset and a transform carries the drawer back
@@ -586,52 +962,66 @@ export default function GenomeBrowserView({
         const running = pinAnimationRef.current
         if (!running) return
         cancelAnimationFrame(running.frame)
-        if (running.drawer) running.drawer.style.transform = ''
+        // Snap to where the move was heading rather than clearing the property,
+        // which would drop the offset until React next renders.
+        if (running.drawer) running.drawer.style.transform = running.settled || ''
         pinAnimationRef.current = null
     }, [])
 
     useEffect(() => stopPinAnimation, [stopPinAnimation])
 
-    const movePinAlignment = useCallback((panel, from, to) => {
+    // `scrollDistance` is deliberately separate from the offset. The offset is
+    // fixed by the alignment — it is the gap between the two rows — but how far
+    // the page scrolls decides where the aligned pair ends up on screen. Matching
+    // them keeps the drawer looking still; scrolling less slides the pair down,
+    // which is how a row hiding under the sticky band is brought out from it.
+    const movePinAlignment = useCallback((panel, from, to, scrollDistance = null) => {
         stopPinAnimation()
         const distance = to - from
-        if (!distance) return
+        const travel = scrollDistance === null ? distance : scrollDistance
+        if (!distance && !travel) return
 
         const scroller = findPanelScroller(panel)
-        const drawer = screenshotOverlayRootRef.current?.querySelector('[data-focus-drawer="true"]')
+        const drawer = panel.closest('[data-focus-panel-wrapper]')
+            ?.querySelector('[data-focus-drawer-body="true"]')
         const scrollTo = (value) => {
             if (!scroller) return
             scroller.scrollTop = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, value))
         }
         if (!scroller || !drawer) {
             setFocusDrawerPinOffset(to)
-            if (scroller) scrollTo(scroller.scrollTop + distance)
-            else window.scrollBy(0, distance)
+            if (scroller) scrollTo(scroller.scrollTop + travel)
+            else window.scrollBy(0, travel)
             return
         }
 
-        // Flushed, so the new anchor and the transform that cancels it land in
-        // the same paint. Left to batch, React commits the anchor a frame early
-        // and the drawer jumps the whole distance before sliding back.
+        // Flushed, so the settled offset and the transform that walks back to the
+        // starting position land in the same paint. Left to batch, React commits
+        // the offset a frame early and the list jumps the whole distance before
+        // sliding back.
+        //
+        // The offset itself is a margin now, so the transform is free to carry
+        // the animation as a correction that decays to nothing.
+        const settled = ''
         flushSync(() => setFocusDrawerPinOffset(to))
         drawer.style.transform = `translateY(${-distance}px)`
 
         const scrollFrom = scroller.scrollTop
-        const duration = Math.min(520, Math.max(220, Math.abs(distance) * 1.5))
+        const duration = Math.min(520, Math.max(220, Math.max(Math.abs(distance), Math.abs(travel)) * 1.5))
         const started = performance.now()
         const step = (now) => {
             const t = Math.min(1, (now - started) / duration)
             const eased = 1 - ((1 - t) ** 3)
-            scrollTo(scrollFrom + (distance * eased))
+            scrollTo(scrollFrom + (travel * eased))
             if (t < 1) {
                 drawer.style.transform = `translateY(${-distance * (1 - eased)}px)`
-                pinAnimationRef.current = { frame: requestAnimationFrame(step), drawer }
+                pinAnimationRef.current = { frame: requestAnimationFrame(step), drawer, settled }
                 return
             }
-            drawer.style.transform = ''
+            drawer.style.transform = settled
             pinAnimationRef.current = null
         }
-        pinAnimationRef.current = { frame: requestAnimationFrame(step), drawer }
+        pinAnimationRef.current = { frame: requestAnimationFrame(step), drawer, settled }
     }, [findPanelScroller, stopPinAnimation])
 
     // Letting the pin go — or switching panel, or collapsing the drawer — undoes
@@ -644,7 +1034,19 @@ export default function GenomeBrowserView({
     // is usually a small net move, which reads as an overshoot and a correction.
     // The alignment below travels straight from wherever it is to where it needs
     // to be instead.
-    const pinSignature = (activePinnedId && focusDrawerOpen) ? activeFocusPanelKey : ''
+    // With the transcript detail open the alignment is dead weight: it holds the
+    // list down to meet a track the detail is covering anyway, and all the reader
+    // sees is the blank strip it leaves under the header. Stand it down while the
+    // detail is up, and align again the moment it closes.
+    const detailOpenOnPinnedPanel = Boolean(detailTranscriptByPanel[activePinPanelKey])
+    // Compact rows and flattened tracks both rearrange the track vertically, so
+    // a row in the list no longer answers to a row in the browser and aligning
+    // the two says nothing. The pin survives; turning either mode off aligns it
+    // again.
+    const alignmentSuspended = detailOpenOnPinnedPanel || compressMode || flattenMode
+    const pinSignature = (activePinnedId && isFocusDrawerOpen(activePinPanelKey) && !alignmentSuspended)
+        ? activePinPanelKey
+        : ''
     const appliedPinSignatureRef = useRef('')
     const pinOffsetRef = useRef(0)
     pinOffsetRef.current = focusDrawerPinOffset
@@ -654,15 +1056,19 @@ export default function GenomeBrowserView({
         const offset = pinOffsetRef.current
         if (!offset) return
         const panel = screenshotOverlayRootRef.current?.querySelector('[data-browser-canvas-surface="true"]')
-        if (panel) movePinAlignment(panel, offset, 0)
+        // Opening the detail does its own scrolling — to the top of that panel —
+        // so the unwind gives up the list offset without also moving the page,
+        // which would drag the view back off the detail it just framed.
+        if (panel) movePinAlignment(panel, offset, 0, detailOpenOnPinnedPanel ? 0 : null)
         else setFocusDrawerPinOffset(0)
-    }, [pinSignature, movePinAlignment])
+    }, [pinSignature, detailOpenOnPinnedPanel, movePinAlignment])
 
     const focusDrawerAlignTopRef = useRef(0)
-    focusDrawerAlignTopRef.current = focusDrawerAlign.top
+    focusDrawerAlignTopRef.current = focusDrawerAlignByPanel[activePinPanelKey]?.top || 0
 
     useEffect(() => {
-        if (!activePinnedId || !focusDrawerOpen) return undefined
+        if (!activePinnedId || !isFocusDrawerOpen(activePinPanelKey)) return undefined
+        if (alignmentSuspended) return undefined
         if (!activePinGeometry || activePinGeometry.transcriptId !== activePinnedId) return undefined
         // A gene still drawn as a block reports its block, not a row. Aligning to
         // that would haul the drawer to a position the re-framing is about to
@@ -685,7 +1091,7 @@ export default function GenomeBrowserView({
             const host = screenshotOverlayRootRef.current
             const row = host?.querySelector(`[data-drawer-transcript-row="${CSS.escape(activePinnedId)}"]`)
             const panel = host?.querySelector(
-                `[data-browser-canvas-surface="true"][data-focus-panel-key="${CSS.escape(activeFocusPanelKey)}"]`
+                `[data-browser-canvas-surface="true"][data-focus-panel-key="${CSS.escape(activePinPanelKey)}"]`
             )
             if (!row || !panel) return
 
@@ -702,12 +1108,23 @@ export default function GenomeBrowserView({
             // shift keeps asking for more and never settles.
             const previous = pinOffsetRef.current
             const applied = Math.max(previous + residual, -focusDrawerAlignTopRef.current)
-            if (applied === previous) return
-            movePinAlignment(panel, previous, applied)
+
+            // A row sitting under the sticky band would stay under it: matching
+            // the scroll to the offset keeps the drawer visually still, obscured
+            // row and all. Scrolling that much less instead slides the aligned
+            // pair down until the row clears the band's bottom edge.
+            const band = host?.querySelector(
+                `[data-focus-panel-wrapper="${CSS.escape(activePinPanelKey)}"] [data-focus-drawer-band="true"]`
+            )
+            const bandBottom = band ? band.getBoundingClientRect().bottom : 0
+            const obscured = Math.max(0, Math.round(bandBottom - rowRect.top))
+
+            if (applied === previous && !obscured) return
+            movePinAlignment(panel, previous, applied, (applied - previous) - obscured)
         }
         timer = setTimeout(attempt, 80)
         return () => { if (timer) clearTimeout(timer) }
-    }, [activePinnedId, activePinGeometry, activeFocusPanelKey, focusDrawerOpen, movePinAlignment])
+    }, [activePinnedId, activePinGeometry, activePinPanelKey, isFocusDrawerOpen, alignmentSuspended, movePinAlignment])
 
     // How much of a panel's right edge the drawer covers, so gene framing can
     // aim for the middle of what stays visible. A panel that does not hold the
@@ -715,25 +1132,12 @@ export default function GenomeBrowserView({
     // moves the drawer to it and opens it.
     const focusDrawerInsetFor = useCallback((panelKey) => {
         if (!focusDrawerEntries.some((entry) => entry.panelKey === panelKey)) return 0
-        if (activeFocusPanelKey !== panelKey) return 0
-        if (!focusDrawerOpen) return FOCUS_DRAWER_RAIL_WIDTH
         // Deliberately blind to the transcript detail. Someone reading metadata
         // is not reading the track, and re-framing the gene every time that
         // panel opens or closes would shuffle the browser under them for nothing.
-        return FOCUS_DRAWER_WIDTH
-    }, [focusDrawerEntries, activeFocusPanelKey, focusDrawerOpen])
+        return isFocusDrawerOpen(panelKey) ? FOCUS_DRAWER_WIDTH : FOCUS_DRAWER_RAIL_WIDTH
+    }, [focusDrawerEntries, isFocusDrawerOpen])
 
-    // Switching to another panel's focus gene brings that panel's bar to the
-    // drawer, rather than leaving the user to find where the drawer jumped to.
-    const previousFocusPanelKeyRef = useRef('')
-    useEffect(() => {
-        const previous = previousFocusPanelKeyRef.current
-        previousFocusPanelKeyRef.current = activeFocusPanelKey
-        if (!activeFocusPanelKey || !previous || previous === activeFocusPanelKey) return
-        const host = screenshotOverlayRootRef.current
-        const bar = host?.querySelector(`[data-focus-bar="true"][data-focus-panel-key="${CSS.escape(activeFocusPanelKey)}"]`)
-        bar?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }, [activeFocusPanelKey])
     const anyFocusedGene = useMemo(() => {
         if (anyGeneSelected) return true
         for (const gene of Object.values(externalFocusGenesByGenome || {})) {
@@ -2181,10 +2585,35 @@ export default function GenomeBrowserView({
                             ? refReloadKey
                             : (panel.alignmentRole === 'target' ? tgtReloadKey : 0)
 
+                        const drawerEntry = focusDrawerEntries.find((entry) => entry.panelKey === panelKey) || null
+                        const drawerAlign = focusDrawerAlignByPanel[panelKey] || { top: 0, height: 0 }
+                        const drawerPinOffset = activePinPanelKey === panelKey ? focusDrawerPinOffset : 0
+                        // With a gene of focus the assembly drawer drops down onto
+                        // the focus drawer's band line and takes its height, so the
+                        // two headers read as one row across the panel. With no
+                        // gene it goes back to the toolbar its pill sits in.
+                        const assemblyAlign = (drawerEntry && drawerAlign.height)
+                            ? drawerAlign
+                            : (assemblyDrawerAlignByPanel[panelKey] || { top: 0, height: 0 })
+                        const assemblyState = assemblyInfoByPanel[panelKey] || null
+                        // Cleared past whatever the focus drawer is currently
+                        // taking, so the two never sit on top of each other.
+                        const focusDrawerCoverage = !drawerEntry
+                            ? 0
+                            : !isFocusDrawerOpen(panelKey)
+                                ? FOCUS_DRAWER_RAIL_WIDTH
+                                : ((detailTranscriptByPanel[panelKey] || notesPanelOpenByPanel[panelKey])
+                                    ? FOCUS_DRAWER_DETAIL_WIDTH
+                                    : FOCUS_DRAWER_WIDTH)
+
                         return (
                             <div
                                 key={panelKey}
-                                className="w-full flex flex-col"
+                                // The drawer for this genome is positioned against
+                                // this box, so it can never reach over the panel
+                                // above or below however tall its list grows.
+                                data-focus-panel-wrapper={panelKey}
+                                className="relative w-full flex flex-col"
                                 style={fillSinglePanelHeight ? growingPanelStyle : undefined}
                             >
                                 {idx > 0 && (
@@ -2206,13 +2635,16 @@ export default function GenomeBrowserView({
                                             key={panelKey}
                                             isActive={isActive}
                                             genome={panel.genomeParam}
+                                            geneNoteCounts={noteCountsByPanel[panelKey] || EMPTY_NOTE_COUNTS}
+                                            onOpenGeneNotes={(geneId) => handleOpenGeneNotes(panelKey, geneId)}
                                             alignmentRole={panel.alignmentRole}
                                             reloadEpoch={panelReloadKey}
                                             theme={theme}
                                             label={panel.label}
                                             genomePillLabel={panel.genomePillLabel}
                                             genomeColor={getGenomeBrowserColor(genomeBrowserColors, panel.index)}
-                                            onGenomePillClick={onToggleSpecies ? () => onToggleSpecies(panel.species) : null}
+                                            onGenomePillClick={() => handleGenomePillClick(panelKey)}
+                                            genomePillExpanded={Boolean(assemblyDrawerOpenByPanel[panelKey])}
                                             toolbarPosition="top"
                                             rulerPosition="top"
                                             focusBarPosition="top"
@@ -2259,7 +2691,7 @@ export default function GenomeBrowserView({
                                             onGeneTranscriptViewChange={(geneId, patch) => handleGeneTranscriptViewChange(panelKey, geneId, patch)}
                                             navigateToGene={navigateGenes[panelKey] || null}
                                             onManualNavigate={handleManualBrowserNavigate}
-                                            clearFocusEpoch={clearFocusEpoch}
+                                            clearFocusEpoch={clearFocusEpoch + (panelClearEpochs[panelKey] || 0)}
                                             screenshotTargetId={panelKey}
                                             onScreenshotTargetChange={(descriptor) => handleScreenshotTargetChange(panelKey, descriptor)}
                                         />
@@ -2271,6 +2703,77 @@ export default function GenomeBrowserView({
                                         />
                                     )}
                                 </div>
+
+                                {drawerEntry && (
+                                    <FocusGeneDrawer
+                                        theme={theme}
+                                        open={isFocusDrawerOpen(panelKey)}
+                                        onToggle={() => setFocusDrawerOpenByPanel((prev) => {
+                                            const wasOpen = prev[panelKey] !== false
+                                            // Collapsing hides the list the pin belongs to, so the
+                                            // highlight it holds in the browser has nothing left to
+                                            // point at. Let it go rather than stranding it.
+                                            if (wasOpen) {
+                                                setDetailTranscriptByPanel((all) => ({ ...all, [panelKey]: '' }))
+                                                setNotesPanelOpenByPanel((all) => ({ ...all, [panelKey]: false }))
+                                                handleFocusTranscriptViewChange(panelKey, {
+                                                    pinnedId: null, hoverId: null, ghostId: null,
+                                                })
+                                            }
+                                            return { ...prev, [panelKey]: !wasOpen }
+                                        })}
+                                        onDismiss={() => handleClearPanelFocus(panelKey)}
+                                        entries={[drawerEntry]}
+                                        activePanelKey={panelKey}
+                                        view={focusTranscriptViews[panelKey] || null}
+                                        onViewChange={(patch) => handleFocusTranscriptViewChange(panelKey, patch)}
+                                        showPanelSwitcher={false}
+                                        alignTop={drawerAlign.top}
+                                        alignHeight={drawerAlign.height}
+                                        pinOffset={drawerPinOffset}
+                                        stickyTopInset={focusDrawerStickyInset}
+                                        listShift={detailListShiftByPanel[panelKey] || 0}
+                                        genome={panel.genomeParam}
+                                        detailTranscriptId={detailTranscriptByPanel[panelKey] || ''}
+                                        onDetailTranscriptChange={(id) => handleDetailTranscriptChange(panelKey, id)}
+                                        notesEnabled={Boolean(notesGenomeKeyFor(panel))}
+                                        // Selected out of the loaded store, so this
+                                        // is always exactly this gene's notes — there
+                                        // is no per-gene fetch left to lag behind.
+                                        notes={notesByPanel[panelKey] || EMPTY_NOTE_LIST}
+                                        notesStatus={noteStore.status}
+                                        notesError={noteStore.error}
+                                        notesPanelOpen={Boolean(notesPanelOpenByPanel[panelKey])}
+                                        onNotesPanelToggle={() => handleNotesPanelToggle(panelKey)}
+                                        openNoteId={openNoteIdByPanel[panelKey] || ''}
+                                        onOpenNoteChange={(id) => handleOpenNoteChange(panelKey, id)}
+                                        noteSortMode={noteSortByPanel[panelKey] || DEFAULT_NOTE_SORT_MODE}
+                                        onNoteSortChange={(mode) => setNoteSortByPanel((prev) => ({ ...prev, [panelKey]: mode }))}
+                                        noteSaveState={noteStore.saveStateFor(openNoteIdByPanel[panelKey] || '')}
+                                        onNoteCreate={() => handleNoteCreate(panelKey)}
+                                        onNoteFieldChange={(id, patch) => noteStore.updateNoteFields(id, patch)}
+                                        onNoteSave={(id, options) => noteStore.saveNote(id, options)}
+                                        onNoteDelete={(id) => handleNoteDelete(panelKey, id)}
+                                        onNotesReload={(noteId) => noteStore.reload({ noteId })}
+                                    />
+                                )}
+
+                                {assemblyDrawerOpenByPanel[panelKey] && (
+                                    <AssemblyInfoDrawer
+                                        theme={theme}
+                                        open
+                                        onClose={() => closeAssemblyDrawer(panelKey)}
+                                        genome={panel.species}
+                                        assemblyInfo={assemblyState?.info || null}
+                                        loading={assemblyState?.loading !== false}
+                                        accentColor={getGenomeBrowserColor(genomeBrowserColors, panel.index)}
+                                        label={panel.genomePillLabel || panel.label}
+                                        alignTop={assemblyAlign.top}
+                                        alignHeight={assemblyAlign.height}
+                                        stickyTopInset={focusDrawerStickyInset}
+                                        rightInset={focusDrawerCoverage}
+                                    />
+                                )}
                             </div>
                         )
                     })
@@ -2304,36 +2807,7 @@ export default function GenomeBrowserView({
                 onClose={handleScreenshotModalClose}
             />
 
-            {hasPanels && (
-            <FocusGeneDrawer
-                theme={theme}
-                open={focusDrawerOpen}
-                onToggle={() => setFocusDrawerOpen((prev) => {
-                    // Collapsing hides the list the pin belongs to, so the
-                    // highlight it holds in the browser has nothing left to
-                    // point at. Let it go rather than stranding it.
-                    if (prev) {
-                        setDetailTranscriptId('')
-                        handleFocusTranscriptViewChange(activeFocusPanelKey, {
-                            pinnedId: null, hoverId: null, ghostId: null,
-                        })
-                    }
-                    return !prev
-                })}
-                onDismiss={handleClearFocusedGenes}
-                entries={focusDrawerEntries}
-                activePanelKey={activeFocusPanelKey}
-                onActivePanelChange={setFocusDrawerPanelKey}
-                view={focusTranscriptViews[activeFocusPanelKey] || null}
-                onViewChange={(patch) => handleFocusTranscriptViewChange(activeFocusPanelKey, patch)}
-                showPanelSwitcher={panelCount > 1}
-                alignTop={focusDrawerAlign.top + focusDrawerPinOffset}
-                alignHeight={focusDrawerAlign.height}
-                genome={focusDrawerEntries.find((entry) => entry.panelKey === activeFocusPanelKey)?.genomeParam || 'reference'}
-                detailTranscriptId={detailTranscriptId}
-                onDetailTranscriptChange={setDetailTranscriptId}
-            />
-            )}
+
         </div>
     )
 }

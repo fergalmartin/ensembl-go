@@ -249,3 +249,28 @@ export function formatDatasetReleaseShortLabel(releaseOrItem) {
   const keyDate = key.split('/').slice(1).join('/')
   return keyDate ? keyDate.replace(/_/g, '-') : ''
 }
+
+//: Longest provider name the dataset badge shows before it is cut short. The
+//: badge sits over the corner of a genome pill, so there is room for a name,
+//: not a sentence.
+export const DATASET_BADGE_MAX_CHARS = 12
+
+export function truncateBadgeLabel(value, maxChars = DATASET_BADGE_MAX_CHARS) {
+  const token = String(value || '').trim()
+  if (token.length <= maxChars) return token
+  return `${token.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`
+}
+
+export function formatDatasetBadgeLabel(item) {
+  // Only Ensembl publishes releases a user can follow — dated, ordered, and
+  // meaningful on their own. Everyone else effectively has one release: RefSeq
+  // calls it "current" for every genome, which tells the user nothing and reads
+  // like a release they could compare against another. For those the badge
+  // names the provider instead, which is the thing actually worth knowing at a
+  // glance, with the release kept in the tooltip.
+  if (normalizeGenomeProvider(item) !== DEFAULT_PROVIDER) {
+    const providerLabel = truncateBadgeLabel(normalizeGenomeSourceDatabase(item))
+    if (providerLabel) return providerLabel
+  }
+  return String(item?.dataset_release_short_label || '').trim() || formatDatasetReleaseShortLabel(item)
+}

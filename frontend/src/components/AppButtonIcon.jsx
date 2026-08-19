@@ -1,3 +1,5 @@
+import { FONT_MONO } from '../utils/typography'
+
 export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
   const size = compact ? 18 : 24
   const strokeWidth = compact ? 1.8 : 2
@@ -97,7 +99,7 @@ export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
     const fontSize = compact ? '8px' : '9.5px'
     const barHeight = compact ? '6px' : '7px'
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', justifyItems: 'center', fontSize, fontWeight: 800, fontFamily: 'ui-monospace, monospace', lineHeight: 1, gap: '0 1px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', justifyItems: 'center', fontSize, fontWeight: 800, fontFamily: FONT_MONO, lineHeight: 1, gap: '0 1px' }}>
         <span>A</span><span>T</span><span>G</span>
         <div style={{ width: '1.5px', height: barHeight, background: 'currentColor', borderRadius: '1px', margin: '1.5px 0' }}></div>
         <div style={{ width: '1.5px', height: barHeight, background: 'currentColor', borderRadius: '1px', margin: '1.5px 0' }}></div>
@@ -289,6 +291,32 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
         <path d="M21.8 15.9v3.2a2.7 2.7 0 0 1-2.7 2.7H15.2" />
         <rect x="4.4" y="5.05" width="15.2" height="13.9" rx="3.4" />
         <circle cx="12" cy="12" r="3.3" />
+      </svg>
+    )
+  }
+
+  if (buttonId === 'notes') {
+    const iconSize = compact ? 21 : 34
+    const noteStroke = compact ? 1.9 : 2.1
+    return (
+      <svg
+        width={iconSize}
+        height={iconSize}
+        viewBox="0 0 32 32"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={noteStroke}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {/* A clean note sheet with a folded corner reads clearly at app-button size. */}
+        <path d="M7 3.5h12.5l5.5 5.6v19.4H7z" />
+        <path d="M19.5 3.5v5.6H25" />
+        <path d="M11 14h10M11 19h8M11 24h4.5" />
+        {/* The pencil overlaps the writing edge without obscuring the note. */}
+        <path d="m17.5 27.8.9-4 7.5-7.5a1.55 1.55 0 0 1 2.2 0l.25.25a1.55 1.55 0 0 1 0 2.2l-7.5 7.5z" />
+        <path d="m24.9 17.3 2.45 2.45M18.4 23.8l2.45 2.45" />
       </svg>
     )
   }

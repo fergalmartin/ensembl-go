@@ -1,4 +1,5 @@
 import AppButtonIcon from './AppButtonIcon'
+import { FONT_MONO } from '../utils/typography'
 
 function HomeView({ theme, onNavigate }) {
   const isLight = theme === 'light'
@@ -96,7 +97,7 @@ function HomeView({ theme, onNavigate }) {
       title: 'Alignment',
       description: 'Align genic regions across haplotypes or species in the context of annotation',
       icon: (
-        <div className="text-white" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', justifyItems: 'center', fontSize: '16px', fontWeight: '800', fontFamily: 'ui-monospace, monospace', lineHeight: 1, gap: '0 2px' }}>
+        <div className="text-white" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', justifyItems: 'center', fontSize: '16px', fontWeight: '800', fontFamily: FONT_MONO, lineHeight: 1, gap: '0 2px' }}>
           <span>A</span><span>T</span><span>G</span>
           <div style={{ width: '2.5px', height: '12px', background: 'currentColor', borderRadius: '1px', margin: '3px 0' }}></div>
           <div style={{ width: '2.5px', height: '12px', background: 'currentColor', borderRadius: '1px', margin: '3px 0' }}></div>
@@ -154,6 +155,16 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
       icon: (
         <div className="text-white scale-[1.15]">
           <AppButtonIcon buttonId="stats" isLight={isLight} />
+        </div>
+      ),
+    },
+    {
+      id: 'notes',
+      title: 'Notes',
+      description: 'Browse, search and manage every note you have written, grouped by genome and by gene.',
+      icon: (
+        <div className="text-white scale-[1.15]">
+          <AppButtonIcon buttonId="notes" isLight={isLight} />
         </div>
       ),
     },

@@ -1,3 +1,5 @@
+import { sansFont } from './typography.js'
+
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const XHTML_NS = 'http://www.w3.org/1999/xhtml'
 
@@ -167,7 +169,7 @@ function buildExportPlaceholder(ownerDocument, width, height, label) {
     sanitizeStyleText(
       `display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:${width}px;height:${height}px;`
       + 'border:1px dashed rgba(100,116,139,0.45);background:rgba(148,163,184,0.08);'
-      + 'color:#64748b;font:12px system-ui,sans-serif;text-align:center;padding:6px;'
+      + `color:#64748b;font:${sansFont(12)};text-align:center;padding:6px;`
     )
   )
   placeholder.textContent = label

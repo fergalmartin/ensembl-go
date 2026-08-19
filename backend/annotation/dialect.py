@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, IO, Iterator, List, Optional, Tuple
 from urllib.parse import unquote
 
+from .cooperative import CooperativeYielder
+
 GFF3 = "gff3"
 GTF = "gtf"
 GFF2 = "gff2"
@@ -129,8 +131,13 @@ def iter_data_lines(
     """
     total_bytes = max(0, os.path.getsize(path))
     next_report = 0
+    # Reading a multi-gigabyte annotation is the longest uninterrupted stretch of
+    # Python in the process; without this the API stops answering for its whole
+    # duration. See annotation/cooperative.py.
+    yielder = CooperativeYielder()
     with open_annotation_text(path) as handle:
         for line_no, raw in enumerate(handle, start=1):
+            yielder.tick()
             if progress_callback and line_no >= next_report:
                 progress_callback(_compressed_position(handle), total_bytes)
                 next_report = line_no + 250

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 
+import ShareBar, { OTHER_SEGMENT_COLOR, ShareList, sequentialRamp, shareSegments } from './ShareBar'
+
 // Renders the reports produced by /api/custom/validate-genome and
 // /api/custom/validate-annotation. Both share the same shell: headline stat
 // tiles, breakdown tables, then issues grouped by severity.
@@ -84,6 +86,171 @@ const CountTable = ({ title, rows, isLight, total, emptyLabel = 'None' }) => {
                     </tbody>
                 </table>
             </div>
+        </div>
+    )
+}
+
+//: The classes worth leading with, in the order a reader scans them. Keys are
+//: the major classes the backend resolves every biotype into.
+const MAJOR_CLASS_LABELS = [
+    ['coding', 'protein_coding'],
+    ['lnoncoding', 'lncRNA'],
+    ['snoncoding', 'sncRNA'],
+    ['pseudogene', 'pseudogene'],
+    ['other', 'other'],
+]
+
+const MajorClassTable = ({ geneClasses, transcriptClasses, geneTotal, transcriptTotal, isLight }) => {
+    const genes = geneClasses || {}
+    const transcripts = transcriptClasses || {}
+    const geneDenominator = geneTotal || Object.values(genes).reduce((sum, n) => sum + Number(n || 0), 0)
+    const txDenominator = transcriptTotal || Object.values(transcripts).reduce((sum, n) => sum + Number(n || 0), 0)
+    // "other" only earns a row when something actually landed in it.
+    const rows = MAJOR_CLASS_LABELS.filter(([key]) => (
+        key !== 'other' || Number(genes[key] || 0) > 0 || Number(transcripts[key] || 0) > 0
+    ))
+
+    if (!geneDenominator && !txDenominator) {
+        return <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>No genes were modelled.</p>
+    }
+
+    const headClass = `py-1 text-[10px] font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`
+    return (
+        <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+                <thead>
+                    <tr className={isLight ? 'border-b border-gray-200' : 'border-b border-gray-700'}>
+                        <th className={`${headClass} text-left`}>Class</th>
+                        <th className={`${headClass} text-right`}>Genes</th>
+                        <th className={`${headClass} text-right w-14`}>%</th>
+                        <th className={`${headClass} text-right`}>Transcripts</th>
+                        <th className={`${headClass} text-right w-14`}>%</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows.map(([key, label]) => {
+                        const geneCount = Number(genes[key] || 0)
+                        const txCount = Number(transcripts[key] || 0)
+                        return (
+                            <tr key={key} className={isLight ? 'border-b border-gray-100' : 'border-b border-gray-800'}>
+                                <td className={`py-1 pr-2 font-mono ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>{label}</td>
+                                <td className={`py-1 text-right tabular-nums ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>{formatInt(geneCount)}</td>
+                                <td className={`py-1 pl-2 text-right tabular-nums ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                    {geneDenominator ? formatPercent((geneCount / geneDenominator) * 100) : '\u2014'}
+                                </td>
+                                <td className={`py-1 pl-3 text-right tabular-nums ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>{formatInt(txCount)}</td>
+                                <td className={`py-1 pl-2 text-right tabular-nums ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                    {txDenominator ? formatPercent((txCount / txDenominator) * 100) : '\u2014'}
+                                </td>
+                            </tr>
+                        )
+                    })}
+                </tbody>
+            </table>
+        </div>
+    )
+}
+
+const Disclosure = ({ label, children, isLight }) => {
+    const [open, setOpen] = useState(false)
+    return (
+        <div>
+            <button
+                type="button"
+                onClick={() => setOpen((prev) => !prev)}
+                className={`text-xs underline underline-offset-2 ${isLight ? 'text-gray-500 hover:text-gray-800' : 'text-gray-400 hover:text-gray-100'}`}
+            >
+                {open ? `Hide ${label}` : `Show ${label}`}
+            </button>
+            {open ? <div className="mt-2">{children}</div> : null}
+        </div>
+    )
+}
+
+//: Small labelled values laid out across the panel rather than down it. A
+//: five-row table of base counts wasted most of a wide panel on white space.
+const TileGrid = ({ title, entries, isLight, columnsClass = 'grid-cols-3 sm:grid-cols-6' }) => {
+    if (!entries.length) return null
+    return (
+        <div>
+            {title ? (
+                <h5 className={`text-xs font-semibold mb-1 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>{title}</h5>
+            ) : null}
+            <div className={`grid ${columnsClass} gap-1.5`}>
+                {entries.map(([label, value, sub]) => (
+                    <div
+                        key={label}
+                        className={`rounded-md border px-2 py-1 ${isLight ? 'bg-white border-gray-200' : 'bg-gray-900/60 border-gray-700'}`}
+                    >
+                        <div className={`truncate text-[10px] font-mono ${isLight ? 'text-gray-500' : 'text-gray-400'}`} title={label}>
+                            {label}
+                        </div>
+                        <div className={`truncate text-xs font-semibold tabular-nums ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
+                            {value}
+                        </div>
+                        {sub ? (
+                            <div className={`truncate text-[10px] tabular-nums ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>{sub}</div>
+                        ) : null}
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
+}
+
+//: Base identities, in the order the stack reads. The first four slots of the
+//: categorical palette (validated for adjacent pairs in both modes); N is not a
+//: base call, so it takes the neutral rather than a fifth hue.
+const BASE_COLORS = {
+    light: { A: '#2a78d6', C: '#eb6834', G: '#1baf7a', T: '#eda100', N: OTHER_SEGMENT_COLOR.light },
+    dark: { A: '#3987e5', C: '#d95926', G: '#199e70', T: '#c98500', N: OTHER_SEGMENT_COLOR.dark },
+}
+const BASE_ORDER = ['A', 'C', 'G', 'T', 'N']
+
+const DefinitionList = ({ rows, isLight }) => (
+    <dl className="space-y-1">
+        {rows.filter(([, value]) => value !== '' && value !== null && value !== undefined).map(([label, value, sub]) => (
+            <div
+                key={label}
+                className={`flex items-baseline gap-2 border-b pb-1 text-xs ${isLight ? 'border-gray-100' : 'border-gray-800'}`}
+            >
+                <dt className={isLight ? 'text-gray-600' : 'text-gray-400'}>{label}</dt>
+                <dd className={`ml-auto shrink-0 font-semibold tabular-nums ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
+                    {value}
+                </dd>
+                {sub ? (
+                    <dd className={`w-24 shrink-0 text-right tabular-nums ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>{sub}</dd>
+                ) : null}
+            </div>
+        ))}
+    </dl>
+)
+
+/** A share bar and the list that names its parts, hovering as one. */
+const ShareFigure = ({ title, segments, isLight, listColumnsClass, primaryWidthClass, secondaryWidthClass }) => {
+    const [hovered, setHovered] = useState('')
+    if (!segments.length) return null
+    return (
+        <div className="space-y-1.5">
+            {title ? (
+                <h5 className={`text-xs font-semibold ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>{title}</h5>
+            ) : null}
+            <ShareBar
+                segments={segments}
+                isLight={isLight}
+                hoveredKey={hovered}
+                onHover={setHovered}
+                ariaLabel={title || 'Share of total'}
+            />
+            <ShareList
+                segments={segments}
+                isLight={isLight}
+                hoveredKey={hovered}
+                onHover={setHovered}
+                columnsClass={listColumnsClass}
+                primaryWidthClass={primaryWidthClass}
+                secondaryWidthClass={secondaryWidthClass}
+            />
         </div>
     )
 }
@@ -177,6 +344,45 @@ const Section = ({ title, children, isLight }) => (
 const GenomeReport = ({ report, isLight }) => {
     const bases = report.base_counts || {}
     const invalid = report.invalid_counts || {}
+    const palette = isLight ? BASE_COLORS.light : BASE_COLORS.dark
+
+    const baseSegments = useMemo(() => {
+        const total = Object.values(bases).reduce((sum, n) => sum + Number(n || 0), 0)
+        const listed = BASE_ORDER
+            .filter((base) => Number(bases[base] || 0) > 0)
+            .map((base) => ({ key: base, label: base, value: Number(bases[base]) }))
+        return shareSegments(listed, total).map((segment) => ({
+            ...segment,
+            color: segment.isOther
+                ? (isLight ? OTHER_SEGMENT_COLOR.light : OTHER_SEGMENT_COLOR.dark)
+                : palette[segment.key],
+            primary: formatPercent(segment.share),
+            secondary: formatInt(segment.value),
+        }))
+    }, [bases, palette, isLight])
+
+    // Ranked by length and coloured by rank, so the bar reads as one gradient:
+    // longest darkest, and everything below the tenth folded into "other" rather
+    // than seating hues nobody can tell apart.
+    const longestSegments = useMemo(() => {
+        const listed = (report.longest_sequences || []).slice(0, 10)
+        if (!listed.length) return []
+        const ramp = sequentialRamp(listed.length, isLight)
+        const unlisted = Math.max(0, Number(report.sequence_count || 0) - listed.length)
+        return shareSegments(
+            listed.map((sequence) => ({ key: sequence.name, label: sequence.name, value: sequence.length })),
+            Number(report.total_length || 0),
+            { otherLabel: `other (${formatInt(unlisted)})` },
+        ).map((segment, index) => ({
+            ...segment,
+            color: segment.isOther
+                ? (isLight ? OTHER_SEGMENT_COLOR.light : OTHER_SEGMENT_COLOR.dark)
+                : ramp[index],
+            primary: formatBases(segment.value),
+            secondary: formatPercent(segment.share),
+        }))
+    }, [report.longest_sequences, report.total_length, report.sequence_count, isLight])
+
     return (
         <div className="space-y-4">
             <Section title="Sequences" isLight={isLight}>
@@ -193,50 +399,46 @@ const GenomeReport = ({ report, isLight }) => {
             </Section>
 
             <Section title="Base composition" isLight={isLight}>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <StatTile isLight={isLight} label="GC" value={formatPercent(report.gc_percent, 2)} sub="of A/C/G/T" />
-                    <StatTile isLight={isLight} label="N" value={formatPercent(report.n_percent, 2)} sub={formatInt(bases.N || 0)} />
-                    <StatTile isLight={isLight} label="Ambiguity codes" value={formatPercent(report.ambiguity_percent, 3)} />
-                    <StatTile
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <DefinitionList
                         isLight={isLight}
-                        label="Soft-masked"
-                        value={formatPercent(report.softmasked_percent, 2)}
-                        sub={formatInt(report.softmasked_bases)}
+                        rows={[
+                            ['GC', formatPercent(report.gc_percent, 2), 'of A/C/G/T'],
+                            ['N', formatPercent(report.n_percent, 2), formatInt(bases.N || 0)],
+                            ['Ambiguity codes', formatPercent(report.ambiguity_percent, 3), ''],
+                            ['Soft-masked', formatPercent(report.softmasked_percent, 2), formatInt(report.softmasked_bases)],
+                            ['Compression', report.compression || 'none', ''],
+                        ]}
+                    />
+                    <ShareFigure
+                        title="Bases present"
+                        segments={baseSegments}
+                        isLight={isLight}
+                        listColumnsClass="sm:grid-cols-1"
+                        primaryWidthClass="w-14"
+                        secondaryWidthClass="w-28"
                     />
                 </div>
-                <CountTable title="Bases present" rows={bases} total={report.total_length} isLight={isLight} />
                 {Object.keys(invalid).length ? (
-                    <CountTable title="Invalid characters" rows={invalid} isLight={isLight} />
+                    <TileGrid
+                        title="Invalid characters"
+                        entries={Object.entries(invalid)
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([code, count]) => [code, formatInt(count), ''])}
+                        isLight={isLight}
+                    />
                 ) : null}
             </Section>
 
-            {(report.longest_sequences || []).length ? (
+            {longestSegments.length ? (
                 <Section title="Longest sequences" isLight={isLight}>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-xs">
-                            <tbody>
-                                {report.longest_sequences.slice(0, 10).map((seq) => (
-                                    <tr key={seq.name} className={isLight ? 'border-b border-gray-100' : 'border-b border-gray-800'}>
-                                        <td className={`py-1 pr-2 font-mono ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>{seq.name}</td>
-                                        <td className={`py-1 text-right tabular-nums ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
-                                            {formatBases(seq.length)}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                    <ShareFigure
+                        segments={longestSegments}
+                        isLight={isLight}
+                        listColumnsClass="sm:grid-cols-2 lg:grid-cols-3"
+                    />
                 </Section>
             ) : null}
-
-            <Section title="Fitness for use" isLight={isLight}>
-                <ul className={`text-xs space-y-1 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
-                    <li>Compression: <span className="font-mono">{report.compression}</span></li>
-                    <li>FASTA index (.fai): {report.fai_present ? 'present' : (report.fai_creatable ? 'will be created' : 'cannot be created')}</li>
-                    {report.all_n_sequences ? <li>{formatInt(report.all_n_sequences)} sequence(s) are entirely N</li> : null}
-                    {report.empty_sequences ? <li>{formatInt(report.empty_sequences)} empty sequence(s)</li> : null}
-                </ul>
-            </Section>
 
             <Section title="Issues" isLight={isLight}>
                 <IssueList issues={report.issues} isLight={isLight} />
@@ -250,23 +452,7 @@ const AnnotationReport = ({ report, isLight }) => {
     const counts = report.counts || {}
     const classification = report.classification || {}
     const regions = report.sequence_regions || {}
-    const preview = report.conversion_preview || {}
     const identifiers = report.identifiers || {}
-
-    const inference = preview.inference || {}
-    const inferenceLabels = {
-        gene_synthesised: 'Genes created for transcripts that had none',
-        transcript_synthesised: 'Transcripts created for genes that had none',
-        exons_from_cds: 'Exons derived from CDS blocks',
-        exon_from_transcript_span: 'Exons derived from the transcript span',
-        utrs_computed: 'UTRs computed from CDS and exons',
-        generic_utr_assigned: 'Generic UTRs assigned to 5′/3′ by position',
-        phase_recomputed: 'CDS phase recomputed',
-        cds_extended_stop_codon: 'Stop codon folded into the CDS',
-        span_expanded_to_children: 'Transcript span widened to cover its exons',
-        span_expanded_to_transcripts: 'Gene span widened to cover its transcripts',
-        strand_from_transcripts: 'Gene strand taken from its transcripts',
-    }
 
     return (
         <div className="space-y-4">
@@ -311,31 +497,43 @@ const AnnotationReport = ({ report, isLight }) => {
             </Section>
 
             <Section title="Gene classes" isLight={isLight}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <CountTable
-                        title="Gene biotypes (resolved)"
-                        rows={classification.gene_biotypes}
-                        total={counts.genes}
-                        isLight={isLight}
-                    />
-                    <CountTable
-                        title="Transcript biotypes (resolved)"
-                        rows={classification.transcript_biotypes}
-                        total={counts.transcripts}
-                        isLight={isLight}
-                    />
-                    <CountTable
-                        title="Biotypes as provided"
-                        rows={classification.source_transcript_biotypes}
-                        total={counts.transcripts}
-                        isLight={isLight}
-                    />
-                    <CountTable
-                        title="Feature types in file"
-                        rows={counts.feature_types}
-                        isLight={isLight}
-                    />
-                </div>
+                <MajorClassTable
+                    geneClasses={classification.gene_major_classes}
+                    transcriptClasses={classification.transcript_major_classes}
+                    geneTotal={counts.genes}
+                    transcriptTotal={counts.transcripts}
+                    isLight={isLight}
+                />
+                {/* The full vocabulary runs to dozens of biotypes. It answers a
+                    question you have to already be asking, so it waits behind a
+                    disclosure rather than burying the counts everybody wants. */}
+                <Disclosure label="every biotype" isLight={isLight}>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <CountTable
+                            title="Gene biotypes (resolved)"
+                            rows={classification.gene_biotypes}
+                            total={counts.genes}
+                            isLight={isLight}
+                        />
+                        <CountTable
+                            title="Transcript biotypes (resolved)"
+                            rows={classification.transcript_biotypes}
+                            total={counts.transcripts}
+                            isLight={isLight}
+                        />
+                        <CountTable
+                            title="Biotypes as provided"
+                            rows={classification.source_transcript_biotypes}
+                            total={counts.transcripts}
+                            isLight={isLight}
+                        />
+                        <CountTable
+                            title="Feature types in file"
+                            rows={counts.feature_types}
+                            isLight={isLight}
+                        />
+                    </div>
+                </Disclosure>
             </Section>
 
             <Section title="Sequence regions" isLight={isLight}>
@@ -367,19 +565,6 @@ const AnnotationReport = ({ report, isLight }) => {
                     </p>
                 ) : null}
             </Section>
-
-            {Object.keys(inference).length ? (
-                <Section title="What conversion will do" isLight={isLight}>
-                    <ul className={`text-xs space-y-1 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
-                        {Object.entries(inference).map(([key, count]) => (
-                            <li key={key} className="flex justify-between gap-3">
-                                <span>{inferenceLabels[key] || key}</span>
-                                <span className="tabular-nums font-semibold">{formatInt(count)}</span>
-                            </li>
-                        ))}
-                    </ul>
-                </Section>
-            ) : null}
 
             <Section title="Identifiers" isLight={isLight}>
                 <ul className={`text-xs space-y-1 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
@@ -417,6 +602,11 @@ export default function ValidationReportPanel({
     theme,
     onClose,
     analysedAt = '',
+    // Set when the panel is dropped inside something that already names it and
+    // draws its own frame. It then contributes content only: a card inside a
+    // card, under a heading repeating the heading above it, reads as clutter
+    // rather than as structure.
+    embedded = false,
 }) {
     const isLight = theme === 'light'
     const busy = status === 'queued' || status === 'running'
@@ -435,7 +625,8 @@ export default function ValidationReportPanel({
         .join(' · ')
 
     return (
-        <div className={`rounded-xl border ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-900/50 border-gray-700'}`}>
+        <div className={embedded ? '' : `rounded-xl border ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-900/50 border-gray-700'}`}>
+            {embedded ? null : (
             <div className={`flex items-center justify-between px-3 py-2 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
                 <div>
                     <h3 className={`text-sm font-bold ${isLight ? 'text-gray-800' : 'text-gray-100'}`}>
@@ -457,8 +648,9 @@ export default function ValidationReportPanel({
                     </button>
                 ) : null}
             </div>
+            )}
 
-            <div className="p-3">
+            <div className={embedded ? '' : 'p-3'}>
                 {busy ? (
                     <div
                         className={`text-xs ${isLight ? 'text-gray-600' : 'text-gray-300'}`}

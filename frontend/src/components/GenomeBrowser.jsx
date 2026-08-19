@@ -1,5 +1,4 @@
 import { Fragment, useRef, useEffect, useId, useLayoutEffect, useState, useCallback, useMemo } from 'react'
-import iconPowerRaw from '../assets/icons/icon_power.svg?raw'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import iconAnchorRaw from '../assets/icons/icon_anchor.svg?raw'
 import {
@@ -35,6 +34,7 @@ import {
     queryGeneIntervalIndex,
     sameGeneRange,
 } from '../utils/geneIntervalIndex'
+import InfoGlyph from './InfoGlyph'
 import { getTranscriptExonSegments } from './genomeBrowserExonSegments'
 import { orderTranscripts, resolveGeneTranscriptView } from './genomeBrowserTranscriptView'
 import {
@@ -59,18 +59,37 @@ import {
     rebalanceRangeForInsetChange,
     shouldRenderViewportTranscriptStructures,
 } from './genomeBrowserViewportLayout'
+import {
+    RULER_FONT_SIZE,
+    RULER_HEIGHT,
+    RULER_LABEL_GAP,
+    formatRulerCoord,
+    rulerGeometry,
+    rulerTicks,
+} from './genomeBrowserRuler'
+import { FONT_MONO, monoFont, sansFont } from '../utils/typography'
+import { drawPowerGlyph, powerGlyphPaths, powerGlyphSvgMarkup } from '../utils/powerGlyph'
+import { noteBubbleGlyphSvgMarkup } from '../utils/noteBubbleGlyph'
+import NoteGlyph from './NoteGlyph'
 
 // ============ Constants ============
 import { API_BASE } from '../backendRuntime'
-const RULER_HEIGHT = 36
 const TRACK_HEIGHT = 40
 const TRACK_GAP = 8
 const EXON_HEIGHT = 12
 const INTRON_HEIGHT = 2
-const LABEL_FONT = '11px Inter, system-ui, sans-serif'
-const COORD_FONT = '10px Inter, system-ui, sans-serif'
-const PILL_FONT = '10px Inter, system-ui, sans-serif'
+const LABEL_FONT = sansFont(11)
+const COORD_FONT = monoFont(RULER_FONT_SIZE)
+const PILL_FONT = sansFont(10)
 const LHS_WIDTH = 48
+// Sidebar power toggles are drawn as a bare glyph, like the chevron and close
+// controls on the focus drawer: the genome's own colour when the track is on,
+// muted grey when it is off. A filled disc read as far louder than the thing it
+// was toggling. The hit radius stays generous so the smaller glyph is no harder
+// to click than the disc was.
+const SIDEBAR_TOGGLE_ICON_SIZE = 16
+const SIDEBAR_TOGGLE_HIT_RADIUS = 12
+const SIDEBAR_TOGGLE_LABEL_GAP = 6
 const CUSTOM_TRACK_HEIGHT_STANDARD = 54
 const CUSTOM_TRACK_HEIGHT_ZONED = 81
 const CUSTOM_TRACK_HEIGHT_ENSEMBL_VCF = 100
@@ -102,9 +121,30 @@ const extractSvgBody = (svgRaw) => {
         .replace(/<\/svg>[\s\S]*$/i, '')
         .trim()
 }
-const POWER_ICON_PATH_D = extractPathData(iconPowerRaw)
 const RESET_ICON_PATH_D = extractPathData(iconResetRaw)
 const ANCHOR_ICON_BODY = extractSvgBody(iconAnchorRaw)
+
+// The same stroked glyph the canvas toggles draw, for the DOM buttons that
+// toggle a track from the track picker. Takes its colour from the button.
+function PowerGlyph({ size = SIDEBAR_TOGGLE_ICON_SIZE }) {
+    const paths = powerGlyphPaths(size)
+    if (!paths) return null
+    return (
+        <svg
+            width={size}
+            height={size}
+            viewBox={`0 0 ${size} ${size}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={paths.stroke}
+            strokeLinecap="round"
+            aria-hidden="true"
+        >
+            <path d={paths.ring} />
+            <path d={paths.stem} />
+        </svg>
+    )
+}
 
 // 5-level LOD pyramid for custom tracks
 // binsPerTile × bpPerBin = tile size in bp
@@ -137,6 +177,16 @@ const SPLICE_TILE_SPAN_FINE = 120_000
 const SPLICE_TILE_SPAN_COARSE = 500_000
 const SPLICE_TRANSCRIPT_BP_PER_PX = 40
 const TRANSCRIPT_DETAIL_VIEWSPAN_BP = 500_000
+
+// A gene carrying notes gets a speech bubble at its head. Smaller than the
+// transcript-count pill because it says one thing rather than reading as a
+// control, and it has to sit in the 16px of track padding above row zero.
+const NOTE_BUBBLE_SIZE = 14
+// Much looser than the footer pill's 60px: a bubble is a fixed mark, not a
+// label that has to fit inside the gene. Below this the gene is a tick and the
+// bubble would be describing something the reader cannot see.
+const NOTE_BUBBLE_MIN_GENE_WIDTH = 24
+const NOTE_BUBBLE_GAP = 2
 const SPLICE_BLOCK_TRACK_HEIGHT = 56
 const SPLICE_BLOCK_MERGE_GAP_PX = 2
 const SPLICE_BLOCK_LEVELS = [
@@ -302,11 +352,14 @@ const ZONED_ZONE_SOLID_COLORS = {
 const COLORS = {
     light: {
         bg: '#ffffff',
-        rulerBg: '#f8f9fa',
-        rulerLine: '#dee2e6',
-        rulerText: '#495057',
-        tickMajor: '#adb5bd',
-        tickMinor: '#dee2e6',
+        // The ruler is unfilled on www.ensembl.org, and its rule, ticks and
+        // labels are all the same mid grey — sampled from the live site at 1x.
+        rulerBg: '#ffffff',
+        rulerLine: '#787878',
+        rulerText: '#787878',
+        tickMajor: '#787878',
+        tickMinor: '#787878',
+        gutterLine: '#dee2e6',
         exonProteinCoding: '#3366cc',     // Ensembl blue
         exonNonCoding: '#33a02c',
         utr: '#a6cee3',
@@ -331,11 +384,14 @@ const COLORS = {
     },
     dark: {
         bg: '#1a1b1e',
-        rulerBg: '#1E2938',
-        rulerLine: '#373a40',
-        rulerText: '#909296',
-        tickMajor: '#5c5f66',
-        tickMinor: '#373a40',
+        // Ensembl has no dark theme to copy; these are the light greys inverted
+        // to keep the same weight against the dark canvas.
+        rulerBg: '#1a1b1e',
+        rulerLine: '#8b8b8b',
+        rulerText: '#8b8b8b',
+        tickMajor: '#8b8b8b',
+        tickMinor: '#8b8b8b',
+        gutterLine: '#373a40',
         exonProteinCoding: '#5b8def',
         exonNonCoding: '#51cf66',
         utr: '#74c0fc',
@@ -759,7 +815,7 @@ function TranscriptInfoPopup({
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, marginBottom: 4 }}>
                 <span style={{ opacity: 0.74 }}>Stable ID:</span>
-                <span style={{ fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', minWidth: 0, overflowWrap: 'anywhere' }}>
+                <span style={{ fontWeight: 700, fontFamily: FONT_MONO, minWidth: 0, overflowWrap: 'anywhere' }}>
                     {metadata.stableId}
                 </span>
                 <button
@@ -1492,6 +1548,9 @@ export default function GenomeBrowser({
     genomePillLabel = '',
     genomeColor = '',
     onGenomePillClick = null,
+    // Whether the assembly drawer the pill toggles is currently out. The pill
+    // deliberately looks the same either way — this is for assistive tech only.
+    genomePillExpanded = false,
     toolbarPosition = 'top',
     rulerPosition = 'top',
     focusBarPosition = 'top',
@@ -1544,6 +1603,10 @@ export default function GenomeBrowser({
     // Resolved gesture map from the user's "Genome Browser Controls" setting.
     browsingControls = DEFAULT_BROWSING_CONTROLS,
     onBrowsingTargetChange = null,
+    // { [geneId]: count } for this panel's genome. Counts only — the bubble
+    // needs to know a gene has notes, never what they say.
+    geneNoteCounts = null,
+    onOpenGeneNotes = null,
 }) {
     // Refs
     const rootRef = useRef(null)
@@ -1625,7 +1688,6 @@ export default function GenomeBrowser({
     const [focusBarHeight, setFocusBarHeight] = useState(0)
     const pendingVerticalCenterGeneIdRef = useRef(null)
     const pendingTranscriptPillFocusRef = useRef(null)
-    const powerIconPathRef = useRef(null)
     const anchorIconImgRef = useRef(null)
     const [anchorIconReady, setAnchorIconReady] = useState(false)
     const selectedChromRef = useRef(selectedChrom)
@@ -1657,17 +1719,11 @@ export default function GenomeBrowser({
     onFocusTranscriptViewChangeRef.current = onFocusTranscriptViewChange
     onGeneTranscriptViewChangeRef.current = onGeneTranscriptViewChange
     onFocusRowGeometryChangeRef.current = onFocusRowGeometryChange
+    const onOpenGeneNotesRef = useRef(onOpenGeneNotes)
+    onOpenGeneNotesRef.current = onOpenGeneNotes
     onScreenshotTargetChangeRef.current = onScreenshotTargetChange
     onViewSyncRef.current = onViewSync
     onViewStateRef.current = onViewState
-
-    useEffect(() => {
-        if (typeof Path2D === 'undefined' || !POWER_ICON_PATH_D) {
-            powerIconPathRef.current = null
-            return
-        }
-        powerIconPathRef.current = new Path2D(POWER_ICON_PATH_D)
-    }, [])
 
     useEffect(() => {
         if (!iconAnchorRaw) {
@@ -5467,10 +5523,16 @@ export default function GenomeBrowser({
     // The drawer needs the focused gene's transcripts whatever the zoom level,
     // but the viewport prefetch below only runs once transcript detail is in
     // range. Ask for them directly so focusing from a wide view still fills it.
+    //
+    // Keyed on the cache as well as the gene, so this heals itself. The cache is
+    // emptied wholesale whenever the genome, chromosome or reload epoch changes;
+    // watching the gene id alone meant a wipe that left the same gene focused
+    // never re-fetched, and the drawer listed no transcripts from then on.
     useEffect(() => {
         if (!selectedGene?.id) return
+        if (transcriptCache[selectedGene.id]) return
         fetchTranscripts(selectedGene.id)
-    }, [selectedGene?.id, fetchTranscripts])
+    }, [selectedGene?.id, transcriptCache, fetchTranscripts])
 
     // Navigate to a gene from external trigger
     const lastNavigateRef = useRef(null)
@@ -6484,6 +6546,15 @@ export default function GenomeBrowser({
         const lineHitPadding = isTranscriptCompressionActive ? 4 : 5
         const exonHitPadding = isTranscriptCompressionActive ? 2.5 : 3
 
+        // The row band is painted across the whole gene, so it has to be live
+        // across the whole gene too. Keying the row hit off each transcript's own
+        // span instead left the short ones with a hit area narrower than the
+        // highlight the user could plainly see.
+        const rawGeneX1 = genomicToScreen(gene.start)
+        const rawGeneX2 = genomicToScreen(gene.end)
+        const geneLeft = Math.min(rawGeneX1, rawGeneX2)
+        const geneRight = Math.max(rawGeneX1, rawGeneX2)
+
         let best = null
         let bestRank = Infinity
         let bestDist = Infinity
@@ -6538,13 +6609,15 @@ export default function GenomeBrowser({
             // is exactly what responds to it. Ranked last, so an exon or the
             // intron line still wins where the bands overlap and the popup keeps
             // anchoring to the feature rather than to empty row.
-            if (!candidate && mouseX >= txLeft - 2 && mouseX <= txRight + 2) {
+            if (!candidate && mouseX >= geneLeft - 2 && mouseX <= geneRight + 2) {
                 const rowTop = txY
                 const rowBottom = txY + transcriptLayoutMetrics.rowPitch - transcriptLayoutMetrics.rowGap
                 if (mouseY >= rowTop && mouseY <= rowBottom) {
                     candidate = {
                         rank: 2,
-                        dist: Math.abs(mouseX - ((txLeft + txRight) / 2)),
+                        dist: Math.abs(mouseX - ((geneLeft + geneRight) / 2)),
+                        // Anchor the popup on the transcript even when the pointer
+                        // is out past its end, so the arrow never points at nothing.
                         anchorCanvasX: clamp(mouseX, txLeft, txRight),
                         anchorCanvasY: midY,
                         transcript: tx,
@@ -6780,6 +6853,12 @@ export default function GenomeBrowser({
         return resolvedGenomeColor
     }, [resolvedGenomeColor])
 
+    // On: the genome's own colour, so the sidebar reads as part of this panel.
+    // Off: a muted grey that still reads as a control rather than a disabled one.
+    const sidebarToggleIconColor = useCallback((active) => (
+        active ? panelPillColor : (isLight ? '#94a3b8' : '#6b7280')
+    ), [panelPillColor, isLight])
+
     const buildPanelExportSnapshot = useCallback(async () => {
         const rootNode = rootRef.current
         const canvas = canvasRef.current
@@ -6921,18 +7000,19 @@ export default function GenomeBrowser({
                 trackId,
                 x: LHS_WIDTH - 13,
                 y: centerY,
-                radius: 11,
-                buttonFill: active ? panelPillColor : (isLight ? '#cbd5e1' : '#334155'),
-                iconColor: active ? '#ffffff' : (isLight ? '#475569' : '#e2e8f0'),
+                iconColor: sidebarToggleIconColor(active),
+                // The rasterised glyph is painted over with the sidebar's own
+                // background so the export can re-emit it as a crisp path.
+                maskFill: getSidebarBgColor(trackId),
             })
         }
         const pushSidebarLabelDescriptor = (trackId, centerY, text) => {
             if (!(Number.isFinite(centerY)) || !text) return
             pushExportText({
                 text,
-                x: (LHS_WIDTH - 13) - 11 - 6,
+                x: (LHS_WIDTH - 13) - (SIDEBAR_TOGGLE_ICON_SIZE / 2) - SIDEBAR_TOGGLE_LABEL_GAP,
                 y: centerY + 4,
-                font: '11px Inter, system-ui, sans-serif',
+                font: sansFont(11),
                 fill: isLight ? '#64748b' : '#cbd5e1',
                 bgFill: getSidebarBgColor(trackId),
                 textAnchor: 'end',
@@ -6943,16 +7023,18 @@ export default function GenomeBrowser({
         }
 
         if (effectiveRulerHeight > 0) {
-            const span = viewEnd - viewStart
-            const minTickIntervalBp = span * (80 / viewWidth)
-            const magnitude = Math.pow(10, Math.floor(Math.log10(minTickIntervalBp || 1)))
-            let tickInterval = magnitude
-            if (minTickIntervalBp > magnitude * 5) tickInterval = magnitude * 10
-            else if (minTickIntervalBp > magnitude * 2) tickInterval = magnitude * 5
-            else if (minTickIntervalBp > magnitude) tickInterval = magnitude * 2
-            if (tickInterval < 10) tickInterval = 10
-            const firstTick = Math.max(1, Math.ceil(viewStart / tickInterval) * tickInterval)
-            for (let pos = firstTick; pos <= viewEnd; pos += tickInterval) {
+            const geometry = rulerGeometry({
+                top: layout.RULER_Y,
+                height: effectiveRulerHeight,
+                position: effectiveRulerPosition,
+            })
+            const { ticks } = rulerTicks({
+                start: viewStart,
+                end: viewEnd,
+                widthPx: viewWidth,
+                fontSize: RULER_FONT_SIZE,
+            })
+            for (const pos of ticks) {
                 const x = isAligned
                     ? (isFlipped
                         ? LHS_WIDTH + (viewEnd - pos) / bpPerPx
@@ -6965,15 +7047,15 @@ export default function GenomeBrowser({
                 }
                 if (pos > 1 || isAligned) {
                     pushExportText({
-                        text: formatCoord(labelPos),
-                        x,
-                        y: effectiveRulerPosition === 'top' ? (layout.RULER_Y + effectiveRulerHeight - 14) : (layout.RULER_Y + 14),
+                        text: formatRulerCoord(labelPos),
+                        x: x + RULER_LABEL_GAP,
+                        y: geometry.labelBaseline,
                         font: COORD_FONT,
                         fill: colors.rulerText,
                         bgFill: colors.rulerBg,
-                        textAnchor: 'middle',
-                        dominantBaseline: effectiveRulerPosition === 'top' ? 'alphabetic' : 'hanging',
-                        paddingX: 4,
+                        textAnchor: 'start',
+                        dominantBaseline: 'alphabetic',
+                        paddingX: 2,
                         paddingY: 2,
                     })
                 }
@@ -7068,7 +7150,7 @@ export default function GenomeBrowser({
                     text: track.label || 'Custom track',
                     x: LHS_WIDTH + 8,
                     y: buildCustomTrackLabelY(trackLayout, track, customTrackData[trackId]),
-                    font: '11px Inter, system-ui, sans-serif',
+                    font: sansFont(11),
                     fill: isLight ? '#1e3a8a' : '#93c5fd',
                     bgFill: getExportTrackBgColor(trackId),
                     textAnchor: 'start',
@@ -7195,7 +7277,7 @@ export default function GenomeBrowser({
                         for (const boundary of boundaryValues) {
                             const y = zoneYForValue(boundary)
                             bigWigMarkup.push(
-                                `<text x="${viewWidth - 4}" y="${y}" fill="${escapeXml(isLight ? '#64748b' : '#94a3b8')}" text-anchor="end" dominant-baseline="middle" style="font:${escapeXml('9px Inter, system-ui, sans-serif')};">${escapeXml(`>${boundary.toLocaleString()}`)}</text>`
+                                `<text x="${viewWidth - 4}" y="${y}" fill="${escapeXml(isLight ? '#64748b' : '#94a3b8')}" text-anchor="end" dominant-baseline="middle" style="font:${escapeXml(sansFont(9))};">${escapeXml(`>${boundary.toLocaleString()}`)}</text>`
                             )
                         }
                     } else if (renderMode === 'signal_plot') {
@@ -7283,7 +7365,7 @@ export default function GenomeBrowser({
                                 `<line x1="${axisX - 4}" y1="${tick.y}" x2="${axisX}" y2="${tick.y}" stroke="${escapeXml(isLight ? 'rgba(15, 23, 42, 0.25)' : 'rgba(148, 163, 184, 0.35)')}" stroke-width="1" />`
                             )
                             bigWigMarkup.push(
-                                `<text x="${viewWidth - 4}" y="${tick.y}" fill="${escapeXml(isLight ? '#64748b' : '#94a3b8')}" text-anchor="end" dominant-baseline="middle" style="font:${escapeXml('9px Inter, system-ui, sans-serif')};">${escapeXml(formatSignalValueForTrack(tick.value))}</text>`
+                                `<text x="${viewWidth - 4}" y="${tick.y}" fill="${escapeXml(isLight ? '#64748b' : '#94a3b8')}" text-anchor="end" dominant-baseline="middle" style="font:${escapeXml(sansFont(9))};">${escapeXml(formatSignalValueForTrack(tick.value))}</text>`
                             )
                         }
                     }
@@ -7521,7 +7603,7 @@ export default function GenomeBrowser({
 
                 if (overflowCount > 0) {
                     bigBedMarkup.push(
-                        `<text x="${right - 3}" y="${bottom - 1}" fill="${escapeXml(isLight ? 'rgba(71,85,105,0.72)' : 'rgba(148,163,184,0.72)')}" text-anchor="end" dominant-baseline="text-after-edge" style="font:${escapeXml('9px Inter, system-ui, sans-serif')};">+${escapeXml(String(overflowCount))} overflow</text>`
+                        `<text x="${right - 3}" y="${bottom - 1}" fill="${escapeXml(isLight ? 'rgba(71,85,105,0.72)' : 'rgba(148,163,184,0.72)')}" text-anchor="end" dominant-baseline="text-after-edge" style="font:${escapeXml(sansFont(9))};">+${escapeXml(String(overflowCount))} overflow</text>`
                     )
                 }
 
@@ -7548,7 +7630,7 @@ export default function GenomeBrowser({
                     height: seqTrackViewH,
                     fill: seqTrackBg,
                 })
-                const seqFont = seqPxPerBp >= 10 ? '12px monospace' : '9px monospace'
+                const seqFont = seqPxPerBp >= 10 ? monoFont(12) : monoFont(9)
                 const startIdx = Math.floor(viewStart)
                 const endIdx = Math.ceil(viewEnd)
                 const alnLen = alignData.sequence.length
@@ -7598,7 +7680,7 @@ export default function GenomeBrowser({
                     height: seqTrackViewH,
                     fill: seqTrackBg,
                 })
-                const seqFont = seqPxPerBp >= 10 ? '12px monospace' : '9px monospace'
+                const seqFont = seqPxPerBp >= 10 ? monoFont(12) : monoFont(9)
                 for (let i = 0; i < sequence.length; i += 1) {
                     const bp = seqRange.start + i
                     if (bp < viewStart || bp >= viewEnd) continue
@@ -7634,7 +7716,7 @@ export default function GenomeBrowser({
                     fill: seqTrackBg,
                 })
                 sequenceMarkup.push(
-                    `<text x="${LHS_WIDTH + (viewWidth - LHS_WIDTH) / 2}" y="${seqY + seqTrackViewH / 2 + 4}" fill="${escapeXml(isLight ? '#868e96' : '#5c5f66')}" text-anchor="middle" dominant-baseline="alphabetic" style="font:9px system-ui, sans-serif;">zoom in to see sequence</text>`
+                    `<text x="${LHS_WIDTH + (viewWidth - LHS_WIDTH) / 2}" y="${seqY + seqTrackViewH / 2 + 4}" fill="${escapeXml(isLight ? '#868e96' : '#5c5f66')}" text-anchor="middle" dominant-baseline="alphabetic" style="font:${escapeXml(sansFont(9))};">zoom in to see sequence</text>`
                 )
             }
 
@@ -7862,7 +7944,7 @@ export default function GenomeBrowser({
                 if (!seg) return
                 if (vtype === 'snv' && seg.drawW >= 14) {
                     vcfMarkup.push(
-                        `<text x="${seg.drawStart + seg.drawW / 2}" y="${barY - 4}" fill="${escapeXml(active ? (isLight ? '#1e3a8a' : '#bfdbfe') : (isLight ? '#1e3a8a' : '#93c5fd'))}" text-anchor="middle" dominant-baseline="alphabetic" style="font:${escapeXml('9px Inter, system-ui, sans-serif')};">${escapeXml(variant.label || 'SNV')}</text>`
+                        `<text x="${seg.drawStart + seg.drawW / 2}" y="${barY - 4}" fill="${escapeXml(active ? (isLight ? '#1e3a8a' : '#bfdbfe') : (isLight ? '#1e3a8a' : '#93c5fd'))}" text-anchor="middle" dominant-baseline="alphabetic" style="font:${escapeXml(sansFont(9))};">${escapeXml(variant.label || 'SNV')}</text>`
                     )
                 }
             }
@@ -7910,13 +7992,30 @@ export default function GenomeBrowser({
                         }
                         const label = vtype === 'ins' ? 'ins' : vtype === 'del' ? 'del' : 'indel'
                         vcfMarkup.push(
-                            `<text x="${x + dotR + 3}" y="${dotY + 3}" fill="${escapeXml(active ? (isLight ? '#1e3a8a' : '#bfdbfe') : (isLight ? '#334155' : '#cbd5e1'))}" text-anchor="start" dominant-baseline="alphabetic" style="font:${escapeXml(active ? 'bold 9px Inter, system-ui, sans-serif' : '9px Inter, system-ui, sans-serif')};">${escapeXml(label)}</text>`
+                            `<text x="${x + dotR + 3}" y="${dotY + 3}" fill="${escapeXml(active ? (isLight ? '#1e3a8a' : '#bfdbfe') : (isLight ? '#334155' : '#cbd5e1'))}" text-anchor="start" dominant-baseline="alphabetic" style="font:${escapeXml(active ? sansFont(9, 'bold') : sansFont(9))};">${escapeXml(label)}</text>`
                         )
                     }
                 }
             }
 
             pushOverlayMarkup(vcfMarkup.join(''))
+        }
+
+        // The note bubbles are DOM over the canvas, so the raster below has no
+        // trace of them — an export would otherwise drop the one mark saying
+        // this gene has been written about. Their coordinates are already
+        // canvas-local, which is the space these sections are emitted in.
+        const noteBubbles = geneNoteOverlayRef.current?.bubbles || []
+        if (noteBubbles.length > 0) {
+            const bubbleColor = escapeXml(panelPillColor)
+            pushOverlayMarkup(noteBubbles.map((bubble) => noteBubbleGlyphSvgMarkup({
+                x: bubble.x + (NOTE_BUBBLE_SIZE / 2),
+                y: bubble.y + (NOTE_BUBBLE_SIZE / 2),
+                size: NOTE_BUBBLE_SIZE,
+                color: bubbleColor,
+                fill: true,
+                knockout: escapeXml(colors.bg),
+            })).join(''))
         }
 
         let canvasImageHref = canvas.toDataURL('image/png')
@@ -7939,13 +8038,12 @@ export default function GenomeBrowser({
                     )
                 }
                 for (const descriptor of sidebarToggleDescriptors) {
+                    const half = (SIDEBAR_TOGGLE_ICON_SIZE / 2) + 1
                     exportCtx.save()
                     exportCtx.translate(descriptor.x * scaleX, descriptor.y * scaleY)
                     exportCtx.scale(scaleX, scaleY)
-                    exportCtx.fillStyle = descriptor.buttonFill
-                    exportCtx.beginPath()
-                    exportCtx.arc(0, 0, descriptor.radius, 0, Math.PI * 2)
-                    exportCtx.fill()
+                    exportCtx.fillStyle = descriptor.maskFill
+                    exportCtx.fillRect(-half, -half, half * 2, half * 2)
                     exportCtx.restore()
                 }
                 canvasImageHref = exportCanvas.toDataURL('image/png')
@@ -7985,14 +8083,16 @@ export default function GenomeBrowser({
                 )).join('')
             )
         }
-        if (POWER_ICON_PATH_D && sidebarToggleDescriptors.length > 0) {
-            const iconSize = 18
-            const iconScale = iconSize / 32
+        if (sidebarToggleDescriptors.length > 0) {
             sections.push(
                 sidebarToggleDescriptors.map((descriptor) => (
                     `<g data-export-icon="sidebar-toggle">`
-                    + `<circle cx="${descriptor.x}" cy="${canvasOffsetY + descriptor.y}" r="${descriptor.radius}" fill="${escapeXml(descriptor.buttonFill)}" />`
-                    + `<path d="${escapeXml(POWER_ICON_PATH_D)}" fill="${escapeXml(descriptor.iconColor)}" transform="translate(${descriptor.x - (iconSize / 2)} ${canvasOffsetY + descriptor.y - (iconSize / 2)}) scale(${iconScale})" />`
+                    + powerGlyphSvgMarkup({
+                        x: descriptor.x,
+                        y: canvasOffsetY + descriptor.y,
+                        size: SIDEBAR_TOGGLE_ICON_SIZE,
+                        color: escapeXml(descriptor.iconColor),
+                    })
                     + `</g>`
                 )).join('')
             )
@@ -8015,7 +8115,7 @@ export default function GenomeBrowser({
             svgMarkup,
             backgroundColor: colors.bg,
         }
-    }, [ANCHOR_ICON_BODY, REV_COMP, alignData, alignmentCoords, bpPerPx, clickedBigBedFeature, clickedVcfVariant, colors, colors.bg, colors.geneLabelText, colors.rulerBg, colors.rulerText, customTrackData, customTracksById, dimNonSelectedGenes, effectiveFocusBarPosition, effectiveHiddenStrands, effectiveRulerHeight, effectiveRulerPosition, effectiveToolbarPosition, expandedGenes, flattenTracks, genes, genomicToScreen, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackToggleY, getEffectiveTranscriptLimit, getGeneRowCountForWidth, getVcfBlockLevel, hoveredBigBedFeature, hoveredSeqBase, hoveredVcfBlock, isAligned, isLight, isPrimaryPanel, isFlipped, isSelectedHidden, isTranscriptCompressionActive, isCompressedLayoutActive, isCustomTrackId, layout, overlayToGenomic, panelPillColor, selectedGene, seqRange, sequence, sequenceTrackLabel, showSequenceTrack, shouldForceGeneBlockView, trackOrder, trackWidth, transcriptCache, transcriptLayoutMetrics, viewEnd, viewHeight, viewSpan, viewStart, viewWidth])
+    }, [ANCHOR_ICON_BODY, REV_COMP, alignData, alignmentCoords, bpPerPx, clickedBigBedFeature, clickedVcfVariant, colors, colors.bg, colors.geneLabelText, colors.rulerBg, colors.rulerText, customTrackData, customTracksById, dimNonSelectedGenes, effectiveFocusBarPosition, effectiveHiddenStrands, effectiveRulerHeight, effectiveRulerPosition, effectiveToolbarPosition, expandedGenes, flattenTracks, genes, genomicToScreen, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackToggleY, getEffectiveTranscriptLimit, getGeneRowCountForWidth, getVcfBlockLevel, hoveredBigBedFeature, hoveredSeqBase, hoveredVcfBlock, isAligned, isLight, isPrimaryPanel, isFlipped, isSelectedHidden, isTranscriptCompressionActive, isCompressedLayoutActive, isCustomTrackId, layout, overlayToGenomic, panelPillColor, sidebarToggleIconColor, selectedGene, seqRange, sequence, sequenceTrackLabel, showSequenceTrack, shouldForceGeneBlockView, trackOrder, trackWidth, transcriptCache, transcriptLayoutMetrics, viewEnd, viewHeight, viewSpan, viewStart, viewWidth])
 
     const buildPanelExportSnapshotRef = useRef(buildPanelExportSnapshot)
     useEffect(() => {
@@ -8660,10 +8760,11 @@ export default function GenomeBrowser({
             if (clickX <= LHS_WIDTH) {
                 const trackId = getTrackAtY(clickY)
 
-                // Check toggles using a tight circular hit test matching the drawn button
-                // (center x = LHS_WIDTH - 13, radius = 11, +2px padding)
+                // Circular hit test around the toggle glyph. The radius is
+                // deliberately larger than the glyph so shrinking it did not make
+                // the control harder to hit.
                 const toggleCenterX = LHS_WIDTH - 13
-                const hitRadiusSq = 13 * 13
+                const hitRadiusSq = SIDEBAR_TOGGLE_HIT_RADIUS * SIDEBAR_TOGGLE_HIT_RADIUS
                 const dxSq = (clickX - toggleCenterX) ** 2
                 const hitsToggle = (centerY) => dxSq + (clickY - centerY) ** 2 <= hitRadiusSq
 
@@ -9532,99 +9633,60 @@ export default function GenomeBrowser({
         const span = viewEnd - viewStart
         if (effectiveRulerHeight > 0) {
             // ---- Coordinate Ruler ----
-            ctx.fillStyle = colors.rulerBg
-            ctx.fillRect(0, RULER_Y, viewWidth, effectiveRulerHeight)
+            // Styled after www.ensembl.org: no filled band and no minor ticks,
+            // just a hairline rule closing off the band with a 1px tick at each
+            // round coordinate and the coordinate set beside it in mono.
+            const geometry = rulerGeometry({
+                top: RULER_Y,
+                height: effectiveRulerHeight,
+                position: effectiveRulerPosition,
+            })
 
-            // Border
             ctx.strokeStyle = colors.rulerLine
             ctx.lineWidth = 1
             ctx.beginPath()
-            if (effectiveRulerPosition === 'top') {
-                ctx.moveTo(0, RULER_Y + effectiveRulerHeight - 0.5)
-                ctx.lineTo(viewWidth, RULER_Y + effectiveRulerHeight - 0.5)
-            } else {
-                ctx.moveTo(0, RULER_Y + 0.5)
-                ctx.lineTo(viewWidth, RULER_Y + 0.5)
-            }
+            ctx.moveTo(0, geometry.ruleY + 0.5)
+            ctx.lineTo(viewWidth, geometry.ruleY + 0.5)
             ctx.stroke()
 
-            // Tick marks - adaptive spacing
-            const minTickIntervalBp = span * (80 / viewWidth)
-            const magnitude = Math.pow(10, Math.floor(Math.log10(minTickIntervalBp || 1)))
-
-            tickInterval = magnitude
-            if (minTickIntervalBp > magnitude * 5) tickInterval = magnitude * 10
-            else if (minTickIntervalBp > magnitude * 2) tickInterval = magnitude * 5
-            else if (minTickIntervalBp > magnitude) tickInterval = magnitude * 2
-            if (tickInterval < 10) tickInterval = 10
-
-            const firstTick = Math.max(1, Math.ceil(viewStart / tickInterval) * tickInterval)
+            const ticks = rulerTicks({
+                start: viewStart,
+                end: viewEnd,
+                widthPx: viewWidth,
+                fontSize: RULER_FONT_SIZE,
+            })
+            tickInterval = ticks.interval
 
             ctx.font = COORD_FONT
-            ctx.textAlign = 'center'
-            for (let pos = firstTick; pos <= viewEnd; pos += tickInterval) {
+            ctx.textAlign = 'left'
+            ctx.textBaseline = 'alphabetic'
+            for (const pos of ticks.ticks) {
                 const x = isAligned
                     ? (isFlipped
                         ? LHS_WIDTH + (viewEnd - pos) / bpPerPx
                         : LHS_WIDTH + (pos - viewStart) / bpPerPx)
                     : genomicToScreen(pos)
-                if (x < 0 || x > viewWidth) continue
+                if (x > viewWidth) continue
 
-                // Major tick
-                ctx.strokeStyle = colors.tickMajor
-                ctx.beginPath()
-                if (effectiveRulerPosition === 'top') {
-                    ctx.moveTo(x, RULER_Y + effectiveRulerHeight - 12)
-                    ctx.lineTo(x, RULER_Y + effectiveRulerHeight - 1)
-                } else {
-                    ctx.moveTo(x, RULER_Y + 1)
-                    ctx.lineTo(x, RULER_Y + 12)
+                // The leading tick sits just off the left edge so that its label
+                // can bleed into view; only its line is skipped.
+                if (x >= 0) {
+                    ctx.strokeStyle = colors.tickMajor
+                    ctx.beginPath()
+                    ctx.moveTo(Math.round(x) + 0.5, geometry.tickStart)
+                    ctx.lineTo(Math.round(x) + 0.5, geometry.tickEnd)
+                    ctx.stroke()
                 }
-                ctx.stroke()
 
-                // Label
                 let labelPos = pos
                 if (isAligned && alignmentCoords && alignData) {
                     labelPos = overlayToGenomic(pos)
                 }
 
-                // Label (hide if it's the 1bp start or <= 1, unless aligned)
+                // Hide the label for the 1bp start of a sequence, unless aligned.
                 if (pos > 1 || isAligned) {
                     ctx.fillStyle = colors.rulerText
-                    if (effectiveRulerPosition === 'top') {
-                        ctx.textBaseline = 'alphabetic'
-                        ctx.fillText(formatCoord(labelPos), x, RULER_Y + effectiveRulerHeight - 14)
-                    } else {
-                        ctx.textBaseline = 'top'
-                        ctx.fillText(formatCoord(labelPos), x, RULER_Y + 14)
-                    }
-                }
-            }
-            ctx.textBaseline = 'alphabetic' // Restore baseline
-
-            // Minor ticks (5 subdivisions)
-            const minorInterval = tickInterval / 5
-            if (minorInterval * viewWidth / span > 4) { // Only draw if spacing > 4px
-                const firstMinor = Math.ceil(viewStart / minorInterval) * minorInterval
-                ctx.strokeStyle = colors.tickMinor
-                for (let pos = firstMinor; pos <= viewEnd; pos += minorInterval) {
-                    // Skip positions that coincide with major ticks (use tolerance for float precision)
-                    if (Math.abs(pos % tickInterval) < 0.01 || Math.abs(pos % tickInterval - tickInterval) < 0.01) continue
-                    const x = isAligned
-                        ? (isFlipped
-                            ? LHS_WIDTH + (viewEnd - pos) / bpPerPx
-                            : LHS_WIDTH + (pos - viewStart) / bpPerPx)
-                        : genomicToScreen(pos)
-                    if (x < 0 || x > viewWidth) continue
-                    ctx.beginPath()
-                    if (effectiveRulerPosition === 'top') {
-                        ctx.moveTo(x, RULER_Y + effectiveRulerHeight - 6)
-                        ctx.lineTo(x, RULER_Y + effectiveRulerHeight - 1)
-                    } else {
-                        ctx.moveTo(x, RULER_Y + 1)
-                        ctx.lineTo(x, RULER_Y + 6)
-                    }
-                    ctx.stroke()
+                    ctx.fillText(formatRulerCoord(labelPos), x + RULER_LABEL_GAP, geometry.labelBaseline)
                 }
             }
         }
@@ -9678,7 +9740,7 @@ export default function GenomeBrowser({
         // Background Directional Arrows
         const bgPatternColor = isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.05)'
         ctx.fillStyle = bgPatternColor
-        ctx.font = 'bold 32px monospace'
+        ctx.font = monoFont(32, 'bold')
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         const chevronSpacing = 150
@@ -10151,7 +10213,7 @@ export default function GenomeBrowser({
         for (const [trackId, trackLayout] of Object.entries(customTrackLayouts)) {
             drawSidebarHighlight(trackLayout.y, trackLayout.height, trackId)
         }
-        ctx.strokeStyle = colors.rulerLine
+        ctx.strokeStyle = colors.gutterLine
         ctx.lineWidth = 1
         ctx.beginPath()
         if (effectiveRulerPosition === 'top') {
@@ -10164,52 +10226,37 @@ export default function GenomeBrowser({
         ctx.stroke()
 
         ctx.fillStyle = colors.trackLabel
-        ctx.font = '11px Inter, system-ui, sans-serif'
+        ctx.font = sansFont(11)
         ctx.textAlign = 'center'
 
         // Render circular power toggle with panel-specific active color.
         const drawToggle = (x, y, isHidden, label, trackId) => {
-            const toggleRadius = 11
             const active = !isHidden
-            const iconColor = active ? '#ffffff' : (isLight ? '#475569' : '#e2e8f0')
+            const iconColor = sidebarToggleIconColor(active)
             const labelColor = isLight ? '#64748b' : '#cbd5e1'
 
             // Draw label to the left of toggle.
             ctx.fillStyle = (draggingTrack === trackId) ? '#ffffff' : labelColor
             ctx.textAlign = 'right'
-            ctx.fillText(label, x - toggleRadius - 6, y + 4)
+            ctx.fillText(label, x - (SIDEBAR_TOGGLE_ICON_SIZE / 2) - SIDEBAR_TOGGLE_LABEL_GAP, y + 4)
             ctx.textAlign = 'center'
 
-            // Draw circular button body.
-            ctx.fillStyle = active ? panelPillColor : (isLight ? '#cbd5e1' : '#334155')
-            ctx.beginPath()
-            ctx.arc(x, y, toggleRadius, 0, 2 * Math.PI)
-            ctx.fill()
+            // Stroked, not filled, and with no disc behind it: the glyph's own
+            // colour carries the on/off state, and its line weight is set
+            // independently of its size so the stem stays legible.
+            if (drawPowerGlyph(ctx, x, y, { size: SIDEBAR_TOGGLE_ICON_SIZE, color: iconColor })) return
 
-            // Draw power symbol from the original SVG path.
-            const powerPath = powerIconPathRef.current
-            if (powerPath) {
-                const iconSize = 18
-                ctx.save()
-                ctx.translate(Math.round(x - (iconSize / 2)), Math.round(y - (iconSize / 2)))
-                ctx.scale(iconSize / 32, iconSize / 32)
-                ctx.fillStyle = iconColor
-                ctx.fill(powerPath)
-                ctx.restore()
-                return
-            }
-
-            // Fallback while icon is loading.
-            const ringRadius = 5.8
+            // Fallback where Path2D is unavailable.
+            const ringRadius = (SIDEBAR_TOGGLE_ICON_SIZE / 2) - 1.7
             ctx.strokeStyle = iconColor
-            ctx.lineWidth = 2
+            ctx.lineWidth = 1.8
             ctx.lineCap = 'round'
             ctx.beginPath()
-            ctx.arc(x, y + 0.6, ringRadius, Math.PI * 0.2, Math.PI * 1.8)
+            ctx.arc(x, y + 1.2, ringRadius, -Math.PI * 0.34, Math.PI * 1.34)
             ctx.stroke()
             ctx.beginPath()
-            ctx.moveTo(x, y - ringRadius - 1.6)
-            ctx.lineTo(x, y - 1.3)
+            ctx.moveTo(x, y - ringRadius - 1.4)
+            ctx.lineTo(x, y - 0.2)
             ctx.stroke()
         }
 
@@ -10244,7 +10291,7 @@ export default function GenomeBrowser({
             const pxPerBp = trackWidth / viewSpan
             if (isAligned && alignData && viewSpan <= 1000) {
                 if (pxPerBp >= 2) {
-                    ctx.font = pxPerBp >= 10 ? '12px monospace' : '9px monospace'
+                    ctx.font = pxPerBp >= 10 ? monoFont(12) : monoFont(9)
                     ctx.textAlign = 'center'
                     ctx.textBaseline = 'middle'
 
@@ -10300,7 +10347,7 @@ export default function GenomeBrowser({
                 }
             } else if (sequence && seqRange && viewSpan <= 1000) {
                 if (pxPerBp >= 2) {
-                    ctx.font = pxPerBp >= 10 ? '12px monospace' : '9px monospace'
+                    ctx.font = pxPerBp >= 10 ? monoFont(12) : monoFont(9)
                     ctx.textAlign = 'center'
                     ctx.textBaseline = 'middle'
                     for (let i = 0; i < sequence.length; i++) {
@@ -10339,7 +10386,7 @@ export default function GenomeBrowser({
                 // Not zoomed in enough — always show a hint so the track is never blank
                 const trackW = viewWidth - LHS_WIDTH
                 ctx.fillStyle = isLight ? '#868e96' : '#5c5f66'
-                ctx.font = '9px system-ui, sans-serif'
+                ctx.font = sansFont(9)
                 ctx.textAlign = 'center'
                 ctx.fillText('zoom in to see sequence', LHS_WIDTH + trackW / 2, seqY + seqTrackViewH / 2 + 4)
             }
@@ -10377,7 +10424,7 @@ export default function GenomeBrowser({
             const labelX = LHS_WIDTH + 8
             const labelText = track.label || 'Custom track'
             ctx.save()
-            ctx.font = '11px Inter, system-ui, sans-serif'
+            ctx.font = sansFont(11)
             ctx.fillStyle = isLight ? '#1e3a8a' : '#93c5fd'
             ctx.textAlign = 'left'
             ctx.textBaseline = 'middle'
@@ -10390,12 +10437,12 @@ export default function GenomeBrowser({
                 if (!data || (data.error && !data.has_data)) {
                     if (data?.error && !data?.has_data) {
                         ctx.fillStyle = isLight ? '#b91c1c' : '#fca5a5'
-                        ctx.font = '10px Inter, system-ui, sans-serif'
+                        ctx.font = sansFont(10)
                         ctx.textAlign = 'center'
                         ctx.fillText(data.error.substring(0, 80), left + width / 2, top + plotHeight / 2 + 3)
                     } else if (isLoading) {
                         ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
-                        ctx.font = '10px Inter, system-ui, sans-serif'
+                        ctx.font = sansFont(10)
                         ctx.textAlign = 'center'
                         ctx.fillText('Loading…', left + width / 2, top + plotHeight / 2 + 3)
                     }
@@ -10610,7 +10657,7 @@ export default function GenomeBrowser({
 
 	                        // SNV label above block — omit ins/del labels (dashed markers do that job)
 	                        if (vtype === 'snv' && seg.drawW >= 14) {
-	                            ctx.font = '9px Inter, system-ui, sans-serif'
+	                            ctx.font = sansFont(9)
 	                            ctx.textAlign = 'center'
 	                            ctx.fillStyle = active ? (isLight ? '#1e3a8a' : '#bfdbfe') : (isLight ? '#1e3a8a' : '#93c5fd')
 	                            ctx.fillText(v.label || 'SNV', seg.drawStart + seg.drawW / 2, barY - 4)
@@ -10678,7 +10725,7 @@ export default function GenomeBrowser({
                                 ctx.fillStyle = active
                                     ? (isLight ? '#111827' : '#f9fafb')
                                     : (isLight ? '#374151' : '#d1d5db')
-                                ctx.font = active ? 'bold 9px Inter, system-ui, sans-serif' : '9px Inter, system-ui, sans-serif'
+                                ctx.font = active ? sansFont(9, 'bold') : sansFont(9)
                                 ctx.textAlign = 'left'
                                 ctx.fillText(label, x + dotR + 3, dotY + 3)
                             }
@@ -10689,7 +10736,7 @@ export default function GenomeBrowser({
 
                     if (isLoading && variants.length === 0) {
                         ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
-                        ctx.font = '10px Inter, system-ui, sans-serif'
+                        ctx.font = sansFont(10)
                         ctx.textAlign = 'center'
                         ctx.fillText('Loading…', left + width / 2, top + plotHeight * 0.56)
                     }
@@ -10745,7 +10792,7 @@ export default function GenomeBrowser({
 
                         if (isLoading && spans.length === 0) {
                             ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
-                            ctx.font = '10px Inter, system-ui, sans-serif'
+                            ctx.font = sansFont(10)
                             ctx.textAlign = 'center'
                             ctx.fillText('Loading…', left + width / 2, top + plotHeight * 0.56)
                         }
@@ -10830,7 +10877,7 @@ export default function GenomeBrowser({
 
                     if (isLoading && !hasDensitySignal) {
                         ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
-                        ctx.font = '10px Inter, system-ui, sans-serif'
+                        ctx.font = sansFont(10)
                         ctx.textAlign = 'center'
                         ctx.fillText('Loading…', left + width / 2, top + plotHeight * 0.56)
                     }
@@ -10986,7 +11033,7 @@ export default function GenomeBrowser({
                                             : v.type === 'del' ? 'DEL'
                                                 : v.type?.toUpperCase() || ''
                                 ctx.fillStyle = isLight ? '#4b7c78' : '#9ec5c1'
-                                ctx.font = '9px Inter, system-ui, sans-serif'
+                                ctx.font = sansFont(9)
                                 ctx.textAlign = 'center'
                                 ctx.textBaseline = 'top'
                                 ctx.fillText(typeLabel, bx + bw / 2, labelY)
@@ -11052,7 +11099,7 @@ export default function GenomeBrowser({
 
                     if (isLoading && spans.length === 0) {
                         ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
-                        ctx.font = '10px Inter, system-ui, sans-serif'
+                        ctx.font = sansFont(10)
                         ctx.textAlign = 'center'
                         ctx.fillText('Loading…', left + width / 2, top + plotHeight * 0.56)
                     }
@@ -11247,7 +11294,7 @@ export default function GenomeBrowser({
 
                     if (overflowCount > 0) {
                         ctx.fillStyle = isLight ? 'rgba(71,85,105,0.72)' : 'rgba(148,163,184,0.72)'
-                        ctx.font = '9px Inter, system-ui, sans-serif'
+                        ctx.font = sansFont(9)
                         ctx.textAlign = 'right'
                         ctx.textBaseline = 'bottom'
                         ctx.fillText(`+${overflowCount} overflow`, right - 3, bottom - 1)
@@ -11256,7 +11303,7 @@ export default function GenomeBrowser({
 
                     if (isLoading && visibleFeatures.length === 0) {
                         ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
-                        ctx.font = '10px Inter, system-ui, sans-serif'
+                        ctx.font = sansFont(10)
                         ctx.textAlign = 'center'
                         ctx.fillText('Loading…', left + width / 2, top + plotHeight / 2 + 3)
                     }
@@ -11339,7 +11386,7 @@ export default function GenomeBrowser({
 
                     if (isLoading && spans.length === 0) {
                         ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
-                        ctx.font = '10px Inter, system-ui, sans-serif'
+                        ctx.font = sansFont(10)
                         ctx.textAlign = 'center'
                         ctx.fillText('Loading…', left + width / 2, top + plotHeight * 0.56)
                     }
@@ -11559,7 +11606,7 @@ export default function GenomeBrowser({
                     if (overflow.length > 0) {
                         const hiddenN = Number(data?.layout?.overflow_count || overflow.length)
                         ctx.fillStyle = isLight ? 'rgba(71,85,105,0.72)' : 'rgba(148,163,184,0.72)'
-                        ctx.font = '9px Inter, system-ui, sans-serif'
+                        ctx.font = sansFont(9)
                         ctx.textAlign = 'right'
                         ctx.textBaseline = 'bottom'
                         ctx.fillText(`+${hiddenN} overflow`, right - 3, bottom - 1)
@@ -11576,7 +11623,7 @@ export default function GenomeBrowser({
 
             if (data?.error && !data?.has_data) {
                 ctx.fillStyle = isLight ? '#b91c1c' : '#fca5a5'
-                ctx.font = '10px Inter, system-ui, sans-serif'
+                ctx.font = sansFont(10)
                 ctx.textAlign = 'center'
                 ctx.fillText(data.error, left + width / 2, top + plotHeight / 2 + 3)
                 continue
@@ -11668,7 +11715,7 @@ export default function GenomeBrowser({
 
                 // Fixed right-side zone labels.
                 ctx.save()
-                ctx.font = '9px Inter, system-ui, sans-serif'
+                ctx.font = sansFont(9)
                 ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
                 ctx.textAlign = 'right'
                 ctx.textBaseline = 'middle'
@@ -11787,7 +11834,7 @@ export default function GenomeBrowser({
                     { y: top + plotHeight / 2, value: (yMin + yMax) / 2 },
                     { y: bottom, value: yMin },
                 ]
-                ctx.font = '9px Inter, system-ui, sans-serif'
+                ctx.font = sansFont(9)
                 ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
                 ctx.textAlign = 'right'
                 ctx.textBaseline = 'middle'
@@ -11836,7 +11883,7 @@ export default function GenomeBrowser({
                     { y: top + plotHeight / 2, value: minVal + (range / 2) },
                     { y: bottom, value: minVal },
                 ]
-                ctx.font = '9px Inter, system-ui, sans-serif'
+                ctx.font = sansFont(9)
                 ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
                 ctx.textAlign = 'right'
                 ctx.textBaseline = 'middle'
@@ -11869,7 +11916,7 @@ export default function GenomeBrowser({
             }
         }
 
-    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight])
+    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, sidebarToggleIconColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight])
 
     useLayoutEffect(() => {
         const anchor = verticalZoomTrackAnchorRef.current
@@ -12005,6 +12052,81 @@ export default function GenomeBrowser({
         }
         return { controls }
     }, [genes, transcriptCache, getEffectiveTranscriptLimit, getDisplayTranscriptRows, getGeneTranscriptView, genomicToScreen, viewWidth, layout, effectiveHiddenStrands, selectedGene, dimNonSelectedGenes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, isGeneHiddenByBiotype, transcriptLayoutMetrics])
+
+    /**
+     * A speech bubble at the head of every gene the user has written about.
+     *
+     * DOM over the canvas, like the transcript footer pills above: that buys
+     * hit-testing, hover, the tooltip and an accessible name for nothing, and
+     * keeps this out of the draw effect entirely.
+     */
+    const geneNoteOverlay = useMemo(() => {
+        const bubbles = []
+        // Only once the track is drawing transcripts. Zoomed out, a gene is a
+        // block or a tick and a mark on it would be pointing at nothing.
+        if (!isTranscriptDetailZoomActive) return { bubbles }
+        if (!geneNoteCounts) return { bubbles }
+        const { FORWARD_Y, REVERSE_Y } = layout
+
+        for (const gene of genes) {
+            const count = Number(geneNoteCounts[String(gene.id)] || 0)
+            if (!(count > 0)) continue
+            if (isGeneHiddenByBiotype(gene)) continue
+            const isForward = gene.strand === '+'
+            if (isForward && effectiveHiddenStrands.forward) continue
+            if (!isForward && effectiveHiddenStrands.reverse) continue
+
+            const rawGx1 = genomicToScreen(gene.start)
+            const rawGx2 = genomicToScreen(gene.end)
+            if (!Number.isFinite(rawGx1) || !Number.isFinite(rawGx2)) continue
+            if (Math.abs(rawGx2 - rawGx1) < NOTE_BUBBLE_MIN_GENE_WIDTH) continue
+            // Flip-safe: a flipped view reverses genomicToScreen, so gene.start
+            // is not reliably the left edge.
+            const gx1 = Math.min(rawGx1, rawGx2)
+
+            const trackY = isForward ? FORWARD_Y : REVERSE_Y
+            const trackPadding = isForward ? layout.fwdPadding : layout.revPadding
+            const baseGeneY = trackY + trackPadding + ((gene._row || 0) * transcriptLayoutMetrics.rowPitch)
+            const footer = getGeneFooterGeometry({
+                gene,
+                txs: transcriptCache[gene.id],
+                getEffectiveTranscriptLimit,
+                genomicToScreen,
+                baseGeneY,
+                transcriptLayoutMetrics,
+                lhsWidth: LHS_WIDTH,
+                viewWidth,
+            })
+            if (!footer) continue
+
+            const top = footer.topY - NOTE_BUBBLE_SIZE - NOTE_BUBBLE_GAP
+            // Compressed and flattened layouts leave 1-2px of track padding, so
+            // there is simply nowhere to put the mark. Suppressed by the space
+            // available rather than by naming the modes, which keeps it drawn
+            // wherever it does fit.
+            if (top < trackY + 1) continue
+
+            bubbles.push({
+                id: gene.id,
+                gene,
+                count,
+                x: clamp(
+                    gx1 - 1,
+                    LHS_WIDTH + 2,
+                    Math.max(LHS_WIDTH + 2, viewWidth - NOTE_BUBBLE_SIZE - 2),
+                ),
+                y: top,
+                isDimmed: dimNonSelectedGenes && !!selectedGene && selectedGene.id !== gene.id,
+            })
+        }
+        return { bubbles }
+    }, [genes, geneNoteCounts, isTranscriptDetailZoomActive, genomicToScreen, viewWidth, layout,
+        transcriptLayoutMetrics, transcriptCache, getEffectiveTranscriptLimit, effectiveHiddenStrands,
+        isGeneHiddenByBiotype, selectedGene, dimNonSelectedGenes])
+
+    // The SVG export builder is a callback and cannot read the memo directly.
+    const geneNoteOverlayRef = useRef(geneNoteOverlay)
+    geneNoteOverlayRef.current = geneNoteOverlay
 
     const transcriptPrefetchGenes = useMemo(() => {
         if (!isTranscriptDetailZoomActive || !selectedChrom) {
@@ -12749,6 +12871,10 @@ export default function GenomeBrowser({
         <div
             ref={toolbarRef}
             data-browser-controls="true"
+            // The assembly drawer lines its header band up with this row, so the
+            // drawer reads as sliding out of the genome pill that opened it.
+            data-browser-toolbar="true"
+            data-focus-panel-key={screenshotTargetId || genome}
             className="flex items-center gap-0 px-3 py-2 border-b flex-none"
             style={{
                 backgroundColor: colors.infoBg,
@@ -12769,9 +12895,17 @@ export default function GenomeBrowser({
                         cursor: onGenomePillClick ? 'pointer' : 'default',
                         width: `${toolbarColumnWidths.genome}px`,
                     }}
-                    title={onGenomePillClick ? `${genomePillLabel} (click to deactivate)` : genomePillLabel}
+                    title={onGenomePillClick ? `${genomePillLabel} (click for assembly information)` : genomePillLabel}
+                    aria-expanded={genomePillExpanded}
                 >
                     <span className="truncate">{genomePillLabel}</span>
+                    {/* Marks the pill as something to read, not just a label.
+                        Only where there is something behind it to open. */}
+                    {onGenomePillClick && (
+                        <span className="ml-auto flex-none pl-1.5 opacity-90">
+                            <InfoGlyph size={13} strokeWidth={2.2} />
+                        </span>
+                    )}
                 </button>
             )}
 
@@ -13345,16 +13479,11 @@ export default function GenomeBrowser({
                                                                 )
                                                             )
                                                         }}
-                                                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1"
-                                                        style={{
-                                                            backgroundColor: isAddedVisible ? panelPillColor : (isLight ? '#cbd5e1' : '#334155'),
-                                                            color: isAddedVisible ? '#ffffff' : (isLight ? '#475569' : '#e2e8f0'),
-                                                        }}
+                                                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors ${isLight ? 'hover:bg-black/5' : 'hover:bg-white/10'}`}
+                                                        style={{ color: sidebarToggleIconColor(isAddedVisible) }}
                                                         title={isAddedVisible ? 'Turn track off' : 'Turn track on'}
                                                     >
-                                                        <svg width="16" height="16" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                                                            <path d={POWER_ICON_PATH_D} fill={isAddedVisible ? '#ffffff' : (isLight ? '#475569' : '#e2e8f0')} />
-                                                        </svg>
+                                                        <PowerGlyph size={15} />
                                                         <span className="text-[10px] font-semibold">{isAddedVisible ? 'On' : 'Off'}</span>
                                                     </button>
                                                     <button
@@ -13383,17 +13512,12 @@ export default function GenomeBrowser({
                                                                 : [...prev, pickerTrackId]
                                                         )
                                                     }}
-                                                    className="ml-2 inline-flex items-center gap-1 rounded-md px-1.5 py-1 shrink-0"
-                                                    style={{
-                                                        backgroundColor: selectedForAdd ? panelPillColor : (isLight ? '#cbd5e1' : '#334155'),
-                                                        color: selectedForAdd ? '#ffffff' : (isLight ? '#475569' : '#e2e8f0'),
-                                                    }}
+                                                    className={`ml-2 inline-flex items-center gap-1 rounded-md px-1.5 py-1 shrink-0 transition-colors ${isLight ? 'hover:bg-black/5' : 'hover:bg-white/10'}`}
+                                                    style={{ color: sidebarToggleIconColor(selectedForAdd) }}
                                                     title={selectedForAdd ? 'Selected for add' : 'Select for add'}
                                                     aria-pressed={selectedForAdd}
                                                 >
-                                                    <svg width="16" height="16" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                                                        <path d={POWER_ICON_PATH_D} fill={selectedForAdd ? '#ffffff' : (isLight ? '#475569' : '#e2e8f0')} />
-                                                    </svg>
+                                                    <PowerGlyph size={15} />
                                                 </button>
                                             )}
                                         </div>
@@ -13850,6 +13974,44 @@ export default function GenomeBrowser({
                         </Fragment>
                     )
                 })}
+
+                {/* One bubble per gene the user has written about. Above the
+                    footer pills in the stack, because it sits at the head of the
+                    gene where nothing else competes for the space. */}
+                {geneNoteOverlay.bubbles.map((bubble) => (
+                    <button
+                        key={`note-${bubble.id}`}
+                        type="button"
+                        onClick={(e) => {
+                            // Without this the canvas click handler runs too and
+                            // toggles the very gene this is trying to open.
+                            e.stopPropagation()
+                            setSelectedGene(bubble.gene)
+                            onOpenGeneNotesRef.current?.(String(bubble.gene.id))
+                        }}
+                        title={`${bubble.count} note${bubble.count === 1 ? '' : 's'} — open notes`}
+                        aria-label={`Open ${bubble.count} note${bubble.count === 1 ? '' : 's'} on ${bubble.gene.name || bubble.gene.id}`}
+                        className="absolute p-0 m-0 border-0 bg-transparent transition-opacity hover:opacity-85"
+                        style={{
+                            left: bubble.x,
+                            top: bubble.y,
+                            width: NOTE_BUBBLE_SIZE,
+                            height: NOTE_BUBBLE_SIZE,
+                            color: bubble.isDimmed ? (isLight ? '#94a3b8' : '#64748b') : panelPillColor,
+                            cursor: 'pointer',
+                            zIndex: 11,
+                            opacity: bubble.isDimmed ? 0.8 : 1,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                        }}
+                    >
+                        {/* Filled, and its rules knocked out in the track's own
+                            background, so the mark reads as writing on a bubble
+                            rather than a solid blob at this size. */}
+                        <NoteGlyph size={NOTE_BUBBLE_SIZE} filled knockout={colors.bg} />
+                    </button>
+                ))}
 
                 {/* Loading indicator */}
                 {loadingGenes && (
