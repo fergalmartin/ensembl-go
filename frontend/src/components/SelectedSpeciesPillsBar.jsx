@@ -28,6 +28,14 @@ function itemKey(species) {
     return getGenomeKey(species)
 }
 
+/** The height of one row of pills, for a caller that needs the strip to hold its place
+ *  while it is still empty.
+ *
+ *  A pill is 12px text on a 16px line with `py-1.5` and a 1px border, and its wrapper
+ *  leaves 8px beneath for the assembly badge; the row itself adds `py-1`. Declared here,
+ *  beside the markup it describes, so the two cannot drift apart unnoticed. */
+export const PILLS_ROW_HEIGHT = 46
+
 export default function SelectedSpeciesPillsBar({
     theme = 'dark',
     config,
@@ -40,6 +48,7 @@ export default function SelectedSpeciesPillsBar({
     speciesList = null,
     primarySpeciesKey = '',
     nonPrimarySelectedColor = '',
+    reserveRowHeight = false,
 }) {
     const isLight = theme === 'light'
     const [pillToast, setPillToast] = useState(null)
@@ -138,6 +147,7 @@ export default function SelectedSpeciesPillsBar({
                 <div
                     ref={pillsScrollRef}
                     className="hide-scrollbar flex items-center gap-1.5 flex-1 px-1 py-1 overflow-x-auto overflow-y-visible cursor-grab select-none"
+                    style={reserveRowHeight ? { minHeight: PILLS_ROW_HEIGHT } : undefined}
                     onMouseDown={onPillMouseDown}
                     onMouseMove={onPillMouseMove}
                     onMouseUp={onPillMouseUp}
@@ -200,6 +210,7 @@ export default function SelectedSpeciesPillsBar({
                             return (
                                 <div
                                     key={speciesKey}
+                                    data-tour-id={`genome-pill-${species?.species_key || ''}`}
                                     className="relative flex-shrink-0 group/pill"
                                     draggable
                                     onDragStart={(event) => {
@@ -263,6 +274,7 @@ export default function SelectedSpeciesPillsBar({
                                     />
                                     {onRemoveSpecies && (
                                         <button
+                                            data-tour-id={`genome-pill-remove-${species?.species_key || ''}`}
                                             type="button"
                                             onMouseDown={(e) => e.stopPropagation()}
                                             onClick={(e) => {

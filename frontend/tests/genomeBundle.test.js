@@ -11,7 +11,12 @@ import {
     registrationBadgeLabel,
     registrationBadgeTooltip,
 } from '../src/utils/genomeBundle.js'
-import { canonicalBundleFiles, orderBundleFileTypes } from '../src/utils/genomeFileTypes.js'
+import {
+    DOWNLOAD_FILE_DEFS,
+    canonicalBundleFiles,
+    fileTypeLabel,
+    orderBundleFileTypes,
+} from '../src/utils/genomeFileTypes.js'
 
 const downloadedGenome = {
     scientific_name: 'Homo sapiens',
@@ -31,6 +36,18 @@ const downloadedGenome = {
     dataset_release_label: 'Ensembl 2024_11',
     dataset_release_short_label: 'E113',
 }
+
+test('GFF3 downloads are presented as genes while retaining their format metadata', () => {
+    assert.equal(DOWNLOAD_FILE_DEFS.gff3.label, 'Genes')
+    assert.equal(fileTypeLabel('gff3'), 'Genes')
+    assert.equal(DOWNLOAD_FILE_DEFS.gff3.subtype, 'GFF3')
+})
+
+test('download dataset labels use consistent plurals', () => {
+    assert.equal(fileTypeLabel('homology'), 'Homologies')
+    assert.equal(fileTypeLabel('cdna'), 'cDNAs')
+    assert.equal(fileTypeLabel('protein'), 'Proteins')
+})
 
 test('a downloaded genome exports with its provider, release and every file type', () => {
     const record = portableGenomeEntry(downloadedGenome, {

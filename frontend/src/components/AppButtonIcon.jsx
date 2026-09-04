@@ -321,5 +321,26 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
     )
   }
 
+  if (buttonId === 'tutorials') {
+    const iconSize = compact ? size + 2 : size + 5
+    return (
+      <svg
+        width={iconSize}
+        height={iconSize}
+        viewBox="0 0 32 32"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {/* An open book: a tutorial is the app read a page at a time. */}
+        <path d="M16 9.4C13.6 7.6 10.7 6.7 7 6.7H4.2v18.1H7c3.7 0 6.6.9 9 2.7 2.4-1.8 5.3-2.7 9-2.7h2.8V6.7H25c-3.7 0-6.6.9-9 2.7z" />
+        <path d="M16 9.4v18.1" />
+      </svg>
+    )
+  }
+
   return null
 }

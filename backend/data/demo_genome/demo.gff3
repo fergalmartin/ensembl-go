@@ -1,0 +1,57 @@
+##gff-version 3
+##sequence-region welcome1 1 15682
+##sequence-region welcome2 1 6352
+welcome1	demo	gene	400	3171	.	+	.	ID=gene:Welcome;Name=Welcome;biotype=protein_coding;description=Demo gene Welcome
+welcome1	demo	mRNA	400	3171	.	+	.	ID=transcript:Welcome-201;Parent=gene:Welcome;Name=Welcome-201;biotype=protein_coding
+welcome1	demo	exon	400	711	.	+	.	ID=exon:Welcome;Parent=transcript:Welcome-201
+welcome1	demo	five_prime_UTR	400	496	.	+	.	Parent=transcript:Welcome-201
+welcome1	demo	CDS	497	711	.	+	0	ID=CDS:Welcome;Parent=transcript:Welcome-201
+welcome1	demo	exon	1612	1869	.	+	.	ID=exon:Welcome;Parent=transcript:Welcome-201
+welcome1	demo	CDS	1612	1869	.	+	1	ID=CDS:Welcome;Parent=transcript:Welcome-201
+welcome1	demo	exon	2770	3171	.	+	.	ID=exon:Welcome;Parent=transcript:Welcome-201
+welcome1	demo	CDS	2770	3049	.	+	1	ID=CDS:Welcome;Parent=transcript:Welcome-201
+welcome1	demo	three_prime_UTR	3050	3171	.	+	.	Parent=transcript:Welcome-201
+welcome1	demo	gene	4371	6457	.	+	.	ID=gene:To;Name=To;biotype=protein_coding;description=Demo gene To
+welcome1	demo	mRNA	4371	6457	.	+	.	ID=transcript:To-201;Parent=gene:To;Name=To-201;biotype=protein_coding
+welcome1	demo	exon	4371	4592	.	+	.	ID=exon:To;Parent=transcript:To-201
+welcome1	demo	five_prime_UTR	4371	4441	.	+	.	Parent=transcript:To-201
+welcome1	demo	CDS	4442	4592	.	+	0	ID=CDS:To;Parent=transcript:To-201
+welcome1	demo	exon	5993	6457	.	+	.	ID=exon:To;Parent=transcript:To-201
+welcome1	demo	CDS	5993	6366	.	+	2	ID=CDS:To;Parent=transcript:To-201
+welcome1	demo	three_prime_UTR	6367	6457	.	+	.	Parent=transcript:To-201
+welcome1	demo	gene	7657	10977	.	-	.	ID=gene:Ensembl;Name=Ensembl;biotype=protein_coding;description=Demo gene Ensembl
+welcome1	demo	mRNA	7657	10977	.	-	.	ID=transcript:Ensembl-201;Parent=gene:Ensembl;Name=Ensembl-201;biotype=protein_coding
+welcome1	demo	exon	7657	7914	.	-	.	ID=exon:Ensembl;Parent=transcript:Ensembl-201
+welcome1	demo	three_prime_UTR	7657	7769	.	-	.	Parent=transcript:Ensembl-201
+welcome1	demo	CDS	7770	7914	.	-	1	ID=CDS:Ensembl;Parent=transcript:Ensembl-201
+welcome1	demo	exon	8665	8955	.	-	.	ID=exon:Ensembl;Parent=transcript:Ensembl-201
+welcome1	demo	CDS	8665	8955	.	-	1	ID=CDS:Ensembl;Parent=transcript:Ensembl-201
+welcome1	demo	exon	9706	10047	.	-	.	ID=exon:Ensembl;Parent=transcript:Ensembl-201
+welcome1	demo	CDS	9706	10047	.	-	1	ID=CDS:Ensembl;Parent=transcript:Ensembl-201
+welcome1	demo	exon	10798	10977	.	-	.	ID=exon:Ensembl;Parent=transcript:Ensembl-201
+welcome1	demo	CDS	10798	10892	.	-	0	ID=CDS:Ensembl;Parent=transcript:Ensembl-201
+welcome1	demo	five_prime_UTR	10893	10977	.	-	.	Parent=transcript:Ensembl-201
+welcome1	demo	gene	12177	13882	.	+	.	ID=gene:Go;Name=Go;biotype=protein_coding;description=Demo gene Go
+welcome1	demo	mRNA	12177	13882	.	+	.	ID=transcript:Go-201;Parent=gene:Go;Name=Go-201;biotype=protein_coding
+welcome1	demo	exon	12177	12572	.	+	.	ID=exon:Go;Parent=transcript:Go-201
+welcome1	demo	five_prime_UTR	12177	12238	.	+	.	Parent=transcript:Go-201
+welcome1	demo	CDS	12239	12572	.	+	0	ID=CDS:Go;Parent=transcript:Go-201
+welcome1	demo	exon	13673	13882	.	+	.	ID=exon:Go;Parent=transcript:Go-201
+welcome1	demo	CDS	13673	13731	.	+	2	ID=CDS:Go;Parent=transcript:Go-201
+welcome1	demo	three_prime_UTR	13732	13882	.	+	.	Parent=transcript:Go-201
+welcome2	demo	gene	400	1999	.	+	.	ID=gene:Have;Name=Have;biotype=protein_coding;description=Demo gene Have
+welcome2	demo	mRNA	400	1999	.	+	.	ID=transcript:Have-201;Parent=gene:Have;Name=Have-201;biotype=protein_coding
+welcome2	demo	exon	400	666	.	+	.	ID=exon:Have;Parent=transcript:Have-201
+welcome2	demo	five_prime_UTR	400	466	.	+	.	Parent=transcript:Have-201
+welcome2	demo	CDS	467	666	.	+	0	ID=CDS:Have;Parent=transcript:Have-201
+welcome2	demo	exon	1667	1999	.	+	.	ID=exon:Have;Parent=transcript:Have-201
+welcome2	demo	CDS	1667	1898	.	+	1	ID=CDS:Have;Parent=transcript:Have-201
+welcome2	demo	three_prime_UTR	1899	1999	.	+	.	Parent=transcript:Have-201
+welcome2	demo	gene	3199	4552	.	-	.	ID=gene:Fun;Name=Fun;biotype=protein_coding;description=Demo gene Fun
+welcome2	demo	mRNA	3199	4552	.	-	.	ID=transcript:Fun-201;Parent=gene:Fun;Name=Fun-201;biotype=protein_coding
+welcome2	demo	exon	3199	3414	.	-	.	ID=exon:Fun;Parent=transcript:Fun-201
+welcome2	demo	three_prime_UTR	3199	3320	.	-	.	Parent=transcript:Fun-201
+welcome2	demo	CDS	3321	3414	.	-	1	ID=CDS:Fun;Parent=transcript:Fun-201
+welcome2	demo	exon	4265	4552	.	-	.	ID=exon:Fun;Parent=transcript:Fun-201
+welcome2	demo	CDS	4265	4473	.	-	0	ID=CDS:Fun;Parent=transcript:Fun-201
+welcome2	demo	five_prime_UTR	4474	4552	.	-	.	Parent=transcript:Fun-201

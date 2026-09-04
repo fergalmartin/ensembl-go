@@ -65,6 +65,14 @@ function ChevronGlyph({ pointsRight, size = 16 }) {
     )
 }
 
+function VerticalChevronGlyph({ pointsDown, size = 16 }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points={pointsDown ? '6 9 12 15 18 9' : '18 15 12 9 6 15'} />
+        </svg>
+    )
+}
+
 function CloseGlyph({ size = 15 }) {
     return (
         <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
@@ -289,6 +297,15 @@ export default function FocusGeneDrawer({
         setHiddenSet(allHidden ? [] : orderedIds)
     }, [allHidden, orderedIds, setHiddenSet, closeDetail])
 
+    const handleTranscriptExpansionToggle = useCallback(() => {
+        closeDetail()
+        patchView({
+            expanded: !expanded,
+            hoverId: null,
+            ghostId: null,
+        })
+    }, [closeDetail, expanded, patchView])
+
     const handleToggleHidden = useCallback((transcriptId) => {
         closeDetail()
         const id = String(transcriptId)
@@ -481,6 +498,7 @@ export default function FocusGeneDrawer({
     const dismissButton = (
         <button
             type="button"
+            data-tour-id="focus-gene-dismiss"
             onClick={() => onDismiss?.()}
             className={`flex-none flex items-center justify-center rounded transition-colors ${rowHoverClass}`}
             style={{ ...HEADER_BUTTON, color: accentColor }}
@@ -639,6 +657,24 @@ export default function FocusGeneDrawer({
                                 <h3 className={`flex-none text-[11px] font-semibold tracking-wide uppercase ${subTextClass}`}>
                                     Transcripts
                                 </h3>
+                                {ordered.length > 1 && (
+                                    <button
+                                        type="button"
+                                        data-tour-id="focus-transcripts-expand"
+                                        onClick={handleTranscriptExpansionToggle}
+                                        title={expanded
+                                            ? 'Collapse to the canonical or MANE transcript'
+                                            : `Show all ${ordered.length} transcripts`}
+                                        aria-label={expanded
+                                            ? 'Collapse to the canonical or MANE transcript'
+                                            : `Show all ${ordered.length} transcripts`}
+                                        aria-expanded={expanded}
+                                        className={`flex-none p-0.5 rounded transition-colors ${rowHoverClass}`}
+                                        style={{ color: accentColor }}
+                                    >
+                                        <VerticalChevronGlyph pointsDown={!expanded} size={17} />
+                                    </button>
+                                )}
                                 <div className="flex-1 h-px" style={{ backgroundColor: dividerColor }} />
                                 {ordered.length > 0 && (
                                     <button
@@ -686,6 +722,7 @@ export default function FocusGeneDrawer({
                                         // The view reads this row's box to work out how
                                         // far the browser has to travel to meet it.
                                         data-drawer-transcript-row={id}
+                                        data-tutorial-engaged={isPinned}
                                         title={isPinned ? 'Release this transcript' : 'Align the browser to this transcript'}
                                         className={`group flex items-start gap-1.5 px-2 py-1.5 text-[11px] transition-colors ${rowHoverClass}`}
                                         style={{
@@ -725,6 +762,7 @@ export default function FocusGeneDrawer({
                                         </span>
                                         <button
                                             type="button"
+                                            data-tour-id={`focus-transcript-info-${id}`}
                                             onClick={(event) => {
                                                 event.stopPropagation()
                                                 const opening = detailTranscriptId !== id
@@ -748,6 +786,7 @@ export default function FocusGeneDrawer({
                                         </button>
                                         <button
                                             type="button"
+                                            data-tour-id={`focus-transcript-hide-${id}`}
                                             onClick={(event) => { event.stopPropagation(); handleToggleHidden(id) }}
                                             title={isHidden ? 'Show this transcript' : 'Hide this transcript'}
                                             aria-pressed={!isHidden}
@@ -760,46 +799,6 @@ export default function FocusGeneDrawer({
                                 )
                             })}
 
-                            {ordered.length > 1 && (
-                                <div className="px-2 pt-1.5 pb-2">
-                                    {expanded ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => { closeDetail(); patchView({ expanded: false, hoverId: null, ghostId: null }) }}
-                                            title="Collapse transcript list"
-                                            // Same control the browser draws under an
-                                            // expanded gene, so the two read as one thing.
-                                            className="inline-flex items-center justify-center font-semibold transition-opacity hover:opacity-85"
-                                            style={{
-                                                width: 16,
-                                                height: 16,
-                                                borderRadius: 1,
-                                                backgroundColor: accentColor,
-                                                color: '#ffffff',
-                                                fontSize: '10px',
-                                                lineHeight: '1',
-                                            }}
-                                        >
-                                            X
-                                        </button>
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            onClick={() => { closeDetail(); patchView({ expanded: true, hoverId: null, ghostId: null }) }}
-                                            title={`Show ${ordered.length} transcript${ordered.length === 1 ? '' : 's'}`}
-                                            className="inline-flex items-center gap-1.5 h-6 px-2.5 text-[11px] font-semibold rounded-full transition-opacity hover:opacity-85"
-                                            style={{ backgroundColor: accentColor, color: '#ffffff' }}
-                                        >
-                                            {/* Counts what the browser would gain by expanding, so
-                                                this and the canvas pill always agree. */}
-                                            {visibleTotal > 1
-                                                ? `+${visibleTotal - 1} transcripts`
-                                                : `Show all ${ordered.length}`}
-                                        </button>
-                                    )}
-
-                                </div>
-                            )}
                         </div>
                     )}
 
@@ -837,6 +836,7 @@ export default function FocusGeneDrawer({
                                     </button>
                                     <button
                                         type="button"
+                                        data-tour-id="focus-notes-add"
                                         onClick={handleAddNote}
                                         title="Add a note"
                                         className={`flex-none p-1 rounded transition-colors ${rowHoverClass}`}
@@ -876,6 +876,7 @@ export default function FocusGeneDrawer({
                                     <button
                                         key={note.id}
                                         type="button"
+                                        data-tour-id={`focus-note-row-${note.id}`}
                                         onClick={() => openNote(note.id)}
                                         title="Open this note"
                                         className={`w-full flex items-baseline gap-2 px-1 py-1 rounded text-left transition-colors ${rowHoverClass}`}

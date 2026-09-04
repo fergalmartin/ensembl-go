@@ -49,21 +49,42 @@ backend/local_data/
 backend/debug_backend.txt
 
 # --- Genome data does not belong in backend/data ---
-# The application ships no sample genomes: users download assemblies through the
-# download view or supply their own. backend/data holds only the classification
-# artifacts that decide species grouping, which ARE tracked (a couple of megabytes,
-# read at run time by backend/project_classifier.py and backend/taxonomy_classifier.py).
-# These patterns are a guard, so a stray FASTA or GFF3 left in that directory during
-# development cannot be committed or bundled by build-backend.js.
+# The application ships no sample genomes for real use: users download assemblies
+# through the download view or supply their own. backend/data holds only the
+# classification artifacts that decide species grouping, which ARE tracked (a couple of
+# megabytes, read at run time by backend/project_classifier.py and
+# backend/taxonomy_classifier.py). These patterns are a guard, so a stray FASTA or GFF3
+# left in that directory during development cannot be committed or bundled by
+# build-backend.js. They are anchored, so they only match the top level.
+#
+# The deliberate exceptions are the two tutorial genomes, which ARE tracked:
+#
+#   backend/data/demo_genome/  — twenty-two kilobases of made-up assembly that the
+#                                Getting Started tutorial installs in place of a real
+#                                download. Built by scripts/build_demo_genome.py.
+#   backend/data/grch38_reg4/  — six hundred kilobytes: half a megabase of real
+#                                chromosome 1 around REG4, at its true coordinates, for
+#                                the genome browser tutorial. Built by
+#                                scripts/build_grch38_slice.py.
+#
+# Regenerate and commit rather than editing by hand. See docs/TUTORIALS.md.
 backend/data/*.fa
 backend/data/*.fai
 backend/data/*.gff3
 backend/data/*.gz
+backend/data/*.bgz
+backend/data/*.gzi
 
 # --- Experimental Rust/WASM renderer ---
 # The Cargo project and its prebuilt pkg/ output stay tracked; only the build
 # directory is ignored, at roughly 790 MB.
 frontend/rust/*/target/
+
+# --- Vendored 3D structure viewer ---
+# pdbe-molstar's prebuilt bundle, ~6 MB, copied out of node_modules by
+# frontend/scripts/copy-structure-viewer.js. The script is tracked; its output
+# is not.
+backend/static/structure/vendor/
 
 # --- Snapshots, vendored clones, scratch ---
 exports/
@@ -75,4 +96,5 @@ test-data/
 # Personal settings. A shared .claude/settings.json, if added, should be tracked.
 .claude/
 docs/browsing-controls-handoff.md
+docs/tutorial-builder-genome-playlists-handoff.md
 

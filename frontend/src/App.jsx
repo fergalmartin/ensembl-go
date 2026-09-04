@@ -49,7 +49,9 @@ import DownloadView from './components/DownloadView'
 import GenomeSelectorView from './components/GenomeSelectorView'
 import GenomeBrowserView from './components/GenomeBrowserView'
 import HomeView from './components/HomeView'
+import GettingStartedOutputDirPrompt from './components/GettingStartedOutputDirPrompt'
 import HelpView from './components/HelpView'
+import TutorialsView from './components/TutorialsView'
 import TrackManagerView from './components/TrackManagerView'
 import NotesView from './components/NotesView'
 import MultiAlignmentSidebar from './components/MultiAlignmentSidebar'
@@ -57,6 +59,9 @@ import MultiAlignmentPanel from './components/MultiAlignmentPanel'
 import SaveAlignmentModal from './components/SaveAlignmentModal'
 import LoadAlignmentModal from './components/LoadAlignmentModal'
 import AppButtonIcon from './components/AppButtonIcon'
+import { useTutorialHost } from './hooks/useTutorial'
+import { resetTutorialWorkspace } from './tutorials/demoGenomeApi'
+import { isTutorialSandboxActive } from './tutorials/sandbox'
 import SelectedSpeciesPillsBar from './components/SelectedSpeciesPillsBar'
 import WindowsBackendSetupView from './components/WindowsBackendSetupView'
 import ScreenshotSelectionOverlay from './components/ScreenshotSelectionOverlay'
@@ -90,6 +95,7 @@ import {
   subtreeContainsCanvas,
 } from './utils/screenshotExport'
 import { getGenomeKey, genomeKeysMatch, normalizeGenomeRecord, getAssemblyAccession, getAssemblyGenomeKey, normalizeGenomeProvider, MANUAL_PROVIDER } from './utils/genomeIdentity'
+import { playlistTourSlug } from './utils/playlistGenomes'
 import {
   primaryGenomeForIndex,
   shouldAutoEnsurePrimaryIndex,
@@ -869,6 +875,8 @@ function App() {
 
   // Navigation: which view is active
   const [currentView, setCurrentView] = useState('home')
+  const [gettingStartedOutputDirDismissed, setGettingStartedOutputDirDismissed] = useState(false)
+  const [outputDirNotification, setOutputDirNotification] = useState('')
   const previousViewRef = useRef('home')
   const [headerCollapsed, setHeaderCollapsed] = useState(false)
   const [draggedTopButtonId, setDraggedTopButtonId] = useState('')
@@ -908,8 +916,9 @@ function App() {
   const alignmentResolveControllersRef = useRef({})
   const alignmentResolveRequestTokenRef = useRef({})
 
-  // Configuration state
-  const [config, setConfig] = useState({
+  // Configuration state. `userConfig` is what is really on disk; `config` below is what
+  // the app runs on, which a tutorial can shadow without ever writing to the real one.
+  const [userConfig, setUserConfig] = useState({
     working_dir: '',
     ref_fasta: '',
     ref_gff: '',
@@ -932,8 +941,39 @@ function App() {
     genome_browser_colors: buildDefaultGenomeBrowserColors(),
     active_app_buttons: DEFAULT_ACTIVE_APP_BUTTONS,
   })
+
+  // The real configuration is frozen for as long as a tutorial runs.
+  //
+  // Plenty of code here reads the current config, changes a field and writes the whole
+  // thing back. During a tutorial "the current config" is the sandbox overlay, so those
+  // writes would fold the tutorial's scratch directory into the user's real settings.
+  // Rather than auditing every one of them, the single setter refuses. Anything the
+  // tutorial genuinely needs to change lives in its override instead.
+  const setConfig = useCallback((update) => {
+    if (isTutorialSandboxActive()) return
+    setUserConfig(update)
+  }, [])
+
+  // Lets a running tutorial follow the user between apps and move them itself.
+  const tutorialRuntime = useTutorialHost({ currentView, theme, navigate: setCurrentView })
+
+  // A tutorial runs in a sandbox: its own scratch output directory and its own set of
+  // active genomes, layered over the user's configuration rather than replacing it.
+  // Nothing here is ever written back, so quitting mid-tutorial leaves the real
+  // configuration exactly as it was and the next launch needs no recovery.
+  const {
+    configOverride: tutorialConfig,
+    updateSandboxConfig,
+    toggleTutorialGenome,
+  } = tutorialRuntime
+  const config = useMemo(
+    () => (tutorialConfig ? { ...userConfig, ...tutorialConfig } : userConfig),
+    [tutorialConfig, userConfig]
+  )
+
   const configRef = useRef(config)
   const [inactiveSelectedSpecies, setInactiveSelectedSpecies] = useState([])
+  const sandboxInactiveSnapshotRef = useRef(null)
   const [dualViewFocus, setDualViewFocus] = useState({ primaryKey: '', secondaryKey: '' })
   const [svFullyActiveSpeciesKeys, setSvFullyActiveSpeciesKeys] = useState([])
   const [svAnchorRegionId, setSvAnchorRegionId] = useState('')
@@ -1065,9 +1105,89 @@ function App() {
     fetchConfig()
   }, [backendRuntime.ready, shouldGateStartupFetch])
 
+  // Coming out of a tutorial, re-read the configuration and let the app derive itself
+  // from it again. The stored configuration was never touched, but state derived from it
+  // — which genomes are active, which are merely selected — was emptied for the sandbox
+  // and has to be rebuilt from the real thing.
+  // Keyed on the sandbox itself going away rather than on the tutorial stopping: a
+  // finished tutorial still shows its completion card, and its overlay config is still
+  // in force until the user dismisses it.
+  // What the browser was looking at before a tutorial took over.
+  //
+  // The configuration override is enough to keep a tutorial out of the user's settings,
+  // but the browser's focused gene is component state and not covered by it. Left alone,
+  // a tutorial that focuses one of the demo genome's invented genes hands the session back
+  // still focused on it — so the user returns to their own genomes with a gene none of
+  // them contain pinned to the focus bar, and clearing it leaves the track blank until the
+  // genome is toggled off and on again.
+  //
+  // Snapshotted rather than simply cleared, because a focus the user had before the
+  // tutorial is theirs and should survive it, the same as everything else.
+  const tutorialSandboxWasUpRef = useRef(false)
+  const preTutorialBrowserFocusRef = useRef(null)
+  useEffect(() => {
+    const sandboxUp = Boolean(tutorialConfig)
+    const tookOver = !tutorialSandboxWasUpRef.current && sandboxUp
+    const handedBack = tutorialSandboxWasUpRef.current && !sandboxUp
+    tutorialSandboxWasUpRef.current = sandboxUp
+
+    if (tookOver) {
+      preTutorialBrowserFocusRef.current = {
+        refGene: browserRefGene,
+        tgtGene: browserTgtGene,
+        byGenome: browserFocusByGenome,
+        refInput,
+        tgtInput,
+      }
+    }
+
+    if (handedBack) {
+      const saved = preTutorialBrowserFocusRef.current
+      preTutorialBrowserFocusRef.current = null
+      setBrowserRefGene(saved?.refGene ?? null)
+      setBrowserTgtGene(saved?.tgtGene ?? null)
+      setBrowserFocusByGenome(saved?.byGenome ?? {})
+      setRefInput(saved?.refInput ?? '')
+      setTgtInput(saved?.tgtInput ?? '')
+      fetchConfig()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tutorialConfig])
+
+  // A tutorial cleans up after itself, but it cannot if the app was killed while one was
+  // running. Sweeping on launch means an interrupted tutorial leaves nothing behind —
+  // and since a tutorial never writes to the real configuration, there is nothing else to
+  // undo: this session starts as the user left it.
+  const sweptTutorialWorkspaceRef = useRef(false)
+  useEffect(() => {
+    const outputDir = userConfig?.output_dir
+    if (!configLoaded || !outputDir || sweptTutorialWorkspaceRef.current) return
+    sweptTutorialWorkspaceRef.current = true
+    resetTutorialWorkspace(outputDir)
+  }, [configLoaded, userConfig?.output_dir])
+
   useEffect(() => {
     configRef.current = config
   }, [config])
+
+  // Selected-but-inactive genomes are React state rather than configuration. Give the
+  // tutorial sandbox its own copy too, otherwise Genome Selector either leaks the
+  // author's existing genomes into the scene or changes that real selection while the
+  // author experiments with playlists.
+  useEffect(() => {
+    if (tutorialConfig) {
+      if (sandboxInactiveSnapshotRef.current === null) {
+        sandboxInactiveSnapshotRef.current = inactiveSelectedSpeciesRef.current
+        setInactiveSelectedSpecies([])
+      }
+      return
+    }
+    if (sandboxInactiveSnapshotRef.current !== null) {
+      const restored = sandboxInactiveSnapshotRef.current
+      sandboxInactiveSnapshotRef.current = null
+      setInactiveSelectedSpecies(restored)
+    }
+  }, [tutorialConfig])
 
   useEffect(() => {
     if (!configLoaded) return undefined
@@ -1396,6 +1516,11 @@ function App() {
   }, [currentView, refResolved?.selectedTranscriptId, tgtResolved?.selectedTranscriptId, refFlankBp, tgtFlankBp])
 
   const fetchConfig = async () => {
+    // While a tutorial runs, `config` is the sandbox overlay — so re-reading here would
+    // look up the sidecar for the tutorial's scratch directory and write its empty genome
+    // list over the user's real one in state. The user's configuration cannot have changed
+    // underneath us anyway, since the tutorial is forbidden from writing it.
+    if (isTutorialSandboxActive()) return null
     try {
       const res = await fetch(`${API_BASE}/api/config`)
       if (res.ok) {
@@ -1698,6 +1823,28 @@ function App() {
     const setSideResolved = side === 'ref' ? setRefResolved : setTgtResolved
     const genome = side === 'ref' ? 'reference' : 'target'
 
+    // Focusing a gene pushes its name into this input, which then looks for the same gene
+    // on the comparison side. During a tutorial that side is still the user's own
+    // reference genome, and the gene is one of the demo genome's invented ones — so the
+    // lookup can only fail, noisily, for something nobody asked for.
+    if (isTutorialSandboxActive()) {
+      setSideResolved(null)
+      setSideError(null)
+      return null
+    }
+
+    // With no annotation configured for this side there is nothing to resolve against,
+    // so the request can only come back 404 — and the "Not found" it produces says the
+    // gene is missing when really the side is simply unset.
+    const configured = side === 'ref'
+      ? configRef.current?.ref_gff
+      : configRef.current?.target_gff
+    if (!String(configured || '').trim()) {
+      setSideResolved(null)
+      setSideError(null)
+      return null
+    }
+
     setSideLoading(true)
     setSideError(null)
 
@@ -1729,6 +1876,9 @@ function App() {
   }, [])
 
   const handleRefGeneSelect = useCallback((gene) => {
+    if (gene?.name || gene?.id) {
+      tutorialRuntime.emitSignal('browser.geneFocused', { gene: gene.name || gene.id })
+    }
     setBrowserRefGene((prev) => {
       const next = mergeGeneFocus(prev, gene)
       return geneFocusSignature(prev) === geneFocusSignature(next) ? prev : next
@@ -3186,8 +3336,9 @@ function App() {
     notes: 'Notes',
     download: 'Download',
     configuration: 'Configuration',
+    tutorials: 'Tutorials',
     help: 'Help',
-    track_manager: 'Track Registry',
+    track_manager: 'Track Manager',
   }
 
   const viewDescriptions = {
@@ -3199,11 +3350,13 @@ function App() {
     neighbourhood: 'Explore gene neighbourhood context',
     structural_variation: 'Inspect structural variation and chain-based syntenic mappings between two genomes',
     homology: 'Query homology TSV files for cross-species gene matches',
-    stats: 'Compare annotation, structural, homology, and assembly summary statistics across selected genomes',
+    stats: 'Compare genome and annotation statistics across selected genomes',
     notes: 'Browse and manage every note you have written, across all your genomes',
     download: 'Download genomes, annotations and homologies locally',
     configuration: 'Set up genome paths and index files',
+    tutorials: 'Follow guided walkthroughs of the main Ensembl Go workflows',
     help: 'Read guidance and workflow notes for each view',
+    track_manager: 'Register and manage custom data tracks for the Genome Browser',
   }
 
   const currentViewTitle = shouldShowWindowsBackendSetup
@@ -3212,6 +3365,11 @@ function App() {
   const currentViewDescription = shouldShowWindowsBackendSetup
     ? 'Connect the packaged Windows app to a Python backend running inside WSL.'
     : (viewDescriptions[currentView] ?? '')
+  const currentViewButtonId = shouldShowWindowsBackendSetup
+    ? ''
+    : (Object.values(APP_BUTTON_META).find(
+      (entry) => entry.kind === 'data_view' && entry.viewId === currentView
+    )?.id || '')
   const defaultFallbackScreenshotDir = useMemo(() => {
     const base = String(config?.output_dir || '').trim().replace(/\/+$/, '')
     return base ? `${base}/screenshots` : ''
@@ -3416,7 +3574,10 @@ function App() {
   }, [])
 
   const persistConfigToBackend = useCallback(async (nextConfig, label = 'config') => {
-    if (!nextConfig) return false
+    // Tutorial state is deliberately transient. The fetch shim also refuses config
+    // writes, but the Electron store is reached directly here, so this guard must come
+    // before either persistence path.
+    if (!nextConfig || isTutorialSandboxActive()) return false
     window.electronAPI?.saveElectronConfig?.(nextConfig)
     try {
       await fetch(`${API_BASE}/api/config`, {
@@ -3485,6 +3646,21 @@ function App() {
   }, [configLoaded, persistConfigToBackend])
 
   const handleConfigurationChange = useCallback((configUpdate) => {
+    // Playback and the builder preview both edit a scratch configuration. Let normal UI
+    // controls (notably Genome Selector playlists) behave truthfully, but route their
+    // result into that override instead of dropping the interaction or touching the
+    // user's real settings.
+    if (tutorialConfig) {
+      const previous = configRef.current || config
+      const nextConfig = typeof configUpdate === 'function'
+        ? configUpdate(previous)
+        : configUpdate
+      if (nextConfig) {
+        configRef.current = nextConfig
+        updateSandboxConfig(nextConfig)
+      }
+      return
+    }
     setConfig((prev) => {
       const nextConfig = typeof configUpdate === 'function'
         ? configUpdate(prev)
@@ -3499,7 +3675,30 @@ function App() {
       scheduleConfigurationAutosave(nextConfig, { immediate: directoryChanged })
       return nextConfig
     })
-  }, [scheduleConfigurationAutosave])
+  }, [config, scheduleConfigurationAutosave, tutorialConfig, updateSandboxConfig])
+
+  useEffect(() => {
+    // This is a launch prompt, not a permanent warning. If this session opened with a
+    // configured directory, clearing it deliberately later must not restart onboarding.
+    if (configLoaded && String(userConfig?.output_dir || '').trim()) {
+      setGettingStartedOutputDirDismissed(true)
+    }
+  }, [configLoaded, userConfig?.output_dir])
+
+  const handleGettingStartedOutputDir = useCallback(async (path) => {
+    const outputDir = String(path || '').trim()
+    if (!outputDir) return false
+    handleConfigurationChange((previous) => ({ ...previous, output_dir: outputDir }))
+    setGettingStartedOutputDirDismissed(true)
+    setOutputDirNotification(outputDir)
+    return true
+  }, [handleConfigurationChange])
+
+  useEffect(() => {
+    if (!outputDirNotification) return undefined
+    const notificationTimer = setTimeout(() => setOutputDirNotification(''), 4000)
+    return () => clearTimeout(notificationTimer)
+  }, [outputDirNotification])
 
   useEffect(() => {
     return () => {
@@ -3523,6 +3722,7 @@ function App() {
   // selective browser reloads and cascading clears.
   const handleConfigSaved = async () => {
     const prev = savedConfigRef.current
+    tutorialRuntime.emitSignal('config.saved')
     // Fetch latest config from backend (may have new index paths, etc.)
     const newConfig = await fetchConfig()
     if (!newConfig || !prev) return
@@ -3669,6 +3869,15 @@ function App() {
         ]
     const newConfig = withNextPreviousSessionGenomes(rawNewConfig, sessionSpeciesSource)
     if (!newConfig) return
+
+    // View-alignment effects can run as the tutorial swaps in its temporary genome set.
+    // That must never turn into an Electron config write: the tutorial provider owns the
+    // overlay, and dropping it is what restores the user's browser configuration.
+    if (isTutorialSandboxActive()) {
+      configRef.current = newConfig
+      updateSandboxConfig(newConfig)
+      return
+    }
     nextPreviousSessionSignatureRef.current = JSON.stringify(buildPreviousSessionGenomes(newConfig.next_previous_session_genomes || []))
 
     // Special case: deactivating primary while secondary is active promotes
@@ -4034,13 +4243,32 @@ function App() {
     handleBrowserConfigChange(aligned)
   }, [currentView, config?.active_species, dualViewFocus.primaryKey, dualViewFocus.secondaryKey, buildFocusFromActive, getAlignedGenomeConfigForView, hasGenomeAssignmentChanges])
 
-	  const handleSpeciesPillToggle = useCallback(async (species, source = 'pill') => {
+	  // `options.desired` states the outcome the caller wants — 'selected' or 'deselected'
+	  // — for a change applied on a delay, which may find the world already in that state
+	  // by the time it runs. Without it the delayed change flips whatever it finds and
+	  // takes back a selection something else has since made.
+	  const handleSpeciesPillToggle = useCallback(async (species, source = 'pill', options = {}) => {
 	    if (!species) return { ok: false, reason: 'missing_species' }
+	    const desired = options?.desired || ''
+
+	    // A tutorial keeps its own set of active genomes, so choosing one here must not
+	    // reach the user's real selection.
+	    if (tutorialConfig) {
+	      toggleTutorialGenome(species, desired)
+	      return { ok: true }
+	    }
 
 	    const key = speciesItemKey(species)
 	    const currentConfig = configRef.current || config
 	    const active = dedupeSpeciesList(currentConfig?.active_species)
 	    const inactive = dedupeSpeciesList(inactiveSelectedSpeciesRef.current)
+	    if (desired) {
+	      const chosen = active.some((item) => speciesItemKey(item) === key)
+	        || inactive.some((item) => speciesItemKey(item) === key)
+	      if ((desired === 'selected' && chosen) || (desired === 'deselected' && !chosen)) {
+	        return { ok: true, reason: 'already_in_desired_state' }
+	      }
+	    }
 	    const viewCapacity = getViewActiveCapacity(currentView)
 	    const activeIndex = active.findIndex((item) => speciesItemKey(item) === key)
 	    const inactiveIndex = inactive.findIndex((item) => speciesItemKey(item) === key)
@@ -4193,7 +4421,11 @@ function App() {
     } finally {
       suppressViewSyncRef.current = false
     }
-  }, [buildFocusFromActive, config, currentView, getAlignedGenomeConfigForView, getContextFullyActiveSpecies, hasGenomeAssignmentChanges, persistNextPreviousSessionGenomes])
+  }, [
+    buildFocusFromActive, config, currentView, getAlignedGenomeConfigForView,
+    getContextFullyActiveSpecies, hasGenomeAssignmentChanges, persistNextPreviousSessionGenomes,
+    toggleTutorialGenome, tutorialConfig,
+  ])
 
   const handleApplyPlaylistFromSelector = useCallback(async ({ playlistId, activeSpecies, selectedSpecies }) => {
     const currentConfig = configRef.current || config
@@ -5148,14 +5380,38 @@ function App() {
     const orderedActive = [...contextFullyActiveSpecies, ...semiActive]
     const orderedActiveKeys = new Set(orderedActive.map((species) => speciesItemKey(species)))
     const activeKeys = new Set(active.map((species) => speciesItemKey(species)))
-    const extras = inactiveSelectedSpecies.filter((species) => !activeKeys.has(speciesItemKey(species)) && !orderedActiveKeys.has(speciesItemKey(species)))
+    // Inactive selections are component state rather than configuration, so the
+    // tutorial override cannot replace them. Never append that user-owned state while
+    // the sandbox is up: a tutorial starts with no pills unless it explicitly activates
+    // one of its own datasets, and dropping the override reveals the user's list again.
+    const extras = tutorialConfig
+      ? []
+      : inactiveSelectedSpecies.filter((species) => !activeKeys.has(speciesItemKey(species)) && !orderedActiveKeys.has(speciesItemKey(species)))
     return [...orderedActive, ...extras]
-  }, [config?.active_species, contextFullyActiveSpecies, inactiveSelectedSpecies])
+  }, [config?.active_species, contextFullyActiveSpecies, inactiveSelectedSpecies, tutorialConfig])
+  const selectorSelectedSpecies = useMemo(() => (
+    tutorialConfig
+      ? dedupeSpeciesList([...(config?.active_species || []), ...inactiveSelectedSpecies])
+      : topBarSpecies
+  ), [config?.active_species, inactiveSelectedSpecies, topBarSpecies, tutorialConfig])
+  // A fixed selector scene used to hide this strip outright, so that ticking a genome
+  // could not change the header height and push the rows being selected down the page.
+  // That also took away the very thing selecting a genome is supposed to show. Instead
+  // the strip keeps its place in the layout from the moment the scene arrives — present
+  // but invisible while nothing is selected — so the first tick fills a space that was
+  // already there and nothing below it moves.
+  const reserveTutorialSelectorPills = Boolean(
+    tutorialConfig
+    && tutorialRuntime.selectorListPresentation?.fitAllRows
+    && currentView === 'genome_selector'
+  )
 
   useEffect(() => {
-    if (!configLoaded) return
+    // The top bar intentionally changes when a tutorial takes over. It is a view of the
+    // sandbox, not a new "previous session" selection to persist for the user.
+    if (!configLoaded || tutorialConfig) return
     persistNextPreviousSessionGenomes(topBarSpecies, configRef.current || config)
-  }, [configLoaded, topBarSpecies, persistNextPreviousSessionGenomes])
+  }, [configLoaded, topBarSpecies, persistNextPreviousSessionGenomes, tutorialConfig])
 
   useEffect(() => {
     const previousView = previousViewRef.current
@@ -5484,6 +5740,17 @@ function App() {
     }
   }, [usingFallbackScreenshot])
 
+  /** Open or close the top-bar playlist popover because a tutorial step says so.
+   *
+   * The same reconciliation the Genome Selector does for its playlist dialog, for the one
+   * piece of this flow that lives in the app shell. A step that names any other dialog is
+   * saying this one is closed — the field holds which one is open, not a set. */
+  useEffect(() => {
+    const dialog = tutorialRuntime.dialogRequest?.dialog
+    if (!dialog) return
+    setGenomePlaylistPopoverOpen(dialog === 'playlistPopover')
+  }, [tutorialRuntime.dialogRequest])
+
   useEffect(() => {
     if (!genomePlaylistPopoverOpen) return undefined
     const handlePointerDown = (event) => {
@@ -5555,8 +5822,8 @@ function App() {
     setCurrentView(nextView)
   }
 
-  const handleSpeciesToggleFromSelector = useCallback((species, source = 'selector') => {
-    return handleSpeciesPillToggle(species, source)
+  const handleSpeciesToggleFromSelector = useCallback((species, source = 'selector', options = {}) => {
+    return handleSpeciesPillToggle(species, source, options)
   }, [handleSpeciesPillToggle])
 
   const handleSelectorConfigChange = useCallback(async (configUpdate) => {
@@ -5645,34 +5912,65 @@ function App() {
     <div className={`h-screen flex flex-col ${themeStyles.bg} ${themeStyles.text}`}>
       {config.show_fps_counter && <FpsCounter />}
       {/* Header */}
-      <header className={`${themeStyles.header} border-b px-6 ${headerCollapsed ? 'py-3' : 'py-4'} flex-none rounded-xl relative`}>
+      <header
+        className={`${themeStyles.header} border-b px-6 ${headerCollapsed ? 'py-3 cursor-pointer' : 'py-4'} flex-none rounded-xl relative`}
+        onClick={headerCollapsed ? () => setHeaderCollapsed(false) : undefined}
+      >
         <div className={`flex flex-col ${headerCollapsed ? 'gap-0' : 'gap-3'} w-full h-full`}>
           <div className={`flex items-start justify-between gap-4 w-full ${headerCollapsed ? '' : 'h-full'}`}>
             <div className="min-w-0 flex-1 pr-2">
-              <h1 className={`text-2xl font-bold ${themeStyles.text} flex items-center gap-3`}>
-                <span className="flex items-center gap-1.5">
+              <div className={`min-w-0 overflow-hidden ${themeStyles.text} flex ${headerCollapsed ? 'items-end' : 'items-center'} gap-1`}>
+                <span className="flex shrink-0 items-center gap-1.5">
                   <img src="ensembl-logotype-blue.svg" alt="Ensembl" className="h-6" />
                   <span className={`leading-none font-normal ${isLight ? 'text-gray-900' : 'text-white'}`} style={{fontSize: '30px'}}>Go</span>
                 </span>
-                <span className="font-normal ml-1">{currentViewTitle}</span>
+                {headerCollapsed && (
+                  <h1
+                    className={`ml-2 min-w-0 truncate font-normal leading-none ${isLight ? 'text-gray-900' : 'text-white'}`}
+                    style={{ fontSize: '24px' }}
+                    title={currentViewTitle}
+                  >
+                    {currentViewTitle}
+                  </h1>
+                )}
                 <button
                   type="button"
-                  onClick={() => setHeaderCollapsed((prev) => !prev)}
-                  className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${isLight
-                    ? 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
-                    : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                    }`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setHeaderCollapsed((prev) => !prev)
+                  }}
+                  className="w-8 h-8 shrink-0 rounded-md border-0 bg-transparent text-[#0099ff] flex items-center justify-center transition-colors hover:bg-[#0099ff]/10"
                   title={headerCollapsed ? 'Expand top bar' : 'Collapse top bar'}
+                  aria-label={headerCollapsed ? 'Expand top bar' : 'Collapse top bar'}
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
                     {headerCollapsed ? <polyline points="6 9 12 15 18 9" /> : <polyline points="18 15 12 9 6 15" />}
                   </svg>
                 </button>
-              </h1>
+              </div>
               {!headerCollapsed && (
-                <p className={`text-sm ${themeStyles.subtext} mt-1 text-left leading-snug whitespace-normal break-words`}>
-                  {currentViewDescription}
-                </p>
+                <div className="mt-2 min-w-0 flex items-start gap-3">
+                  {currentViewButtonId && (
+                    <span
+                      aria-hidden="true"
+                      className="w-11 h-11 shrink-0 rounded-lg bg-[#0099ff] text-white flex items-center justify-center overflow-hidden"
+                    >
+                      <AppButtonIcon buttonId={currentViewButtonId} isLight={isLight} />
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <h1
+                      className={`min-w-0 truncate font-normal leading-none ${isLight ? 'text-gray-900' : 'text-white'}`}
+                      style={{ fontSize: '24px' }}
+                      title={currentViewTitle}
+                    >
+                      {currentViewTitle}
+                    </h1>
+                    <p className={`text-sm ${themeStyles.subtext} mt-1 text-left leading-snug whitespace-normal break-words`}>
+                      {currentViewDescription}
+                    </p>
+                  </div>
+                </div>
               )}
             </div>
             {!headerCollapsed && !shouldShowWindowsBackendSetup && (
@@ -5702,6 +6000,7 @@ function App() {
                         const buttonNode = (
                           <button
                             key={buttonId}
+                            data-tour-id={`app-button-${buttonId}`}
                             ref={buttonId === 'screenshot_toggle'
                               ? screenshotActionButtonRef
                               : (buttonId === 'genome_playlist' ? genomePlaylistActionButtonRef : null)}
@@ -5794,6 +6093,7 @@ function App() {
                             {buttonNode}
                             <div
                               ref={genomePlaylistPopoverRef}
+                              data-tour-id={genomePlaylistPopoverOpen ? 'app-playlist-popover' : undefined}
                               className={`absolute right-0 top-full mt-2 w-72 origin-top-right rounded-xl border shadow-2xl z-50 overflow-hidden transition-all duration-200 ${genomePlaylistPopoverOpen
                                 ? 'opacity-100 translate-y-0 pointer-events-auto'
                                 : 'opacity-0 -translate-y-2 pointer-events-none'
@@ -5813,6 +6113,7 @@ function App() {
                                   return (
                                     <button
                                       key={playlist.id}
+                                      data-tour-id={`app-playlist-option-${playlistTourSlug(playlist.name)}`}
                                       type="button"
                                       disabled={Boolean(applyingGenomePlaylistId)}
                                       onClick={() => handleTopBarPlaylistSelect(playlist)}
@@ -5857,10 +6158,12 @@ function App() {
             )}
           </div>
 
-          {!headerCollapsed && !shouldShowWindowsBackendSetup && topBarSpecies.length > 0 && (
+          {!headerCollapsed && !shouldShowWindowsBackendSetup && (topBarSpecies.length > 0 || reserveTutorialSelectorPills) && (
             <div
+              data-tour-id="app-genome-pills"
               className={`border-t ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
               style={{
+                visibility: topBarSpecies.length === 0 ? 'hidden' : undefined,
                 backgroundColor: isLight ? '#f1f3f5' : '#1E2938',
                 borderRadius: '0.5rem',
                 paddingLeft: '0.5rem',
@@ -5880,6 +6183,7 @@ function App() {
                 semiSelectedSpeciesKeys={semiSelectedSpeciesKeysForView}
                 speciesList={topBarSpecies}
                 primarySpeciesKey={speciesItemKey(refSpecies)}
+                reserveRowHeight={reserveTutorialSelectorPills}
               />
             </div>
           )}
@@ -5890,7 +6194,8 @@ function App() {
       {/* Main content container with flex-grow to fill remaining height */}
       <div
         ref={setMainContentNode}
-        className={`relative flex-grow w-full ${currentView === 'notes' ? 'py-6 pl-6 pr-0' : 'p-6'} ${(currentView === 'genome_browser' || currentView === 'alignment' || currentView === 'structural_variation') ? `overflow-y-auto overflow-x-hidden themed-scrollbar ${isLight ? 'themed-scrollbar-light' : 'themed-scrollbar-dark'}` : 'overflow-hidden'}`}
+        data-tutorial-page-scroll={currentView === 'genome_selector' ? 'true' : undefined}
+        className={`relative min-h-0 flex-grow w-full ${currentView === 'notes' ? 'py-6 pl-6 pr-0' : 'p-6'} ${(currentView === 'genome_browser' || currentView === 'alignment' || currentView === 'structural_variation' || currentView === 'genome_selector') ? `overflow-y-auto overflow-x-hidden themed-scrollbar ${isLight ? 'themed-scrollbar-light' : 'themed-scrollbar-dark'}` : 'overflow-hidden'}`}
       >
         {shouldRenderFallbackContentWrapper ? (
           <div ref={setActiveViewContentNode} className="h-full">
@@ -6142,18 +6447,30 @@ function App() {
             </div>
           ) : currentView === 'genome_selector' ? (
             /* ========== GENOME SELECTOR VIEW ========== */
-            <div className="h-full">
-	              <GenomeSelectorView
-	                config={selectorPlaylistConfig}
+            <div className="min-h-full">
+              <GenomeSelectorView
+                config={selectorPlaylistConfig}
                 onConfigChange={handleSelectorConfigChange}
                 onToggleSpecies={handleSpeciesToggleFromSelector}
                 onApplyPlaylist={handleApplyPlaylistFromSelector}
-                selectedSpeciesList={topBarSpecies}
+                selectedSpeciesList={selectorSelectedSpecies}
+                tutorialListPresentation={tutorialRuntime.selectorListPresentation}
+                tutorialDialogRequest={tutorialRuntime.dialogRequest}
                 theme={theme}
                 screenshotMode={currentView === 'genome_selector' ? screenshotMode : false}
                 onScreenshotModeChange={setScreenshotMode}
                 onScreenshotAvailabilityChange={handleScreenshotAvailabilityChange}
                 screenshotToggleButtonRef={screenshotActionButtonRef}
+                scrollContainerNode={mainContentNode}
+              />
+            </div>
+          ) : currentView === 'tutorials' ? (
+            /* ========== TUTORIALS VIEW ========== */
+            <div className="h-full">
+              <TutorialsView
+                theme={theme}
+                config={config}
+                onOpenConfiguration={() => setCurrentView('configuration')}
               />
             </div>
           ) : currentView === 'help' ? (
@@ -6279,6 +6596,49 @@ function App() {
         outputDir={defaultFallbackScreenshotDir}
         onSave={handleFallbackScreenshotSave}
         onClose={handleFallbackScreenshotModalClose}
+      />
+      {outputDirNotification && (
+        <div
+          role="status"
+          data-output-dir-notification="true"
+          data-tutorial-notification="true"
+          aria-live="polite"
+          className="fixed right-4 top-24 z-50 max-w-[calc(100vw-32px)] break-words rounded-lg border border-emerald-400 bg-emerald-500/90 px-6 py-4 text-white shadow-lg backdrop-blur-sm sm:right-6 sm:max-w-md"
+        >
+          <div className="flex items-start gap-3">
+            <svg
+              className="mt-0.5 shrink-0"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden="true"
+            >
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" strokeLinecap="round" strokeLinejoin="round" />
+              <polyline points="22 4 12 14.01 9 11.01" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="min-w-0 font-medium break-words">
+              Output directory set: <span className="font-mono">{outputDirNotification}</span>
+            </span>
+          </div>
+        </div>
+      )}
+      <GettingStartedOutputDirPrompt
+        open={Boolean(
+          configLoaded &&
+          currentView === 'home' &&
+          !String(userConfig?.output_dir || '').trim() &&
+          !gettingStartedOutputDirDismissed &&
+          !shouldShowWindowsBackendSetup &&
+          !tutorialRuntime.isRunning
+        )}
+        outputDir={userConfig?.output_dir || ''}
+        workingDir={userConfig?.working_dir || ''}
+        theme={theme}
+        onSave={handleGettingStartedOutputDir}
+        onSkip={() => setGettingStartedOutputDirDismissed(true)}
       />
     </div >
   )

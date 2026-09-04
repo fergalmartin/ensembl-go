@@ -1,0 +1,644 @@
+{
+  "format": "ensembl-go-tutorial",
+  "schemaVersion": 1,
+  "id": "getting-started",
+  "revision": 1,
+  "title": "Getting Started",
+  "blurb": "Set up where your data lives, fetch a genome, choose it, and find a gene in the browser. Runs on a temporary demo genome and leaves your own setup untouched.",
+  "estimatedMinutes": 5,
+  "usesDemoGenome": true,
+  "completionBody": "You have seen the whole loop: configure, download, activate, browse. Real genomes work exactly the same way; they just take longer to arrive. Your own settings and genomes were never changed, and the tutorial’s temporary data has been cleared away.",
+  "author": "",
+  "createdAt": "2026-08-25T00:00:00Z",
+  "updatedAt": "2026-08-25T00:00:00Z",
+  "datasets": [],
+  "steps": [
+    {
+      "id": "welcome",
+      "section": "Intro",
+      "placement": "center",
+      "title": "Welcome to Ensembl Go",
+      "body": "This tutorial covers downloading a genome, selecting it and viewing in the browser. By the end of this tutorial you'll understand the basics of fetching and viewing genomes and annotation data in Ensembl Go.  The Next button will advance to the next step if you are doing the tutorial interactively. Enable Autoplay to run a non-interactive version of the tutorial. You can switch Autoplay on/off at any point.",
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-config",
+      "section": "Intro",
+      "view": "configuration",
+      "placement": "bottom",
+      "title": "Open Configuration",
+      "body": "Before we download some example data, let's look at the Configuration view. Click on the highlighted Configuration button above to open the view.",
+      "advanceOn": {
+        "type": "view",
+        "view": "configuration"
+      },
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "configuration"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "configuration"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "output-dir",
+      "section": "Intro",
+      "view": "configuration",
+      "placement": "bottom",
+      "interactive": false,
+      "title": "Where your data lives",
+      "body": "Genomes you download, the indexes built from them, and anything you export all go under this directory. As the output directory is a requirement for the tutorial, you've already set it. For the tutorial itself, we're doing to use a temporary directory above. It will revert back to your output dir once you complete or exit the tutorial.",
+      "spotlight": {
+        "target": {
+          "id": "config.outputDir",
+          "version": 1
+        }
+      },
+      "openSectionTarget": {
+        "id": "config.outputs",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-download",
+      "section": "Download a genome",
+      "view": "download",
+      "placement": "bottom",
+      "title": "Open the Download view",
+      "body": "Ensembl Go can automatically fetch genomes and annotations from Ensembl and RefSeq. Click the Download button to move to the Download view.",
+      "advanceOn": {
+        "type": "view",
+        "view": "download"
+      },
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "download"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "download"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "download-file-types",
+      "section": "Download a genome",
+      "view": "download",
+      "placement": "bottom",
+      "interactive": false,
+      "title": "Choose what to fetch",
+      "body": "For fetching data from Ensembl there are several types of file that can be downloaded for each genome.  By default the Genome (FASTA) and Genes (GFF3) files are selected (and coloured blue as a result). In this example we're doing to download a tiny demo genome from Ensembl.",
+      "spotlight": {
+        "target": {
+          "id": "download.fileTypes",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "download-search",
+      "section": "Download a genome",
+      "view": "download",
+      "placement": "top",
+      "title": "The search bar",
+      "body": "Search by species, assembly or accession. For this demo type ‘Ensemblus welcomus’ and watch the list below narrow to our demo genome.",
+      "advanceOn": {
+        "type": "input",
+        "value": "Ensemblus welcomus",
+        "target": {
+          "id": "download.search",
+          "version": 1
+        }
+      },
+      "spotlight": {
+        "target": {
+          "id": "download.search",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "download.speciesList",
+            "version": 1
+          },
+          "whenTypedTarget": {
+            "id": "download.search",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "download.search",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "download.search",
+            "version": 1
+          },
+          "capability": "input",
+          "value": "Ensemblus welcomus",
+          "submit": true
+        }
+      }
+    },
+    {
+      "id": "download-demo",
+      "section": "Download a genome",
+      "view": "download",
+      "placement": "bottom",
+      "interactive": false,
+      "title": "The demo genome",
+      "body": "You should now see the demo genome as the only result in the list. As you're likely aware from the name, this is not a real genome, just an artificially constructed one for the tutorial.",
+      "spotlight": {
+        "target": {
+          "id": "download.species",
+          "version": 1,
+          "params": {
+            "speciesKey": "ensemblus_welcomus"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "download-start",
+      "section": "Download a genome",
+      "view": "download",
+      "placement": "left",
+      "title": "Download the data locally",
+      "body": "This is the download button. Click it and watch the icon: it fills as the files arrive, exactly as a real genome does. As this is a demo genome and annotation, it is very small, large genomes and annotations will take a little while to download.",
+      "advanceOn": {
+        "type": "signal",
+        "name": "demoGenome.installed"
+      },
+      "autoplayMs": 9000,
+      "settleMs": 8000,
+      "spotlight": {
+        "target": {
+          "id": "download.start",
+          "version": 1,
+          "params": {
+            "speciesKey": "ensemblus_welcomus"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "download.start",
+              "version": 1,
+              "params": {
+                "speciesKey": "ensemblus_welcomus"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "download.start",
+            "version": 1,
+            "params": {
+              "speciesKey": "ensemblus_welcomus"
+            }
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "download-complete",
+      "section": "Download a genome",
+      "view": "download",
+      "placement": "left",
+      "interactive": false,
+      "title": "Download complete",
+      "body": "The icon has turned into a green tick, which is how a row tells you its files are available locally. This also means the genome will appear in the Genome Selector view, which is the view for managing all the locally downloaded genomes. It is also where you can add your own custom genomes and annotations.",
+      "ensure": [
+        "demo-genome-installed"
+      ],
+      "spotlight": {
+        "target": {
+          "id": "download.start",
+          "version": 1,
+          "params": {
+            "speciesKey": "ensemblus_welcomus"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-selector",
+      "section": "Activate a genome",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "title": "Open Genome Selector",
+      "body": "Downloading a genome gets the data into your output director. The Genome Selector view is where you go to add/remove from your current session and provides a lot of options for managing the local genome data. Click on the Genome Selector button to go there.",
+      "ensure": [
+        "demo-genome-installed"
+      ],
+      "advanceOn": {
+        "type": "view",
+        "view": "genome_selector"
+      },
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_selector"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_selector"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "activate-demo",
+      "section": "Activate a genome",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "title": "Select the demo genome",
+      "body": "Tick the box to activate the demo genome.  Once active it becomes available in many other views, including the Genome Browser. We won't cover the Genome Selector view in detail, this is a separate tutorial, but it allows you to view/delete all the files, set all the genomes you want in a session, add custom genomes and annotations and even create genome playlists, which allow you to save a set of genomes and easily flick between sets.",
+      "ensure": [
+        "demo-genome-installed"
+      ],
+      "advanceOn": {
+        "type": "signal",
+        "name": "genome.activated",
+        "match": {
+          "speciesKey": "ensemblus_welcomus"
+        }
+      },
+      "spotlight": {
+        "target": {
+          "id": "selector.genome",
+          "version": 1,
+          "params": {
+            "speciesKey": "ensemblus_welcomus"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "ensemblus_welcomus"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "selector.checkbox",
+            "version": 1,
+            "params": {
+              "speciesKey": "ensemblus_welcomus"
+            }
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "genome-pill",
+      "section": "Activate a genome",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "interactive": false,
+      "title": "Genome pills",
+      "body": "Every selected genome gets a pill style button (such as the one highlighted above) that is then persistently available across all views. These pills can be activated (blue) or deactivated (grey) by clicking on them. Some views like the Genome Browser allow several genomes to be active simultaneously and allow for dynamic activation/deactivation of pills.  Each pill also has an 'X' on the left hand side, which will remove them from the pill bar. This is the same as deselecting them in Genome Selector (where they can also be re-added to the pill bar).",
+      "ensure": [
+        "demo-genome-installed",
+        "demo-genome-active"
+      ],
+      "undo": "deactivate-demo-genome",
+      "spotlight": {
+        "target": {
+          "id": "app.genomePill",
+          "version": 1,
+          "params": {
+            "speciesKey": "ensemblus_welcomus"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-browser",
+      "section": "The Genome Browser",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "title": "Viewing the data",
+      "body": "The Genome Browser view is the main view for general browsing the genomes and their annotations. It has a dedicated tutorial that covers more advanced features, we'll just look at the basics. The first time a genome is opened here its annotation is indexed, you may see a spinner while that happens. It is done once per genome, so the genomes and their annotation should load significantly faster after the initial load.",
+      "ensure": [
+        "demo-genome-installed",
+        "demo-genome-active"
+      ],
+      "advanceOn": {
+        "type": "view",
+        "view": "genome_browser"
+      },
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_browser"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_browser"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "browser-track",
+      "section": "The Genome Browser",
+      "view": "genome_browser",
+      "placement": "top",
+      "cardPosition": {
+        "x": 0.015,
+        "y": 0.0229
+      },
+      "cardSize": {
+        "width": 453
+      },
+      "interactive": false,
+      "ensure": [
+        "demo-genome-installed",
+        "demo-genome-active"
+      ],
+      "title": "The browser window",
+      "body": "This is the genome itself, drawn along its coordinates. Both the genome, the genes and their identifiers are made up for this demo. The browser window is highlighted below, it has three default subtracks: GF, GR and SL representing genes on the forward and reverse strand and the sequence level track respectively. The genome coordinates ruler in on top.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "browser-global-controls",
+      "section": "The Genome Browser",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "interactive": false,
+      "ensure": [
+        "demo-genome-installed",
+        "demo-genome-active"
+      ],
+      "title": "The general controls",
+      "body": "The top bar sets how the browser behaves overall: which tracks are shown, how transcripts are laid out, and what dragging does. These settings apply to every active genome at once.",
+      "spotlight": {
+        "target": {
+          "id": "browser.globalControls",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "browser-genome-controls",
+      "section": "The Genome Browser",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "interactive": false,
+      "ensure": [
+        "demo-genome-installed",
+        "demo-genome-active"
+      ],
+      "title": "The controls for this genome",
+      "body": "Below it, each genome gets a bar of its own: which contig you are on, where in it, and the search box. Activate several genomes and you get one of these bars each, stacked down the window — the general controls above still apply to all of them.",
+      "spotlight": {
+        "target": {
+          "id": "browser.toolbar",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "browser-search",
+      "section": "Find and inspect a gene",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "title": "Find a gene",
+      "body": "Type ‘Welcome’ and press Return — or press Next and the tutorial will do it. The same box takes a region as chr:start-end. This demo genome only knows six gene names, so ‘Welcome’ is the one to use here.",
+      "ensure": [
+        "demo-genome-installed",
+        "demo-genome-active"
+      ],
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.geneFocused"
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.locationSearch",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.locationSearch",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.locationSearch",
+            "version": 1
+          },
+          "capability": "input",
+          "value": "Welcome",
+          "submit": true,
+          "overwrite": true
+        }
+      }
+    },
+    {
+      "id": "browser-focused-gene",
+      "section": "Find and inspect a gene",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "demo-genome-installed",
+        "demo-genome-active"
+      ],
+      "undo": "unfocus-gene",
+      "title": "Welcome, in the track",
+      "body": "The made-up symbol ‘Welcome’: one transcript, three exons, on the forward strand of welcome1. The thick blocks are exons and the thin line between them is intron; the red dashed lines mark where the gene starts and ends.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "browser-focus-bar",
+      "section": "Find and inspect a gene",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "interactive": false,
+      "ensure": [
+        "demo-genome-installed",
+        "demo-genome-active"
+      ],
+      "title": "The gene in focus",
+      "body": "Focusing a gene pins it to this bar: its symbol, biotype, strand and coordinates, and a button to bring the view back to it if you have panned away. It stays there until you focus something else or unfocus it.",
+      "spotlight": {
+        "target": {
+          "id": "browser.focusBar",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "browser-drawer",
+      "section": "Find and inspect a gene",
+      "view": "genome_browser",
+      "placement": "left",
+      "interactive": false,
+      "ensure": [
+        "demo-genome-installed",
+        "demo-genome-active"
+      ],
+      "title": "The focus drawer",
+      "body": "The drawer goes deeper: every transcript of the focused gene, their exons, the sequence underneath, and any notes you have taken. To, Ensembl and Go are on the same contig — try those once the tutorial is done.",
+      "spotlight": {
+        "target": {
+          "id": "browser.focusDrawer",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    }
+  ]
+}

@@ -212,3 +212,62 @@ body {
         width: max(480px, 55vw);
     }
 }
+
+/* The click a tutorial makes on the user's behalf, so it reads as an action rather than
+   the screen changing by itself. Honours a reduced-motion preference. */
+@keyframes tutorial-pulse {
+  from { transform: scale(0.94); opacity: 0.35; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+/* The steady breathing of a spotlight the user is expected to act on. Unlike the
+   one-shot pulse above this repeats, because it is not reporting an event — it is
+   answering "where am I meant to look?" for as long as the question stands. */
+@keyframes tutorial-attention {
+  0%   { box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.65), 0 0 0 0 rgba(56, 189, 248, 0.85), 0 0 18px 2px rgba(56, 189, 248, 0.55); }
+  70%  { box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.65), 0 0 0 16px rgba(56, 189, 248, 0), 0 0 26px 6px rgba(56, 189, 248, 0.28); }
+  100% { box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.65), 0 0 0 0 rgba(56, 189, 248, 0), 0 0 18px 2px rgba(56, 189, 248, 0.55); }
+}
+/* The border colour swings with it: a spreading halo alone is easy to miss against a
+   busy panel, and this is the cue that says "this one is yours to press". */
+@keyframes tutorial-attention-edge {
+  0%, 100% { border-color: rgba(255, 255, 255, 0.98); }
+  55%      { border-color: rgba(56, 189, 248, 1); }
+}
+
+/* The tutorial's own cursor: a coloured disc rather than an arrow, so it can never be
+   mistaken for the user's own pointer sitting somewhere unexpected. It breathes while it
+   is on screen and presses when it clicks. */
+@keyframes tutorial-cursor-press {
+  0%, 100% { transform: scale(1); }
+  45%      { transform: scale(0.7); }
+}
+@keyframes tutorial-cursor-idle {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7), 0 2px 10px rgba(2, 6, 23, 0.55); }
+  70%      { box-shadow: 0 0 0 12px rgba(56, 189, 248, 0), 0 2px 10px rgba(2, 6, 23, 0.55); }
+}
+@keyframes tutorial-cursor-ripple {
+  from { transform: scale(0.4); opacity: 0.75; }
+  to   { transform: scale(1.9); opacity: 0; }
+}
+
+/* Autoplay's countdown, drawn as the step card's own edge closing back on itself. The
+   dash length is set per-element, since it depends on the card's measured size. */
+@keyframes tutorial-trace {
+  from { stroke-dashoffset: var(--trace-length); }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* A step that only moves on when the reader presses Next gives no other sign that it is
+   waiting for them. After a while with nothing happening, the button breathes — much
+   fainter than `tutorial-attention`, because that answers "where am I meant to look?"
+   and this only answers "there is nothing else to wait for". The button also carries a
+   static ring of its own, so the cue survives the reduced-motion rule below. */
+@keyframes tutorial-next-nudge {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.30); }
+  50%      { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.22); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-tutorial-overlay] * { animation: none !important; }
+}

@@ -3,11 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AppButtonIcon from './AppButtonIcon'
 import GenomePill, { genomePillLabels } from './GenomePill'
 import NoteGlyph from './NoteGlyph'
+import NotesTransferModal from './NotesTransferModal'
 import useNoteStore from '../hooks/useNoteStore'
 import useSaveOnLeaveNote from '../hooks/useSaveOnLeaveNote'
 import { getGenomeBrowserColor, normalizeGenomeBrowserColors } from '../genomeColorSchemes'
 import { API_BASE } from '../backendRuntime'
-import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch, normalizeGenomeRecord } from '../utils/genomeIdentity'
+import { getAssemblyGenomeKey, getGenomeKey, genomeKeyDisplayLabels, genomeKeysMatch, normalizeGenomeRecord } from '../utils/genomeIdentity'
 import {
     GENERAL_NOTES_TARGET_ID,
     NOTE_TARGET_KIND_GENE,
@@ -464,6 +465,18 @@ function DownloadGlyph({ size = 12 }) {
     )
 }
 
+// One arrow, pointed out of the tray for an export and into it for an import.
+function TransferGlyph({ size = 14, direction = 'out' }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+            {direction === 'out'
+                ? <path d="M12 15V3M12 3 8 7M12 3l4 4" />
+                : <path d="M12 3v12M12 15l-4-4M12 15l4-4" />}
+        </svg>
+    )
+}
+
 function TrashGlyph({ size = 18 }) {
     return (
         <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -670,14 +683,7 @@ function notesGenomeRecord(species, { active = false, color = null, browsable = 
 }
 
 function fallbackGenomePillLabels(genomeKey) {
-    const parts = String(genomeKey || '').split('::').filter(Boolean)
-    const speciesToken = parts.length >= 3 ? parts[1] : ''
-    const assemblyToken = parts.length >= 3 ? parts[2] : (parts.at(-1) || '')
-    const speciesName = speciesToken.replaceAll('_', ' ')
-    const displayName = speciesName
-        ? `${speciesName.charAt(0).toUpperCase()}${speciesName.slice(1)}`
-        : 'Unavailable genome'
-    return { displayName, displayAssembly: assemblyToken, tooltip: String(genomeKey || '') }
+    return genomeKeyDisplayLabels(genomeKey)
 }
 
 /** How long "Confirm" stands before a delete button goes back to asking. */
@@ -749,6 +755,8 @@ export default function NotesView({
     const [recentNoteViews, setRecentNoteViews] = useState(loadRecentNoteViews)
     const [idlePanelExpanded, setIdlePanelExpanded] = useState(false)
     const [idlePanelFollowing, setIdlePanelFollowing] = useState(false)
+    const [transferTab, setTransferTab] = useState('')
+    const [transferNotice, setTransferNotice] = useState(null)
     const [detailFixedTop, setDetailFixedTop] = useState(220)
     const confirmTimerRef = useRef(null)
     const scrollContainerRef = useRef(null)
@@ -869,6 +877,7 @@ export default function NotesView({
     // square hit target makes their artwork align while hover/focus emphasises
     // the mark itself rather than drawing a differently shaped button around it.
     const iconActionClass = 'flex-none inline-flex h-7 w-7 items-center justify-center border-0 bg-transparent p-0 opacity-70 transition-all hover:scale-110 hover:opacity-100 focus-visible:scale-110 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 disabled:scale-100 disabled:opacity-25 disabled:cursor-default'
+    const transferButtonClass = `inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors ${isLight ? 'border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100' : 'border-gray-600 bg-gray-900 text-gray-300 hover:bg-[#273449]'}`
     const dividerColor = isLight ? '#e5e7eb' : '#374151'
     const accentColor = isLight ? '#0099ff' : '#4c9aff'
     const dangerColor = isLight ? '#dc2626' : '#f87171'
@@ -1134,6 +1143,14 @@ export default function NotesView({
             }, 220)
         })
     }, [])
+
+    // A transfer finishes by closing its dialog, so the confirmation has to live
+    // out here. Same shape and lifetime as the sequence-export toast.
+    useEffect(() => {
+        if (!transferNotice) return undefined
+        const timer = setTimeout(() => setTransferNotice(null), 6000)
+        return () => clearTimeout(timer)
+    }, [transferNotice])
 
     const handleNoteSetChange = useCallback((nextSet) => {
         if (nextSet === noteSet) return
@@ -2198,6 +2215,24 @@ export default function NotesView({
                                 <button type="button" onClick={() => setQuery('')} className="opacity-40 hover:opacity-70 text-xs" title="Clear search">✕</button>
                             )}
                         </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setTransferTab('export')}
+                                className={transferButtonClass}
+                                title="Export notes and tasks to a file"
+                            >
+                                <TransferGlyph direction="out" /> Export
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setTransferTab('import')}
+                                className={transferButtonClass}
+                                title="Import notes and tasks from a file"
+                            >
+                                <TransferGlyph direction="in" /> Import
+                            </button>
+                        </div>
                         <button
                             type="button"
                             onClick={() => requestBulkDelete(deletableCurrentNoteIds, `all ${noteSetLabel} notes`)}
@@ -2737,6 +2772,43 @@ export default function NotesView({
                     </div>
                 </div>
             </div>
+
+            <NotesTransferModal
+                open={Boolean(transferTab)}
+                theme={theme}
+                notes={allStoredNotes}
+                activeGenomes={activeGenomes}
+                outputDir={config?.output_dir || ''}
+                mode={transferTab || 'export'}
+                onImported={() => store.reload()}
+                onNotify={(notice) => setTransferNotice({ ...notice, at: Date.now() })}
+                onClose={() => setTransferTab('')}
+            />
+
+            {transferNotice && (
+                <div
+                    role="status"
+                    className={`fixed bottom-6 left-1/2 z-[210] w-[460px] max-w-[calc(100vw-2rem)] -translate-x-1/2 cursor-pointer rounded-xl border px-4 py-3 text-sm shadow-2xl ${transferNotice.ok
+                        ? (isLight ? 'bg-white border-green-300 text-green-800' : 'bg-gray-800 border-green-600/60 text-green-300')
+                        : (isLight ? 'bg-white border-red-300 text-red-700' : 'bg-gray-800 border-red-600/60 text-red-400')}`}
+                    onClick={() => setTransferNotice(null)}
+                    title="Dismiss"
+                >
+                    <div className="font-semibold">{transferNotice.title}</div>
+                    {(transferNotice.lines || []).length > 0 && (
+                        <div className="mt-1.5 space-y-0.5 font-mono text-xs">
+                            {transferNotice.lines.slice(0, 3).map((line) => (
+                                <div key={line} className="truncate">{line}</div>
+                            ))}
+                        </div>
+                    )}
+                    {transferNotice.note && (
+                        <div className={`mt-1.5 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {transferNotice.note}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     )
 }

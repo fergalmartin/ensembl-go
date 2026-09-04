@@ -1194,6 +1194,15 @@ function createWindow() {
     }
   });
 
+  // The structure viewer runs in a sandboxed iframe on the loopback backend.
+  // Sub-frame navigation is held to the same rule as the top frame so that
+  // third-party code inside it cannot steer its own frame off-origin.
+  mainWindow.webContents.on('will-frame-navigate', (event) => {
+    if (!isAllowedRendererUrl(event.url)) {
+      event.preventDefault();
+    }
+  });
+
   mainWindow.webContents.on('did-finish-load', () => {
     publishBackendState();
   });

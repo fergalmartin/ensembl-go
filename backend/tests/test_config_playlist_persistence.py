@@ -112,6 +112,15 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
 
             self.assertEqual(Path(payload["current_path"]).resolve(), (output_dir / "local_data").resolve())
             self.assertTrue((output_dir / "local_data").exists())
+            self.assertTrue(payload["requested_path_valid"])
+
+    def test_file_browser_reports_when_it_recovered_from_a_missing_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            payload = asyncio.run(main.list_files(str(root / "misspelled-directory")))
+
+            self.assertEqual(Path(payload["current_path"]).resolve(), root.resolve())
+            self.assertFalse(payload["requested_path_valid"])
 
     def test_playlists_are_persisted_with_output_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:

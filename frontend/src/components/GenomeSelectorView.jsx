@@ -23,6 +23,12 @@ import {
     normalizeGenomeRecord,
     normalizeGenomeSourceDatabase,
 } from '../utils/genomeIdentity'
+import {
+    buildPlaylistId,
+    formatSpeciesNameFromKey,
+    playlistTourSlug,
+    snapshotGenomeForPlaylist,
+} from '../utils/playlistGenomes'
 import { datasetReleaseDownloadMetadata } from '../utils/downloadMetadata'
 import {
     getCurrentGenomeAnalysis,
@@ -445,54 +451,16 @@ const manualIndexFilename = (genomeLabel = '', assemblyLabel = '', annotationPat
     return `${labelStem || annotationStem}.gff3.index.db`
 }
 
-const titleCaseWords = (value = '') =>
-    value
-        .split(/\s+/)
-        .filter(Boolean)
-        .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-        .join(' ')
-
 const toSpeciesKey = (value = '') =>
     value
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '')
 
-const formatSpeciesNameFromKey = (speciesKey = '') => titleCaseWords(String(speciesKey || '').replace(/_/g, ' '))
 const itemKey = (item) => {
     return getGenomeKey(item)
 }
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
-
-const buildPlaylistId = () => `playlist_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
-
-const snapshotGenomeForPlaylist = (item) => {
-    const normalized = normalizeGenomeRecord(item)
-    const key = itemKey(normalized)
-    if (!key) return null
-    return {
-        key,
-        assembly_key: String(normalized?.assembly_key || '').trim(),
-        selection_key: String(normalized?.selection_key || key).trim(),
-        species_key: String(normalized?.species_key || '').trim(),
-        assembly: String(normalized?.assembly || '').trim(),
-        scientific_name: String(normalized?.scientific_name || '').trim() || formatSpeciesNameFromKey(normalized?.species_key || ''),
-        common_name: String(normalized?.common_name || '').trim(),
-        display_name: String(normalized?.display_name || '').trim(),
-        display_name_reason: String(normalized?.display_name_reason || '').trim(),
-        assembly_name: String(normalized?.assembly_name || normalized?.assembly || '').trim(),
-        provider: normalizeGenomeProvider(normalized),
-        source_database: normalizeGenomeSourceDatabase(normalized),
-        gca: String(normalized?.gca || '').trim(),
-        dataset_release_key: String(normalized?.dataset_release_key || '').trim(),
-        dataset_release_source: String(normalized?.dataset_release_source || '').trim(),
-        dataset_release_date: String(normalized?.dataset_release_date || '').trim(),
-        dataset_release_label: String(normalized?.dataset_release_label || '').trim(),
-        dataset_release_short_label: String(normalized?.dataset_release_short_label || '').trim(),
-        is_manual: Boolean(normalized?.is_manual),
-        active_by_default: Boolean(item?.active_by_default),
-    }
-}
 
 const normalizePlaylistGenome = (item) => {
     if (!item || typeof item !== 'object') return null
@@ -863,8 +831,13 @@ function GenomeRemovalDialog({ isOpen, theme, targets, preview, onClose, onRemov
     )
 }
 
-function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, onSave }) {
+function PlaylistMembershipModal({ isOpen, theme, genomes, addOnly = false, preset = null, playlists, onClose, onSave }) {
     const isLight = theme === 'light'
+    const targetGenomes = useMemo(
+        () => (Array.isArray(genomes) ? genomes : []).filter(Boolean),
+        [genomes]
+    )
+    const genome = targetGenomes[0] || null
     const genomeKey = itemKey(genome)
     const [selectedIds, setSelectedIds] = useState(new Set())
     const [newPlaylistName, setNewPlaylistName] = useState('')
@@ -877,26 +850,42 @@ function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, on
     useEffect(() => {
         if (!isOpen || !genomeKey) return
         const nextSelected = new Set(
-            editablePlaylists
-                .filter((playlist) => playlist.genomes.some((member) => genomeKeysMatch(member, genomeKey)))
-                .map((playlist) => playlist.id)
+            addOnly
+                ? []
+                : editablePlaylists
+                    .filter((playlist) => playlist.genomes.some((member) => genomeKeysMatch(member, genomeKey)))
+                    .map((playlist) => playlist.id)
         )
         setSelectedIds(nextSelected)
-        setNewPlaylistName('')
-        setNewPlaylistDescription('')
-    }, [isOpen, genomeKey, editablePlaylists])
+        // A tutorial step that expects the form already filled in says so; see the dialog
+        // arrival in docs/TUTORIALS.md. It fills what is empty rather than replacing what
+        // is there: a reader who wrote their own description keeps it when the next step
+        // re-establishes the dialog. Everywhere else this is the ordinary empty form.
+        setNewPlaylistName((current) => (preset ? (String(current || '').trim() ? current : String(preset.name || '')) : ''))
+        setNewPlaylistDescription((current) => (preset ? (String(current || '').trim() ? current : String(preset.description || '')) : ''))
+    }, [isOpen, genomeKey, addOnly, editablePlaylists, preset])
 
     if (!isOpen || !genome) return null
 
     return (
         <div className="fixed inset-0 z-[220] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className={`w-full max-w-xl rounded-xl border shadow-2xl ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800 border-gray-700'}`}>
+            <div
+                data-tour-id="playlist-membership-dialog"
+                className={`w-full max-w-xl rounded-xl border shadow-2xl ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800 border-gray-700'}`}
+            >
                 <div className={`px-5 py-4 border-b flex items-center justify-between ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
                     <div>
-                        <h3 className={`text-base font-bold ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>Add to playlists</h3>
-                        <p className={`text-xs mt-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>{formatPlaylistGenomeLabel(genome)}</p>
+                        <h3 className={`text-base font-bold ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
+                            {addOnly ? 'Add selected genomes to playlists' : 'Add to playlists'}
+                        </h3>
+                        <p className={`text-xs mt-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {addOnly
+                                ? `${targetGenomes.length} selected genome${targetGenomes.length === 1 ? '' : 's'}`
+                                : formatPlaylistGenomeLabel(genome)}
+                        </p>
                     </div>
                     <button
+                        data-tour-id="playlist-membership-close"
                         type="button"
                         onClick={onClose}
                         className={`p-2 rounded-lg transition-colors ${isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-700'}`}
@@ -910,7 +899,10 @@ function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, on
                 <div className="px-5 py-4 space-y-4">
                     <div>
                         <div className={`text-xs font-semibold uppercase tracking-wide mb-2 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Existing playlists</div>
-                        <div className={`rounded-xl border max-h-52 overflow-y-auto ${isLight ? 'border-gray-200 bg-gray-50/70' : 'border-gray-700 bg-gray-900/30'}`}>
+                        <div
+                            data-tour-id="playlist-membership-existing"
+                            className={`rounded-xl border max-h-52 overflow-y-auto ${isLight ? 'border-gray-200 bg-gray-50/70' : 'border-gray-700 bg-gray-900/30'}`}
+                        >
                             {editablePlaylists.length === 0 ? (
                                 <div className={`px-4 py-4 text-sm ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>No playlists yet.</div>
                             ) : editablePlaylists.map((playlist) => {
@@ -921,6 +913,7 @@ function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, on
                                         className={`flex items-start gap-3 px-4 py-3 border-b last:border-b-0 cursor-pointer ${isLight ? 'border-gray-200 hover:bg-white' : 'border-gray-700 hover:bg-gray-800/70'}`}
                                     >
                                         <input
+                                            data-tour-id={`playlist-membership-checkbox-${playlist.id}`}
                                             type="checkbox"
                                             checked={checked}
                                             onChange={() => {
@@ -950,6 +943,7 @@ function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, on
                         <div className={`text-xs font-semibold uppercase tracking-wide mb-3 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Create new playlist</div>
                         <div className="space-y-3">
                             <input
+                                data-tour-id="playlist-membership-new-name"
                                 type="text"
                                 value={newPlaylistName}
                                 onChange={(event) => setNewPlaylistName(event.target.value)}
@@ -960,6 +954,7 @@ function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, on
                                     }`}
                             />
                             <textarea
+                                data-tour-id="playlist-membership-new-description"
                                 value={newPlaylistDescription}
                                 onChange={(event) => setNewPlaylistDescription(event.target.value)}
                                 placeholder="Description (optional)"
@@ -975,6 +970,7 @@ function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, on
 
                 <div className={`px-5 py-4 border-t flex items-center justify-end gap-3 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
                     <button
+                        data-tour-id="playlist-membership-cancel"
                         type="button"
                         onClick={onClose}
                         className={`px-4 py-2 rounded-lg text-sm font-semibold border ${isLight
@@ -985,10 +981,13 @@ function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, on
                         Cancel
                     </button>
                     <button
+                        data-tour-id="playlist-membership-save"
                         type="button"
                         onClick={() => {
                             const didSave = onSave({
                                 genome,
+                                genomes: targetGenomes,
+                                addOnly,
                                 selectedPlaylistIds: Array.from(selectedIds),
                                 newPlaylistName,
                                 newPlaylistDescription,
@@ -997,7 +996,7 @@ function PlaylistMembershipModal({ isOpen, theme, genome, playlists, onClose, on
                         }}
                         className={`px-4 py-2 rounded-lg text-sm font-semibold ${isLight ? 'bg-[#0099ff] text-white hover:bg-[#0088ee]' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
                     >
-                        Save
+                        {addOnly ? 'Add genomes' : 'Save'}
                     </button>
                 </div>
             </div>
@@ -1437,11 +1436,14 @@ export default function GenomeSelectorView({
     onToggleSpecies,
     onApplyPlaylist = null,
     selectedSpeciesList = null,
+    tutorialListPresentation = null,
+    tutorialDialogRequest = null,
     theme,
     screenshotMode = false,
     onScreenshotModeChange = null,
     onScreenshotAvailabilityChange = null,
     screenshotToggleButtonRef = null,
+    scrollContainerNode = null,
 }) {
     const isLight = theme === 'light'
     const screenshotRootRef = useRef(null)
@@ -1451,6 +1453,10 @@ export default function GenomeSelectorView({
         screenshotRootRef.current = node
         setScreenshotRootNode(node)
     }, [])
+    const screenshotScrollContainerRef = useMemo(
+        () => ({ current: scrollContainerNode || screenshotRootNode }),
+        [scrollContainerNode, screenshotRootNode]
+    )
 
     const [assemblies, setAssemblies] = useState(() => lastScannedAssemblies || [])
     const [loading, setLoading] = useState(false)
@@ -1467,6 +1473,7 @@ export default function GenomeSelectorView({
     const [pendingSelectionKeys, setPendingSelectionKeys] = useState(new Set())
     const indexBuildPromiseRef = useRef(new Map())
     const selectionDelayTimersRef = useRef(new Map())
+    const genomeListRef = useRef(null)
     const tableScrollRef = useRef(null)
     const pendingScrollTopRef = useRef(null)
     // Removal mode keeps its own flags: the Active ticks say what the app is
@@ -1477,7 +1484,7 @@ export default function GenomeSelectorView({
     const [removalDialog, setRemovalDialog] = useState(null)   // { targets, origin }
     const [removalPreview, setRemovalPreview] = useState({ status: 'idle' })
     const [removalRun, setRemovalRun] = useState(null)
-    const [playlistMembershipTarget, setPlaylistMembershipTarget] = useState(null)
+    const [playlistMembershipDialog, setPlaylistMembershipDialog] = useState(null)
     const [editingPlaylistId, setEditingPlaylistId] = useState('')
     const [playlistsCollapsed, setPlaylistsCollapsed] = useState(true)
     const [selectorPlaylistId, setSelectorPlaylistId] = useState(PLAYLIST_ALL_ID)
@@ -2240,6 +2247,11 @@ export default function GenomeSelectorView({
     const selectedGenomeKeys = useMemo(() => {
         return new Set(activeSpeciesList.map((item) => itemKey(item)))
     }, [activeSpeciesList])
+    // The live set, for the deferred selection below: its callback was built a second
+    // earlier, when the genome it is about was by definition not yet selected, so the
+    // captured value is exactly the wrong one to check against.
+    const selectedGenomeKeysRef = useRef(selectedGenomeKeys)
+    selectedGenomeKeysRef.current = selectedGenomeKeys
     const selectedOrder = useMemo(() => {
         const order = new Map()
         activeSpeciesList.forEach((item, idx) => {
@@ -2250,7 +2262,7 @@ export default function GenomeSelectorView({
 
     const filteredSorted = useMemo(() => {
         if (!filtered.length) return filtered
-        if (selectedPlaylistId !== PLAYLIST_ALL_ID) return filtered
+        if (selectedPlaylistId !== PLAYLIST_ALL_ID || tutorialListPresentation?.preserveOrder) return filtered
         return [...filtered].sort((a, b) => {
             const aSelected = selectedGenomeKeys.has(itemKey(a))
             const bSelected = selectedGenomeKeys.has(itemKey(b))
@@ -2262,17 +2274,52 @@ export default function GenomeSelectorView({
             }
             return 0
         })
-    }, [filtered, selectedGenomeKeys, selectedOrder, selectedPlaylistId])
+    }, [filtered, selectedGenomeKeys, selectedOrder, selectedPlaylistId, tutorialListPresentation?.preserveOrder])
 
     const totalPages = Math.ceil(filteredSorted.length / LOCAL_PAGE_SIZE)
     const pageItems = filteredSorted.slice((page - 1) * LOCAL_PAGE_SIZE, page * LOCAL_PAGE_SIZE)
     useLayoutEffect(() => {
         if (pendingScrollTopRef.current === null) return
-        if (tableScrollRef.current) {
-            tableScrollRef.current.scrollTop = pendingScrollTopRef.current
-        }
-        pendingScrollTopRef.current = null
+        const node = tableScrollRef.current
+        if (!node) return
+        const scrollTop = pendingScrollTopRef.current
+        node.scrollTop = scrollTop
+        // Moving a still-focused checkbox to the selected group can make the browser run
+        // its own focus/scroll-anchor correction after layout effects. Re-assert the
+        // user's viewport on the next frame, once that correction has happened.
+        const frame = window.requestAnimationFrame(() => {
+            if (tableScrollRef.current === node) node.scrollTop = scrollTop
+            pendingScrollTopRef.current = null
+        })
+        return () => window.cancelAnimationFrame(frame)
     }, [filteredSorted, page])
+    useLayoutEffect(() => {
+        if (!tutorialListPresentation?.fitAllRows || !tableScrollRef.current) return
+        tableScrollRef.current.scrollTop = 0
+        pendingScrollTopRef.current = null
+    }, [tutorialListPresentation?.fitAllRows])
+    // Not when the step authored its own view position. This recentres whenever the row
+    // count changes, which in playback happens late as the tutorial workspace loads — long
+    // after the step's own scroll has finished, and silently undoing it.
+    const centerFixedTutorialList = useCallback(() => {
+        if (!tutorialListPresentation?.fitAllRows || tutorialListPresentation?.center === false) return
+        if (loading || filteredSorted.length === 0) return
+        genomeListRef.current?.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'auto' })
+    }, [filteredSorted.length, loading, tutorialListPresentation?.center, tutorialListPresentation?.fitAllRows])
+    useLayoutEffect(() => {
+        if (!tutorialListPresentation?.fitAllRows || loading || filteredSorted.length === 0) return undefined
+        const frame = window.requestAnimationFrame(centerFixedTutorialList)
+        return () => window.cancelAnimationFrame(frame)
+    }, [centerFixedTutorialList, filteredSorted.length, loading, tutorialListPresentation?.fitAllRows])
+    useEffect(() => {
+        if (!tutorialListPresentation?.fitAllRows) return undefined
+        window.addEventListener('resize', centerFixedTutorialList)
+        window.visualViewport?.addEventListener?.('resize', centerFixedTutorialList)
+        return () => {
+            window.removeEventListener('resize', centerFixedTutorialList)
+            window.visualViewport?.removeEventListener?.('resize', centerFixedTutorialList)
+        }
+    }, [centerFixedTutorialList, tutorialListPresentation?.fitAllRows])
     useEffect(() => {
         setPage(1)
     }, [search, selectedPlaylistId])
@@ -2401,17 +2448,27 @@ export default function GenomeSelectorView({
         showStatus(`Activated playlist "${playlist.name}" with ${activeLabel}${inactiveLabel}${missingLabel}.`)
     }
 
-    const handleSaveGenomePlaylistMembership = ({ genome, selectedPlaylistIds, newPlaylistName, newPlaylistDescription }) => {
-        const snapshot = snapshotGenomeForPlaylist(genome)
-        if (!snapshot) {
-            showStatus('Unable to add this genome to a playlist.', true)
+    const handleSaveGenomePlaylistMembership = ({ genome, genomes, addOnly, selectedPlaylistIds, newPlaylistName, newPlaylistDescription }) => {
+        const targetGenomes = addOnly ? genomes : [genome]
+        const snapshots = (Array.isArray(targetGenomes) ? targetGenomes : [])
+            .map((item) => snapshotGenomeForPlaylist(item))
+            .filter(Boolean)
+        if (snapshots.length === 0) {
+            showStatus('Unable to add the selected genomes to a playlist.', true)
             return false
         }
 
         const trimmedNewName = String(newPlaylistName || '').trim()
         const trimmedNewDescription = String(newPlaylistDescription || '').trim()
+        const requestedPlaylistIds = (selectedPlaylistIds || [])
+            .map((id) => String(id || '').trim())
+            .filter(Boolean)
+        if (addOnly && requestedPlaylistIds.length === 0 && !trimmedNewName) {
+            showStatus('Choose a playlist or create a new one first.', true)
+            return false
+        }
         return updatePlaylistConfig(({ playlists, selectedPlaylistId: currentSelectedPlaylistId }) => {
-            const selectedIds = new Set((selectedPlaylistIds || []).map((id) => String(id || '').trim()).filter(Boolean))
+            const selectedIds = new Set(requestedPlaylistIds)
             const nextPlaylists = playlists.map((playlist) => ({ ...playlist, genomes: [...playlist.genomes] }))
 
             if (trimmedNewName) {
@@ -2425,32 +2482,42 @@ export default function GenomeSelectorView({
                     id: newPlaylistId,
                     name: trimmedNewName,
                     description: trimmedNewDescription,
-                    genomes: [{ ...snapshot, active_by_default: true }],
+                    genomes: snapshots.map((snapshot, index) => ({
+                        ...snapshot,
+                        active_by_default: index === 0,
+                    })),
                 })
                 selectedIds.add(newPlaylistId)
             }
 
             for (let index = 0; index < nextPlaylists.length; index += 1) {
                 const playlist = nextPlaylists[index]
-                const hasGenome = playlist.genomes.some((member) => genomeKeysMatch(member, snapshot.key))
                 const shouldInclude = selectedIds.has(playlist.id)
-                if (shouldInclude && !hasGenome) {
+                const missingSnapshots = snapshots.filter((snapshot) => (
+                    !playlist.genomes.some((member) => genomeKeysMatch(member, snapshot.key))
+                ))
+                if (shouldInclude && missingSnapshots.length > 0) {
                     nextPlaylists[index] = {
                         ...playlist,
                         genomes: [
                             ...playlist.genomes,
-                            { ...snapshot, active_by_default: playlist.genomes.length === 0 },
+                            ...missingSnapshots.map((snapshot, snapshotIndex) => ({
+                                ...snapshot,
+                                active_by_default: playlist.genomes.length === 0 && snapshotIndex === 0,
+                            })),
                         ],
                     }
-                } else if (!shouldInclude && hasGenome) {
+                } else if (!addOnly && !shouldInclude) {
                     nextPlaylists[index] = {
                         ...playlist,
-                        genomes: playlist.genomes.filter((member) => !genomeKeysMatch(member, snapshot.key)),
+                        genomes: playlist.genomes.filter((member) => !genomeKeysMatch(member, snapshots[0].key)),
                     }
                 }
             }
 
-            showStatus(`Updated playlist memberships for ${genome?.scientific_name || genome?.assembly_name || genome?.assembly}.`)
+            showStatus(addOnly
+                ? `Added ${snapshots.length} selected genome${snapshots.length === 1 ? '' : 's'} to the chosen playlist${selectedIds.size === 1 ? '' : 's'}.`
+                : `Updated playlist memberships for ${genome?.scientific_name || genome?.assembly_name || genome?.assembly}.`)
             return {
                 genome_playlists: nextPlaylists,
                 selected_genome_playlist_id: currentSelectedPlaylistId,
@@ -2961,13 +3028,26 @@ export default function GenomeSelectorView({
         }
     }, [config.output_dir, fetchAssemblies])
 
-    const applySpeciesToggleNow = async (item, source = 'selector') => {
+    /**
+     * Apply a selection change immediately.
+     *
+     * `options.desired` states the outcome the caller wants rather than asking for a
+     * flip. A selection made a second earlier is applied from a timer, and by the time it
+     * runs the genome may already be selected — a tutorial step that arrives with its own
+     * genomes chosen does exactly that. Toggling then quietly removes the genome the user
+     * had just chosen, so a stated intent that is already satisfied does nothing at all.
+     */
+    const applySpeciesToggleNow = async (item, source = 'selector', options = {}) => {
         if (item?.is_missing) return
+        const desired = options.desired || ''
+        const alreadySelected = selectedGenomeKeysRef.current.has(itemKey(item))
+        if (desired === 'selected' && alreadySelected) return
+        if (desired === 'deselected' && !alreadySelected) return
         if (tableScrollRef.current) {
             pendingScrollTopRef.current = tableScrollRef.current.scrollTop
         }
         if (onToggleSpecies) {
-            const result = await onToggleSpecies(item, source)
+            const result = await onToggleSpecies(item, source, { desired })
             if (result?.ok === false) {
                 showStatus('Unable to update genome selection.', true)
             }
@@ -3047,7 +3127,7 @@ export default function GenomeSelectorView({
                 next.delete(key)
                 return next
             })
-            await applySpeciesToggleNow(item)
+            await applySpeciesToggleNow(item, 'selector', { desired: 'selected' })
         }, 1000)
         selectionDelayTimersRef.current.set(key, timer)
     }
@@ -3101,6 +3181,46 @@ export default function GenomeSelectorView({
         () => selectableItems(filteredSorted).filter((item) => selectedGenomeKeys.has(itemKey(item))).length,
         [filteredSorted, selectedGenomeKeys],
     )
+    const selectedAssemblies = useMemo(
+        () => selectableItems(allAssemblies).filter((item) => selectedGenomeKeys.has(itemKey(item))),
+        [allAssemblies, selectedGenomeKeys],
+    )
+
+    /** Open or close the playlist dialog because a tutorial step says so.
+     *
+     * A dialog is the one thing a step cannot arrive at by describing it: until something
+     * opens it there is no element for the spotlight to sit on and no panel for the card
+     * to talk about. So a step declares the dialog it expects, exactly as it declares
+     * which genomes are selected, and this reconciles it — which is what lets the author
+     * jump straight to that step in the builder, and lets a reader go Back to the step
+     * that opens it and watch it open again.
+     *
+     * The request carries a timestamp so re-entering the same step is a new request:
+     * "closed" has to be re-established on the way back even though nothing about the
+     * step changed. Which genomes the dialog opens for is always the selected set, so it
+     * matches what pressing the button by hand would have done.
+     *
+     * Nothing here fights the user. A dialog they close mid-step stays closed until a
+     * step asks for it again. */
+    useEffect(() => {
+        const dialog = tutorialDialogRequest?.dialog
+        if (!dialog) return
+        // One value, so naming any other dialog means this one is closed.
+        if (dialog !== 'playlistMembership') {
+            setPlaylistMembershipDialog(null)
+            return
+        }
+        if (selectedAssemblies.length === 0) return
+        setPlaylistMembershipDialog({
+            genomes: selectedAssemblies,
+            addOnly: true,
+            preset: tutorialDialogRequest.fields || null,
+        })
+        // selectedAssemblies is deliberately absent: this reconciles a step's request, and
+        // re-running it every time the selection changes would reopen a dialog the user
+        // has closed.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tutorialDialogRequest])
 
     const handleRemovalFillToggle = useCallback((action) => {
         if (removalFillMode === action) {
@@ -3117,11 +3237,18 @@ export default function GenomeSelectorView({
 
     const toggleRemovalMode = useCallback(() => {
         setRemovalMode((current) => {
-            if (current) setRemovalKeys(new Set())
+            if (current) {
+                setRemovalKeys(new Set())
+                setRemovalFillMode(null)
+            } else {
+                // The header bin is a bulk action for the active/selected genomes.
+                // The red review mode can still be used to refine that explicit set.
+                setRemovalKeys(new Set(selectedAssemblies.map((item) => itemKey(item))))
+                setRemovalFillMode(REMOVAL_FILL_SELECTED)
+            }
             return !current
         })
-        setRemovalFillMode(null)
-    }, [])
+    }, [selectedAssemblies])
 
     const handleSelectAllToggle = useCallback(() => {
         const candidates = selectableItems(filteredSorted)
@@ -3871,7 +3998,7 @@ export default function GenomeSelectorView({
             allowedFormats,
             defaultFormat: canCaptureRasterScreenshot ? 'png' : 'svg',
             getVisibleRect: () => node.getBoundingClientRect(),
-            getScrollElement: () => node,
+            getScrollElement: () => scrollContainerNode || node,
             buildDefaultFilename: () => buildDefaultScreenshotName('ens_genome_selector_page'),
             buildExportSnapshot: async () => {
                 const { width, height } = measureScreenshotNode(node)
@@ -3882,7 +4009,7 @@ export default function GenomeSelectorView({
                 })
             },
         }
-    }, [canCaptureRasterScreenshot, isLight, screenshotRootNode])
+    }, [canCaptureRasterScreenshot, isLight, screenshotRootNode, scrollContainerNode])
 
     const defaultScreenshotDir = useMemo(() => {
         const base = String(config?.output_dir || '').trim().replace(/\/+$/, '')
@@ -3962,7 +4089,7 @@ export default function GenomeSelectorView({
 
     return (
         <>
-        <div ref={setScreenshotRoot} className="relative h-full overflow-y-auto pr-1 flex flex-col max-w-5xl mx-auto pb-6">
+        <div ref={setScreenshotRoot} className="relative min-h-full pr-1 flex flex-col max-w-5xl mx-auto pb-6">
             <FileBrowserModal
                 isOpen={modalOpen}
                 onClose={() => setModalOpen(false)}
@@ -4061,11 +4188,13 @@ export default function GenomeSelectorView({
                 onRemove={(options) => runRemoval(removalDialog?.targets || [], options)}
             />
             <PlaylistMembershipModal
-                isOpen={!!playlistMembershipTarget}
+                isOpen={!!playlistMembershipDialog}
                 theme={theme}
-                genome={playlistMembershipTarget}
+                genomes={playlistMembershipDialog?.genomes || []}
+                addOnly={!!playlistMembershipDialog?.addOnly}
+                preset={playlistMembershipDialog?.preset || null}
                 playlists={genomePlaylists}
-                onClose={() => setPlaylistMembershipTarget(null)}
+                onClose={() => setPlaylistMembershipDialog(null)}
                 onSave={handleSaveGenomePlaylistMembership}
             />
             <PlaylistEditorModal
@@ -4078,7 +4207,11 @@ export default function GenomeSelectorView({
             />
 
             {statusMessage && (
-                <div className={`fixed top-24 right-4 sm:right-6 z-50 rounded-lg px-6 py-4 shadow-lg border backdrop-blur-sm max-w-[calc(100vw-32px)] sm:max-w-md break-words ${statusMessage.isError
+                // Marked so a tutorial step whose target this lands on can wait for it;
+                // see `notifications-clear` in docs/TUTORIALS.md. It sits above the app
+                // but below the tutorial overlay, so it half-covers a highlight and
+                // cannot be dismissed by the reader.
+                <div data-tutorial-notification="true" className={`fixed top-24 right-4 sm:right-6 z-50 rounded-lg px-6 py-4 shadow-lg border backdrop-blur-sm max-w-[calc(100vw-32px)] sm:max-w-md break-words ${statusMessage.isError
                     ? 'bg-red-500/90 text-white border-red-400'
                     : 'bg-emerald-500/90 text-white border-emerald-400'
                     }`}>
@@ -4105,8 +4238,12 @@ export default function GenomeSelectorView({
                     </div>
                 )}
 
-                <div className={`border rounded-xl overflow-hidden ${isLight ? 'border-gray-200 bg-gray-50/70' : 'border-gray-700 bg-gray-900/30'}`}>
+                <div
+                    data-tour-id="selector-playlist-bar"
+                    className={`border rounded-xl overflow-hidden ${isLight ? 'border-gray-200 bg-gray-50/70' : 'border-gray-700 bg-gray-900/30'}`}
+                >
                     <button
+                        data-tour-id="selector-playlist-bar-toggle"
                         type="button"
                         onClick={() => setPlaylistsCollapsed((prev) => !prev)}
                         className={`w-full px-4 py-3 flex items-center justify-between gap-3 text-left transition-colors ${isLight ? 'hover:bg-white' : 'hover:bg-gray-800/70'}`}
@@ -4166,8 +4303,9 @@ export default function GenomeSelectorView({
                                     )}
                                 </div>
                             )}
-                            <div className="max-h-56 overflow-y-auto rounded-lg overflow-hidden">
+                            <div data-tour-id="selector-playlist-list" className="max-h-56 overflow-y-auto rounded-lg overflow-hidden">
                             <button
+                                data-tour-id="selector-playlist-row-all-genomes"
                                 type="button"
                                 onClick={() => handleSelectPlaylist(PLAYLIST_ALL_ID)}
                                 className={`w-full px-4 py-3 text-left border-b transition-colors ${selectedPlaylistId === PLAYLIST_ALL_ID
@@ -4197,6 +4335,7 @@ export default function GenomeSelectorView({
                                 return (
                                     <div
                                         key={playlist.id}
+                                        data-tour-id={`selector-playlist-row-${playlistTourSlug(playlist.name)}`}
                                         role="button"
                                         tabIndex={0}
                                         onClick={() => handleSelectPlaylist(playlist.id)}
@@ -4235,6 +4374,7 @@ export default function GenomeSelectorView({
                                                 {!playlist.system && (
                                                     <>
                                                         <button
+                                                            data-tour-id={`selector-playlist-edit-${playlistTourSlug(playlist.name)}`}
                                                             type="button"
                                                             onClick={(event) => {
                                                                 event.stopPropagation()
@@ -4252,6 +4392,7 @@ export default function GenomeSelectorView({
                                                             </svg>
                                                         </button>
                                                         <button
+                                                            data-tour-id={`selector-playlist-delete-${playlistTourSlug(playlist.name)}`}
                                                             type="button"
                                                             onClick={(event) => {
                                                                 event.stopPropagation()
@@ -4283,6 +4424,7 @@ export default function GenomeSelectorView({
                             <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
                         </svg>
                         <input
+                            data-tour-id="selector-search"
                             type="text"
                             placeholder="Search species, GCA, assembly…"
                             value={search}
@@ -4733,7 +4875,7 @@ export default function GenomeSelectorView({
                         </div>
                         <div className="flex items-center gap-1.5 ml-auto">
                             {[
-                                { action: REMOVAL_FILL_ALL, label: `All ${selectableFilteredCount}` },
+                                { action: REMOVAL_FILL_ALL, label: `All results ${selectableFilteredCount}` },
                                 { action: REMOVAL_FILL_SELECTED, label: `Selected ${selectedFilteredCount}` },
                             ].map(({ action, label }) => (
                                 <button
@@ -4778,7 +4920,7 @@ export default function GenomeSelectorView({
                                     }`}
                                 title="Delete affected files and deregister the flagged genomes without opening the summary"
                             >
-                                Delete
+                                Delete flagged
                             </button>
                             <button
                                 type="button"
@@ -4833,7 +4975,11 @@ export default function GenomeSelectorView({
                 </div>
             ) : null}
 
-            <div className={`order-2 flex-none h-[560px] min-h-[560px] rounded-xl border overflow-hidden flex flex-col ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}>
+            <div
+                ref={genomeListRef}
+                data-tour-id="selector-genome-list"
+                className={`order-2 flex-none min-h-[220px] rounded-xl border overflow-hidden flex flex-col ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}
+            >
                 {loading ? (
                     <div className={`flex-1 flex flex-col items-center justify-center gap-3 ${isLight ? 'text-gray-600' : 'text-gray-300'}`}>
                         <div className={`animate-spin w-8 h-8 border-4 border-t-transparent rounded-full ${isLight ? 'border-blue-500' : 'border-blue-400'}`}></div>
@@ -4852,7 +4998,11 @@ export default function GenomeSelectorView({
                     </div>
                 ) : (
                     <>
-                        <div ref={tableScrollRef} className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
+                        <div
+                            ref={tableScrollRef}
+                            className="overflow-x-auto overflow-y-hidden flex-1 min-h-0"
+                            style={{ overflowAnchor: 'none' }}
+                        >
                             <table className="w-full text-sm">
                                 <thead className={`sticky top-0 z-10 ${isLight ? 'bg-gray-50' : 'bg-gray-800'}`}>
                                     <tr className={`border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
@@ -4881,17 +5031,47 @@ export default function GenomeSelectorView({
                                         <th className={thClass}>Files</th>
                                         <th className={thClass}>Index</th>
                                         <th className={`${thCenteredClass} w-32 min-w-[8rem]`}>
-                                            {/* Same 72px two-slot box as every row's action cell, so the
-                                                bulk-removal bin sits in the same column as the row bins. */}
+                                            {/* Same 72px two-slot box as every row's action cell. Both
+                                                controls operate on the active/selected genome set. */}
                                             <div className="mx-auto inline-flex w-[72px] items-center justify-center gap-1 align-middle">
-                                                <span aria-hidden="true" className="h-8 w-8 flex-none" />
+                                                <button
+                                                    data-tour-id="selector-playlist-selected"
+                                                    type="button"
+                                                    aria-disabled={selectedAssemblies.length === 0}
+                                                    onClick={() => {
+                                                        if (selectedAssemblies.length === 0) {
+                                                            showStatus('Select genomes before adding them to a playlist.', true)
+                                                            return
+                                                        }
+                                                        setPlaylistMembershipDialog({
+                                                            genomes: selectedAssemblies,
+                                                            addOnly: true,
+                                                        })
+                                                    }}
+                                                    title={selectedAssemblies.length === 0
+                                                        ? 'Select genomes before adding them to a playlist'
+                                                        : `Add all ${selectedAssemblies.length} selected genome${selectedAssemblies.length === 1 ? '' : 's'} to playlists`}
+                                                    aria-label="Add selected genomes to playlists"
+                                                    className={`w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors ${selectedAssemblies.length === 0
+                                                        ? (isLight ? 'text-gray-300 cursor-not-allowed' : 'text-gray-700 cursor-not-allowed')
+                                                        : (isLight ? 'text-gray-400 hover:text-blue-600 hover:bg-blue-50' : 'text-gray-500 hover:text-blue-300 hover:bg-blue-900/20')
+                                                        }`}
+                                                >
+                                                    <AppButtonIcon buttonId="genome_playlist" isLight={isLight} compact size={15} />
+                                                </button>
                                                 <button
                                                     type="button"
+                                                    disabled={!removalMode && selectedAssemblies.length === 0}
                                                     onClick={toggleRemovalMode}
                                                     title={removalMode
                                                         ? 'Leave removal mode'
-                                                        : 'Flag several genomes to remove'}
-                                                    className={`w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors ${removalMode
+                                                        : selectedAssemblies.length === 0
+                                                            ? 'Select genomes before removing them'
+                                                            : `Review removal of all ${selectedAssemblies.length} selected genome${selectedAssemblies.length === 1 ? '' : 's'}`}
+                                                    aria-label={removalMode ? 'Leave removal mode' : 'Remove selected genomes'}
+                                                    className={`w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors ${!removalMode && selectedAssemblies.length === 0
+                                                        ? (isLight ? 'text-gray-300 cursor-not-allowed' : 'text-gray-700 cursor-not-allowed')
+                                                        : removalMode
                                                         ? (isLight ? 'bg-red-100 text-red-700' : 'bg-red-900/50 text-red-300')
                                                         : (isLight ? 'text-gray-400 hover:text-red-600 hover:bg-red-50' : 'text-gray-500 hover:text-red-400 hover:bg-red-900/20')
                                                         }`}
@@ -4936,6 +5116,7 @@ export default function GenomeSelectorView({
 	                                        return (
 	                                            <React.Fragment key={rowKey}>
                                             <tr
+                                                data-tour-id={`selector-genome-${item?.species_key || ''}`}
                                                 onClick={() => {
                                                     if (isMissing) return
                                                     // In removal mode a click curates the removal set
@@ -4957,6 +5138,7 @@ export default function GenomeSelectorView({
                                             >
                                                 <td className="px-4 py-3 text-center align-middle" onClick={(e) => e.stopPropagation()}>
                                                     <input
+                                                        data-tour-id={`selector-checkbox-${item?.species_key || ''}`}
                                                         type="checkbox"
                                                         checked={!isMissing && (isSelected || isPendingSelection)}
                                                         disabled={isMissing}
@@ -4994,10 +5176,18 @@ export default function GenomeSelectorView({
                                                                 {item.missing_files.length} missing
                                                             </span>
                                                         ) : null}
+                                                        {item.is_demo && !isMissing && (
+                                                            <span
+                                                                className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isLight ? 'bg-sky-100 text-sky-700' : 'bg-sky-900/30 text-sky-300'}`}
+                                                                title="A small made-up genome used by the tutorials. It is removed when the tutorial ends."
+                                                            >
+                                                                Demo
+                                                            </span>
+                                                        )}
                                                         {item.retired_remote && !isMissing && (
                                                             <span
                                                                 className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${isLight ? 'bg-amber-100 text-amber-700' : 'bg-amber-900/30 text-amber-300'}`}
-                                                                title="This genome remains available locally but is no longer present in the current Ensembl Beta FTP catalogue."
+                                                                title="This genome remains available locally but is no longer present in the current Ensembl FTP catalogue."
                                                             >
                                                                 Retired upstream
                                                             </span>
@@ -5107,7 +5297,7 @@ export default function GenomeSelectorView({
                                                                     ? (isLight ? 'bg-gray-100 text-gray-400 cursor-wait' : 'bg-gray-800 text-gray-500 cursor-wait')
                                                                     : (isLight ? 'bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300' : 'bg-amber-800/40 text-amber-200 hover:bg-amber-800/60 border border-amber-700')
                                                                 }`}
-                                                                title="Download FASTA and GFF3 for this missing playlist genome"
+                                                                title="Download the genome and gene annotation for this missing playlist genome"
                                                             >
                                                                 {downloadingMissingKeys.has(key) ? 'Queued' : 'Download'}
                                                             </button>
@@ -5146,12 +5336,13 @@ export default function GenomeSelectorView({
                                                     ) : (
 	                                                        <div className="mx-auto inline-flex w-[72px] items-center justify-center gap-1">
 	                                                            <button
+	                                                                data-tour-id={`selector-playlist-${itemKey(item)}`}
 	                                                                type="button"
 	                                                                onMouseDown={(event) => {
 	                                                                    event.preventDefault()
                                                                     event.stopPropagation()
                                                                 }}
-                                                                onClick={() => setPlaylistMembershipTarget(item)}
+                                                                onClick={() => setPlaylistMembershipDialog({ genomes: [item], addOnly: false })}
                                                                 className={`w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors ${isLight
                                                                     ? 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
                                                                     : 'text-gray-500 hover:text-blue-300 hover:bg-blue-900/20'
@@ -5385,7 +5576,7 @@ export default function GenomeSelectorView({
                 active={screenshotMode && Boolean(screenshotTarget)}
                 theme={theme}
                 containerRef={screenshotRootRef}
-                scrollContainerRef={screenshotRootRef}
+                scrollContainerRef={screenshotScrollContainerRef}
                 exemptRefs={[screenshotToggleButtonRef]}
                 targets={screenshotTarget ? [screenshotTarget] : []}
                 instructions="Click on the highlighted area to export"

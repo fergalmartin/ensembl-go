@@ -193,10 +193,11 @@ test('meta is folded into ctrl so macOS pinch and Firefox behave alike', () => {
 // The wheel truth table
 // ---------------------------------------------------------------------------
 
-test('default scheme: plain wheel zooms, sideways pans', () => {
+test('default scheme: plain wheel zooms, sideways pans, and shift scrolls the page', () => {
   const c = controlsFor('default')
   assert.equal(resolveWheelAction(wheel({ dy: 40 }), c, {}).type, 'zoom')
   assert.equal(resolveWheelAction(wheel({ dx: 40 }), c, {}).type, 'pan')
+  assert.equal(resolveWheelAction(wheel({ dy: 40, shift: true }), c, {}).type, 'page_scroll')
 })
 
 test('wheel_scrolls scheme: plain wheel scrolls the page, ctrl zooms, shift pans', () => {
@@ -550,13 +551,13 @@ test('the renamed scheme still resolves from its old saved id', () => {
 })
 
 test('a modifier that does nothing extra is not listed as its own control', () => {
-  // Default binds plain, ctrl and shift vertical wheel all to zoom. Listing all
-  // three is three ways of describing one control, so only the simplest survives.
+  // Default leaves Alt doing the same thing as the plain wheel and Ctrl unbound,
+  // so neither should add a duplicate or unusable row to the guide. Shift is
+  // intentionally different and is covered by the next test.
   const rows = describeBrowsingControls(controlsFor('default'), 'mouse')
   const gestures = rows.map((r) => r.gesture)
   assert.ok(gestures.includes('Wheel up/down'))
   assert.ok(!gestures.some((g) => g.startsWith('Ctrl')), 'ctrl row should be collapsed away')
-  assert.ok(!gestures.some((g) => g.startsWith('Shift')), 'shift row should be collapsed away')
   assert.ok(!gestures.some((g) => g.startsWith('Alt')), 'alt row should be collapsed away')
 })
 
@@ -577,12 +578,13 @@ test('distinct controls that share an action are both kept', () => {
   assert.ok(panning.includes('Drag sideways'))
 })
 
-test('Default leaves pinch unbound so two-finger swipe is the only zoom gesture', () => {
+test('Default leaves pinch unbound and offers Shift + two-finger swipe for page scrolling', () => {
   const rows = describeBrowsingControls(controlsFor('default'), 'trackpad')
-  const gestures = rows.map((r) => r.gesture)
+  const by = Object.fromEntries(rows.map((r) => [r.gesture, r.action]))
+  const gestures = Object.keys(by)
   assert.ok(gestures.includes('Two-finger swipe up/down'))
   assert.ok(!gestures.some((g) => g.startsWith('Pinch')), 'pinch must not be offered here')
-  assert.ok(!gestures.some((g) => g.startsWith('Shift')), 'shift+swipe adds nothing here')
+  assert.equal(by['Shift + two-finger swipe up/down'], 'Scroll the page up and down')
 })
 
 test('an unbound pinch still suppresses the browser page zoom', () => {

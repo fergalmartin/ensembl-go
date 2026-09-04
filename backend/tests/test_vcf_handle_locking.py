@@ -196,7 +196,14 @@ class HandleAccessDisciplineTests(unittest.TestCase):
         }
         self.assertEqual(
             entry_points,
-            {"_browse_vcf_block_tiles_sync", "_browse_vcf_tiles_sync"},
+            {
+                "_browse_vcf_block_tiles_sync",
+                "_browse_vcf_tiles_sync",
+                # The structure panel's variant overlay. It fetches once per
+                # coding exon of one transcript, all inside the same `with`, so
+                # the lock is held for a bounded scan like the tile builders.
+                "_structure_variants_for_track",
+            },
             "a new VCF entry point appeared; confirm it holds the handle lock",
         )
 

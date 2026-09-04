@@ -12,6 +12,16 @@ function HomeView({ theme, onNavigate }) {
 
   const views = [
     {
+      id: 'tutorials',
+      title: 'Tutorials',
+      description: 'Follow guided, hands-on walkthroughs of the main Ensembl Go workflows.',
+      icon: (
+        <div className="text-white scale-[1.25]">
+          <AppButtonIcon buttonId="tutorials" isLight={isLight} />
+        </div>
+      ),
+    },
+    {
       id: 'genome_selector',
       title: 'Genome Selector',
       description: 'Select downloaded genomes for visualisation.',
@@ -50,7 +60,7 @@ function HomeView({ theme, onNavigate }) {
     {
       id: 'genome_browser',
       title: 'Genome Browser',
-      description: 'Browse genomes and annotations, including pairwise genome browsing',
+      description: 'Browse genomes and annotations, including simultaneous multi-genome browsing',
       icon: (
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
           <rect x="2" y="3" width="20" height="18" rx="2" />

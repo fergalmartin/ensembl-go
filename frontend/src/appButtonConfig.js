@@ -12,6 +12,7 @@ export const DATA_VIEW_BUTTON_IDS = [
   'notes',
   'download',
   'configuration',
+  'tutorials',
   'help',
 ]
 
@@ -43,6 +44,7 @@ export const APP_BUTTON_META = {
   notes: { id: 'notes', label: 'Notes', shortLabel: 'Notes', kind: 'data_view', viewId: 'notes' },
   download: { id: 'download', label: 'Download', shortLabel: 'Download', kind: 'data_view', viewId: 'download' },
   configuration: { id: 'configuration', label: 'Configuration', shortLabel: 'Config', kind: 'data_view', viewId: 'configuration' },
+  tutorials: { id: 'tutorials', label: 'Tutorials', shortLabel: 'Tutorials', kind: 'data_view', viewId: 'tutorials' },
   help: { id: 'help', label: 'Help', shortLabel: 'Help', kind: 'data_view', viewId: 'help' },
   genome_playlist: { id: 'genome_playlist', label: 'Genome Playlist', shortLabel: 'Playlist', kind: 'action' },
   theme_toggle: { id: 'theme_toggle', label: 'Theme Toggle', shortLabel: 'Theme', kind: 'action' },

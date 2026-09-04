@@ -21,9 +21,9 @@ export default function FileBrowserModal({
     const [activeExtensions, setActiveExtensions] = useState([])
     const [saveFileName, setSaveFileName] = useState(defaultFileName)
 
-    // New Folder State
-    const [isCreatingFolder, setIsCreatingFolder] = useState(false)
-    const [newFolderName, setNewFolderName] = useState('')
+    // New Directory State
+    const [isCreatingDirectory, setIsCreatingDirectory] = useState(false)
+    const [newDirectoryName, setNewDirectoryName] = useState('')
 
     const pathRef = useRef(null)
 
@@ -41,6 +41,9 @@ export default function FileBrowserModal({
             const startPath = initialPath || '.'
             setCurrentPath(startPath)
             setSaveFileName(defaultFileName)
+            setIsCreatingDirectory(false)
+            setNewDirectoryName('')
+            setSelectedItem(null)
             fetchItems(startPath)
             // Reset filters: activeExtensions = all extensions passed, showAll = false (unless no extensions)
             if (extensions && extensions.length > 0) {
@@ -116,13 +119,13 @@ export default function FileBrowserModal({
         onClose()
     }
 
-    const handleCreateFolder = async () => {
-        if (!newFolderName.trim()) return
+    const handleCreateDirectory = async () => {
+        if (!newDirectoryName.trim()) return
 
         try {
             // Remove trailing slash if present
             const base = currentPath.endsWith('/') ? currentPath.slice(0, -1) : currentPath;
-            const newPath = `${base}/${newFolderName.trim()}`;
+            const newPath = `${base}/${newDirectoryName.trim()}`;
 
             const res = await fetch(`${API_BASE}/api/files/mkdir`, {
                 method: 'POST',
@@ -132,13 +135,14 @@ export default function FileBrowserModal({
 
             if (res.ok) {
                 await fetchItems(currentPath);
-                setIsCreatingFolder(false)
-                setNewFolderName('')
+                setIsCreatingDirectory(false)
+                setNewDirectoryName('')
             } else {
-                alert("Failed to create folder")
+                const payload = await res.json().catch(() => ({}))
+                setError(payload?.detail || 'Failed to create directory')
             }
         } catch (e) {
-            alert("Error creating folder: " + e.message)
+            setError(`Error creating directory: ${e.message}`)
         }
     }
 
@@ -320,7 +324,7 @@ export default function FileBrowserModal({
 
                     {/* Action buttons row */}
                     <div className={`px-4 py-3 flex items-center justify-end gap-3 ${(extensions && extensions.length > 0) || footerContent ? `border-t ${borderColor}` : ''}`}>
-                        {mode === 'save' && !isCreatingFolder ? (
+                        {mode === 'save' && !isCreatingDirectory ? (
                             <input
                                 type="text"
                                 value={saveFileName}
@@ -335,31 +339,31 @@ export default function FileBrowserModal({
                                     }`}
                             />
                         ) : null}
-                        {isCreatingFolder ? (
+                        {isCreatingDirectory ? (
                             <div className="flex items-center gap-2 mr-auto animate-in fade-in slide-in-from-right-4 duration-200">
                                 <input
                                     type="text"
-                                    value={newFolderName}
-                                    onChange={(e) => setNewFolderName(e.target.value)}
-                                    placeholder="Folder Name"
+                                    value={newDirectoryName}
+                                    onChange={(e) => setNewDirectoryName(e.target.value)}
+                                    placeholder="Directory name"
                                     className={`px-3 py-2 rounded-lg text-sm border focus:outline-none focus:ring-2 w-40 ${isLight
                                         ? 'bg-white border-gray-300 focus:ring-blue-500/40 focus:border-blue-500'
                                         : 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500/40 focus:border-blue-500'
                                         }`}
                                     autoFocus
                                     onKeyDown={(e) => {
-                                        if (e.key === 'Enter') handleCreateFolder()
-                                        if (e.key === 'Escape') setIsCreatingFolder(false)
+                                        if (e.key === 'Enter') handleCreateDirectory()
+                                        if (e.key === 'Escape') setIsCreatingDirectory(false)
                                     }}
                                 />
                                 <button
-                                    onClick={handleCreateFolder}
+                                    onClick={handleCreateDirectory}
                                     className="px-3 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 transition-colors"
                                 >
                                     Create
                                 </button>
                                 <button
-                                    onClick={() => setIsCreatingFolder(false)}
+                                    onClick={() => setIsCreatingDirectory(false)}
                                     className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isLight ? 'text-gray-600 hover:bg-gray-200' : 'text-gray-300 hover:bg-gray-700'}`}
                                 >
                                     Cancel
@@ -368,13 +372,13 @@ export default function FileBrowserModal({
                         ) : (
                             <button
                                 onClick={() => {
-                                    setNewFolderName('')
-                                    setIsCreatingFolder(true)
+                                    setNewDirectoryName('')
+                                    setIsCreatingDirectory(true)
                                 }}
                                 className={`mr-auto px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isLight ? 'text-gray-600 hover:bg-gray-200' : 'text-gray-300 hover:bg-gray-700'
                                     }`}
                             >
-                                New Folder
+                                New Directory
                             </button>
                         )}
 

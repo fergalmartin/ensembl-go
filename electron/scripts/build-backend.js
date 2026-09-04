@@ -41,6 +41,7 @@ function buildNativeBackend() {
   const { command, args } = resolvePythonCommand();
   const pyInstallerDataSeparator = process.platform === 'win32' ? ';' : ':';
   const backendDataPath = path.join(PROJECT_DIR, 'backend', 'data');
+  const backendStaticPath = path.join(PROJECT_DIR, 'backend', 'static');
   const backendEntry = path.join(PROJECT_DIR, 'backend', 'main.py');
   const specOutputDir = path.join(ELECTRON_DIR, 'build_backend', 'spec');
 
@@ -87,6 +88,25 @@ function buildNativeBackend() {
       `backend/data is missing: ${backendDataPath}\n` +
         'It holds the taxonomy and project classification artifacts. Without them the ' +
         'download view falls back to name heuristics and mis-groups many species.'
+    );
+  }
+
+  // backend/static holds the sandboxed 3D structure viewer: the hand-written page
+  // plus the vendored Mol* bundle that frontend/scripts/copy-structure-viewer.js
+  // copies out of node_modules. Without it the Structure panel reports that its
+  // assets are not installed.
+  if (pathExists(path.join(backendStaticPath, 'structure', 'vendor', 'pdbe-molstar-plugin.js'))) {
+    pyInstallerArgs.splice(
+      pyInstallerArgs.length - 1,
+      0,
+      '--add-data',
+      `${backendStaticPath}${pyInstallerDataSeparator}static`
+    );
+  } else {
+    fail(
+      `The 3D structure viewer bundle is missing under ${backendStaticPath}.\n` +
+        'Run "npm run prepare:structure-viewer" in the frontend directory first; ' +
+        'the packaged Structure panel cannot load without it.'
     );
   }
 

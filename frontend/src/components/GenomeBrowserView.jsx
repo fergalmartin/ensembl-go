@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { flushSync } from 'react-dom'
+import useTutorial from '../hooks/useTutorial'
+import { registerBrowserNotes } from '../utils/browserTutorialControls'
 import GenomeBrowser from './GenomeBrowser'
 import FocusGeneDrawer, { FOCUS_DRAWER_DETAIL_WIDTH, FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from './FocusGeneDrawer'
 import AssemblyInfoDrawer from './AssemblyInfoDrawer'
@@ -237,6 +239,10 @@ export default function GenomeBrowserView({
     onScreenshotAvailabilityChange = null,
     screenshotToggleButtonRef = null,
 }) {
+    // Taken from the context rather than threaded as a prop, the way DownloadView does
+    // it: the tutorial provider sits above App, so every view can reach the runtime
+    // without anything in between having to pass it along.
+    const { emitSignal: emitTutorialSignal, isRunning: tutorialRunning } = useTutorial()
     const [lockPan, setLockPan] = useState(false)
     const [lockZoom, setLockZoom] = useState(false)
 
@@ -706,6 +712,10 @@ export default function GenomeBrowserView({
         const { tempId } = noteStore.createNote(target, {
             onIdAssigned: (fromId, toId) => {
                 setOpenNoteIdByPanel((prev) => (prev[panelKey] === fromId ? { ...prev, [panelKey]: toId } : prev))
+                // The tutorial waits on this rather than on the click, because the click
+                // opens an editor and it is the note landing on the server that the step
+                // is about — and because the id is what Back needs to remove it again.
+                emitTutorialSignal('browser.noteCreated', { geneId, noteId: String(toId) })
             },
         })
         setOpenNoteIdByPanel((prev) => ({ ...prev, [panelKey]: tempId }))
@@ -717,7 +727,7 @@ export default function GenomeBrowserView({
             hoverId: null,
         })
         setFocusDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
-    }, [panels, selectedGenes, notesGenomeKeyFor, handleDetailTranscriptChange, handleFocusTranscriptViewChange, noteStore])
+    }, [panels, selectedGenes, notesGenomeKeyFor, handleDetailTranscriptChange, handleFocusTranscriptViewChange, noteStore, emitTutorialSignal])
 
     const handleNoteDelete = useCallback((panelKey, noteId) => {
         // Deleting is leaving the editor, not navigating to an empty editor
@@ -726,6 +736,52 @@ export default function GenomeBrowserView({
         setNotesPanelOpenByPanel((prev) => ({ ...prev, [panelKey]: false }))
         noteStore.deleteNote(noteId)
     }, [noteStore])
+
+    // The browser's own controls, put back when a tutorial finishes with them.
+    //
+    // The tutorial sandbox is a *configuration* override, and none of these are
+    // configuration: Detail, Flatten, the gene-class filter and the track master switch
+    // all live in this component. So a tutorial that turned three gene classes off would
+    // hand the session back with them still off, and the user would find their own
+    // genomes missing half their genes with nothing on screen to explain why.
+    //
+    // Snapshot on the way in, restore on the way out. Same shape as the focused-gene
+    // snapshot App keeps around the sandbox, and for the same reason.
+    const preTutorialViewRef = useRef(null)
+    useEffect(() => {
+        if (tutorialRunning) {
+            if (!preTutorialViewRef.current) {
+                preTutorialViewRef.current = {
+                    forceTracksVisibility,
+                    hideInactiveMode,
+                    compressMode,
+                    flattenMode,
+                    biotypeFilter,
+                }
+            }
+            return
+        }
+        const snapshot = preTutorialViewRef.current
+        if (!snapshot) return
+        preTutorialViewRef.current = null
+        setForceTracksVisibility(snapshot.forceTracksVisibility)
+        setHideInactiveMode(snapshot.hideInactiveMode)
+        setCompressMode(snapshot.compressMode)
+        setFlattenMode(snapshot.flattenMode)
+        setBiotypeFilter(snapshot.biotypeFilter)
+        // Deliberately not in the dependency list: this has to read whatever the state was
+        // at the moment the tutorial started and whatever it is when the tutorial ends,
+        // and re-running it on every change of them would snapshot the tutorial's own
+        // edits over the user's.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tutorialRunning])
+
+    // Published so a tutorial's Back can remove the note it took. It goes through the
+    // store, so the drawer's note list and the gene's note bubble both update — deleting
+    // server-side alone would leave both showing a note that is no longer there.
+    useEffect(() => registerBrowserNotes({
+        deleteNote: (noteId) => noteStore.deleteNote(noteId),
+    }), [noteStore])
 
     const handleNotesPanelToggle = useCallback((panelKey) => {
         setNotesPanelOpenByPanel((prev) => {
@@ -2338,6 +2394,7 @@ export default function GenomeBrowserView({
 
             <div
                 data-browser-controls="true"
+                data-tour-id="browser-global-controls"
                 className="flex items-center justify-between px-4 py-2 border-b flex-none"
                 style={{
                     backgroundColor: isLight ? '#f1f3f5' : '#1E2938',
@@ -2348,6 +2405,7 @@ export default function GenomeBrowserView({
                     {hasPanels && (
                         <>
                             <button
+                                data-tour-id="browser-tracks-toggle"
                                 onClick={handleGlobalTracksToggle}
                                 className="flex-shrink-0 flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors hover:bg-gray-100 dark:hover:bg-[#373a40]"
                                 style={{
@@ -2396,6 +2454,8 @@ export default function GenomeBrowserView({
                             </button>
 
                             <button
+                                data-tour-id="browser-detail"
+                                data-tutorial-engaged={compressMode ? 'true' : 'false'}
                                 onClick={() => setCompressMode((prev) => !prev)}
                                 className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
                                 style={browserActionButtonStyle(true, compressMode, { emphasizeWhenEnabled: true })}
@@ -2407,6 +2467,8 @@ export default function GenomeBrowserView({
                             </button>
 
                             <button
+                                data-tour-id="browser-flatten"
+                                data-tutorial-engaged={flattenMode ? 'true' : 'false'}
                                 onClick={() => setFlattenMode((prev) => !prev)}
                                 className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
                                 style={browserActionButtonStyle(true, flattenMode, { emphasizeWhenEnabled: true })}
@@ -2420,6 +2482,7 @@ export default function GenomeBrowserView({
                             {!isOverlayActive && (
                                 <>
                                     <button
+                                        data-tour-id="browser-unfocus"
                                         onClick={handleClearFocusedGenes}
                                         disabled={!anyFocusedGene}
                                         className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
@@ -2529,21 +2592,21 @@ export default function GenomeBrowserView({
                                 return (
                                     <>
                                         <div className="h-4 w-px flex-shrink-0 mx-1" style={{ backgroundColor: isLight ? '#dee2e6' : '#495057' }} />
-                                        <div className="grid gap-x-4 gap-y-0.5" style={{ gridTemplateColumns: 'auto auto', fontSize: '10px', lineHeight: '1.35' }}>
+                                        <div data-tour-id="browser-biotype-filter" className="grid gap-x-4 gap-y-0.5" style={{ gridTemplateColumns: 'auto auto', fontSize: '10px', lineHeight: '1.35' }}>
                                             <label className="flex items-center gap-1" style={labelStyle}>
-                                                <input type="checkbox" checked={biotypeFilter.proteinCoding} onChange={() => toggle('proteinCoding')} style={chkStyle} />
+                                                <input data-tour-id="browser-biotype-proteinCoding" type="checkbox" checked={biotypeFilter.proteinCoding} onChange={() => toggle('proteinCoding')} style={chkStyle} />
                                                 Protein-coding
                                             </label>
                                             <label className="flex items-center gap-1" style={labelStyle}>
-                                                <input type="checkbox" checked={biotypeFilter.lncRNA} onChange={() => toggle('lncRNA')} style={chkStyle} />
+                                                <input data-tour-id="browser-biotype-lncRNA" type="checkbox" checked={biotypeFilter.lncRNA} onChange={() => toggle('lncRNA')} style={chkStyle} />
                                                 Long non-coding
                                             </label>
                                             <label className="flex items-center gap-1" style={labelStyle}>
-                                                <input type="checkbox" checked={biotypeFilter.pseudogene} onChange={() => toggle('pseudogene')} style={chkStyle} />
+                                                <input data-tour-id="browser-biotype-pseudogene" type="checkbox" checked={biotypeFilter.pseudogene} onChange={() => toggle('pseudogene')} style={chkStyle} />
                                                 Pseudogene
                                             </label>
                                             <label className="flex items-center gap-1" style={labelStyle}>
-                                                <input type="checkbox" checked={biotypeFilter.smallNonCoding} onChange={() => toggle('smallNonCoding')} style={chkStyle} />
+                                                <input data-tour-id="browser-biotype-smallNonCoding" type="checkbox" checked={biotypeFilter.smallNonCoding} onChange={() => toggle('smallNonCoding')} style={chkStyle} />
                                                 Small non-coding
                                             </label>
                                         </div>

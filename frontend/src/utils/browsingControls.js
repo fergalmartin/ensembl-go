@@ -136,7 +136,8 @@ const SCHEME_DEFINITIONS = [
         label: 'Default',
         description:
             'The wheel zooms in and out on the position under the cursor, and scrolling '
-            + 'sideways moves along the chromosome. Best when one genome fills the window.',
+            + 'sideways moves along the chromosome. Hold Shift while scrolling up or down '
+            + 'to scroll the page. Best when one genome fills the window.',
         wheel: {
             plain_vertical: 'zoom_at_cursor',
             plain_horizontal: 'pan',
@@ -146,7 +147,7 @@ const SCHEME_DEFINITIONS = [
             // zoom, which is enforced for ctrl in resolveWheelAction.
             ctrl_vertical: 'none',
             ctrl_horizontal: 'none',
-            shift_vertical: 'zoom_at_cursor',
+            shift_vertical: 'page_scroll',
             shift_horizontal: 'pan',
             alt_vertical: 'zoom_at_cursor',
             alt_horizontal: 'pan',

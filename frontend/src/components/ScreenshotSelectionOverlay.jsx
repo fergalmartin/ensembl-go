@@ -1,19 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  areRectListsEqual,
+  areSizesEqual,
+  clipRectToContainer,
+  cutoutPathD,
+  viewportRect,
+} from '../utils/overlayGeometry'
 
 const EMPTY_REFS = Object.freeze([])
 const EMPTY_TARGETS = Object.freeze([])
-
-function clipRectToContainer(rect, containerRect) {
-  if (!rect || !containerRect) return null
-  const left = Math.max(0, rect.left - containerRect.left)
-  const top = Math.max(0, rect.top - containerRect.top)
-  const right = Math.min(containerRect.width, rect.right - containerRect.left)
-  const bottom = Math.min(containerRect.height, rect.bottom - containerRect.top)
-  const width = right - left
-  const height = bottom - top
-  if (!(width > 0 && height > 0)) return null
-  return { left, top, width, height }
-}
 
 function resolveTargetFromPoint(targets, clientX, clientY) {
   let bestTarget = null
@@ -45,29 +40,6 @@ function canScrollNode(node, deltaX, deltaY) {
     if (deltaX < 0) return node.scrollLeft > 1
   }
   return false
-}
-
-function areSizesEqual(a, b) {
-  return a?.width === b?.width && a?.height === b?.height
-}
-
-function areRectsEqual(a, b) {
-  return (
-    a?.left === b?.left
-    && a?.top === b?.top
-    && a?.width === b?.width
-    && a?.height === b?.height
-  )
-}
-
-function areRectListsEqual(a, b) {
-  if (a === b) return true
-  if (!Array.isArray(a) || !Array.isArray(b)) return false
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i += 1) {
-    if (!areRectsEqual(a[i], b[i])) return false
-  }
-  return true
 }
 
 export default function ScreenshotSelectionOverlay({
@@ -118,16 +90,7 @@ export default function ScreenshotSelectionOverlay({
       return null
     }
 
-    const containerRect = useViewport
-      ? {
-          left: 0,
-          top: 0,
-          right: window.innerWidth || document.documentElement?.clientWidth || 0,
-          bottom: window.innerHeight || document.documentElement?.clientHeight || 0,
-          width: window.innerWidth || document.documentElement?.clientWidth || 0,
-          height: window.innerHeight || document.documentElement?.clientHeight || 0,
-        }
-      : container.getBoundingClientRect()
+    const containerRect = useViewport ? viewportRect() : container.getBoundingClientRect()
     const nextContainerSize = {
       width: Math.max(0, Math.round(containerRect.width || 0)),
       height: Math.max(0, Math.round(containerRect.height || 0)),
@@ -319,10 +282,7 @@ export default function ScreenshotSelectionOverlay({
         <path
           fill={isLight ? 'rgba(15, 23, 42, 0.28)' : 'rgba(2, 6, 23, 0.58)'}
           fillRule="evenodd"
-          d={[
-            `M0 0H${Math.max(1, containerSize.width)}V${Math.max(1, containerSize.height)}H0Z`,
-            ...cutoutRects.map((rect) => `M${rect.left} ${rect.top}H${rect.left + rect.width}V${rect.top + rect.height}H${rect.left}Z`),
-          ].join(' ')}
+          d={cutoutPathD(containerSize, cutoutRects)}
         />
       </svg>
 

@@ -4,10 +4,14 @@ import test from 'node:test'
 import {
   GENE_FOOTER_CONTROL_TOP_OFFSET,
   GENE_FOOTER_LABEL_BASELINE_OFFSET,
+  geneFooterTrackOverflow,
+  intersectsRuler,
+  TRANSCRIPT_FOOTER_CONTROL_HEIGHT,
   buildGeneLabelCandidate,
   getGeneFooterGeometry,
   getTranscriptBoundaryTrails,
   getTranscriptFooterControlState,
+  placeGeneFooterWithinViewport,
   placeNonOverlappingGeneLabels,
 } from '../src/components/genomeBrowserLabelLayout.js'
 
@@ -236,6 +240,41 @@ test('transcript footer control expands all transcripts and closes with X', () =
   assert.equal(getTranscriptFooterControlState(1, 1), null)
 })
 
+test('an expanded gene footer follows the visible bottom until its natural position arrives', () => {
+  const footer = {
+    topY: 40,
+    labelY: 296,
+    controlY: 300,
+  }
+
+  const firstViewport = placeGeneFooterWithinViewport(footer, { top: 0, bottom: 150 })
+  assert.equal(firstViewport.controlY, 122)
+  assert.equal(firstViewport.labelY, 118)
+  assert.equal(firstViewport.naturalControlY, 300)
+  assert.equal(firstViewport.isViewportPinned, true)
+
+  const scrolledViewport = placeGeneFooterWithinViewport(footer, { top: 100, bottom: 250 })
+  assert.equal(scrolledViewport.controlY, 222)
+  assert.equal(scrolledViewport.labelY, 218)
+  assert.equal(scrolledViewport.isViewportPinned, true)
+
+  const footerReached = placeGeneFooterWithinViewport(footer, { top: 200, bottom: 400 })
+  assert.equal(footerReached, footer)
+})
+
+test('an expanded footer does not appear before its first transcript enters the viewport', () => {
+  const footer = {
+    topY: 200,
+    labelY: 496,
+    controlY: 500,
+  }
+
+  assert.equal(
+    placeGeneFooterWithinViewport(footer, { top: 0, bottom: 180 }),
+    footer,
+  )
+})
+
 test('transcript boundary trails cover both missing gene-edge spans', () => {
   const gene = { start: 100, end: 500 }
   const transcript = { start: 150, end: 400 }
@@ -248,4 +287,85 @@ test('transcript boundary trails cover both missing gene-edge spans', () => {
     { x1: 100, x2: 200, boundaryX: 100 },
     { x1: 450, x2: 500, boundaryX: 500 },
   ])
+})
+
+test('an expanded gene\'s label and X clear the transcript they sit under', () => {
+  // The expanded footer is one row — the gene symbol, then the control — placed by
+  // subtracting EXPANDED_FOOTER_LABEL_TOP_OFFSET from the label baseline. At ten that put
+  // its top exactly on the bottom of the last exon block, so the row sat flush against the
+  // transcript it belongs to; six leaves a visible gap without moving it off the gene.
+  const EXON_HALF_HEIGHT = 6
+  const EXPANDED_FOOTER_LABEL_TOP_OFFSET = 6 // GenomeBrowser.jsx
+  const metrics = { rowPitch: 32, rowGap: 2, midOffset: 8, exonHeight: 12 }
+
+  const footer = getGeneFooterGeometry({
+    gene: { id: 'gene-1', start: 100, end: 900, strand: '-' },
+    txs: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    visibleTranscriptCount: 3,
+    genomicToScreen: (pos) => pos,
+    baseGeneY: 40,
+    transcriptLayoutMetrics: metrics,
+    lhsWidth: 48,
+    viewWidth: 800,
+  })
+
+  const blockBottom = footer.lastTranscriptMidY + EXON_HALF_HEIGHT
+  const rowTop = footer.labelY - EXPANDED_FOOTER_LABEL_TOP_OFFSET
+  assert.ok(rowTop > blockBottom, `the footer row starts at ${rowTop}, the block ends at ${blockBottom}`)
+  assert.ok(rowTop - blockBottom <= 6, 'a slight gap, not a step away from the gene')
+
+  // And the row still fits in the height the track reserves for it, or Flatten would clip
+  // the very controls it now keeps.
+  const lastRowBottom = 40 + (3 * metrics.rowPitch) - metrics.rowGap
+  assert.ok(
+    rowTop + TRANSCRIPT_FOOTER_CONTROL_HEIGHT <= lastRowBottom + geneFooterTrackOverflow(metrics, true),
+    'the footer row overflows the room the track reserves below the last transcript',
+  )
+})
+
+test('a track reserves the room its footer actually needs, in either layout', () => {
+  // The offsets are absolute pixels tuned for the ordinary 42px row pitch. A flattened
+  // track's pitch is 18, so one fixed reserve cannot be right for both — twelve was
+  // generous for the first and six short for the second, and a compact panel puts the
+  // ruler flush against the last track, so those six pixels landed on it.
+  const normal = { rowPitch: 42, rowGap: 2, exonHeight: 12, trackPadding: 16, midOffset: 13 }
+  const flattened = { rowPitch: 18, rowGap: 2, exonHeight: 12, trackPadding: 2, midOffset: 8 }
+
+  for (const [metrics, flat] of [[normal, false], [flattened, true]]) {
+    const reserve = geneFooterTrackOverflow(metrics, flat)
+    for (const rows of [1, 3, 5]) {
+      const footer = getGeneFooterGeometry({
+        gene: { id: 'g', start: 100, end: 900, strand: '+' },
+        txs: Array.from({ length: rows + 1 }, (_, index) => ({ id: `t${index}` })),
+        visibleTranscriptCount: rows,
+        genomicToScreen: (pos) => pos,
+        baseGeneY: metrics.trackPadding,
+        transcriptLayoutMetrics: metrics,
+        lhsWidth: 0,
+        viewWidth: 800,
+      })
+      const geneHeight = flat ? (rows * metrics.rowPitch) - metrics.rowGap : rows * metrics.rowPitch
+      const trackBottom = metrics.trackPadding + geneHeight + reserve
+      // The collapsed control is the deeper of the footer's two forms.
+      const footerBottom = footer.controlY + TRANSCRIPT_FOOTER_CONTROL_HEIGHT
+      assert.ok(
+        footerBottom <= trackBottom,
+        `${flat ? 'flattened' : 'normal'} ${rows}-row footer ends at ${footerBottom}, track at ${trackBottom}`,
+      )
+    }
+  }
+})
+
+test('nothing belonging to a track is drawn into the ruler band', () => {
+  // The backstop for the arithmetic above. It has several inputs, and being wrong about
+  // one of them should cost a hidden label rather than a ruler drawn through a gene symbol.
+  assert.equal(intersectsRuler(100, 116, 120, 24), false, 'clear above the ruler')
+  assert.equal(intersectsRuler(150, 166, 120, 24), false, 'clear below the ruler')
+  assert.equal(intersectsRuler(118, 134, 120, 24), true, 'overlapping its top edge')
+  assert.equal(intersectsRuler(130, 146, 120, 24), true, 'starting inside it')
+  // Touching the edge is not overlapping it.
+  assert.equal(intersectsRuler(104, 120, 120, 24), false)
+  assert.equal(intersectsRuler(144, 160, 120, 24), false)
+  // A collapsed ruler has no band to intrude on.
+  assert.equal(intersectsRuler(118, 134, 120, 0), false)
 })

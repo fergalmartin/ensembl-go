@@ -8,10 +8,10 @@
 
 export const DOWNLOAD_FILE_DEFS = {
     fasta: { label: 'Genome', shortLabel: 'Genome', category: 'Genome', subtype: 'FASTA', color: 'bg-amber-100 text-amber-800', tooltip: 'Genome FASTA; central to app views.' },
-    gff3: { label: 'GFF3', shortLabel: 'GFF3', category: 'Annotation', subtype: 'GFF3', color: 'bg-purple-100 text-purple-800', tooltip: 'GFF3 annotation; central to app views.' },
-    homology: { label: 'Homology', shortLabel: 'Homology', category: 'Homology', subtype: 'TSV', color: 'bg-teal-100 text-teal-800', tooltip: 'Homology table used by comparative views.' },
-    cdna: { label: 'cDNA', shortLabel: 'cDNA', category: 'Transcript', subtype: 'cDNA', color: 'bg-lime-100 text-lime-800', tooltip: 'cDNA FASTA; downloaded for optional/external use.' },
-    protein: { label: 'Protein', shortLabel: 'Protein', category: 'Protein', subtype: 'FASTA', color: 'bg-rose-100 text-rose-800', tooltip: 'Protein FASTA; downloaded for optional/external use.' },
+    gff3: { label: 'Genes', shortLabel: 'Genes', category: 'Annotation', subtype: 'GFF3', color: 'bg-purple-100 text-purple-800', tooltip: 'GFF3 annotation; central to app views.' },
+    homology: { label: 'Homologies', shortLabel: 'Homologies', category: 'Homology', subtype: 'TSV', color: 'bg-teal-100 text-teal-800', tooltip: 'Homology table used by comparative views.' },
+    cdna: { label: 'cDNAs', shortLabel: 'cDNAs', category: 'Transcript', subtype: 'cDNA', color: 'bg-lime-100 text-lime-800', tooltip: 'cDNA FASTA; downloaded for optional/external use.' },
+    protein: { label: 'Proteins', shortLabel: 'Proteins', category: 'Protein', subtype: 'FASTA', color: 'bg-rose-100 text-rose-800', tooltip: 'Protein FASTA; downloaded for optional/external use.' },
     xref: { label: 'Xrefs', shortLabel: 'Xrefs', category: 'Xref', subtype: 'TSV', color: 'bg-cyan-100 text-cyan-800', tooltip: 'External references; downloaded for optional/external use.' },
     metadata: { label: 'Metadata', shortLabel: 'Meta', category: 'Metadata', subtype: 'Assembly', color: 'bg-sky-100 text-sky-800', tooltip: 'Assembly report / sequence metadata.' },
     index: { label: 'App index', shortLabel: 'Index', category: 'Index', subtype: 'App GFF3', color: 'bg-blue-100 text-blue-800', tooltip: 'Local app-generated GFF3 index.' },

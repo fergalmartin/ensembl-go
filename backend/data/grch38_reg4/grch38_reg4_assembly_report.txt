@@ -1,0 +1,5 @@
+# Assembly name:  GRCh38-REG4-slice
+# Organism name:  Homo sapiens (demo slice)
+# Taxid:          9606
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+1	assembled-molecule	1	Chromosome	na	=	1	Primary Assembly	120120000	chr1

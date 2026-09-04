@@ -246,6 +246,7 @@ export default function FocusNotesPanel({
                     </span>
                     <button
                         type="button"
+                        data-tour-id="focus-note-save"
                         // In conflict this button is "Keep mine", so it has to
                         // overwrite rather than offer the same stamp the server
                         // already refused.
@@ -288,6 +289,7 @@ export default function FocusNotesPanel({
                 )}
 
                 <input
+                    data-tour-id="focus-note-title"
                     type="text"
                     value={openNote.title}
                     onChange={(event) => onFieldChange?.(openNote.id, { title: event.target.value })}
@@ -302,6 +304,7 @@ export default function FocusNotesPanel({
                     click "Edit" before they can add a line to their own note is
                     a tax on the one action this panel exists for. */}
                 <textarea
+                    data-tour-id="focus-note-body"
                     ref={bodyRef}
                     value={openNote.body}
                     onChange={(event) => onFieldChange?.(openNote.id, { body: event.target.value })}

@@ -8,6 +8,7 @@ from typing import Any, Iterable, Iterator, List, Optional, Tuple
 DEFAULT_PROVIDER = "ensembl"
 NCBI_PROVIDER = "ncbi"
 MANUAL_PROVIDER = "manual"
+DEMO_PROVIDER = "demo"
 DATASET_SELECTION_SEPARATOR = "::dataset::"
 _STORAGE_PROVIDER_DIRS = {NCBI_PROVIDER}
 
@@ -178,7 +179,11 @@ def iter_local_assembly_dirs(local_root: Path) -> Iterator[Tuple[str, str, str, 
         if not first_level.is_dir():
             continue
         name = first_level.name
-        if name in _STORAGE_PROVIDER_DIRS:
+        # Demo is a provider directory only inside the disposable tutorial workspace.
+        # Treating every top-level `local_data/demo` directory this way would reclassify
+        # a perfectly valid legacy species whose key happened to be "demo".
+        is_tutorial_demo_provider = name == DEMO_PROVIDER and ".ensembl_go_tutorial" in local_root.parts
+        if name in _STORAGE_PROVIDER_DIRS or is_tutorial_demo_provider:
             provider = name
             for species_dir in sorted(first_level.iterdir()):
                 if not species_dir.is_dir():

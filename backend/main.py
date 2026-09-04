@@ -23,22 +23,24 @@ import threading
 import uuid
 import queue
 from collections import Counter, OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
-from urllib.parse import urlparse, unquote, urlunparse
+from urllib.parse import urlparse, quote, unquote, urlencode, urlunparse
 import urllib.request
 import urllib.error
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, IO, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, IO, Set
 from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 import pysam
+import requests
 from Bio.Seq import Seq
 import asyncio
 
@@ -60,6 +62,22 @@ from assembly_report import (
     load_assembly_synonym_rows,
     parse_assembly_report_file,
     resolve_region_name,
+)
+import tutorial_authoring
+import tutorial_packages
+import tutorial_datasets
+from demo_genome import (
+    TUTORIAL_WORKSPACE_DIR,
+    clear_tutorial_session_genome,
+    demo_index_target,
+    demo_install_status,
+    demo_install_statuses,
+    install_demo_genome,
+    reset_tutorial_workspace,
+    set_tutorial_session_genome,
+    tutorial_session_species,
+    tutorial_session_workspace,
+    tutorial_workspace,
 )
 from genome_identity import (
     DEFAULT_PROVIDER,
@@ -118,6 +136,8 @@ from manual_genome_config import (
     parse_manual_genome_config,
     save_manual_genome_config,
 )
+import notes_transfer
+import protein_structure
 import removal_rules
 from translation import (
     MOLECULE_NUCLEAR,
@@ -144,6 +164,7 @@ from sv_config import (
 from security_utils import (
     get_with_validated_redirects,
     normalize_trackhub_data_url,
+    validate_annotation_service_url,
     require_loopback_client,
     require_path_within,
     safe_export_filename,
@@ -459,6 +480,10 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="Ensembl Go API", lifespan=_lifespan)
 API_TOKEN = os.environ.get("ENSEMBL_LOCAL_API_TOKEN", "").strip()
 API_TOKEN_HEADER = "x-ensembl-local-token"
+# Routes serving the sandboxed 3D structure viewer. Kept off /api because these
+# are framed navigations and third-party subresource fetches rather than calls
+# the app's own fetch wrapper makes; see enforce_local_origin.
+STRUCTURE_VIEWER_PREFIX = "/structure/"
 
 # Allow only local renderer origins (Electron file origin is "null")
 app.add_middleware(
@@ -512,13 +537,23 @@ async def enforce_local_origin(request: Request, call_next):
     path = request.url.path or ""
     client_host = getattr(request.client, "host", "") if request.client else ""
     require_loopback_client(client_host)
-    if path.startswith("/api") and path != "/api/health":
+    guarded = path.startswith("/api") and path != "/api/health"
+    framed = path.startswith(STRUCTURE_VIEWER_PREFIX)
+    if guarded or framed:
         origin = request.headers.get("origin")
         referer = request.headers.get("referer")
         if not _is_allowed_origin(origin) or not _is_allowed_referer(referer):
             return JSONResponse(status_code=403, content={"detail": "Forbidden origin"})
         if API_TOKEN and request.method.upper() != "OPTIONS":
-            provided = request.headers.get(API_TOKEN_HEADER, "")
+            # The structure viewer is loaded as an iframe and then fetches its own
+            # assets and model file. Neither a frame navigation nor a fetch the
+            # third-party viewer issues on its own behalf can carry a header, so
+            # this one prefix accepts the token from the query string instead.
+            provided = (
+                request.query_params.get("token", "")
+                if framed else
+                request.headers.get(API_TOKEN_HEADER, "")
+            )
             if not hmac.compare_digest(provided, API_TOKEN):
                 return JSONResponse(status_code=401, content={"detail": "Missing or invalid local API token"})
     return await call_next(request)
@@ -5993,9 +6028,26 @@ class ConfigUpdate(BaseModel):
     save_path: Optional[str] = None  # Optional path to save to
 
 
+def _is_tutorial_workspace_path(value: Any) -> bool:
+    """Whether a path is a tutorial's scratch directory rather than a real output dir."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    return Path(text).name == TUTORIAL_WORKSPACE_DIR
+
+
 @app.post("/api/config")
 async def update_config(config: ConfigUpdate):
     """Save configuration to disk. If save_path is provided, save there; otherwise save to default cache."""
+    # A tutorial runs on a configuration overlay pointing at a scratch directory, and that
+    # overlay must never become the saved configuration — it would survive the tutorial and
+    # leave the user pointed at a directory that is about to be deleted. The frontend
+    # already refuses these writes, but this is the guarantee: it does not depend on which
+    # order two effects happen to run in.
+    if _is_tutorial_workspace_path(getattr(config, "output_dir", "")):
+        logger.warning("Refusing to save a configuration pointing at the tutorial workspace")
+        return load_config()
+
     # Merge incoming fields over the existing saved config so that fields not present
     # in the ConfigUpdate model (e.g. ref_index / target_index written by generate_indexes)
     # are never silently dropped.
@@ -6165,6 +6217,11 @@ async def list_files(path: str = "."):
             target_path = _default_file_browser_path()
         else:
             target_path = Path(requested_path)
+
+        # The browser deliberately recovers from a missing path by showing its nearest
+        # usable parent. Callers that are validating a typed directory still need to know
+        # that recovery happened, or a typo such as /outputt silently becomes /.
+        requested_path_valid = target_path.exists() and target_path.is_dir()
         
         if not target_path.exists():
              # Try to recover - maybe parent exists?
@@ -6216,6 +6273,7 @@ async def list_files(path: str = "."):
         
         return {
             "current_path": str(target_path.absolute()),
+            "requested_path_valid": requested_path_valid,
             "items": items
         }
     except HTTPException:
@@ -6235,7 +6293,7 @@ class MkdirRequest(BaseModel):
 async def create_directory(request: MkdirRequest):
     """Create one new directory inside a directory that already exists.
 
-    The file browser only ever creates a single folder inside the directory the
+    The file browser only ever creates a single directory inside the directory the
     user is currently viewing, so the request is held to exactly that: an
     existing parent plus one leaf name. Creating whole nested trees at an
     arbitrary path is refused, which keeps this from being a general "write
@@ -6895,6 +6953,10 @@ def _release_short_label(source: str, date: str, label: str = "") -> str:
     label_text = str(label or "").strip()
     if source_text == "custom":
         return label_text or (f"custom {date_text.replace('_', '-')}" if date_text else "custom")
+    # A demo release has only ever one version, so its date ("current") says nothing worth
+    # the badge space; the label does.
+    if source_text == "demo":
+        return label_text or "Demo"
     if date_text and date_text != "unknown":
         return date_text.replace("_", "-")
     if label_text:
@@ -7708,6 +7770,449 @@ async def check_local_files(
     }
 
 
+@app.get("/api/demo/genome")
+async def get_demo_genome(output_dir: str = "", genome_id: str = ""):
+    """A bundled genome's catalogue entry, and whether it is already installed.
+
+    The download view asks for this while a tutorial is running so it can show the
+    tutorials' genomes alongside the real catalogue.
+
+    ``genomes`` is the list; ``species`` and the rest of the top level describe one of
+    them — the one asked for, or the demo genome — because that is the shape this
+    endpoint had when there was only ever one.
+    """
+    status = demo_install_status(output_dir, genome_id or None)
+    status["genomes"] = demo_install_statuses(output_dir)
+    return status
+
+
+class DemoGenomeInstallRequest(BaseModel):
+    output_dir: str
+    genome_id: str = ""
+
+
+@app.post("/api/demo/genome/install")
+async def post_demo_genome_install(request: DemoGenomeInstallRequest):
+    """Install a bundled genome, standing in for a download during a tutorial.
+
+    Indexes it on the way out. The annotations are small — a few kilobytes for the demo
+    genome, a hundred transcripts for the chromosome-1 slice — so building the index here
+    rather than in the background costs little and means the browser is ready by the time
+    the tutorial's next step arrives.
+    """
+    output_dir = str(request.output_dir or "").strip()
+    if not output_dir:
+        raise HTTPException(status_code=400, detail="output_dir is required")
+    genome_id = str(request.genome_id or "").strip() or None
+    try:
+        status = install_demo_genome(output_dir, genome_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    target = demo_index_target(output_dir, genome_id)
+    if target:
+        gff_path, index_path = target
+        try:
+            status["index"] = ensure_gff_index(gff_path, index_path)
+        except Exception as exc:
+            # A missing index is recoverable — the browser rebuilds on demand — so the
+            # tutorial should carry on rather than fail here.
+            status["index_error"] = str(exc)
+    return status
+
+
+class TutorialWorkspaceRequest(BaseModel):
+    output_dir: str
+
+
+@app.post("/api/tutorial/workspace")
+async def post_tutorial_workspace(request: TutorialWorkspaceRequest):
+    """Create the scratch directory a tutorial runs in, inside the user's output dir.
+
+    A tutorial never writes to the real configuration, so this is the only trace it
+    leaves on disk — and it is removed again on the way out.
+    """
+    try:
+        workspace = tutorial_workspace(request.output_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    workspace.mkdir(parents=True, exist_ok=True)
+    return {"workspace": str(workspace)}
+
+
+@app.delete("/api/tutorial/workspace")
+async def delete_tutorial_workspace(output_dir: str):
+    """Remove the tutorial scratch directory.
+
+    Called when a tutorial ends, and again on launch, so a run interrupted by a crash
+    does not leave the demo genome sitting in the user's output directory.
+    """
+    clear_tutorial_session_genome()
+    try:
+        return reset_tutorial_workspace(output_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class TutorialSessionRequest(BaseModel):
+    genome: Dict[str, Any]
+
+
+@app.post("/api/tutorial/session")
+async def post_tutorial_session(request: TutorialSessionRequest):
+    """Tell the browser about the genome the running tutorial has activated.
+
+    The tutorial's active genome lives in the frontend's configuration override and is
+    never saved, which is what keeps the user's setup untouched — but the genome browser
+    resolves genomes on this side, from the saved configuration, so without this it
+    answers every request for the demo genome with "invalid genome" and draws empty
+    tracks. This holds it in memory for the life of the process instead.
+    """
+    try:
+        registered = set_tutorial_session_genome(request.genome)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"registered": True, "genome": _active_species_item_key(registered)}
+
+
+# ── Editing a tutorial's wording from inside the app ─────────────────────────
+#
+# A developer tool. `TUTORIAL_AUTHORING` is the switch: set it False and both endpoints
+# below refuse, the frontend hides the control, and the feature is gone without anything
+# else having to be unpicked. It is off in anything but a source checkout regardless,
+# because there is nothing to edit in a packaged build.
+TUTORIAL_AUTHORING = True
+TUTORIAL_BUILDER = True
+
+
+def _tutorial_authoring_enabled() -> bool:
+    return bool(TUTORIAL_AUTHORING) and tutorial_authoring.is_available()
+
+
+def _tutorial_builder_enabled() -> bool:
+    return bool(TUTORIAL_BUILDER) and _tutorial_authoring_enabled()
+
+
+@app.get("/api/tutorial/authoring")
+async def get_tutorial_authoring():
+    """Whether tutorial text can be edited in place, so the frontend can hide the control."""
+    return {"enabled": _tutorial_authoring_enabled(), "builder_enabled": _tutorial_builder_enabled()}
+
+
+class TutorialAuthoringRequest(BaseModel):
+    tutorial_id: str
+    step_id: str
+    field: str
+    value: str
+
+
+class TutorialAuthoringPositionRequest(BaseModel):
+    tutorial_id: str
+    step_id: str
+    x: float
+    y: float
+
+
+class TutorialAuthoringSizeRequest(BaseModel):
+    tutorial_id: str
+    step_id: str
+    width: Optional[float] = None
+    height: Optional[float] = None
+
+
+class TutorialDraftSaveRequest(BaseModel):
+    output_dir: str
+    tutorial: Dict[str, Any]
+
+
+class TutorialCheckpointSaveRequest(BaseModel):
+    output_dir: str
+    tutorial_id: str
+    name: str
+    tutorial: Dict[str, Any]
+
+
+class TutorialPackageExportRequest(BaseModel):
+    output_dir: str
+    tutorial_id: str
+    path: str
+
+
+class TutorialPackageImportRequest(BaseModel):
+    output_dir: str
+    path: str
+
+
+class TutorialPromoteRequest(BaseModel):
+    output_dir: str
+    tutorial_id: str
+
+
+class TutorialDatasetGenerateRequest(BaseModel):
+    output_dir: str
+    tutorial_id: str
+    fasta_path: str
+    annotation_path: str
+    chrom: str
+    start: int
+    end: int
+    partial_mode: str = "expand"
+    source: Optional[Dict[str, Any]] = None
+
+
+class TutorialDatasetFixtureRequest(BaseModel):
+    output_dir: str
+    tutorial_id: str
+    fixture_id: str
+
+
+class TutorialDatasetInstallRequest(BaseModel):
+    output_dir: str
+    tutorial_id: str
+    recipe_id: str
+    workspace: str
+
+
+@app.post("/api/tutorial/authoring/step")
+async def post_tutorial_authoring_step(request: TutorialAuthoringRequest):
+    """Write one step's wording back into its definition file.
+
+    Narrow on purpose: one named field of one named step, and only the words shown on a
+    card. Shared section headings are followed back to their local SECTION constant. See
+    backend/tutorial_authoring.py for what stops it doing more.
+    """
+    if not _tutorial_authoring_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial editing is not enabled.")
+    try:
+        return await run_in_threadpool(
+            tutorial_authoring.save_step_field,
+            request.tutorial_id,
+            request.step_id,
+            request.field,
+            request.value,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write the definition: {exc}")
+
+
+@app.post("/api/tutorial/authoring/step-position")
+async def post_tutorial_authoring_step_position(request: TutorialAuthoringPositionRequest):
+    """Persist a normalized card position chosen by dragging its authoring header."""
+    if not _tutorial_authoring_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial editing is not enabled.")
+    try:
+        return await run_in_threadpool(
+            tutorial_authoring.save_step_position,
+            request.tutorial_id,
+            request.step_id,
+            request.x,
+            request.y,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write the definition: {exc}")
+
+
+@app.post("/api/tutorial/authoring/step-size")
+async def post_tutorial_authoring_step_size(request: TutorialAuthoringSizeRequest):
+    """Persist card dimensions chosen with its authoring resize handles."""
+    if not _tutorial_authoring_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial editing is not enabled.")
+    try:
+        return await run_in_threadpool(
+            tutorial_authoring.save_step_size,
+            request.tutorial_id,
+            request.step_id,
+            request.width,
+            request.height,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write the definition: {exc}")
+
+
+# ── Declarative tutorial drafts and portable packages ───────────────────────
+
+@app.get("/api/tutorial/drafts")
+async def get_tutorial_drafts(output_dir: str = ""):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial building is not enabled.")
+    try:
+        return {"drafts": await run_in_threadpool(tutorial_packages.list_drafts, output_dir)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tutorial/drafts")
+async def post_tutorial_draft(request: TutorialDraftSaveRequest):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial building is not enabled.")
+    try:
+        return await run_in_threadpool(tutorial_packages.save_draft, request.output_dir, request.tutorial)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not save the tutorial draft: {exc}")
+
+
+@app.delete("/api/tutorial/drafts/{tutorial_id}")
+async def delete_tutorial_draft(tutorial_id: str, output_dir: str = ""):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial building is not enabled.")
+    try:
+        return {"deleted": await run_in_threadpool(tutorial_packages.delete_draft, output_dir, tutorial_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/tutorial/drafts/{tutorial_id}/checkpoints")
+async def get_tutorial_checkpoints(tutorial_id: str, output_dir: str = ""):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial building is not enabled.")
+    try:
+        return {"checkpoints": await run_in_threadpool(tutorial_packages.list_checkpoints, output_dir, tutorial_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tutorial/drafts/checkpoints")
+async def post_tutorial_checkpoint(request: TutorialCheckpointSaveRequest):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial building is not enabled.")
+    try:
+        return await run_in_threadpool(
+            tutorial_packages.save_checkpoint,
+            request.output_dir,
+            request.tutorial_id,
+            request.name,
+            request.tutorial,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tutorial/packages/export")
+async def post_tutorial_package_export(request: TutorialPackageExportRequest):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial building is not enabled.")
+    try:
+        return await run_in_threadpool(
+            tutorial_packages.export_package,
+            request.output_dir,
+            request.tutorial_id,
+            request.path,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not export the tutorial package: {exc}")
+
+
+@app.get("/api/tutorial/packages/scan")
+async def get_tutorial_package_scan(path: str = ""):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial building is not enabled.")
+    try:
+        return await run_in_threadpool(tutorial_packages.scan_package, path)
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tutorial/packages/import")
+async def post_tutorial_package_import(request: TutorialPackageImportRequest):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial building is not enabled.")
+    try:
+        return await run_in_threadpool(tutorial_packages.import_package, request.path, request.output_dir)
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tutorial/drafts/promote")
+async def post_tutorial_draft_promote(request: TutorialPromoteRequest):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial promotion is not enabled.")
+    repository_root = Path(__file__).resolve().parents[1]
+    try:
+        return await run_in_threadpool(
+            tutorial_packages.promote_draft,
+            request.output_dir,
+            request.tutorial_id,
+            repository_root,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not promote the tutorial: {exc}")
+
+
+@app.post("/api/tutorial/datasets/generate")
+async def post_tutorial_dataset_generate(request: TutorialDatasetGenerateRequest):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial dataset authoring is not enabled.")
+    try:
+        return await run_in_threadpool(
+            tutorial_datasets.generate_recipe,
+            request.output_dir,
+            request.tutorial_id,
+            request.fasta_path,
+            request.annotation_path,
+            request.chrom,
+            request.start,
+            request.end,
+            request.partial_mode,
+            request.source,
+        )
+    except (ValueError, OSError, pysam.utils.SamtoolsError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tutorial/datasets/fixture")
+async def post_tutorial_dataset_fixture(request: TutorialDatasetFixtureRequest):
+    if not _tutorial_builder_enabled():
+        raise HTTPException(status_code=404, detail="Tutorial dataset authoring is not enabled.")
+    try:
+        return await run_in_threadpool(
+            tutorial_datasets.generate_fixture_pack,
+            request.output_dir,
+            request.tutorial_id,
+            request.fixture_id,
+        )
+    except (ValueError, OSError, pysam.utils.SamtoolsError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tutorial/datasets/install")
+async def post_tutorial_dataset_install(request: TutorialDatasetInstallRequest):
+    expected_workspace = tutorial_workspace(request.output_dir).resolve()
+    supplied_workspace = Path(request.workspace).expanduser().resolve()
+    if supplied_workspace != expected_workspace:
+        raise HTTPException(status_code=400, detail="Tutorial datasets may only be installed in the active tutorial workspace.")
+    try:
+        return await run_in_threadpool(
+            tutorial_datasets.install_recipe,
+            request.output_dir,
+            request.tutorial_id,
+            request.recipe_id,
+            request.workspace,
+        )
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/api/tutorial/session")
+async def delete_tutorial_session():
+    """Forget it again, when the tutorial ends."""
+    clear_tutorial_session_genome()
+    return {"registered": False}
+
+
 @app.get("/api/remote/local-assemblies")
 async def list_local_assemblies(output_dir: str):
     """Scan output_dir/local_data/ and return all locally downloaded assemblies with file paths."""
@@ -7741,6 +8246,7 @@ async def list_local_assemblies(output_dir: str):
         manifest = _load_genome_manifest(asm_dir, assembly)
         scanned = _scan_local_assembly(asm_dir, assembly, manifest)
         download_managed = _is_download_managed_assembly(manifest, asm_dir, assembly)
+        is_demo = bool(manifest.get("is_demo"))
         types = list(scanned.get("types") or [])
         files = dict(scanned.get("files") or {})
 
@@ -7828,10 +8334,20 @@ async def list_local_assemblies(output_dir: str):
         genome_key = build_provider_aware_genome_key(species_key, assembly, provider)
         metadata = _genome_key_display_metadata(genome_key)
         if metadata:
-            scientific_name = metadata.get("scientific_name") or scientific_name
-            common_name = metadata.get("common_name") or common_name
-            display_name = metadata.get("display_name") or display_name
-            display_name_reason = metadata.get("display_name_reason") or display_name_reason
+            # `_genome_key_display_metadata` always answers something: with nothing in the
+            # configuration and nothing in the catalogue it falls back to a title-cased
+            # species key. That is a reasonable last resort, but it must not overwrite a
+            # manifest that knows the real name — a genome actually called "Ensemblus
+            # welcomus" was being listed everywhere as "Ensemblus Welcomus".
+            derived_only = (
+                not metadata.get("common_name")
+                and metadata.get("scientific_name") == _format_species_key_for_display(species_key)
+            )
+            if not (derived_only and scientific_name):
+                scientific_name = metadata.get("scientific_name") or scientific_name
+                common_name = metadata.get("common_name") or common_name
+                display_name = metadata.get("display_name") or display_name
+                display_name_reason = metadata.get("display_name_reason") or display_name_reason
             if _is_useful_assembly_name(metadata.get("assembly_name"), assembly):
                 assembly_name = metadata["assembly_name"]
         if not display_name:
@@ -7885,7 +8401,17 @@ async def list_local_assemblies(output_dir: str):
             "dataset_releases": scanned.get("dataset_releases") or [],
             "download_managed": download_managed,
             "delete_blocked_reason": "" if download_managed else _CUSTOM_FILES_DELETE_DETAIL,
-            "retired_remote": not (
+            "is_demo": is_demo,
+            # Carried through from the manifest so the record stays self-describing. A
+            # tutorial's genomes are held as the catalogue's records rather than the
+            # records the install returned, and registering one as browsable is refused
+            # unless it can say which generated dataset it is — dropping this here left
+            # every re-registration answering 400 and the genome browser unable to
+            # recover the tutorial's genomes after a backend restart.
+            "tutorial_dataset_id": str(manifest.get("tutorial_dataset_id") or ""),
+            # The demo genome is not in any remote catalogue and never will be, so the
+            # usual "we could not find this upstream" reasoning does not apply to it.
+            "retired_remote": (not is_demo) and not (
                 species_key in species_lookup
                 and (
                     (
@@ -9245,11 +9771,22 @@ def _browse_index_for(gff_path: str, db_path: str, cfg: Dict[str, Any], species:
     return _resolve_annotation_index(gff_path, cfg, assembly) or saved
 
 
+def _browsable_active_species(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The genomes the browser may be asked to resolve.
+
+    Normally just the configuration's own. A running tutorial adds its demo genome here
+    and nowhere else: it is deliberately absent from the saved configuration, so without
+    this the browser would reject the only genome the tutorial has to show. See
+    ``demo_genome.set_tutorial_session_genome`` for what that registration will accept.
+    """
+    return _dedupe_active_species(list(cfg.get("active_species") or []) + tutorial_session_species())
+
+
 def _resolve_browse_genome_context(genome: str) -> Dict[str, Any]:
     cfg = load_config()
     token = str(genome or "reference").strip() or "reference"
     legacy = token.lower()
-    active_species = _dedupe_active_species(cfg.get("active_species") or [])
+    active_species = _browsable_active_species(cfg)
 
     if legacy in {"reference", "target"}:
         if legacy == "reference":
@@ -9330,6 +9867,29 @@ def _resolve_browse_genome_context(genome: str) -> Dict[str, Any]:
         "fasta_path": fasta_path,
         "species": species,
     }
+
+
+def _genome_browsable_ranges(genome: str) -> Dict[str, Any]:
+    """Per-region browsable windows a genome's manifest declares, if any.
+
+    Read from the manifest on disk rather than from the genome record, because the record
+    is assembled by ``list_local_assemblies`` and carries only the fields it knows about.
+    Empty for everything that does not declare one, which is everything except the
+    tutorial's chromosome-1 slice.
+    """
+    try:
+        context = _resolve_browse_genome_context(genome)
+        fasta_path = str(context.get("fasta_path") or "").strip()
+        if not fasta_path:
+            return {}
+        for manifest_path in Path(fasta_path).parent.glob("*.genome_manifest.json"):
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            declared = manifest.get("browsable_range") or {}
+            if isinstance(declared, dict):
+                return declared
+    except Exception:
+        pass
+    return {}
 
 
 def _get_genome_metadata_path(genome: str) -> Optional[str]:
@@ -9457,6 +10017,13 @@ class RegionInfo(BaseModel):
     length: int
     synonyms: List[str] = []
     display_name: Optional[str] = None
+    # The part of this region worth looking at, when the genome says that is narrower than
+    # the region itself. Only the bundled tutorial slice declares one: it is a real
+    # chromosome coordinate space holding a small window of real sequence, and without
+    # this the browser happily pans out into a hundred megabases of padding. Absent for
+    # every other genome, which is left exactly as it was.
+    browsable_start: Optional[int] = None
+    browsable_end: Optional[int] = None
 
 
 class BrowseGene(BaseModel):
@@ -9812,6 +10379,144 @@ class ProteinDomainsRequest(BaseModel):
 
 class ProteinDomainsResponse(BaseModel):
     rows: List[ProteinDomainRow]
+
+
+# ── 3D structure models ────────────────────────────────────────────────────────
+
+class StructureModelInfo(BaseModel):
+    """The AlphaFold entry backing a structure view."""
+    accession: str = ""
+    model_entity_id: str = ""
+    version: int = 0
+    sequence_length: int = 0
+    sequence_start: int = 1
+    sequence_end: int = 0
+    fragment_count: int = 1
+    model_url: str = ""            # local, backend-proxied mmCIF the viewer loads
+    afdb_url: str = ""             # AlphaFold DB page, for attribution and link-out
+
+class StructureResolveRequest(BaseModel):
+    genome: str = "reference"
+    transcript_id: str = ""
+    protein_id: str = ""
+    accession_override: str = ""
+
+class StructureResolveResponse(BaseModel):
+    transcript_id: str = ""
+    protein_id: str = ""
+    uniprot_accession: str = ""
+    source: str = ""               # manual | custom_tsv | xref | uniprot_api
+    status: str = "ok"             # ok | no_cds | no_accession | no_model | error
+    message: str = ""
+    protein_length: int = 0
+    model: Optional[StructureModelInfo] = None
+
+class StructureResidueSegment(BaseModel):
+    """One run of model residues contributed by a single coding exon."""
+    exon_index: int = 0            # 0-based index into the transcript's CDS segments
+    aa_start: int = 0              # 1-based position in the local translation
+    aa_end: int = 0
+    model_start: int = 0           # 1-based residue number in the AlphaFold model
+    model_end: int = 0
+    genomic_start: Optional[int] = None
+    genomic_end: Optional[int] = None
+
+class StructureResidueMapRequest(BaseModel):
+    genome: str = "reference"
+    transcript_id: str = ""
+    accession: str = ""
+
+class StructureResidueMapResponse(BaseModel):
+    transcript_id: str = ""
+    accession: str = ""
+    status: str = "ok"             # ok | no_cds | no_model | error
+    message: str = ""
+    identical: bool = False        # local translation equals the modelled sequence
+    aligned: bool = False          # an alignment was needed to reconcile them
+    identity: float = 0.0
+    coverage: float = 0.0          # fraction of local residues present in the model
+    local_length: int = 0
+    model_length: int = 0
+    exon_count: int = 0
+    unmapped_residues: int = 0
+    strand: str = "+"
+    segments: List[StructureResidueSegment] = []
+    warnings: List[str] = []
+
+class StructureTranscriptOption(BaseModel):
+    """Whether one transcript has a structure worth offering in the dropdown."""
+    transcript_id: str = ""
+    protein_id: str = ""
+    status: str = "unknown"        # ok | no_cds | no_accession | no_model | unknown | error
+    accession: str = ""
+    source: str = ""
+    model_version: int = 0
+    protein_length: int = 0
+    model_length: int = 0
+    identical: bool = False        # translation length matches the modelled sequence
+    message: str = ""
+
+class StructureTranscriptsRequest(BaseModel):
+    genome: str = "reference"
+    transcript_ids: List[str] = []
+
+class StructureTranscriptsResponse(BaseModel):
+    # probed: every transcript was checked. partial: some lookups did not finish
+    # in time. canonical_only: the set was too large to probe at all.
+    mode: str = "probed"
+    checked: int = 0
+    message: str = ""
+    entries: List[StructureTranscriptOption] = []
+
+class StructureVariant(BaseModel):
+    track_id: str = ""
+    chrom: str = ""
+    pos: int = 0                   # 1-based genomic position of the REF allele
+    ref: str = ""
+    alt: str = ""
+    variant_id: str = ""
+    aa_index: int = 0              # 1-based position in the local translation
+    model_residue: int = 0         # 1-based residue number in the AlphaFold model
+    exon_index: int = 0
+    ref_aa: str = ""
+    alt_aa: str = ""
+    consequence: str = ""          # synonymous | missense | stop_gained | …
+    impact: str = "other"          # silent | missense | truncating | other
+    ref_mismatch: bool = False     # the VCF REF disagrees with the loaded genome
+
+class StructureVariantsRequest(BaseModel):
+    genome: str = "reference"
+    transcript_id: str = ""
+    accession: str = ""
+    track_ids: List[str] = []
+
+class StructureVariantTrackResult(BaseModel):
+    track_id: str = ""
+    label: str = ""
+    status: str = "ok"             # ok | not_found | wrong_type | unreadable
+    message: str = ""
+    variants: List[StructureVariant] = []
+    truncated: bool = False
+    ref_mismatches: int = 0
+
+class StructureVariantsResponse(BaseModel):
+    transcript_id: str = ""
+    accession: str = ""
+    status: str = "ok"             # ok | no_cds | no_model | error
+    message: str = ""
+    tracks: List[StructureVariantTrackResult] = []
+    warnings: List[str] = []
+
+class StructureMappingImportRequest(BaseModel):
+    path: str = ""
+
+class StructureMappingStatusResponse(BaseModel):
+    configured: bool = False
+    path: str = ""
+    format: str = ""
+    entry_count: int = 0
+    row_count: int = 0
+    message: str = ""
 
 
 def _parse_gff_attributes(attr_str: str) -> dict:
@@ -10231,6 +10936,19 @@ async def browse_regions(genome: str = "reference", min_length: int = 0):
                     )
         except Exception:
             pass  # FASTA complement is best-effort
+
+        for chrom, window in (_genome_browsable_ranges(genome) or {}).items():
+            region = results_by_chrom.get(str(chrom))
+            if not region or not isinstance(window, (list, tuple)) or len(window) != 2:
+                continue
+            try:
+                lo, hi = int(window[0]), int(window[1])
+            except (TypeError, ValueError):
+                continue
+            if lo >= hi:
+                continue
+            region.browsable_start = max(region.start, lo)
+            region.browsable_end = min(region.end, hi)
 
         results = list(results_by_chrom.values())
         if not results and not db_path:
@@ -12984,60 +13702,35 @@ _uniprot_id_cache: Dict[str, str] = {}
 
 
 def _lookup_uniprot_id(ensp_id: str) -> str:
-    """Map an Ensembl protein ID to a UniProt accession via the UniProt ID-mapping API."""
-    if ensp_id in _uniprot_id_cache:
-        return _uniprot_id_cache[ensp_id]
-
+    """Map an Ensembl or RefSeq protein ID to a UniProt accession."""
+    protein_id = str(ensp_id or "").strip()
+    if not protein_id:
+        return ""
+    cache_key = protein_structure.strip_id_version(protein_id).upper()
+    if cache_key in _uniprot_id_cache:
+        return _uniprot_id_cache[cache_key]
     try:
-        # Step 1: submit mapping job
-        data = json.dumps({
-            "from": "Ensembl_Protein",
-            "to": "UniProtKB",
-            "ids": [ensp_id],
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            "https://rest.uniprot.org/idmapping/run",
-            data=data,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            job = json.loads(resp.read().decode())
-        job_id = job.get("jobId", "")
-        if not job_id:
-            return ""
-
-        # Step 2: poll for results (up to ~30s)
-        results_url = f"https://rest.uniprot.org/idmapping/results/{job_id}"
-        for _ in range(15):
-            time.sleep(2)
-            req2 = urllib.request.Request(results_url, headers={"Accept": "application/json"})
-            with urllib.request.urlopen(req2, timeout=15) as resp2:
-                body = resp2.read().decode()
-            result = json.loads(body)
-            if "results" in result:
-                for item in result["results"]:
-                    accession = item.get("to", {}).get("primaryAccession", "") if isinstance(item.get("to"), dict) else str(item.get("to", ""))
-                    if accession:
-                        _uniprot_id_cache[ensp_id] = accession
-                        return accession
-                # Job complete but no mapping found
-                _uniprot_id_cache[ensp_id] = ""
-                return ""
+        accession = _uniprot_accession_from_api(protein_id)
     except Exception as exc:
-        logging.debug("UniProt ID mapping failed for %s: %s", ensp_id, exc)
-    return ""
+        logging.debug("UniProt lookup failed for %s: %s", protein_id, exc)
+        return ""
+    _uniprot_id_cache[cache_key] = accession
+    return accession
 
 
 def _fetch_interpro_domains(uniprot_id: str) -> List[ProteinDomainEntry]:
     """Fetch domain annotations from InterPro for a UniProt accession."""
     if not uniprot_id:
         return []
+    accession = protein_structure.normalize_accession(uniprot_id)
+    if not accession:
+        return []
     try:
-        url = f"https://www.ebi.ac.uk/interpro/api/entry/all/protein/uniprot/{uniprot_id}?format=json"
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode())
+        # Routed through the annotation allowlist rather than a raw urlopen, so
+        # this call is subject to the same host and redirect rules as every other
+        # outbound request the backend makes.
+        url = f"https://www.ebi.ac.uk/interpro/api/entry/all/protein/uniprot/{accession}?format=json"
+        data = _annotation_get_json(url) or {}
 
         domains: List[ProteinDomainEntry] = []
         for result in data.get("results", []):
@@ -13120,6 +13813,1214 @@ async def feature_explorer_protein_domains(payload: ProteinDomainsRequest):
         return ProteinDomainsResponse(rows=rows_out)
 
     return await run_in_threadpool(_query)
+
+
+# ── 3D protein structure ───────────────────────────────────────────────────────
+#
+# AlphaFold DB is keyed by UniProt accession; the annotation this app reads gives
+# Ensembl or RefSeq protein IDs. Bridging the two is the bulk of what follows.
+# The rules themselves live in backend/protein_structure.py so they can be tested
+# without a socket; this layer adds the allowlisted HTTP, the caches, and the
+# routes that serve the sandboxed viewer.
+
+STRUCTURE_CONFIG_KEY = "protein_structure"
+STRUCTURE_METADATA_TTL_SECONDS = 7 * 24 * 3600
+MAX_STRUCTURE_MODEL_BYTES = 96 * 1024 * 1024
+ALPHAFOLD_ENTRY_URL = "https://alphafold.ebi.ac.uk/entry/{accession}"
+# Marks a cached "no such prediction" answer, so it is not mistaken for a model.
+STRUCTURE_ABSENT_KEY = "__absent__"
+STRUCTURE_ASSET_DIR = BASE_PATH / "static" / "structure"
+
+# A remote accession lookup is the only expensive step in deciding whether a
+# transcript has a structure at all, and the answer barely changes. Persisting it
+# turns the second visit to a gene into a purely local operation. Misses are
+# cached too, on a much shorter clock: "UniProt has nothing for this protein"
+# is worth remembering for a day, not for a month.
+STRUCTURE_ACCESSION_TTL_SECONDS = 30 * 24 * 3600
+STRUCTURE_ACCESSION_MISS_TTL_SECONDS = 24 * 3600
+# Probing every coding transcript of a gene costs one lookup each on a cold
+# cache, and human genes routinely carry twenty-odd coding transcripts, so the
+# ceiling has to clear that or the filter never runs where it is most wanted.
+# Past it the panel offers the canonical transcript alone rather than making the
+# user wait on a burst of requests.
+STRUCTURE_PROBE_MAX_TRANSCRIPTS = 30
+STRUCTURE_PROBE_DEADLINE_SECONDS = 8.0
+STRUCTURE_PROBE_WORKERS = 6
+# Ceilings for the variant overlay. Both are about what a reader can take in on
+# a structure, not about what the files hold.
+STRUCTURE_VARIANT_LIMIT = 2000
+STRUCTURE_VARIANT_TRACK_LIMIT = 8
+STRUCTURE_ALIGNMENT_CACHE_SIZE = 32
+
+_structure_lock = threading.Lock()
+_alphafold_model_cache: Dict[str, Optional["protein_structure.AlphaFoldModel"]] = {}
+_uniprot_accession_cache: Dict[str, str] = {}
+_uniprot_accession_disk: Optional[Dict[str, Dict[str, Any]]] = None
+_structure_alignment_cache: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
+# {path -> (mtime, mapping)}; a re-imported file is picked up without a restart.
+_uniprot_mapping_cache: Dict[str, Tuple[float, "protein_structure.UniProtMapping"]] = {}
+
+
+def _structure_cache_dir() -> Path:
+    path = CACHE_DIR / "structures"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _accession_cache_path() -> Path:
+    return _structure_cache_dir() / "uniprot_accessions.json"
+
+
+def _accession_disk_cache() -> Dict[str, Dict[str, Any]]:
+    """The persisted protein-ID to accession cache, read once per process."""
+    global _uniprot_accession_disk
+    with _structure_lock:
+        if _uniprot_accession_disk is not None:
+            return _uniprot_accession_disk
+    loaded: Dict[str, Dict[str, Any]] = {}
+    try:
+        raw = json.loads(_accession_cache_path().read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            for key, entry in raw.items():
+                if isinstance(entry, dict):
+                    loaded[str(key)] = entry
+    except (OSError, ValueError):
+        loaded = {}
+    with _structure_lock:
+        if _uniprot_accession_disk is None:
+            _uniprot_accession_disk = loaded
+        return _uniprot_accession_disk
+
+
+def _accession_disk_lookup(key: str) -> Optional[str]:
+    """A cached accession, ``""`` for a cached miss, or ``None`` when unknown."""
+    entry = _accession_disk_cache().get(key)
+    if not isinstance(entry, dict):
+        return None
+    accession = protein_structure.normalize_accession(entry.get("accession"))
+    try:
+        stamp = float(entry.get("ts") or 0)
+    except (TypeError, ValueError):
+        return None
+    ttl = STRUCTURE_ACCESSION_TTL_SECONDS if accession else STRUCTURE_ACCESSION_MISS_TTL_SECONDS
+    if (time.time() - stamp) > ttl:
+        return None
+    return accession
+
+
+def _accession_disk_store(key: str, accession: str) -> None:
+    cache = _accession_disk_cache()
+    with _structure_lock:
+        cache[key] = {"accession": accession or "", "ts": time.time()}
+        snapshot = json.dumps(cache)
+    path = _accession_cache_path()
+    temp = path.with_suffix(".json.tmp")
+    try:
+        temp.write_text(snapshot, encoding="utf-8")
+        temp.replace(path)
+    except OSError:
+        # A cache that cannot be written is a slower panel, not a broken one.
+        temp.unlink(missing_ok=True)
+
+
+def _annotation_get_json(url: str, timeout: int = 20) -> Any:
+    """GET an allowlisted annotation endpoint, returning ``None`` for a 404."""
+    with get_with_validated_redirects(
+        url,
+        validate_annotation_service_url,
+        timeout=timeout,
+        headers={"Accept": "application/json"},
+    ) as response:
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json()
+
+
+def _uniprot_accession_from_api(protein_id: str, preferred_length: int = 0) -> str:
+    """Find the UniProt accession that cross-references ``protein_id``."""
+    if not str(protein_id or "").strip():
+        return ""
+    params = protein_structure.uniprot_search_params(protein_id)
+    url = f"{protein_structure.UNIPROT_SEARCH_URL}?{urlencode(params)}"
+    try:
+        payload = _annotation_get_json(url)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.debug("UniProt cross-reference lookup failed for %s: %s", protein_id, exc)
+        return ""
+    return protein_structure.extract_search_accession(payload, preferred_length)
+
+
+def _load_uniprot_mapping(path: Path) -> Optional["protein_structure.UniProtMapping"]:
+    key = str(path)
+    try:
+        stamp = path.stat().st_mtime
+    except OSError:
+        return None
+
+    with _structure_lock:
+        cached = _uniprot_mapping_cache.get(key)
+        if cached and cached[0] == stamp:
+            return cached[1]
+
+    try:
+        mapping = protein_structure.load_uniprot_mapping_file(path)
+    except Exception as exc:
+        logging.warning("Could not read UniProt mapping file %s: %s", path, exc)
+        return None
+
+    with _structure_lock:
+        _uniprot_mapping_cache[key] = (stamp, mapping)
+    return mapping
+
+
+def _configured_mapping_path() -> Optional[Path]:
+    try:
+        section = (load_config() or {}).get(STRUCTURE_CONFIG_KEY) or {}
+    except Exception:
+        return None
+    raw = str(section.get("uniprot_map_path") or "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_file() else None
+
+
+def _genome_xref_mapping(genome: str) -> Optional["protein_structure.UniProtMapping"]:
+    """A UniProt cross-reference table sitting alongside the genome's annotation.
+
+    Ensembl publishes these as an ``xref`` TSV, which the download view already
+    knows how to fetch. Finding one makes the lookup fully local.
+    """
+    try:
+        context = _resolve_browse_genome_context(genome)
+    except Exception:
+        return None
+    gff_path = str(context.get("gff_path") or "")
+    if not gff_path:
+        return None
+
+    directory = Path(gff_path).parent
+    try:
+        candidates = sorted(
+            entry for entry in directory.glob("*xref*")
+            if entry.is_file() and entry.name.lower().endswith((".tsv", ".tsv.gz"))
+        )
+    except OSError:
+        return None
+
+    for candidate in candidates:
+        mapping = _load_uniprot_mapping(candidate)
+        if mapping and mapping.by_id:
+            return mapping
+    return None
+
+
+def _resolve_structure_accession(
+    genome: str, protein_id: str, override: str, preferred_length: int = 0
+) -> Tuple[str, str]:
+    """Find a UniProt accession for ``protein_id``, returning ``(accession, source)``.
+
+    Ordered most trusted first: an accession the user typed, then their own
+    mapping file, then a cross-reference shipped with the genome, and only then a
+    remote lookup. The first three need no network at all.
+    """
+    manual = protein_structure.normalize_accession(override)
+    if manual:
+        return manual, protein_structure.SOURCE_MANUAL
+
+    protein_id = str(protein_id or "").strip()
+    if not protein_id:
+        return "", ""
+
+    custom_path = _configured_mapping_path()
+    if custom_path:
+        mapping = _load_uniprot_mapping(custom_path)
+        hit = mapping.lookup(protein_id) if mapping else ""
+        if hit:
+            return hit, protein_structure.SOURCE_CUSTOM_TSV
+
+    xref = _genome_xref_mapping(genome)
+    hit = xref.lookup(protein_id) if xref else ""
+    if hit:
+        return hit, protein_structure.SOURCE_XREF
+
+    cache_key = protein_structure.strip_id_version(protein_id).upper()
+    with _structure_lock:
+        cached = _uniprot_accession_cache.get(cache_key)
+    if cached is None:
+        cached = _accession_disk_lookup(cache_key)
+    if cached is None:
+        cached = _uniprot_accession_from_api(protein_id, preferred_length)
+        _accession_disk_store(cache_key, cached)
+    with _structure_lock:
+        _uniprot_accession_cache[cache_key] = cached
+
+    return (cached, protein_structure.SOURCE_UNIPROT_API) if cached else ("", "")
+
+
+def _alphafold_model(accession: str) -> Optional["protein_structure.AlphaFoldModel"]:
+    """AFDB prediction metadata for ``accession``, memoised in memory and on disk."""
+    with _structure_lock:
+        if accession in _alphafold_model_cache:
+            return _alphafold_model_cache[accession]
+
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", accession)
+    meta_path = _structure_cache_dir() / f"AF-{safe}-prediction.json"
+
+    payload: Any = None
+    try:
+        stat = meta_path.stat()
+        age = time.time() - stat.st_mtime
+        cached = json.loads(meta_path.read_text(encoding="utf-8"))
+        # "AlphaFold has nothing for this accession" is recorded too, on the
+        # shorter clock a miss deserves. Without it the dropdown probe repeats a
+        # handful of 404s on every restart, for every gene the user revisits.
+        absent = isinstance(cached, dict) and cached.get(STRUCTURE_ABSENT_KEY) is True
+        ttl = STRUCTURE_ACCESSION_MISS_TTL_SECONDS if absent else STRUCTURE_METADATA_TTL_SECONDS
+        if age < ttl:
+            if absent:
+                with _structure_lock:
+                    _alphafold_model_cache[accession] = None
+                return None
+            payload = cached
+    except (OSError, ValueError):
+        payload = None
+
+    if payload is None:
+        payload = _annotation_get_json(
+            protein_structure.ALPHAFOLD_PREDICTION_URL.format(accession=accession)
+        )
+        temp = meta_path.with_suffix(".json.tmp")
+        try:
+            body = json.dumps(payload if payload is not None else {STRUCTURE_ABSENT_KEY: True})
+            temp.write_text(body, encoding="utf-8")
+            temp.replace(meta_path)
+        except OSError:
+            temp.unlink(missing_ok=True)
+
+    model = protein_structure.parse_alphafold_prediction(payload, accession)
+    with _structure_lock:
+        _alphafold_model_cache[accession] = model
+    return model
+
+
+def _ensure_model_file(model: "protein_structure.AlphaFoldModel") -> Path:
+    """Return the cached mmCIF for ``model``, downloading it once if needed."""
+    filename = protein_structure.model_cache_filename(model.accession, model.version)
+    destination = _structure_cache_dir() / filename
+    if destination.is_file() and destination.stat().st_size > 0:
+        return destination
+
+    url = model.cif_url or f"https://alphafold.ebi.ac.uk/files/{filename}"
+    temp = destination.with_suffix(".cif.tmp")
+    written = 0
+    try:
+        with get_with_validated_redirects(
+            url, validate_annotation_service_url, timeout=60, stream=True
+        ) as response:
+            response.raise_for_status()
+            with open(temp, "wb") as handle:
+                for chunk in response.iter_content(chunk_size=65536):
+                    if not chunk:
+                        continue
+                    written += len(chunk)
+                    if written > MAX_STRUCTURE_MODEL_BYTES:
+                        raise HTTPException(
+                            status_code=502,
+                            detail="AlphaFold model exceeded the size limit",
+                        )
+                    handle.write(chunk)
+        if written <= 0:
+            raise HTTPException(status_code=502, detail="AlphaFold returned an empty model file")
+        # Atomic: a reader either sees no file or a complete one, never a partial
+        # mmCIF that Mol* would fail to parse and then cache as broken.
+        temp.replace(destination)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+    return destination
+
+
+def _structure_transcript_contexts(
+    genome: str, transcript_ids: Sequence[str]
+) -> Dict[str, Dict[str, Any]]:
+    """Translation, coding-segment layout and protein ID for several transcripts.
+
+    Batched deliberately. ``_extract_protein_ids_from_gff`` scans the source GFF
+    until every requested transcript is found, so calling it once per transcript
+    would turn a dropdown probe into one full pass over the annotation per
+    option. One pass covers the whole set instead.
+    """
+    wanted: List[str] = []
+    for raw in transcript_ids or ():
+        token = str(raw or "").strip()
+        if token and token not in wanted:
+            wanted.append(token)
+    if not wanted:
+        return {}
+
+    db_path = _get_browse_db(genome)
+    fasta = _get_browse_fasta(genome)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.cursor()
+        placeholders = ",".join("?" for _ in wanted)
+        cursor.execute(
+            f"SELECT id, chrom, strand, parent_gene_id, data FROM transcripts WHERE id IN ({placeholders})",
+            wanted,
+        )
+        rows = {str(row["id"]): row for row in cursor.fetchall()}
+        source_gff = ""
+        cursor.execute("SELECT value FROM metadata WHERE key = 'source_gff'")
+        meta = cursor.fetchone()
+        if meta and meta[0]:
+            source_gff = str(meta[0])
+    finally:
+        conn.close()
+
+    protein_ids = _extract_protein_ids_from_gff(
+        source_gff,
+        set(rows.keys()),
+        {tx_id: str(row["parent_gene_id"] or "") for tx_id, row in rows.items()},
+    )
+
+    contexts: Dict[str, Dict[str, Any]] = {}
+    for transcript_id in wanted:
+        row = rows.get(transcript_id)
+        if not row:
+            contexts[transcript_id] = {"status": "not_found", "message": "Transcript not found"}
+            continue
+
+        try:
+            data = json.loads(row["data"]) if row["data"] else {}
+        except Exception:
+            data = {}
+        cds_list = (data or {}).get("cds_list") or []
+        if not cds_list:
+            contexts[transcript_id] = {"status": "no_cds", "message": "No CDS — non-coding transcript"}
+            continue
+
+        chrom = str(row["chrom"] or "")
+        strand = str(row["strand"] or "+")
+        table, molecule, table_resolved = _resolve_translation_table(genome, chrom)
+        protein, layout, used_table = _translate_transcript(
+            fasta, chrom, strand, cds_list,
+            table=table, molecule=molecule, autodetect=not table_resolved,
+        )
+        if not protein:
+            contexts[transcript_id] = {"status": "error", "message": "Failed to translate CDS sequence"}
+            continue
+
+        contexts[transcript_id] = {
+            "status": "ok",
+            "message": "",
+            "protein": protein,
+            "protein_id": protein_ids.get(transcript_id, ""),
+            "chrom": chrom,
+            "strand": strand,
+            "table": used_table,
+            "layout": layout,
+            "segments": [
+                {
+                    "coord_start": segment.coord_start,
+                    "coord_end": segment.coord_end,
+                    "genomic_start": segment.genomic_start,
+                    "genomic_end": segment.genomic_end,
+                    "phase": segment.phase,
+                }
+                for segment in layout.segments
+            ],
+        }
+
+    return contexts
+
+
+def _structure_transcript_context(genome: str, transcript_id: str) -> Dict[str, Any]:
+    """Translation, coding-segment layout and protein ID for one transcript."""
+    transcript_id = str(transcript_id or "").strip()
+    if not transcript_id:
+        return {"status": "not_found", "message": "transcript_id is required"}
+    contexts = _structure_transcript_contexts(genome, [transcript_id])
+    return contexts.get(transcript_id) or {"status": "not_found", "message": "Transcript not found"}
+
+
+def _model_info(model: "protein_structure.AlphaFoldModel", token: str) -> StructureModelInfo:
+    query = f"?token={quote(token)}" if token else ""
+    return StructureModelInfo(
+        accession=model.accession,
+        model_entity_id=model.model_entity_id,
+        version=model.version,
+        sequence_length=len(model.sequence or ""),
+        sequence_start=model.sequence_start,
+        sequence_end=model.sequence_end,
+        fragment_count=model.fragment_count,
+        model_url=f"{STRUCTURE_VIEWER_PREFIX}model/{quote(model.accession)}{query}",
+        afdb_url=ALPHAFOLD_ENTRY_URL.format(accession=model.accession),
+    )
+
+
+@app.post("/api/structure/resolve", response_model=StructureResolveResponse)
+async def structure_resolve(payload: StructureResolveRequest):
+    """Find the AlphaFold model for a transcript's translation."""
+    genome = str(payload.genome or "reference").strip() or "reference"
+    transcript_id = str(payload.transcript_id or "").strip()
+    override = str(payload.accession_override or "").strip()
+
+    if not transcript_id and not str(payload.protein_id or "").strip() and not override:
+        raise HTTPException(status_code=400, detail="transcript_id, protein_id or accession_override is required")
+
+    def _query() -> StructureResolveResponse:
+        protein_id = str(payload.protein_id or "").strip()
+        protein_length = 0
+
+        if transcript_id:
+            context = _structure_transcript_context(genome, transcript_id)
+            if context.get("status") != "ok":
+                return StructureResolveResponse(
+                    transcript_id=transcript_id,
+                    status=str(context.get("status") or "error"),
+                    message=str(context.get("message") or ""),
+                )
+            protein_id = protein_id or str(context.get("protein_id") or "")
+            protein_length = len(str(context.get("protein") or ""))
+
+        accession, source = _resolve_structure_accession(
+            genome, protein_id, override, preferred_length=protein_length
+        )
+        if not accession:
+            return StructureResolveResponse(
+                transcript_id=transcript_id,
+                protein_id=protein_id,
+                status="no_accession",
+                protein_length=protein_length,
+                message=(
+                    "No UniProt accession found for this protein. Enter one manually, or "
+                    "import a mapping file, to load a structure."
+                ),
+            )
+
+        model = _alphafold_model(accession)
+        if model is None or not model.sequence:
+            return StructureResolveResponse(
+                transcript_id=transcript_id,
+                protein_id=protein_id,
+                uniprot_accession=accession,
+                source=source,
+                status="no_model",
+                protein_length=protein_length,
+                message=f"AlphaFold DB has no model for {accession}.",
+            )
+
+        _ensure_model_file(model)
+        return StructureResolveResponse(
+            transcript_id=transcript_id,
+            protein_id=protein_id,
+            uniprot_accession=accession,
+            source=source,
+            status="ok",
+            protein_length=protein_length,
+            model=_model_info(model, API_TOKEN),
+        )
+
+    return await run_in_threadpool(_query)
+
+
+@app.post("/api/structure/residue_map", response_model=StructureResidueMapResponse)
+async def structure_residue_map(payload: StructureResidueMapRequest):
+    """Project each coding exon of a transcript onto model residue ranges."""
+    genome = str(payload.genome or "reference").strip() or "reference"
+    transcript_id = str(payload.transcript_id or "").strip()
+    accession = protein_structure.normalize_accession(payload.accession)
+    if not transcript_id:
+        raise HTTPException(status_code=400, detail="transcript_id is required")
+    if not accession:
+        raise HTTPException(status_code=400, detail="A valid UniProt accession is required")
+
+    def _query() -> StructureResidueMapResponse:
+        context = _structure_transcript_context(genome, transcript_id)
+        if context.get("status") != "ok":
+            return StructureResidueMapResponse(
+                transcript_id=transcript_id,
+                accession=accession,
+                status=str(context.get("status") or "error"),
+                message=str(context.get("message") or ""),
+            )
+
+        model = _alphafold_model(accession)
+        if model is None or not model.sequence:
+            return StructureResidueMapResponse(
+                transcript_id=transcript_id,
+                accession=accession,
+                status="no_model",
+                message=f"AlphaFold DB has no model for {accession}.",
+            )
+
+        segments = context["segments"]
+        strand = str(context.get("strand") or "+")
+        residue_map = protein_structure.build_residue_map(
+            str(context.get("protein") or ""),
+            model,
+            segments,
+            strand,
+            align_fn=_structure_align,
+        )
+
+        return StructureResidueMapResponse(
+            transcript_id=transcript_id,
+            accession=accession,
+            status="ok",
+            identical=residue_map.identical,
+            aligned=residue_map.aligned,
+            identity=residue_map.identity,
+            coverage=residue_map.coverage,
+            local_length=residue_map.local_length,
+            model_length=residue_map.model_length,
+            exon_count=residue_map.exon_count,
+            unmapped_residues=residue_map.unmapped_residues,
+            strand=strand,
+            segments=[
+                StructureResidueSegment(
+                    exon_index=item.exon_index,
+                    aa_start=item.aa_start,
+                    aa_end=item.aa_end,
+                    model_start=item.model_start,
+                    model_end=item.model_end,
+                    genomic_start=item.genomic_start,
+                    genomic_end=item.genomic_end,
+                )
+                for item in residue_map.segments
+            ],
+            warnings=residue_map.warnings,
+        )
+
+    return await run_in_threadpool(_query)
+
+
+def _structure_align(local_seq: str, model_seq: str) -> Tuple[str, str]:
+    """Pairwise-align a translation against a model sequence with the bundled MAFFT.
+
+    Memoised on the sequence pair: reconciling a non-canonical isoform takes
+    seconds, and the exon overlay and the variant overlay both need the very same
+    alignment. Returns empty strings when MAFFT is unavailable or fails, which the
+    residue mapper reports as an unreconciled pair rather than a broken request:
+    an isoform we cannot align is a caveat to show, not an error to raise.
+    """
+    key = hashlib.sha1(f"{local_seq}\n{model_seq}".encode("utf-8")).hexdigest()
+    with _structure_lock:
+        cached = _structure_alignment_cache.get(key)
+        if cached is not None:
+            _structure_alignment_cache.move_to_end(key)
+            return cached
+
+    try:
+        result = run_mafft_alignment(local_seq, model_seq)
+    except Exception as exc:
+        logging.warning("MAFFT alignment for structure mapping failed: %s", exc)
+        result = ("", "")
+
+    with _structure_lock:
+        _structure_alignment_cache[key] = result
+        _structure_alignment_cache.move_to_end(key)
+        while len(_structure_alignment_cache) > STRUCTURE_ALIGNMENT_CACHE_SIZE:
+            _structure_alignment_cache.popitem(last=False)
+    return result
+
+
+def _probe_structure_option(
+    genome: str, transcript_id: str, context: Dict[str, Any], deadline: float
+) -> StructureTranscriptOption:
+    """Decide whether one transcript has a model, without raising."""
+    status = str(context.get("status") or "error")
+    if status != "ok":
+        return StructureTranscriptOption(
+            transcript_id=transcript_id,
+            status=status,
+            message=str(context.get("message") or ""),
+        )
+
+    protein = str(context.get("protein") or "")
+    protein_id = str(context.get("protein_id") or "")
+    option = StructureTranscriptOption(
+        transcript_id=transcript_id,
+        protein_id=protein_id,
+        protein_length=len(protein),
+    )
+
+    if time.monotonic() > deadline:
+        option.status = "unknown"
+        option.message = "Lookup did not finish in time"
+        return option
+
+    try:
+        accession, source = _resolve_structure_accession(genome, protein_id, "", len(protein))
+    except Exception as exc:
+        logging.debug("Structure probe accession lookup failed for %s: %s", transcript_id, exc)
+        option.status = "unknown"
+        option.message = "Could not reach the accession lookup"
+        return option
+
+    if not accession:
+        option.status = "no_accession"
+        option.message = "No UniProt accession found for this translation"
+        return option
+
+    option.accession = accession
+    option.source = source
+
+    try:
+        model = _alphafold_model(accession)
+    except Exception as exc:
+        logging.debug("Structure probe model lookup failed for %s: %s", accession, exc)
+        option.status = "unknown"
+        option.message = "Could not reach AlphaFold DB"
+        return option
+
+    if model is None or not model.sequence:
+        option.status = "no_model"
+        option.message = f"AlphaFold DB has no model for {accession}"
+        return option
+
+    option.status = "ok"
+    option.model_version = model.version
+    option.model_length = len(model.sequence)
+    option.identical = protein == model.sequence
+    return option
+
+
+@app.post("/api/structure/transcripts", response_model=StructureTranscriptsResponse)
+async def structure_transcripts(payload: StructureTranscriptsRequest):
+    """Report which of a gene's transcripts actually have an AlphaFold model.
+
+    The panel uses this to stop offering transcripts that lead nowhere. Every
+    answer here is bounded: a large transcript set is not probed at all, and a
+    slow network yields ``unknown`` entries rather than a hanging request, so the
+    caller can always fall back to the canonical transcript.
+    """
+    genome = str(payload.genome or "reference").strip() or "reference"
+
+    def _query() -> StructureTranscriptsResponse:
+        wanted: List[str] = []
+        for raw in payload.transcript_ids or []:
+            token = str(raw or "").strip()
+            if token and token not in wanted:
+                wanted.append(token)
+
+        if not wanted:
+            return StructureTranscriptsResponse(mode="probed", checked=0)
+        if len(wanted) > STRUCTURE_PROBE_MAX_TRANSCRIPTS:
+            return StructureTranscriptsResponse(
+                mode="canonical_only",
+                checked=0,
+                message=(
+                    f"{len(wanted)} coding transcripts is more than this panel checks "
+                    "one by one; showing the canonical transcript."
+                ),
+            )
+
+        contexts = _structure_transcript_contexts(genome, wanted)
+        deadline = time.monotonic() + STRUCTURE_PROBE_DEADLINE_SECONDS
+        workers = max(1, min(STRUCTURE_PROBE_WORKERS, len(wanted)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            entries = list(pool.map(
+                lambda tid: _probe_structure_option(
+                    genome, tid, contexts.get(tid) or {"status": "not_found"}, deadline,
+                ),
+                wanted,
+            ))
+
+        unknown = sum(1 for entry in entries if entry.status == "unknown")
+        if unknown == len(entries):
+            return StructureTranscriptsResponse(
+                mode="canonical_only",
+                checked=len(entries),
+                message="Could not check which transcripts have models; showing the canonical transcript.",
+                entries=entries,
+            )
+        return StructureTranscriptsResponse(
+            mode="partial" if unknown else "probed",
+            checked=len(entries),
+            message=(
+                f"{unknown} transcript(s) could not be checked in time."
+                if unknown else ""
+            ),
+            entries=entries,
+        )
+
+    return await run_in_threadpool(_query)
+
+
+def _structure_local_to_model(
+    protein: str, model: "protein_structure.AlphaFoldModel",
+) -> Dict[int, int]:
+    """Local amino-acid index -> model residue number, fragment offset included."""
+    mapping, _identity, _aligned, _matches = protein_structure.align_local_to_model(
+        protein, model.sequence, align_fn=_structure_align,
+    )
+    offset = max(0, int(model.sequence_start or 1) - 1)
+    return {local: residue + offset for local, residue in mapping.items()}
+
+
+def _translate_codon(codon: str, table: int) -> str:
+    """One amino acid for a three-base codon; ``*`` for a stop, ``""`` on failure."""
+    try:
+        return str(Seq(str(codon).upper()).translate(table=int(table)))
+    except Exception:
+        return ""
+
+
+def _structure_variant_from_record(
+    rec,
+    track_id: str,
+    chrom: str,
+    strand: str,
+    table: int,
+    segments: List[Dict[str, Any]],
+    pad: int,
+    dna: str,
+    local_to_model: Dict[int, int],
+) -> Optional[StructureVariant]:
+    """Project one VCF record onto a model residue, or ``None`` if it misses the CDS."""
+    ref = str(rec.ref or "")
+    alts = [str(a) for a in (rec.alts or []) if a]
+    if not ref or not alts:
+        return None
+
+    # A deletion's REF begins on a padding base that may sit in an intron, so the
+    # first position of the record is not necessarily the first coding one.
+    coord = None
+    position = int(rec.pos)
+    span_end = position + max(1, len(ref)) - 1
+    for candidate in range(position, span_end + 1):
+        coord = protein_structure.genomic_to_cds_coord(segments, strand, candidate)
+        if coord is not None:
+            position = candidate
+            break
+    if coord is None:
+        return None
+
+    aa_index = (coord + 2) // 3
+    model_residue = local_to_model.get(aa_index, 0)
+    if not model_residue:
+        return None
+
+    variant = StructureVariant(
+        track_id=track_id,
+        chrom=chrom,
+        pos=int(rec.pos),
+        ref=ref[:40],
+        alt=",".join(alts)[:80],
+        variant_id=str(rec.id or ""),
+        aa_index=aa_index,
+        model_residue=model_residue,
+        exon_index=protein_structure.exon_index_for_coord(segments, coord),
+    )
+
+    minus = str(strand or "+") == "-"
+    is_snv = len(ref) == 1 and all(len(alt) == 1 for alt in alts)
+    if not is_snv:
+        variant.consequence = protein_structure.classify_indel(ref, alts[0])
+        variant.impact = protein_structure.variant_impact(variant.consequence)
+        return variant
+
+    codon_start = (aa_index - 1) * 3 + 1
+    first = codon_start - pad
+    last = first + 2
+    if first < 1 or last > len(dna):
+        # A codon that runs off the 5' pad or the end of the read sequence cannot
+        # be retranslated; the position is still worth showing.
+        variant.consequence = "protein_altering"
+        variant.impact = protein_structure.variant_impact(variant.consequence)
+        return variant
+
+    codon = dna[first - 1:last].upper()
+    offset = coord - codon_start
+    ref_base = protein_structure.reverse_complement(ref) if minus else ref.upper()
+    alt_base = protein_structure.reverse_complement(alts[0]) if minus else alts[0].upper()
+    variant.ref_mismatch = codon[offset] != ref_base
+
+    alt_codon = codon[:offset] + alt_base + codon[offset + 1:]
+    variant.ref_aa = _translate_codon(codon, table)
+    variant.alt_aa = _translate_codon(alt_codon, table)
+    variant.consequence = protein_structure.classify_substitution(
+        variant.ref_aa, variant.alt_aa, aa_index,
+    )
+    variant.impact = protein_structure.variant_impact(variant.consequence)
+    return variant
+
+
+def _structure_variants_for_track(
+    track: Dict[str, Any],
+    chrom: str,
+    strand: str,
+    table: int,
+    segments: List[Dict[str, Any]],
+    pad: int,
+    dna: str,
+    local_to_model: Dict[int, int],
+    limit: int,
+) -> StructureVariantTrackResult:
+    """Read one registered VCF over a transcript's coding exons."""
+    result = StructureVariantTrackResult(
+        track_id=str(track.get("id") or ""),
+        label=str(track.get("label") or ""),
+    )
+    path = str(track.get("path") or "")
+
+    try:
+        with locked_vcf(path) as (handle, _fingerprint, _resolved_path):
+            resolved_chrom = _resolve_vcf_chrom(handle, chrom)
+            if not resolved_chrom:
+                result.status = "unreadable"
+                result.message = f"{chrom} is not present in this VCF"
+                return result
+
+            seen: Set[Tuple[int, str, str]] = set()
+            for segment in segments:
+                if len(result.variants) >= limit:
+                    result.truncated = True
+                    break
+                start = int(segment.get("genomic_start") or 0)
+                end = int(segment.get("genomic_end") or 0)
+                if start <= 0 or end < start:
+                    continue
+                # Reach one base to the left so a deletion whose padding base sits
+                # just outside the exon still surfaces.
+                for rec in handle.fetch(resolved_chrom, max(0, start - 2), end):
+                    if len(result.variants) >= limit:
+                        result.truncated = True
+                        break
+                    key = (int(rec.pos), str(rec.ref or ""), ",".join(str(a) for a in (rec.alts or [])))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    variant = _structure_variant_from_record(
+                        rec, result.track_id, chrom, strand, table,
+                        segments, pad, dna, local_to_model,
+                    )
+                    if variant is None:
+                        continue
+                    if variant.ref_mismatch:
+                        result.ref_mismatches += 1
+                    result.variants.append(variant)
+    except HTTPException as exc:
+        result.status = "unreadable"
+        result.message = str(exc.detail)
+        return result
+    except Exception as exc:
+        logging.warning("Reading VCF %s for the structure panel failed: %s", path, exc)
+        result.status = "unreadable"
+        result.message = "Could not read this VCF"
+        return result
+
+    result.variants.sort(key=lambda item: (item.aa_index, item.pos))
+    return result
+
+
+@app.post("/api/structure/variants", response_model=StructureVariantsResponse)
+async def structure_variants(payload: StructureVariantsRequest):
+    """Project variants from registered VCFs onto a transcript's modelled residues.
+
+    Only the transcript's coding exons are read, and every consequence is derived
+    from the codon itself rather than from a CSQ/ANN field, so an unannotated VCF
+    is just as informative as an annotated one.
+    """
+    genome = str(payload.genome or "reference").strip() or "reference"
+    transcript_id = str(payload.transcript_id or "").strip()
+    accession = protein_structure.normalize_accession(payload.accession)
+    if not transcript_id:
+        raise HTTPException(status_code=400, detail="transcript_id is required")
+    if not accession:
+        raise HTTPException(status_code=400, detail="A valid UniProt accession is required")
+
+    track_ids: List[str] = []
+    for raw in payload.track_ids or []:
+        token = str(raw or "").strip()
+        if token and token not in track_ids:
+            track_ids.append(token)
+    if len(track_ids) > STRUCTURE_VARIANT_TRACK_LIMIT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {STRUCTURE_VARIANT_TRACK_LIMIT} variant tracks can be shown at once",
+        )
+
+    def _query() -> StructureVariantsResponse:
+        response = StructureVariantsResponse(transcript_id=transcript_id, accession=accession)
+        if not track_ids:
+            return response
+
+        context = _structure_transcript_context(genome, transcript_id)
+        if context.get("status") != "ok":
+            response.status = str(context.get("status") or "error")
+            response.message = str(context.get("message") or "")
+            return response
+
+        model = _alphafold_model(accession)
+        if model is None or not model.sequence:
+            response.status = "no_model"
+            response.message = f"AlphaFold DB has no model for {accession}."
+            return response
+
+        protein = str(context.get("protein") or "")
+        local_to_model = _structure_local_to_model(protein, model)
+        if not local_to_model:
+            response.status = "error"
+            response.message = "Could not align the translation to the model."
+            return response
+
+        layout = context.get("layout")
+        chrom = str(context.get("chrom") or "")
+        strand = str(context.get("strand") or "+")
+        dna = _cds_dna_from_layout(_get_browse_fasta(genome), chrom, strand, layout)
+
+        config = load_config()
+        registry = _load_track_registry(config)
+        by_id = {str(item.get("id") or ""): item for item in registry.get("tracks", [])}
+
+        remaining = STRUCTURE_VARIANT_LIMIT
+        for track_id in track_ids:
+            track = by_id.get(track_id)
+            if not track:
+                response.tracks.append(StructureVariantTrackResult(
+                    track_id=track_id, status="not_found", message="Track is no longer registered",
+                ))
+                continue
+            if str(track.get("type") or "") != "vcf":
+                response.tracks.append(StructureVariantTrackResult(
+                    track_id=track_id,
+                    label=str(track.get("label") or ""),
+                    status="wrong_type",
+                    message="Not a VCF track",
+                ))
+                continue
+            if not str(track.get("genome_key") or "").strip():
+                # A track with no assembly recorded cannot be checked against the
+                # genome in view, and plotting it would be a guess.
+                response.tracks.append(StructureVariantTrackResult(
+                    track_id=track_id,
+                    label=str(track.get("label") or ""),
+                    status="wrong_type",
+                    message="This VCF is not registered against an assembly",
+                ))
+                continue
+
+            result = _structure_variants_for_track(
+                track, chrom, strand, int(context.get("table") or TABLE_STANDARD),
+                context["segments"], int(getattr(layout, "pad", 0) or 0),
+                dna, local_to_model, remaining,
+            )
+            remaining = max(0, remaining - len(result.variants))
+            if result.ref_mismatches:
+                response.warnings.append(
+                    f"{result.label or track_id}: {result.ref_mismatches} variant(s) have a REF allele "
+                    "that disagrees with the loaded genome — check the VCF is on this assembly."
+                )
+            response.tracks.append(result)
+
+        return response
+
+    return await run_in_threadpool(_query)
+
+
+@app.get("/api/structure/mapping", response_model=StructureMappingStatusResponse)
+async def structure_mapping_status():
+    """Report the user-supplied protein-ID to UniProt mapping file, if any."""
+    def _query() -> StructureMappingStatusResponse:
+        path = _configured_mapping_path()
+        if not path:
+            return StructureMappingStatusResponse(configured=False)
+        mapping = _load_uniprot_mapping(path)
+        if mapping is None:
+            return StructureMappingStatusResponse(
+                configured=True, path=str(path),
+                message="The mapping file could not be read.",
+            )
+        return StructureMappingStatusResponse(
+            configured=True,
+            path=str(path),
+            format=mapping.format,
+            entry_count=len(mapping.by_id),
+            row_count=mapping.row_count,
+        )
+
+    return await run_in_threadpool(_query)
+
+
+@app.post("/api/structure/mapping/import", response_model=StructureMappingStatusResponse)
+async def structure_mapping_import(payload: StructureMappingImportRequest):
+    """Adopt a user's own protein-ID to UniProt-accession table."""
+    raw = str(payload.path or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    def _query() -> StructureMappingStatusResponse:
+        source = Path(raw).expanduser()
+        if not source.is_file():
+            raise HTTPException(status_code=404, detail=f"Mapping file not found: {source}")
+
+        mapping = protein_structure.load_uniprot_mapping_file(source)
+        if not mapping.by_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No protein-ID to UniProt-accession pairs were found. Expected either an "
+                    "Ensembl xref TSV or two columns of protein_id and accession."
+                ),
+            )
+
+        destination = _structure_cache_dir() / f"uniprot_map{''.join(source.suffixes[-2:]) or '.tsv'}"
+        try:
+            shutil.copy2(source, destination)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to copy mapping file: {exc}")
+
+        config = load_config() or {}
+        config[STRUCTURE_CONFIG_KEY] = {
+            **(config.get(STRUCTURE_CONFIG_KEY) or {}),
+            "uniprot_map_path": str(destination),
+            "uniprot_map_origin": str(source),
+            "uniprot_map_imported_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        save_config(config)
+
+        with _structure_lock:
+            _uniprot_accession_cache.clear()
+        return StructureMappingStatusResponse(
+            configured=True,
+            path=str(destination),
+            format=mapping.format,
+            entry_count=len(mapping.by_id),
+            row_count=mapping.row_count,
+        )
+
+    return await run_in_threadpool(_query)
+
+
+@app.post("/api/structure/mapping/clear", response_model=StructureMappingStatusResponse)
+async def structure_mapping_clear():
+    """Stop using the imported mapping file and fall back to the other sources."""
+    def _query() -> StructureMappingStatusResponse:
+        config = load_config() or {}
+        section = dict(config.get(STRUCTURE_CONFIG_KEY) or {})
+        section.pop("uniprot_map_path", None)
+        section.pop("uniprot_map_origin", None)
+        section.pop("uniprot_map_imported_at", None)
+        config[STRUCTURE_CONFIG_KEY] = section
+        save_config(config)
+        with _structure_lock:
+            _uniprot_accession_cache.clear()
+        return StructureMappingStatusResponse(configured=False)
+
+    return await run_in_threadpool(_query)
+
+
+# ── Sandboxed viewer ───────────────────────────────────────────────────────────
+#
+# Mol* needs 'unsafe-eval', which the app's own renderer must not grant. These
+# routes serve the viewer from the backend origin so it runs under its own,
+# separate policy with no access to the renderer's context or its API token.
+
+STRUCTURE_VIEWER_CSP = (
+    "default-src 'none'; "
+    "script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self' data:; "
+    # Mol* instantiates a WebAssembly module from a data: URI via fetch, which
+    # connect-src governs; without data: here the viewer loads but cannot render.
+    "connect-src 'self' data:; "
+    "worker-src 'self' blob:; "
+    "object-src 'none'; "
+    "base-uri 'none'; "
+    "form-action 'none'"
+)
+STRUCTURE_ASSET_CONTENT_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+}
+# The hand-written page and the vendored bundle sit in separate directories but
+# are addressed by leaf name, so a viewer asset never carries a path separator.
+STRUCTURE_ASSET_ROOTS = ("", "vendor")
+
+
+def _structure_no_store(headers: Dict[str, str]) -> Dict[str, str]:
+    headers.setdefault("Cache-Control", "no-store")
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    return headers
+
+
+@app.get("/structure/viewer")
+async def structure_viewer_page():
+    """The iframe page hosting the Mol* viewer."""
+    page = STRUCTURE_ASSET_DIR / "viewer.html"
+    if not page.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The structure viewer assets are not installed. Run "
+                "'npm run prepare:structure-viewer' in the frontend directory."
+            ),
+        )
+    query = f"?token={quote(API_TOKEN)}" if API_TOKEN else ""
+    markup = page.read_text(encoding="utf-8").replace("__STRUCTURE_QUERY__", query)
+    return HTMLResponse(
+        content=markup,
+        headers=_structure_no_store({"Content-Security-Policy": STRUCTURE_VIEWER_CSP}),
+    )
+
+
+@app.get("/structure/assets/{filename}")
+async def structure_viewer_asset(filename: str):
+    """Serve one vendored viewer asset from the structure directory."""
+    safe = sanitize_leaf_filename(filename)
+    suffix = Path(safe).suffix.lower()
+    if suffix not in STRUCTURE_ASSET_CONTENT_TYPES:
+        raise HTTPException(status_code=404, detail="Unknown viewer asset")
+
+    path = None
+    for root in STRUCTURE_ASSET_ROOTS:
+        candidate = require_path_within(STRUCTURE_ASSET_DIR, STRUCTURE_ASSET_DIR / root / safe)
+        if candidate.is_file():
+            path = candidate
+            break
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"Viewer asset not found: {safe}")
+
+    return FileResponse(
+        path,
+        media_type=STRUCTURE_ASSET_CONTENT_TYPES[suffix],
+        headers=_structure_no_store({"Content-Security-Policy": STRUCTURE_VIEWER_CSP}),
+    )
+
+
+@app.get("/structure/model/{accession}")
+async def structure_model_file(accession: str):
+    """Serve the cached AlphaFold mmCIF the viewer loads.
+
+    Proxied rather than linked so the viewer never reaches the network itself:
+    its own CSP restricts it to ``connect-src 'self'``.
+    """
+    normalized = protein_structure.normalize_accession(accession)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid UniProt accession")
+
+    def _query() -> Path:
+        model = _alphafold_model(normalized)
+        if model is None or not model.sequence:
+            raise HTTPException(status_code=404, detail=f"AlphaFold DB has no model for {normalized}")
+        return _ensure_model_file(model)
+
+    path = await run_in_threadpool(_query)
+    return FileResponse(
+        path,
+        media_type="chemical/x-mmcif",
+        headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 def _normalize_chrom_token(token: str) -> str:
@@ -17374,6 +19275,26 @@ def _note_target_matches(note: Dict[str, Any], kind: str, genome_key: str, targe
     return True
 
 
+def _notes_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The configuration the notes store should be resolved against.
+
+    Normally the user's own. While a tutorial is running it is that configuration with
+    its output directory swapped for the tutorial's workspace, so a note taken during a
+    tutorial is written into the scratch directory and swept away with it.
+
+    This has to happen here rather than in the frontend's config override. The override
+    is a frontend fact; every notes endpoint resolves its store from the configuration
+    *on disk*, so without this a note taken during a tutorial lands in the user's real
+    notes file and outlives the tutorial — the one thing the sandbox promises cannot
+    happen. Same shape as ``_browsable_active_species``, and for the same reason.
+    """
+    cfg = dict(config or load_config())
+    workspace = tutorial_session_workspace()
+    if workspace:
+        cfg["output_dir"] = workspace
+    return cfg
+
+
 def _output_dir_user_notes_store_path(output_dir: Any) -> Optional[Path]:
     output_dir_text = str(output_dir or "").strip()
     if not output_dir_text:
@@ -17391,6 +19312,11 @@ def _user_notes_store_paths_for_config(config: Optional[Dict[str, Any]] = None) 
     sidecar = _output_dir_user_notes_store_path(cfg.get("output_dir")) if use_output_sidecar else None
     if sidecar:
         paths.append(sidecar)
+    if sidecar and TUTORIAL_WORKSPACE_DIR in sidecar.parts:
+        # A tutorial's notes are its own. Merging the global store in would show the
+        # user's notes inside the tutorial, and — because a merged store is written back
+        # out — could copy them into a scratch directory that is about to be deleted.
+        return [sidecar]
     paths.append(USER_NOTES_FILE)
 
     out: List[Path] = []
@@ -17492,6 +19418,65 @@ def _save_user_notes(store: Dict[str, Any], config: Optional[Dict[str, Any]] = N
             pass
 
 
+def _save_user_notes_to_all_stores(
+    store: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
+) -> List[Path]:
+    """Write the store to every file that currently holds notes.
+
+    _save_user_notes writes only the primary path, which is right for an edit:
+    _load_user_notes unions every store it can read, so an edit that lands in one
+    of them still wins on the next load. It is wrong for a deletion. "Delete
+    everything and replace" that only rewrites the primary leaves a second store
+    untouched, and the union brings every deleted note straight back — so a
+    destructive import writes everywhere or it has not happened at all.
+    """
+    cfg = config or load_config()
+    written: List[Path] = []
+    targets = [path for path in _user_notes_store_paths_for_config(cfg) if path.exists()]
+    primary = _primary_user_notes_store_path(cfg)
+    if not any(str(path) == str(primary) for path in targets):
+        targets.append(primary)
+
+    for path in targets:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(store, f, indent=2)
+            os.replace(tmp_path, path)
+            written.append(path)
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except Exception:
+                pass
+    return written
+
+
+def _backup_user_notes_stores(config: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Copy every store aside before a destructive import.
+
+    Same reasoning as _quarantine_unparseable_notes_store: these bytes are the
+    only copy of something the user wrote, so nothing overwrites them without
+    leaving a way back.
+    """
+    cfg = config or load_config()
+    stamp = int(time.time())
+    saved: List[str] = []
+    for path in _user_notes_store_paths_for_config(cfg):
+        try:
+            if not path.exists() or path.stat().st_size == 0:
+                continue
+            backup = path.with_name(f"{path.name}.backup-{stamp}")
+            shutil.copy2(path, backup)
+            saved.append(str(backup))
+        except Exception:
+            continue
+    return saved
+
+
 def _ensure_user_notes_sidecar(config: Optional[Dict[str, Any]] = None) -> None:
     cfg = config or load_config()
     sidecar = _output_dir_user_notes_store_path(cfg.get("output_dir"))
@@ -17584,7 +19569,7 @@ class UserNotesIndexResponse(BaseModel):
 async def list_user_notes(kind: str = "", genome_key: str = "", target_id: str = ""):
     """Notes, most recently edited first. Every filter is optional and narrowing."""
     def _run():
-        config = load_config()
+        config = _notes_config()
         with _user_notes_lock:
             store = _load_user_notes(config)
         _ensure_user_notes_sidecar(config)
@@ -17606,7 +19591,7 @@ async def user_notes_index(kind: str = "gene", genome_key: str = ""):
     written just to place a 14px mark.
     """
     def _run():
-        config = load_config()
+        config = _notes_config()
         with _user_notes_lock:
             store = _load_user_notes(config)
         grouped: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
@@ -17655,7 +19640,7 @@ async def create_user_note(request: UserNoteCreateRequest):
         raise HTTPException(status_code=400, detail="A todo title is required")
 
     def _run():
-        config = load_config()
+        config = _notes_config()
         now = _utc_now_iso()
         status = _normalize_todo_status(request.status)
         completed = bool(request.completed) or status == "completed"
@@ -17691,7 +19676,7 @@ async def create_user_note(request: UserNoteCreateRequest):
 async def set_user_note_archived(note_id: str, request: UserNoteArchiveRequest):
     """Move a note into or out of the archive without changing its text."""
     def _run():
-        config = load_config()
+        config = _notes_config()
         with _user_notes_lock:
             store = _load_user_notes(config)
             notes = list(store.get("notes", []))
@@ -17720,7 +19705,7 @@ async def bulk_delete_user_notes(request: UserNoteBulkDeleteRequest):
     requested = [note_id for note_id in requested if note_id]
 
     def _run():
-        config = load_config()
+        config = _notes_config()
         wanted = set(requested)
         with _user_notes_lock:
             store = _load_user_notes(config)
@@ -17743,7 +19728,7 @@ async def update_user_note(note_id: str, request: UserNoteUpdateRequest):
     another — or in the file itself.
     """
     def _run():
-        config = load_config()
+        config = _notes_config()
         with _user_notes_lock:
             store = _load_user_notes(config)
             notes = list(store.get("notes", []))
@@ -17803,7 +19788,7 @@ async def update_user_note(note_id: str, request: UserNoteUpdateRequest):
 @app.delete("/api/notes/{note_id}")
 async def delete_user_note(note_id: str):
     def _run():
-        config = load_config()
+        config = _notes_config()
         with _user_notes_lock:
             store = _load_user_notes(config)
             notes = list(store.get("notes", []))
@@ -17813,6 +19798,377 @@ async def delete_user_note(note_id: str):
             store["notes"] = remaining
             _save_user_notes(store, config)
         return {"deleted": note_id}
+
+    return await run_in_threadpool(_run)
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Notes Transfer — export a selection, and import one back
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Notes are the one thing in this app the user cannot recreate: a genome can be
+# re-downloaded and an annotation re-derived, but prose someone typed is gone.
+# So the shape of this is deliberately cautious — an import is always scanned
+# before it is applied, the destructive strategy takes a backup first, and the
+# merge is recomputed at apply time rather than trusted from the scan.
+#
+# The serialising and the merge arithmetic live in notes_transfer, which imports
+# nothing from here. Everything it produces is still run through
+# _normalize_note_record before it is saved, so validation has one home.
+
+MAX_EXPORT_NOTE_IDS = 50_000
+
+# Todos first, then general notes, then genes — so a spreadsheet reads in the
+# same order the Notes view does.
+_NOTE_KIND_RANK = {"todo": 0, "genome": 1, "gene": 2}
+
+
+class NotesExportRequest(BaseModel):
+    directory: str
+    filename: str
+    format: str = "json"
+    note_ids: List[str] = []
+    # "create" refuses to touch an existing file so the UI can offer a choice,
+    # matching the genome-config export.
+    mode: str = "create"
+
+
+class NotesImportScanRequest(BaseModel):
+    path: str
+
+
+class NotesImportApplyRequest(BaseModel):
+    path: str
+    # The file digest the scan reported. Apply refuses if the file moved since.
+    digest: str = ""
+    # The store digest the scan reported. Apply proceeds either way — autosave
+    # fires every 600ms, so refusing would be maddening — but says whether the
+    # notes moved under the user while they were reading the scan.
+    store_digest: str = ""
+    strategy: str = "newer_wins"
+
+
+def _note_export_sort_key(note: Dict[str, Any]) -> Tuple[int, str, str, str]:
+    target = note.get("target") or {}
+    kind = str(target.get("kind") or "gene")
+    return (
+        _NOTE_KIND_RANK.get(kind, 3),
+        str(target.get("genome_key") or ""),
+        str(target.get("id") or ""),
+        str(note.get("updated_at") or ""),
+    )
+
+
+def _read_transfer_file(path_value: str) -> Tuple[Path, bytes, str]:
+    """Resolve, size-check and decode a file the user picked."""
+    resolved = _resolve_user_file(path_value, "Notes")
+    size = resolved.stat().st_size
+    if size > notes_transfer.MAX_TRANSFER_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"That file is {size} bytes; the limit is {notes_transfer.MAX_TRANSFER_FILE_BYTES}.",
+        )
+    data = resolved.read_bytes()
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That file is not UTF-8 text, so it cannot be read as notes: {exc}",
+        )
+    return resolved, data, text
+
+
+def _parse_transfer_file(path_value: str) -> Tuple[Path, bytes, Dict[str, Any], str]:
+    resolved, data, text = _read_transfer_file(path_value)
+    fmt = notes_transfer.sniff_transfer_format(resolved.name, text[:4096])
+    parsed = notes_transfer.parse_transfer_text(text, fmt=fmt)
+    return resolved, data, parsed, fmt
+
+
+@app.post("/api/notes/export")
+async def export_user_notes(payload: NotesExportRequest):
+    directory_raw = str(payload.directory or "").strip()
+    filename = str(payload.filename or "").strip()
+    fmt = str(payload.format or "").strip().lower()
+    mode = str(payload.mode or "create").strip().lower()
+    note_ids = [str(note_id or "").strip() for note_id in (payload.note_ids or [])]
+    note_ids = [note_id for note_id in note_ids if note_id]
+
+    # Checked before safe_export_filename: its unknown-format fallback appends
+    # ".{format}" verbatim, which is how ".json" works without a table entry —
+    # and also how "exe" would sneak through if nothing validated first.
+    if fmt not in notes_transfer.TRANSFER_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail="format must be one of: " + ", ".join(notes_transfer.TRANSFER_FORMATS),
+        )
+    if not directory_raw:
+        raise HTTPException(status_code=400, detail="directory must not be empty")
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename must not be empty")
+    if not note_ids:
+        raise HTTPException(status_code=400, detail="Select at least one note to export")
+    if len(note_ids) > MAX_EXPORT_NOTE_IDS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many notes in one export; the limit is {MAX_EXPORT_NOTE_IDS}",
+        )
+    if mode not in {"create", "overwrite"}:
+        raise HTTPException(status_code=400, detail="mode must be create or overwrite")
+
+    def _run():
+        config = _notes_config()
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+            by_id = {str(note.get("id")): note for note in store.get("notes", [])}
+
+        wanted = list(dict.fromkeys(note_ids))
+        selected = [by_id[note_id] for note_id in wanted if note_id in by_id]
+        missing = [note_id for note_id in wanted if note_id not in by_id]
+        if not selected:
+            raise HTTPException(status_code=404, detail="None of those notes are in the store")
+        selected.sort(key=_note_export_sort_key)
+
+        directory = Path(directory_raw).expanduser().resolve()
+        safe_filename = safe_export_filename(filename, fmt)
+        out_path = directory / safe_filename
+        if mode == "create" and out_path.exists():
+            raise HTTPException(status_code=409, detail=f"{safe_filename} already exists.")
+
+        text = notes_transfer.serialise_notes(selected, fmt=fmt)
+        directory.mkdir(parents=True, exist_ok=True)
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+            os.replace(tmp_path, out_path)
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except Exception:
+                pass
+
+        return {
+            "ok": True,
+            "path": str(out_path),
+            "filename": safe_filename,
+            "format": fmt,
+            "count": len(selected),
+            "missing_ids": missing,
+        }
+
+    return await run_in_threadpool(_run)
+
+
+@app.post("/api/notes/import/scan")
+async def scan_user_notes_import(payload: NotesImportScanRequest):
+    """Read a file and say what is in it, without changing anything.
+
+    The statuses here are a preview, not a decision. Autosave can move the store
+    while the user reads this, so apply recomputes the whole merge from a fresh
+    load — see apply_user_notes_import.
+    """
+
+    def _run():
+        resolved, data, parsed, fmt = _parse_transfer_file(payload.path)
+
+        config = _notes_config()
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+        existing = list(store.get("notes", []))
+        existing_by_id = {str(note.get("id")): note for note in existing}
+
+        rows: List[Dict[str, Any]] = []
+        candidates: List[Dict[str, Any]] = []
+        summary = {
+            "new": 0, "identical": 0, "differs": 0, "invalid": 0,
+            "todos": 0, "notes": 0, "archived": 0,
+        }
+
+        for row in parsed.get("rows", []):
+            note = row.get("note")
+            errors = list(row.get("errors") or [])
+            warnings = list(row.get("warnings") or [])
+
+            if note is not None:
+                # The same gate the create endpoint uses, so nothing can be
+                # accepted here that the store would then reject.
+                normalized = _normalize_note_record({**note, "id": note.get("id") or "pending"})
+                if normalized is None:
+                    note = None
+                    errors.append("this row cannot be stored as a note")
+
+            if note is None:
+                summary["invalid"] += 1
+                rows.append({
+                    "line": row.get("line"),
+                    "id": "",
+                    "kind": "",
+                    "genome_key": "",
+                    "target_id": "",
+                    "target_label": "",
+                    "title": "",
+                    "preview": "",
+                    "tags": [],
+                    "archived": False,
+                    "updated_at": "",
+                    "status": "invalid",
+                    "errors": errors,
+                    "warnings": warnings,
+                })
+                continue
+
+            candidates.append(note)
+            target = note.get("target") or {}
+            kind = str(target.get("kind") or "gene")
+            if kind == "todo":
+                summary["todos"] += 1
+            else:
+                summary["notes"] += 1
+            if note.get("archived"):
+                summary["archived"] += 1
+            body = str(note.get("body") or "")
+            rows.append({
+                "line": row.get("line"),
+                "id": str(note.get("id") or ""),
+                "kind": kind,
+                "genome_key": str(target.get("genome_key") or ""),
+                "target_id": str(target.get("id") or ""),
+                "target_label": str(target.get("label") or ""),
+                "title": str(note.get("title") or ""),
+                "preview": body[:200],
+                "tags": list(note.get("tags") or []),
+                "archived": bool(note.get("archived")),
+                "updated_at": str(note.get("updated_at") or ""),
+                "status": "new",
+                "errors": errors,
+                "warnings": warnings,
+            })
+
+        diffs = notes_transfer.diff_against_store(candidates, existing_by_id)
+        diff_iter = iter(diffs)
+        for row in rows:
+            if row["status"] == "invalid":
+                continue
+            diff = next(diff_iter)
+            row["status"] = diff["status"]
+            row["warnings"] = list(row["warnings"]) + list(diff["warnings"])
+            summary[diff["status"]] += 1
+
+        return {
+            "format": fmt,
+            "path": str(resolved),
+            "filename": resolved.name,
+            "bytes": len(data),
+            "digest": notes_transfer.file_digest(data),
+            "store_digest": notes_transfer.store_digest(existing),
+            "schema_version": notes_transfer.TRANSFER_SCHEMA_VERSION,
+            "total": len(rows),
+            "applicable": len(candidates),
+            "stored_total": len(existing),
+            "rows": rows,
+            "summary": summary,
+            "near_duplicates": notes_transfer.find_near_duplicates(candidates, existing),
+            "document_errors": list(parsed.get("document_errors") or []),
+            "document_warnings": list(parsed.get("document_warnings") or []),
+        }
+
+    return await run_in_threadpool(_run)
+
+
+@app.post("/api/notes/import/apply")
+async def apply_user_notes_import(payload: NotesImportApplyRequest):
+    strategy = str(payload.strategy or "").strip().lower()
+    if strategy not in notes_transfer.MERGE_STRATEGIES:
+        raise HTTPException(
+            status_code=400,
+            detail="strategy must be one of: " + ", ".join(notes_transfer.MERGE_STRATEGIES),
+        )
+    expected_digest = str(payload.digest or "").strip()
+    scanned_store_digest = str(payload.store_digest or "").strip()
+
+    def _run():
+        # Parsing happens outside the lock: it can be slow, and it needs nothing
+        # from the store.
+        resolved, data, parsed, fmt = _parse_transfer_file(payload.path)
+
+        if expected_digest and notes_transfer.file_digest(data) != expected_digest:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "file_changed",
+                    "message": "That file changed after it was scanned. Scan it again before importing.",
+                },
+            )
+        if parsed.get("document_errors"):
+            raise HTTPException(status_code=400, detail="; ".join(parsed["document_errors"]))
+
+        incoming: List[Dict[str, Any]] = []
+        for note in notes_transfer.valid_notes(parsed):
+            normalized = _normalize_note_record({
+                **note,
+                "id": str(note.get("id") or "").strip() or _new_note_id(),
+            })
+            if normalized is None:
+                continue
+            if normalized["target"]["kind"] == "todo" and not normalized["title"].strip():
+                continue
+            if not str(note.get("id") or "").strip():
+                # Keep it blank so the merge mints an id under its own rules.
+                normalized["id"] = ""
+            incoming.append(normalized)
+
+        if not incoming:
+            raise HTTPException(status_code=400, detail="That file has no notes that can be imported")
+
+        destructive = strategy == "replace_all"
+        now = _utc_now_iso()
+        config = _notes_config()
+
+        with _user_notes_lock:
+            store = _load_user_notes(config)
+            existing = list(store.get("notes", []))
+            before_digest = notes_transfer.store_digest(existing)
+
+            merged, counts = notes_transfer.apply_merge(
+                existing,
+                incoming,
+                strategy,
+                now=now,
+                mint_id=_new_note_id,
+            )
+            final = [
+                record for record in (_normalize_note_record(note) for note in merged)
+                if record is not None
+            ]
+
+            backup_paths: List[str] = []
+            if destructive:
+                backup_paths = _backup_user_notes_stores(config)
+
+            store["version"] = USER_NOTES_STORE_VERSION
+            store["notes"] = sorted(final, key=lambda n: n["updated_at"], reverse=True)
+
+            if destructive:
+                # Every store, or the union on the next load undoes the deletion.
+                _save_user_notes_to_all_stores(store, config)
+            else:
+                _save_user_notes(store, config)
+
+        return {
+            "ok": True,
+            "strategy": strategy,
+            "format": fmt,
+            "path": str(resolved),
+            "total": len(incoming),
+            "stored_total": len(store["notes"]),
+            "backup_paths": backup_paths,
+            "store_changed": bool(scanned_store_digest) and scanned_store_digest != before_digest,
+            **counts,
+        }
 
     return await run_in_threadpool(_run)
 

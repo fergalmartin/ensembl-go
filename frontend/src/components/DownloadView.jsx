@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { API_BASE } from '../backendRuntime'
+import useTutorial from '../hooks/useTutorial'
+import { isDemoGenomeItem } from '../tutorials/demoGenome'
+import { fetchDemoGenomeStatus, installDemoGenome } from '../tutorials/demoGenomeApi'
 import ScreenshotExportModal from './ScreenshotExportModal'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
 import ProgressGlyph from './ProgressGlyph'
@@ -896,7 +899,7 @@ const chooseFilesForTypes = (availability, selectedTypes) => {
 function DownloadTypeToolbar({ activeProvider, selectedTypes, onToggleType, isLight }) {
     const allowedTypes = activeProvider === 'ncbi' ? REFSEQ_DOWNLOAD_FILE_TYPES : ENSEMBL_DOWNLOAD_FILE_TYPES
     return (
-        <div className={`px-4 py-3 border-b flex items-center gap-2 flex-wrap ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-750 border-gray-700'}`}>
+        <div data-tour-id="download-file-types" className={`px-4 py-3 border-b flex items-center gap-2 flex-wrap ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-750 border-gray-700'}`}>
             <span className={`text-xs font-bold uppercase tracking-widest mr-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Download</span>
             {allowedTypes.map((type) => {
                 const active = selectedTypes.has(type)
@@ -1482,6 +1485,7 @@ function GenomeRowActions({
     localFileInfo = null,
     tasksByItemKey,
     downloading,
+    demoProgress = null,
     isLight,
     onDownload,
     onDownloadFiles,
@@ -1492,6 +1496,11 @@ function GenomeRowActions({
     deleteTitle = 'Remove downloaded files',
 }) {
     const itemTasks = tasksByItemKey?.[item.id] || []
+    // The demo genome is copied from disk rather than queued, so it has no tasks to read
+    // progress from and none of the machinery below sees it as running. Its progress is
+    // driven from above instead, and the button is otherwise treated exactly the same.
+    const isDemo = isDemoGenomeItem(item)
+    const demoRunning = isDemo && demoProgress != null
     const desiredTypes = selectedDownloadTypeList(selectedTypes)
     const desiredTypesWithMetadata = withImplicitMetadataTypes(desiredTypes)
     const activeTypeSet = new Set(itemTasks
@@ -1505,11 +1514,19 @@ function GenomeRowActions({
         ['pending', 'downloading'].includes(String(task.status || ''))
         && desiredTypesWithMetadata.includes(String(task.file_type || ''))
     ))
-    const active = desiredTypes.length > 0 && activeTasks.length > 0 && downloadTypes.length === 0
-    const activeProgress = itemTasks
-        .filter((task) => activeTasks.includes(task))
-        .reduce((best, task) => Math.max(best, Number(task.progress || 0)), 0)
-    const disabled = downloading || desiredTypes.length === 0 || active || downloadTypes.length === 0
+    const active = demoRunning || (desiredTypes.length > 0 && activeTasks.length > 0 && downloadTypes.length === 0)
+    const activeProgress = demoRunning
+        ? demoProgress
+        : itemTasks
+            .filter((task) => activeTasks.includes(task))
+            .reduce((best, task) => Math.max(best, Number(task.progress || 0)), 0)
+    // A tutorial step the user cannot repeat is a step they cannot go back to, so the demo
+    // genome stays downloadable after it has been downloaded. Re-fetching it just
+    // overwrites the same handful of files.
+    const replayable = isDemo && !demoRunning
+    const disabled = replayable
+        ? false
+        : (downloading || desiredTypes.length === 0 || active || downloadTypes.length === 0)
     const title = desiredTypes.length === 0
         ? 'Select data to download'
         : active
@@ -1523,11 +1540,17 @@ function GenomeRowActions({
     const buttonClass = active
         ? (isLight ? 'text-blue-700 border-blue-200 cursor-progress' : 'text-blue-300 border-blue-900/50 cursor-progress')
         : complete
-            ? (isLight ? 'text-green-600 bg-green-50 border-green-100 cursor-default' : 'text-green-300 bg-green-900/20 border-green-900/40 cursor-default')
+            // The green tick means "already here", which is normally the end of it — except
+            // for the demo genome, which stays re-fetchable so the tutorial step can be
+            // replayed, and so must still look like something you can press.
+            ? `${isLight ? 'text-green-600 bg-green-50 border-green-100' : 'text-green-300 bg-green-900/20 border-green-900/40'} ${replayable ? 'cursor-pointer' : 'cursor-default'}`
             : disabled
                 ? 'opacity-40 border-transparent cursor-not-allowed'
-                : (isLight ? 'text-blue-700 border-blue-100 hover:bg-blue-50' : 'text-blue-300 border-blue-900/40 hover:bg-blue-900/20')
+                // cursor-pointer is not the browser default on a button, and a control the
+                // tutorial is asking someone to click should look like one.
+                : (isLight ? 'cursor-pointer text-blue-700 border-blue-100 hover:bg-blue-50' : 'cursor-pointer text-blue-300 border-blue-900/40 hover:bg-blue-900/20')
     const Icon = complete && !active ? IconDownloaded : IconDownload
+    const downloadNow = replayable && downloadTypes.length === 0 ? desiredTypes : downloadTypes
 
     return (
         <div className="flex items-center justify-end gap-1">
@@ -1543,13 +1566,14 @@ function GenomeRowActions({
                 isLight={isLight}
             />
             <button
+                data-tour-id={`download-start-${item.species_key}`}
                 type="button"
                 disabled={disabled}
                 title={title}
                 onClick={(e) => {
                     e.stopPropagation()
-                    if (downloadTypes.length === 0) return
-                    onDownload(item, { selectedTypes: downloadTypes })
+                    if (downloadNow.length === 0) return
+                    onDownload(item, { selectedTypes: downloadNow })
                 }}
                 className={`w-8 h-8 inline-flex items-center justify-center rounded-md border transition-colors ${buttonClass}`}
             >
@@ -1578,7 +1602,7 @@ function GenomeRowActions({
 // ---------------------------------------------------------------------------
 // Species table row
 // ---------------------------------------------------------------------------
-function SpeciesRow({ species, expanded, onToggleExpand, onDownload, onDownloadAll, onDownloadFiles, onCancelFiles, onDeleteFile, selectedTypes, localTypeByKey, localFileInfoByKey = new Map(), tasksByItemKey, downloading, isLight }) {
+function SpeciesRow({ species, expanded, onToggleExpand, onDownload, onDownloadAll, onDownloadFiles, onCancelFiles, onDeleteFile, selectedTypes, localTypeByKey, localFileInfoByKey = new Map(), tasksByItemKey, downloading, demoProgress = null, isLight }) {
     const hasMany = species.assemblies.length > 1
     const firstAsm = species.assemblies[0]
 
@@ -1597,6 +1621,7 @@ function SpeciesRow({ species, expanded, onToggleExpand, onDownload, onDownloadA
                 localFileInfo={localFileInfo}
                 tasksByItemKey={tasksByItemKey}
                 downloading={downloading}
+                demoProgress={demoProgress}
                 isLight={isLight}
                 onDownload={onDownload}
                 onDownloadFiles={onDownloadFiles}
@@ -1609,7 +1634,7 @@ function SpeciesRow({ species, expanded, onToggleExpand, onDownload, onDownloadA
     // Single assembly — standard row with direct download actions
     if (!hasMany) {
         return (
-            <div className={rowBase} style={{ gridTemplateColumns: gridCols }}>
+            <div data-tour-id={`download-species-${species.key}`} className={rowBase} style={{ gridTemplateColumns: gridCols }}>
                 <div className={`px-3 py-2.5 overflow-hidden ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
                     <div className="font-medium leading-tight truncate" title={species.scientific_name}>{species.scientific_name}</div>
                     {species.common_name && (
@@ -1808,8 +1833,8 @@ function PanelHeader({ title, count, countLabel, collapsed, onToggle, isLight, a
 // ---------------------------------------------------------------------------
 const FILE_TYPES = [
     { id: 'fasta', label: 'FASTA' },
-    { id: 'gff3', label: 'GFF3' },
-    { id: 'homology', label: 'Homology' },
+    { id: 'gff3', label: 'Genes' },
+    { id: 'homology', label: 'Homologies' },
 ]
 
 function MyDownloadList({ items, onRemove, onClear, onDownload, onRetry, downloading, statusMsg,
@@ -2344,6 +2369,7 @@ export default function DownloadView({
     // Panel collapse state
     const [speciesCollapsed, setSpeciesCollapsed] = useState(false)
 
+
     // ---------------------------------------------------------------------------
     // Data fetching
     // ---------------------------------------------------------------------------
@@ -2413,6 +2439,70 @@ export default function DownloadView({
 	            console.warn('Failed to refresh local assemblies:', error)
 	        }
 	    }, [config?.output_dir])
+
+    // While a tutorial is running the demo genome joins the catalogue, so the tutorial
+    // can teach this view for real — same search, same file-type chips, same download
+    // button — without a network round trip or a gigabyte on disk.
+    const { isRunning: tutorialRunning, emitSignal: emitTutorialSignal } = useTutorial()
+    const [demoSpecies, setDemoSpecies] = useState(null)
+
+    useEffect(() => {
+        if (!tutorialRunning) {
+            setDemoSpecies(null)
+            return
+        }
+        let cancelled = false
+        fetchDemoGenomeStatus(config?.output_dir || '')
+            .then((status) => { if (!cancelled) setDemoSpecies(status?.species || null) })
+            .catch(() => { if (!cancelled) setDemoSpecies(null) })
+        return () => { cancelled = true }
+    }, [config?.output_dir, tutorialRunning])
+
+    // The demo genome is already on the machine, so installing it is instantaneous — which
+    // teaches the wrong thing. Pacing it over a few seconds with real-looking progress is
+    // the point of the step: this is what waiting for a download looks like.
+    const DEMO_DOWNLOAD_MS = 5000
+    const [demoProgress, setDemoProgress] = useState(null)
+
+    const handleDemoGenomeInstall = useCallback(async () => {
+        if (!config?.output_dir) {
+            setStatusMsg({ text: 'Set an Output Directory in Configuration first.', isError: true })
+            setTimeout(() => setStatusMsg(null), 4000)
+            return
+        }
+        // Deliberately not a status banner: that banner is in the flow above the species
+        // table, so showing one shifts the whole list — including the button just clicked —
+        // down by its height. The progress goes on the button's own icon instead, which is
+        // where a real download shows it anyway.
+        setDemoProgress(0)
+        const started = Date.now()
+        const ticker = setInterval(() => {
+            setDemoProgress(Math.min(0.99, (Date.now() - started) / DEMO_DOWNLOAD_MS))
+        }, 60)
+        try {
+            // Do the real work while the progress runs, then hold until the clock catches
+            // up so the pacing is the same whether or not the disk was quick.
+            const install = installDemoGenome(config.output_dir)
+            await Promise.all([
+                install,
+                new Promise((resolve) => setTimeout(resolve, DEMO_DOWNLOAD_MS)),
+            ])
+            clearInterval(ticker)
+            setDemoProgress(1)
+            await fetchLocalAssemblies()
+            // Cleared only once the listing has caught up, so the icon goes straight from
+            // a full ring to the downloaded tick rather than flicking back in between.
+            setDemoProgress(null)
+            emitTutorialSignal('demoGenome.installed')
+        } catch (error) {
+            clearInterval(ticker)
+            setDemoProgress(null)
+            setStatusMsg({ text: `Could not install the demo genome: ${error?.message || 'Unknown error'}`, isError: true })
+            setTimeout(() => setStatusMsg(null), 5000)
+        } finally {
+            clearInterval(ticker)
+        }
+    }, [config?.output_dir, emitTutorialSignal, fetchLocalAssemblies])
 
     const fetchRemoteCatalogData = useCallback(async () => {
         const [gRes, sRes] = await Promise.all([
@@ -2664,7 +2754,7 @@ export default function DownloadView({
                     }
                     if (newFailedTasks.length > 0) {
                         const first = newFailedTasks[0]
-                        const label = first.file_type ? `${String(first.file_type).toUpperCase()} for ${first.assembly}` : first.filename
+                        const label = first.file_type ? `${fileTypeLabel(first.file_type)} for ${first.assembly}` : first.filename
                         setStatusMsg({ text: `Download failed: ${label}`, isError: true })
                         setTimeout(() => setStatusMsg(null), 6000)
                     } else {
@@ -2678,7 +2768,7 @@ export default function DownloadView({
                         }
                         if (newWarningTasks.length > 0) {
                             const first = newWarningTasks[0]
-                            const fallbackLabel = first.file_type ? `${String(first.file_type).toUpperCase()} for ${first.assembly}` : first.filename
+                            const fallbackLabel = first.file_type ? `${fileTypeLabel(first.file_type)} for ${first.assembly}` : first.filename
                             setStatusMsg({
                                 text: String(first.warning || `Softmasked file unavailable; used unmasked fallback for ${fallbackLabel}.`),
                                 isError: false,
@@ -2912,6 +3002,10 @@ export default function DownloadView({
     }, [])
 
     const handleRowDownload = useCallback(async (item, { force = false, selectedTypes = null } = {}) => {
+        if (isDemoGenomeItem(item)) {
+            await handleDemoGenomeInstall()
+            return
+        }
         const requestedTypes = Array.isArray(selectedTypes) ? selectedTypes : Array.from(activeDownloadTypes)
         if (requestedTypes.length === 0) {
             setStatusMsg({ text: 'Select at least one file type to download.', isError: true })
@@ -2928,7 +3022,7 @@ export default function DownloadView({
             setStatusMsg({ text: `Download failed: ${e?.message || 'Unknown error'}`, isError: true })
             setTimeout(() => setStatusMsg(null), 6000)
         }
-    }, [activeDownloadTypes, buildAvailabilityUrl, handleDownloadFiles])
+    }, [activeDownloadTypes, buildAvailabilityUrl, handleDemoGenomeInstall, handleDownloadFiles])
 
     const handleDownloadAllAssemblies = useCallback(async (species, options = {}) => {
         const assemblies = Array.isArray(species?.assemblies) ? species.assemblies : []
@@ -3156,7 +3250,7 @@ export default function DownloadView({
             }
             return list
         }
-        let list = allSpecies
+        let list = demoSpecies ? [demoSpecies, ...allSpecies] : allSpecies
 
         if (activeGroup === 'Models') {
             // Filter species to only those in the MODEL_ORGANISMS list
@@ -3224,7 +3318,7 @@ export default function DownloadView({
                 .filter(Boolean)
         }
         return list
-    }, [activeProvider, allSpecies, activeGroup, activeSubGroup, ncbiSpecies, search, localAssemblies, activeRefSeqGroup])
+    }, [activeProvider, allSpecies, demoSpecies, activeGroup, activeSubGroup, ncbiSpecies, search, localAssemblies, activeRefSeqGroup])
 
     const totalPages = Math.ceil(filteredSpecies.length / PAGE_SIZE)
     const pageSpecies = filteredSpecies.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -3314,7 +3408,7 @@ export default function DownloadView({
             if (typeof window !== 'undefined') {
                 window.dispatchEvent(new Event(SELECTOR_REFRESH_EVENT))
             }
-            setStatusMsg({ text: 'Checked Ensembl Beta FTP catalogue for updates.', isError: false })
+            setStatusMsg({ text: 'Checked Ensembl FTP catalogue for updates.', isError: false })
             setTimeout(() => setStatusMsg(null), 4000)
         } catch (e) {
             setStatusMsg({ text: `Catalogue refresh failed: ${e?.message || 'Unknown error'}`, isError: true })
@@ -3384,7 +3478,7 @@ export default function DownloadView({
             }
             if (data?.status === 'already_exists' || data?.status === 'completed') {
                 fetchLocalAssemblies()
-                setStatusMsg({ text: `${String(fileType).toUpperCase()} is already present locally for ${getAssemblyAccession(item)}.`, isError: false })
+                setStatusMsg({ text: `${fileTypeLabel(fileType)} is already present locally for ${getAssemblyAccession(item)}.`, isError: false })
                 setTimeout(() => setStatusMsg(null), 4000)
                 return
             }
@@ -3403,7 +3497,7 @@ export default function DownloadView({
                     }
                     : entry
             ))
-            setStatusMsg({ text: `Retrying ${String(fileType).toUpperCase()} download for ${getAssemblyAccession(item)}…`, isError: false })
+            setStatusMsg({ text: `Retrying ${fileTypeLabel(fileType)} download for ${getAssemblyAccession(item)}…`, isError: false })
             setTimeout(() => setStatusMsg(null), 4000)
         } catch (e) {
             setStatusMsg({ text: `Retry failed: ${e?.message || 'Unknown error'}`, isError: true })
@@ -3415,6 +3509,10 @@ export default function DownloadView({
     // Download
     // ---------------------------------------------------------------------------
     const handleDownload = async (items, fileTypes) => {
+        if (items.length === 1 && isDemoGenomeItem(items[0])) {
+            await handleDemoGenomeInstall()
+            return
+        }
         if (!config?.output_dir) {
             setStatusMsg({ text: 'Set an Output Directory in Configuration first.', isError: true })
             setTimeout(() => setStatusMsg(null), 4000)
@@ -3648,12 +3746,12 @@ export default function DownloadView({
             <div className={`px-6 py-3 border-b shrink-0 flex items-center gap-4 ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800 border-gray-700'}`}>
                 <div>
                     <h2 className={`font-semibold ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
-                        {activeProvider === 'ncbi' ? 'RefSeq Genomes — Data Browser' : 'Ensembl Organisms — Data Browser'}
+                        {activeProvider === 'ncbi' ? 'RefSeq Genomes — Data Browser' : 'Ensembl Data Browser'}
                     </h2>
                         <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
                             {activeProvider === 'ncbi'
                                 ? 'Browse RefSeq annotated assemblies by taxonomic group, or search by name or accession'
-                                : 'Browse and download genomes, gene annotations, and homologies from the Ensembl Beta FTP'}
+                                : 'Browse and download genomes, gene annotations, and homologies from the Ensembl FTP'}
                         </p>
                     </div>
                 <div className="ml-auto flex items-center gap-3">
@@ -3763,6 +3861,7 @@ export default function DownloadView({
                         <div className={`flex items-center gap-2 flex-1 px-3 py-1.5 rounded-lg border ${isLight ? 'bg-gray-50 border-gray-300' : 'bg-gray-700 border-gray-600'}`}>
                             <span className="opacity-40"><IconSearch /></span>
                             <input
+                                data-tour-id="download-search"
                                 type="text"
                                 placeholder={activeProvider === 'ncbi'
                                     ? 'Search NCBI species, assembly, or accession…'
@@ -3952,7 +4051,7 @@ export default function DownloadView({
                                     ) : pageSpecies.length === 0 ? (
                                         <div className="h-40 flex items-center justify-center opacity-40 text-sm">No genomes found</div>
                                     ) : (
-                                        <div>
+                                        <div data-tour-id="download-species-list">
                                             {pageSpecies.map(species => (
                                                 <SpeciesRow
                                                     key={species.key}
@@ -3969,6 +4068,7 @@ export default function DownloadView({
                                                     localFileInfoByKey={localFileInfoByKey}
                                                     tasksByItemKey={tasksByItemKey}
                                                     downloading={downloading}
+                                                    demoProgress={demoProgress}
                                                     isLight={isLight}
                                                 />
                                             ))}

@@ -1,0 +1,6 @@
+# Assembly name:  EnsWel1.0
+# Organism name:  Ensemblus welcomus (demo)
+# Taxid:          32644
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+welcome1	assembled-molecule	welcome1	Chromosome	na	=	welcome1	Primary Assembly	15682	welcome1
+welcome2	assembled-molecule	welcome2	Chromosome	na	=	welcome2	Primary Assembly	6352	welcome2

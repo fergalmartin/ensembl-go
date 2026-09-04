@@ -13,9 +13,9 @@
     "prepare:mafft": "node ./scripts/prepare-mafft-bundle.js",
     "verify:linux-backend": "node ./scripts/verify-linux-backend.js",
     "prebuild": "npm run prebuild:mac",
-    "prebuild:mac": "npm run check:backend-prereqs -- --target darwin && npm run prepare:mafft -- --target darwin && npm run build:backend -- --target darwin && npm run build:frontend",
-    "prebuild:win": "npm run check:backend-prereqs -- --target win32 && npm run prepare:mafft -- --target win32 && npm run build:backend -- --target win32 && npm run build:frontend",
-    "prebuild:linux": "npm run check:backend-prereqs -- --target linux && npm run prepare:mafft -- --target linux && npm run build:backend -- --target linux && npm run build:frontend",
+    "prebuild:mac": "npm run check:backend-prereqs -- --target darwin && npm run prepare:mafft -- --target darwin && npm run prepare:structure-viewer && npm run build:backend -- --target darwin && npm run build:frontend",
+    "prebuild:win": "npm run check:backend-prereqs -- --target win32 && npm run prepare:mafft -- --target win32 && npm run prepare:structure-viewer && npm run build:backend -- --target win32 && npm run build:frontend",
+    "prebuild:linux": "npm run check:backend-prereqs -- --target linux && npm run prepare:mafft -- --target linux && npm run prepare:structure-viewer && npm run build:backend -- --target linux && npm run build:frontend",
     "build": "node ./node_modules/electron-builder/cli.js",
     "dist": "npm run dist:mac:release",
     "dist:mac:release": "node ./scripts/check-macos-release-prereqs.js && npm run check:electron-runtime && npm run refresh:classification && node ./scripts/clean-branding-artifacts.js && npm run prebuild:mac && node ./node_modules/electron-builder/cli.js --mac dmg zip",
@@ -24,7 +24,8 @@
     "dist:win:dir": "npm run prebuild:win && node ./node_modules/electron-builder/cli.js --win dir",
     "dist:linux": "npm run check:electron-runtime && npm run refresh:classification && npm run prebuild:linux && npm run verify:linux-backend && node ./node_modules/electron-builder/cli.js --linux AppImage deb",
     "dist:linux:dir": "npm run prebuild:linux && npm run verify:linux-backend && node ./node_modules/electron-builder/cli.js --linux dir",
-    "refresh:classification": "node ./scripts/refresh-classification.js"
+    "refresh:classification": "node ./scripts/refresh-classification.js",
+    "prepare:structure-viewer": "npm --prefix ../frontend run prepare:structure-viewer"
   },
   "build": {
     "appId": "com.ensembl.go",

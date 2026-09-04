@@ -1,3 +1,5 @@
+import { isBlockedDuringTutorial } from './tutorials/sandbox.js'
+
 export const DEFAULT_API_BASE = 'http://127.0.0.1:8000'
 export const API_TOKEN_HEADER = 'X-Ensembl-Local-Token'
 
@@ -70,6 +72,22 @@ export async function apiFetch(input, options = {}) {
   }
 
   const resolvedInput = resolveFetchUrl(input)
+
+  // A tutorial runs on a configuration overlay of its own and must not be able to write
+  // the user's real one — from anywhere, including paths added later. Refused here rather
+  // than at each of the dozen-odd call sites, and answered as a success so callers carry
+  // on normally. See tutorials/sandbox.js.
+  {
+    const requestUrl = typeof resolvedInput === 'string' ? resolvedInput : resolvedInput?.url || ''
+    const method = options.method
+      || (typeof Request !== 'undefined' && resolvedInput instanceof Request ? resolvedInput.method : 'GET')
+    if (isBlockedDuringTutorial(requestUrl, method)) {
+      return new Response(JSON.stringify({ ok: true, skipped: 'tutorial-sandbox' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+  }
   const isRequest = typeof Request !== 'undefined' && resolvedInput instanceof Request
   const headers = new Headers(options.headers || (isRequest ? resolvedInput.headers : undefined))
   const token = getApiToken()

@@ -173,6 +173,32 @@ export default function FocusTranscriptDetail({
     const seqBg = isLight ? '#f8fafc' : '#161d29'
     const rowHoverClass = isLight ? 'hover:bg-gray-100' : 'hover:bg-[#273449]'
 
+    const renderFeatureButton = (feature) => {
+        const enabled = Boolean(availability[feature.key])
+        const active = featureType === feature.key
+        return (
+            <button
+                key={feature.key}
+                data-tour-id={`focus-sequence-${feature.key}`}
+                type="button"
+                disabled={!enabled}
+                aria-pressed={active}
+                onClick={() => setFeatureType(feature.key)}
+                title={enabled ? `Show ${feature.label}` : `No ${feature.label} for this transcript`}
+                className={`text-left px-2 py-1 rounded text-[11px] transition-colors ${enabled ? rowHoverClass : ''}`}
+                style={{
+                    color: !enabled
+                        ? (isLight ? '#c7ccd1' : '#5c5f66')
+                        : active ? '#ffffff' : undefined,
+                    backgroundColor: active && enabled ? accentColor : undefined,
+                    cursor: enabled ? 'pointer' : 'not-allowed',
+                }}
+            >
+                {feature.label}
+            </button>
+        )
+    }
+
     // Labels and values both start on their own left edge, so the eye runs down
     // two straight columns rather than tracking a ragged gutter between them.
     const Field = ({ label, children }) => (
@@ -211,6 +237,7 @@ export default function FocusTranscriptDetail({
                         <div className="flex-1 h-px" style={{ backgroundColor: dividerColor }} />
                         <button
                             type="button"
+                            data-tour-id="focus-transcript-detail-close"
                             onClick={() => onClose?.()}
                             className={`flex-none p-1 rounded transition-colors ${rowHoverClass}`}
                             style={{ color: accentColor }}
@@ -357,30 +384,16 @@ export default function FocusTranscriptDetail({
                             )}
                         </div>
 
-                        <div className="flex-none w-[104px] flex flex-col gap-0.5">
-                            {SEQUENCE_FEATURE_TYPES.map((feature) => {
-                                const enabled = Boolean(availability[feature.key])
-                                const active = featureType === feature.key
-                                return (
-                                    <button
-                                        key={feature.key}
-                                        type="button"
-                                        disabled={!enabled}
-                                        onClick={() => setFeatureType(feature.key)}
-                                        title={enabled ? `Show ${feature.label}` : `No ${feature.label} for this transcript`}
-                                        className={`text-left px-2 py-1 rounded text-[11px] transition-colors ${enabled ? rowHoverClass : ''}`}
-                                        style={{
-                                            color: !enabled
-                                                ? (isLight ? '#c7ccd1' : '#5c5f66')
-                                                : active ? '#ffffff' : undefined,
-                                            backgroundColor: active && enabled ? accentColor : undefined,
-                                            cursor: enabled ? 'pointer' : 'not-allowed',
-                                        }}
-                                    >
-                                        {feature.label}
-                                    </button>
-                                )
-                            })}
+                        <div data-tour-id="focus-sequence-types" className="flex-none w-[104px] flex flex-col gap-0.5">
+                            {SEQUENCE_FEATURE_TYPES.slice(0, 2).map(renderFeatureButton)}
+                            <div
+                                data-tour-id="focus-sequence-coding-types"
+                                data-tutorial-engaged={['cds', 'protein'].includes(featureType) ? 'true' : 'false'}
+                                className="flex flex-col gap-0.5"
+                            >
+                                {SEQUENCE_FEATURE_TYPES.slice(2, 4).map(renderFeatureButton)}
+                            </div>
+                            {SEQUENCE_FEATURE_TYPES.slice(4).map(renderFeatureButton)}
                         </div>
                     </div>
                 </section>

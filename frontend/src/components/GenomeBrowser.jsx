@@ -3,10 +3,14 @@ import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import iconAnchorRaw from '../assets/icons/icon_anchor.svg?raw'
 import {
     buildGeneLabelCandidate,
-    GENE_FOOTER_TRACK_OVERFLOW,
+    geneFooterTrackOverflow,
+    intersectsRuler,
+    LABEL_ASCENT_PX,
+    LABEL_DESCENT_PX,
     getGeneFooterGeometry,
     getTranscriptBoundaryTrails,
     getTranscriptFooterControlState,
+    placeGeneFooterWithinViewport,
     placeNonOverlappingGeneLabels,
     TRANSCRIPT_FOOTER_CONTROL_HEIGHT,
 } from './genomeBrowserLabelLayout'
@@ -35,8 +39,11 @@ import {
     sameGeneRange,
 } from '../utils/geneIntervalIndex'
 import InfoGlyph from './InfoGlyph'
+import { registerBrowserViewport } from '../utils/browserTutorialControls'
+import useTutorial from '../hooks/useTutorial'
 import { getTranscriptExonSegments } from './genomeBrowserExonSegments'
 import { orderTranscripts, resolveGeneTranscriptView } from './genomeBrowserTranscriptView'
+import { shouldResetStickyGeneRows } from './genomeBrowserTranscriptLayout'
 import {
     DEFAULT_BROWSING_CONTROLS,
     beginWheelGesture,
@@ -82,6 +89,41 @@ const LABEL_FONT = sansFont(11)
 const COORD_FONT = monoFont(RULER_FONT_SIZE)
 const PILL_FONT = sansFont(10)
 const LHS_WIDTH = 48
+// How long a move the tutorial makes takes. Long enough to read as travelling rather
+// than jumping, and in the same range as the browser's own Home/End (400ms) and
+// whole-chromosome reset (500ms). The tutorial scales it by the chosen autoplay speed.
+const TUTORIAL_MOVE_MS = 700
+
+/** A box over one track's switch in the gutter, for a tutorial to spotlight.
+ *
+ *  The gutter is painted on the canvas and hit-tested by geometry, so there is no element
+ *  to anchor on; these markers are `pointer-events-none` and exist only to be measured. */
+function gutterMarkerStyle(trackY, trackHeight) {
+    return {
+        left: 0,
+        top: Math.max(0, trackY + (trackHeight / 2) - SIDEBAR_TOGGLE_HIT_RADIUS - 2),
+        width: LHS_WIDTH,
+        height: (SIDEBAR_TOGGLE_HIT_RADIUS + 2) * 2,
+    }
+}
+// Measured up from the label's baseline to the top of the expanded footer row, so the
+// label and the control beside it share one top edge. Six rather than ten: ten put that
+// edge at the mid-line plus six, which is exactly the bottom of the last exon block, and
+// the row sat flush against the transcript it belongs to.
+const EXPANDED_FOOTER_LABEL_TOP_OFFSET = 6
+const EXPANDED_FOOTER_INLINE_GAP = 6
+
+let expandedFooterTextMeasureContext = null
+function measureExpandedFooterLabelWidth(text) {
+    const fallbackWidth = String(text || '').length * 6
+    if (typeof document === 'undefined') return fallbackWidth + 4
+    if (!expandedFooterTextMeasureContext) {
+        expandedFooterTextMeasureContext = document.createElement('canvas').getContext('2d')
+    }
+    if (!expandedFooterTextMeasureContext) return fallbackWidth + 4
+    expandedFooterTextMeasureContext.font = LABEL_FONT
+    return Math.ceil(expandedFooterTextMeasureContext.measureText(String(text || '')).width) + 4
+}
 // Sidebar power toggles are drawn as a bare glyph, like the chevron and close
 // controls on the focus drawer: the genome's own colour when the track is on,
 // muted grey when it is off. A filled disc read as far louder than the thing it
@@ -1627,6 +1669,7 @@ export default function GenomeBrowser({
     const [viewHeight, setViewHeight] = useState(160)
     const [viewStart, setViewStart] = useState(0)        // Genomic coordinate of left edge
     const [viewEnd, setViewEnd] = useState(100000)        // Genomic coordinate of right edge
+    const [expandedFooterViewport, setExpandedFooterViewport] = useState(null)
     // `isDragging` state only drives the cursor and listener wiring. The move
     // handler reads the refs instead, so the first mousemove after mousedown pans
     // immediately rather than being dropped while React commits the state.
@@ -1634,6 +1677,14 @@ export default function GenomeBrowser({
     const isDraggingRef = useRef(false)
     const dragStartXRef = useRef(0)
     const dragViewStartRef = useRef(0)
+    // 'all', or 'zoom-only' while a tutorial step asks for it. A ref because it is read
+    // inside gesture handlers and must not make the panel re-render to take effect.
+    const interactionModeRef = useRef('all')
+
+    // Reached through the context, the way GenomeBrowserView does it: the tutorial
+    // provider sits above App, so a view can report to it without anything in between
+    // having to pass it along.
+    const { emitSignal: emitTutorialSignal } = useTutorial()
 
     // Data state
     const [regions, setRegions] = useState([])
@@ -2052,6 +2103,11 @@ export default function GenomeBrowser({
         forward: { key: '', rowMap: new Map(), requiredRows: 1 },
         reverse: { key: '', rowMap: new Map(), requiredRows: 1 },
     })
+    const previousStickyLayoutModeRef = useRef({
+        expanded: isViewportTranscriptExpandMode,
+        flatten: flattenTracks,
+    })
+    const [stickyLayoutResetEpoch, setStickyLayoutResetEpoch] = useState(0)
     const colors = COLORS[theme] || COLORS.dark
     const isLight = theme === 'light'
 
@@ -2064,6 +2120,25 @@ export default function GenomeBrowser({
             reverse: { key: '', rowMap: new Map(), requiredRows: 1 },
         }
     }, [genome, selectedChrom])
+
+    // Expanded transcript views deliberately make the canvas very tall, and Flatten
+    // deliberately removes that height. The ordinary panning stabiliser must not carry
+    // either temporary shape back into the plain layout: after collapsing the transcripts
+    // it used to leave two thousand pixels of blank track below them. Reset synchronously
+    // and invalidate the layout memo before the next frame is painted.
+    useLayoutEffect(() => {
+        const next = { expanded: isViewportTranscriptExpandMode, flatten: flattenTracks }
+        const previous = previousStickyLayoutModeRef.current
+        previousStickyLayoutModeRef.current = next
+        if (!shouldResetStickyGeneRows(previous, next)) return
+        geneRowStickyRef.current = { forward: 1, reverse: 1 }
+        geneRowShrinkBucketRef.current = { forward: null, reverse: null }
+        geneLayoutPackCacheRef.current = {
+            forward: { key: '', rowMap: new Map(), requiredRows: 1 },
+            reverse: { key: '', rowMap: new Map(), requiredRows: 1 },
+        }
+        setStickyLayoutResetEpoch((epoch) => epoch + 1)
+    }, [isViewportTranscriptExpandMode, flattenTracks])
 
     useEffect(() => {
         setHasInitialViewportData(false)
@@ -5805,9 +5880,9 @@ export default function GenomeBrowser({
     }, [focusViewGeneId, focusTranscriptView?.expanded, transcriptCache, requestTranscriptPillFocus])
 
     const getGeneTotalHeight = useCallback((rowCount) => {
-        const footerOverflow = (!isCompressedLayoutActive && !flattenTracks)
-            ? GENE_FOOTER_TRACK_OVERFLOW
-            : 0
+        const footerOverflow = isCompressedLayoutActive
+            ? 0
+            : geneFooterTrackOverflow(transcriptLayoutMetrics, flattenTracks)
         return (
             rowCount * transcriptLayoutMetrics.rowPitch
             - transcriptLayoutMetrics.rowGap
@@ -5966,6 +6041,15 @@ export default function GenomeBrowser({
     viewStartRef.current = pendingInteractiveViewportRef.current?.start ?? viewStart
     viewEndRef.current = pendingInteractiveViewportRef.current?.end ?? viewEnd
 
+    // What the genome says is worth looking at on this region, if it says anything.
+    const browsableRange = useMemo(() => {
+        const region = regions.find((candidate) => candidate.chrom === selectedChrom)
+        const start = Number(region?.browsable_start)
+        const end = Number(region?.browsable_end)
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+        return { start, end }
+    }, [regions, selectedChrom])
+
     const clampView = useCallback((start, end) => {
         let span = end - start
 
@@ -5976,9 +6060,13 @@ export default function GenomeBrowser({
             return [start, start + span]
         }
 
-        // Clamp to chromosome bounds
-        const minStart = 1;
-        const maxEnd = Math.max(2, chromLength || 1e9);
+        // Clamp to chromosome bounds — or, where the genome declares one, to the part of
+        // the region worth looking at. Only the tutorial's chromosome-1 slice does: it is
+        // a real chromosome coordinate space holding a small window of real sequence, and
+        // without this you can pan and zoom out into a hundred megabases of padding,
+        // which reads as the browser being broken rather than as the edge of a slice.
+        const minStart = Math.max(1, browsableRange?.start || 1);
+        const maxEnd = Math.max(minStart + 1, browsableRange?.end || chromLength || 1e9);
         span = Math.max(1, span);
 
         if (span >= (maxEnd - minStart)) return [minStart, maxEnd];
@@ -5990,7 +6078,7 @@ export default function GenomeBrowser({
             start = end - span;
         }
         return [Math.max(minStart, start), Math.min(maxEnd, end)]
-    }, [chromLength, isAligned, alignData])
+    }, [browsableRange, chromLength, isAligned, alignData])
 
     const scheduleInteractiveViewport = useCallback((start, end, targetTrack = undefined, anchorRatio = undefined) => {
         // Update refs immediately so multiple input events in one frame accumulate
@@ -6093,6 +6181,11 @@ export default function GenomeBrowser({
 
     // Pan by pixel delta
     const panByPx = useCallback((dx) => {
+        // A tutorial step can hold the view still while leaving zooming alone. Guarded
+        // here rather than at each gesture because dragging, the wheel, the arrow keys and
+        // the momentum fling all arrive through this one function — and `animateToView`
+        // deliberately does not, so a step can still put the view where it wants it.
+        if (interactionModeRef.current === 'zoom-only') return
         if (onManualNavigate) onManualNavigate()
         const currentStart = viewStartRef.current
         const currentEnd = viewEndRef.current
@@ -6375,9 +6468,14 @@ export default function GenomeBrowser({
         const revPadding = effectiveHiddenStrands.reverse ? 0 : transcriptLayoutMetrics.trackPadding
         const forwardGeneHeight = maxRowForward * transcriptLayoutMetrics.rowPitch - transcriptLayoutMetrics.rowGap
         const reverseGeneHeight = maxRowReverse * transcriptLayoutMetrics.rowPitch - transcriptLayoutMetrics.rowGap
-        const geneFooterOverflow = (!isCompressedLayoutActive && !flattenTracks)
-            ? GENE_FOOTER_TRACK_OVERFLOW
-            : 0
+        // Flatten removes *unused* height, and the gene's label and its expand/collapse
+        // control are not unused height — they are the only thing naming the gene once the
+        // canvas label moves under it. Reserving their room here is what keeps them on
+        // screen when the track shrinks to its content. Compressed layouts still drop it:
+        // they have one or two pixels of padding to work with and no footer to place.
+        const geneFooterOverflow = isCompressedLayoutActive
+            ? 0
+            : geneFooterTrackOverflow(transcriptLayoutMetrics, flattenTracks)
 
         const forwardBgHeight = effectiveHiddenStrands.forward
             ? (hideInactiveTracks ? 0 : 36)
@@ -6529,7 +6627,7 @@ export default function GenomeBrowser({
             customTrackLayouts,
             orderedTracks,
         }
-    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, hiddenStrands, selectedGeneHiddenByBiotype, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, isGeneHiddenByBiotype, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight])
+    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, hiddenStrands, selectedGeneHiddenByBiotype, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, isGeneHiddenByBiotype, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight, stickyLayoutResetEpoch])
 
     const getSelectedGeneTranscriptHit = useCallback((mouseX, mouseY) => {
         if (!selectedGeneLayoutEntry || shouldForceGeneBlockView) return null
@@ -7094,7 +7192,7 @@ export default function GenomeBrowser({
                     },
                     lhsWidth: LHS_WIDTH,
                     order: exportGeneLabelOrder++,
-                    footerStyleEnabled: !isCompressedLayoutActive && !flattenTracks,
+                    footerStyleEnabled: !isCompressedLayoutActive,
                 })
                 if (candidate) exportGeneLabelCandidates.push(candidate)
             }
@@ -8637,6 +8735,140 @@ export default function GenomeBrowser({
             : (window.scrollY || document.documentElement?.scrollTop || 0)
     )
 
+    const expandedGeneFooters = useMemo(() => {
+        if (compressTranscripts || isViewportTranscriptExpandMode) return []
+
+        const footers = []
+        for (const gene of genes) {
+            if (isGeneHiddenByBiotype(gene)) continue
+            const txs = transcriptCache[gene.id]
+            if (!Array.isArray(txs) || txs.length < 2) continue
+
+            const displayRows = getDisplayTranscriptRows(gene)
+            const visibleRows = displayRows.filter((row) => !row.ghost)
+            if (visibleRows.length < 2) continue
+
+            const rawGx1 = genomicToScreen(gene.start)
+            const rawGx2 = genomicToScreen(gene.end)
+            if (!Number.isFinite(rawGx1) || !Number.isFinite(rawGx2) || Math.abs(rawGx2 - rawGx1) < 60) {
+                continue
+            }
+
+            const isForward = gene.strand === '+'
+            if (isForward && effectiveHiddenStrands.forward) continue
+            if (!isForward && effectiveHiddenStrands.reverse) continue
+
+            const trackY = isForward ? layout.FORWARD_Y : layout.REVERSE_Y
+            const trackPadding = isForward ? layout.fwdPadding : layout.revPadding
+            const baseGeneY = trackY + trackPadding + ((gene._row || 0) * transcriptLayoutMetrics.rowPitch)
+            const footer = getGeneFooterGeometry({
+                gene,
+                txs,
+                getEffectiveTranscriptLimit,
+                visibleTranscriptCount: displayRows.length,
+                genomicToScreen,
+                baseGeneY,
+                transcriptLayoutMetrics,
+                lhsWidth: LHS_WIDTH,
+                viewWidth,
+            })
+            if (!footer) continue
+
+            footers.push({
+                ...footer,
+                // An expanded footer is one horizontal unit: label, then X.
+                controlY: footer.labelY - EXPANDED_FOOTER_LABEL_TOP_OFFSET,
+                geneId: String(gene.id),
+                label: String(gene.name || gene.id || '').trim(),
+                trackBackground: isForward ? colors.forwardStrandBg : colors.reverseStrandBg,
+            })
+        }
+        return footers
+    }, [genes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, isGeneHiddenByBiotype,
+        transcriptCache, getDisplayTranscriptRows, genomicToScreen, effectiveHiddenStrands, layout,
+        transcriptLayoutMetrics, getEffectiveTranscriptLimit, viewWidth, colors.forwardStrandBg,
+        colors.reverseStrandBg])
+
+    useLayoutEffect(() => {
+        const canvas = canvasRef.current
+        if (!canvas || expandedGeneFooters.length === 0) {
+            setExpandedFooterViewport((prev) => (prev === null ? prev : null))
+            return undefined
+        }
+
+        const scrollElement = findNearestScrollable(canvas)
+        let frameId = null
+
+        const updateViewport = () => {
+            frameId = null
+            const canvasRect = canvas.getBoundingClientRect()
+            const scrollRect = scrollElement?.getBoundingClientRect?.() || null
+            const visibleTopClient = Math.max(
+                0,
+                canvasRect.top,
+                Number.isFinite(scrollRect?.top) ? scrollRect.top : 0,
+            )
+            const visibleBottomClient = Math.min(
+                window.innerHeight,
+                canvasRect.bottom,
+                Number.isFinite(scrollRect?.bottom) ? scrollRect.bottom : window.innerHeight,
+            )
+            const next = visibleBottomClient > visibleTopClient
+                ? {
+                    top: Math.max(0, visibleTopClient - canvasRect.top),
+                    bottom: Math.max(0, visibleBottomClient - canvasRect.top),
+                }
+                : null
+
+            setExpandedFooterViewport((prev) => {
+                if (prev === null || next === null) return prev === next ? prev : next
+                if (Math.abs(prev.top - next.top) < 0.5 && Math.abs(prev.bottom - next.bottom) < 0.5) return prev
+                return next
+            })
+        }
+
+        const scheduleViewportUpdate = () => {
+            if (frameId !== null) return
+            frameId = window.requestAnimationFrame(updateViewport)
+        }
+
+        updateViewport()
+        scrollElement?.addEventListener('scroll', scheduleViewportUpdate, { passive: true })
+        window.addEventListener('scroll', scheduleViewportUpdate, { passive: true, capture: true })
+        window.addEventListener('resize', scheduleViewportUpdate, { passive: true })
+
+        const resizeObserver = typeof ResizeObserver === 'function'
+            ? new ResizeObserver(scheduleViewportUpdate)
+            : null
+        resizeObserver?.observe(canvas)
+        if (scrollElement) resizeObserver?.observe(scrollElement)
+
+        return () => {
+            if (frameId !== null) window.cancelAnimationFrame(frameId)
+            scrollElement?.removeEventListener('scroll', scheduleViewportUpdate)
+            window.removeEventListener('scroll', scheduleViewportUpdate, { capture: true })
+            window.removeEventListener('resize', scheduleViewportUpdate)
+            resizeObserver?.disconnect()
+        }
+    }, [expandedGeneFooters])
+
+    const expandedFooterPlacementByGeneId = useMemo(() => {
+        const placements = new Map()
+        for (const footer of expandedGeneFooters) {
+            placements.set(footer.geneId, {
+                ...placeGeneFooterWithinViewport(footer, expandedFooterViewport),
+                geneId: footer.geneId,
+                label: footer.label,
+                trackBackground: footer.trackBackground,
+            })
+        }
+        return placements
+    }, [expandedGeneFooters, expandedFooterViewport])
+    const expandedFooterGeneIds = useMemo(
+        () => new Set(expandedGeneFooters.map((footer) => footer.geneId)),
+        [expandedGeneFooters],
+    )
+
     const applyAdaptiveScrollAnchor = useCallback(() => {
         const anchor = adaptiveScrollAnchorRef.current
         const root = rootRef.current
@@ -8758,6 +8990,11 @@ export default function GenomeBrowser({
 
             // Intercept sidebar toggling or dragging
             if (clickX <= LHS_WIDTH) {
+                // A step that limits the browser to zooming means it: the gutter switches
+                // a track off and its handle reorders the stack, and neither is zooming.
+                // The user who was told they could only zoom should not be able to blank
+                // the track by clicking a little to the left of it.
+                if (interactionModeRef.current === 'zoom-only') return
                 const trackId = getTrackAtY(clickY)
 
                 // Circular hit test around the toggle glyph. The radius is
@@ -10089,7 +10326,11 @@ export default function GenomeBrowser({
             }
 
             const labelText = gene.name || gene.id
-            if (labelText && !flattenTracks) {
+            // Expanded labels are HTML so the label and its X remain one
+            // horizontal unit both while following the viewport and after
+            // settling beneath the final transcript.
+            const hasExpandedFooterOverlay = expandedFooterGeneIds.has(String(gene.id))
+            if (labelText && !hasExpandedFooterOverlay) {
                 ctx.font = LABEL_FONT
                 const candidate = buildGeneLabelCandidate({
                     gene,
@@ -10130,6 +10371,11 @@ export default function GenomeBrowser({
         ctx.font = LABEL_FONT
         ctx.textBaseline = 'alphabetic'
         for (const label of placeNonOverlappingGeneLabels(geneLabelCandidates)) {
+            // A label belongs to its track. Drawn into the ruler it is unreadable over the
+            // ticks and takes the ticks with it, which is what a compact panel makes
+            // possible: the ruler sits immediately after the last track, so a few pixels of
+            // overflow land on it rather than in a margin.
+            if (intersectsRuler(label.y - LABEL_ASCENT_PX, label.y + LABEL_DESCENT_PX, RULER_Y, effectiveRulerHeight)) continue
             ctx.fillStyle = label.fill || colors.geneLabelText
             ctx.textAlign = label.textAlign || 'center'
             ctx.fillText(label.text, label.x, label.y)
@@ -11916,7 +12162,7 @@ export default function GenomeBrowser({
             }
         }
 
-    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, sidebarToggleIconColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight])
+    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, sidebarToggleIconColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight, expandedFooterGeneIds])
 
     useLayoutEffect(() => {
         const anchor = verticalZoomTrackAnchorRef.current
@@ -11963,10 +12209,15 @@ export default function GenomeBrowser({
 
     const transcriptFooterOverlay = useMemo(() => {
         const controls = []
-        if (compressTranscripts || isViewportTranscriptExpandMode || flattenTracks) {
+        // Flatten is a *height* control, not a "hide the gene's own controls" one: a gene
+        // whose transcripts are showing still needs the way back, and a tutorial step
+        // pointing at that control found nothing there. Compressed and window-wide-expanded
+        // layouts do drop it — the first has no room, and in the second every gene is
+        // expanded already, so a per-gene pill would be saying something untrue.
+        if (compressTranscripts || isViewportTranscriptExpandMode) {
             return { controls }
         }
-        const { FORWARD_Y, REVERSE_Y } = layout
+        const { FORWARD_Y, REVERSE_Y, RULER_Y } = layout
 
         for (const gene of genes) {
             if (isGeneHiddenByBiotype(gene)) continue
@@ -12000,6 +12251,7 @@ export default function GenomeBrowser({
                 viewWidth,
             })
             if (!footer) continue
+            const displayFooter = expandedFooterPlacementByGeneId.get(String(gene.id)) || footer
 
             // Transcripts the user has hidden aren't waiting to be revealed by
             // this pill, so they don't count towards its "+N".
@@ -12031,14 +12283,36 @@ export default function GenomeBrowser({
                 : ''
             const restoreWidth = restoreLabel ? (restoreLabel.length * 5.6) + 10 : 0
             const totalWidth = controlWidth + (restoreWidth ? restoreWidth + CONTROL_GAP_PX : 0)
+            const isExpandedControl = controlState?.action === 'collapse'
+            const expandedLabelWidth = isExpandedControl && displayFooter.label
+                ? measureExpandedFooterLabelWidth(displayFooter.label)
+                : 0
+            const expandedGroupWidth = expandedLabelWidth
+                ? expandedLabelWidth + EXPANDED_FOOTER_INLINE_GAP + totalWidth
+                : 0
+            const overlayWidth = Math.max(totalWidth, expandedGroupWidth)
+            const groupX = clamp(
+                displayFooter.x,
+                LHS_WIDTH + 6,
+                Math.max(LHS_WIDTH + 6, viewWidth - overlayWidth - 6),
+            )
+            // The same rule the canvas labels follow: a track's own controls stay in their
+            // track. Reaching into the ruler makes both unreadable, and a compact panel
+            // leaves no margin between the two for an overflow to land in.
+            const rowTop = isExpandedControl
+                ? displayFooter.labelY - EXPANDED_FOOTER_LABEL_TOP_OFFSET
+                : displayFooter.controlY
+            if (intersectsRuler(rowTop, rowTop + TRANSCRIPT_FOOTER_CONTROL_HEIGHT, RULER_Y, effectiveRulerHeight)) {
+                continue
+            }
+
             controls.push({
                 id: gene.id,
-                x: clamp(
-                    footer.x,
-                    LHS_WIDTH + 6,
-                    Math.max(LHS_WIDTH + 6, viewWidth - totalWidth - 6),
-                ),
-                y: footer.controlY,
+                x: groupX,
+                controlX: isExpandedControl
+                    ? groupX + expandedLabelWidth + EXPANDED_FOOTER_INLINE_GAP
+                    : groupX,
+                y: displayFooter.controlY,
                 width: controlWidth,
                 ...(controlState || {}),
                 hasPrimary: Boolean(controlState),
@@ -12048,10 +12322,14 @@ export default function GenomeBrowser({
                 isDimmed,
                 isFocused: gene.id === selectedGene?.id,
                 totalTranscripts: txs.length,
+                geneLabel: displayFooter.label || '',
+                geneLabelY: displayFooter.labelY,
+                isExpandedControl,
+                trackBackground: displayFooter.trackBackground || '',
             })
         }
         return { controls }
-    }, [genes, transcriptCache, getEffectiveTranscriptLimit, getDisplayTranscriptRows, getGeneTranscriptView, genomicToScreen, viewWidth, layout, effectiveHiddenStrands, selectedGene, dimNonSelectedGenes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, isGeneHiddenByBiotype, transcriptLayoutMetrics])
+    }, [genes, transcriptCache, getEffectiveTranscriptLimit, getDisplayTranscriptRows, getGeneTranscriptView, genomicToScreen, viewWidth, layout, effectiveHiddenStrands, selectedGene, dimNonSelectedGenes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, isGeneHiddenByBiotype, transcriptLayoutMetrics, expandedFooterPlacementByGeneId, effectiveRulerHeight])
 
     /**
      * A speech bubble at the head of every gene the user has written about.
@@ -12342,8 +12620,17 @@ export default function GenomeBrowser({
             if (region) {
                 // Region starts should always be 1-based chromosome coordinates.
                 // Do not clamp to first-gene position from metadata payloads.
-                const minBound = 1
-                const maxBound = Math.max(minBound + 1, Math.floor(region.end || minBound + 1))
+                //
+                // Unless the genome declares a narrower window worth looking at, which the
+                // tutorial's chromosome-1 slice does. Panning and zooming already respect
+                // it through clampView; without it here too, a typed region or a pick from
+                // the region list could still strand the user in the padding, which is the
+                // one thing the declaration exists to prevent.
+                const minBound = Math.max(1, Math.floor(Number(region.browsable_start) || 1))
+                const maxBound = Math.max(
+                    minBound + 1,
+                    Math.floor(Number(region.browsable_end) || region.end || minBound + 1)
+                )
                 const span = Math.max(1, end - start)
                 if (start < minBound) {
                     start = minBound
@@ -12386,6 +12673,11 @@ export default function GenomeBrowser({
             const start = parseInt(coordMatch[2].replace(/[,\s]/g, ''), 10)
             const end = parseInt(coordMatch[3].replace(/[,\s]/g, ''), 10)
             await jumpToRange(chrom, start, end, null)
+            // A tutorial step about the search box cannot wait for the box to hold what
+            // was typed — jumpToRange empties it — so it waits for this instead. Emitted
+            // whether the user typed it or the tutorial did, which is what lets someone
+            // who types it themselves move straight on.
+            emitTutorialSignal('browser.regionSearched', { chrom, start, end })
             return
         }
 
@@ -12440,7 +12732,7 @@ export default function GenomeBrowser({
             const padding = Math.max(100, (match.end - match.start) * 0.5)
             await jumpToRange(match.chrom, match.start - padding, match.end + padding, match)
         }
-    }, [searchInput, regions, selectedChrom, genome, genes, onManualNavigate, onPositionChange, focusDrawerInsetOnFocus, isFlipped])
+    }, [searchInput, regions, selectedChrom, genome, genes, onManualNavigate, onPositionChange, focusDrawerInsetOnFocus, isFlipped, emitTutorialSignal])
 
     const handleRegionChange = useCallback((chrom) => {
         setSelectedChrom(chrom)
@@ -12857,7 +13149,93 @@ export default function GenomeBrowser({
     // Reset showFeatureless each time regions are loaded
     useEffect(() => { setShowFeatureless(false) }, [regions])
 
+    // ============ Viewport control, published for the tutorial ============
+    // The browser has no zoom button and no slider — panning is a drag or the arrow keys,
+    // zooming is the wheel or +/- — so a tutorial demonstrating either has nothing to
+    // click on the user's behalf. Rather than adding controls that exist only for the
+    // tutorial to press, the panel publishes the moves it can make and the tutorial calls
+    // them. Everything goes through animateToView, so a move the tutorial makes travels at
+    // the same speed and stops at the same edges as one the user makes.
+    const tutorialSequenceVisibleRef = useRef(false)
+    tutorialSequenceVisibleRef.current = Boolean(
+        showSequenceTrack
+        && !effectiveHiddenStrands.sequence
+        && sequence
+        && seqRange
+        && viewSpan <= 1000
+    )
+
+    useEffect(() => {
+        const panelKey = String(screenshotTargetId || genome || '')
+        if (!panelKey) return undefined
+        const span = () => Math.max(1, viewEndRef.current - viewStartRef.current)
+        const duration = (ms) => (Number(ms) > 0 ? Number(ms) : TUTORIAL_MOVE_MS)
+        const bare = (name) => String(name || '').trim().toLowerCase().replace(/^chr/, '')
+
+        return registerBrowserViewport(panelKey, {
+            setInteraction: (mode) => { interactionModeRef.current = mode },
+            resetScroll: () => {
+                // The panel lives inside the view's scroller, not its own, so this walks
+                // up to whatever is actually scrolling.
+                let node = rootRef.current
+                while (node && node !== document.body) {
+                    if (node.scrollHeight > node.clientHeight + 1) { node.scrollTop = 0; return }
+                    node = node.parentElement
+                }
+            },
+            describe: () => ({
+                chrom: selectedChrom,
+                start: viewStartRef.current,
+                end: viewEndRef.current,
+                sequenceVisible: tutorialSequenceVisibleRef.current,
+            }),
+            panByWindows: (fraction, ms) => {
+                const shift = span() * (Number(fraction) || 0)
+                if (!shift) return false
+                animateToView(viewStartRef.current + shift, viewEndRef.current + shift, duration(ms))
+                return true
+            },
+            zoomBy: (factor, ms) => {
+                const value = Number(factor)
+                if (!(value > 0)) return false
+                const centre = viewStartRef.current + (span() / 2)
+                const next = Math.max(2, span() * value)
+                animateToView(centre - (next / 2), centre + (next / 2), duration(ms))
+                return true
+            },
+            goToLocus: (text, ms) => {
+                const parsed = String(text || '').match(/^\s*([^:\s]+)\s*:\s*([\d,\s]+)\s*-\s*([\d,\s]+)\s*$/)
+                if (!parsed) return false
+                const start = parseInt(parsed[2].replace(/[,\s]/g, ''), 10)
+                const end = parseInt(parsed[3].replace(/[,\s]/g, ''), 10)
+                if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return false
+                // A locus on some other region is not a move, it is a navigation — leave
+                // that to the search box, which knows how to switch region.
+                const showing = chromDisplayMap[selectedChrom] || selectedChrom
+                if (bare(parsed[1]) !== bare(showing) && bare(parsed[1]) !== bare(selectedChrom)) return false
+                // Through the same framing every other "put this on screen" path uses, so
+                // a locus a tutorial asks for lands in the part of the track the reader can
+                // actually see. Without it a step that names a region around the focused
+                // gene centres that gene behind the drawer — the drawer overlays the canvas
+                // rather than narrowing it, so the window itself never shrank. A no-op
+                // whenever no drawer is open, since the inset is then zero.
+                const framed = frameFocusRange(start, end)
+                animateToView(framed.start, framed.end, duration(ms))
+                return true
+            },
+        })
+    }, [animateToView, chromDisplayMap, frameFocusRange, genome, screenshotTargetId, selectedChrom])
+
     // ============ Render ============
+
+    // The foot of the last track drawn, which is where the gutter marker stops. Zero until
+    // the tracks have been laid out, which is the signal not to render it yet.
+    const gutterMarkerHeight = (() => {
+        const foot = showSequenceTrack && layout.SEQUENCE_Y >= 0
+            ? layout.SEQUENCE_Y + layout.seqBgHeight
+            : layout.REVERSE_Y + layout.reverseBgHeight
+        return foot > LHS_WIDTH ? Math.round(foot + 4) : 0
+    })()
 
     const toolbarColumnWidths = {
         genome: 180,
@@ -12911,6 +13289,7 @@ export default function GenomeBrowser({
 
             {/* Region selector */}
             <select
+                data-tour-id="browser-region-select"
                 value={selectedChrom}
                 onChange={(e) => {
                     const v = e.target.value
@@ -12946,12 +13325,17 @@ export default function GenomeBrowser({
                 ))}
             </select>
 
-            {/* Search */}
+            {/* Search. The wrapper is anchored as well as the input: the box and its go
+                button are one control to a reader, so a tutorial spotlighting the pair
+                leaves the button inside the lit, clickable area rather than dimmed
+                alongside the field it belongs to. */}
             <div
+                data-tour-id="browser-location-search-field"
                 className="flex items-center gap-0.5 ml-2 mr-0.5 shrink-0"
                 style={{ width: `${toolbarColumnWidths.search}px` }}
             >
                 <input
+                    data-tour-id="browser-location-search"
                     type="text"
                     value={searchInput}
                     onChange={(e) => setSearchInput(e.target.value)}
@@ -12965,6 +13349,7 @@ export default function GenomeBrowser({
                     }}
                 />
                 <button
+                    data-tour-id="browser-location-search-go"
                     onClick={handleSearch}
                     className="p-1 rounded transition-opacity hover:opacity-80 flex items-center justify-center"
                     style={{ backgroundColor: controlAccentColor, color: '#ffffff', width: '28px', height: '28px' }}
@@ -12990,6 +13375,8 @@ export default function GenomeBrowser({
 
                     return (
                         <button
+                            data-tour-id="browser-expand-transcripts"
+                            data-tutorial-engaged={isWindowExpanded ? 'true' : 'false'}
                             onClick={() => {
                                 if (transcriptControlsDisabled) return
                                 if (isWindowExpanded) {
@@ -13148,6 +13535,7 @@ export default function GenomeBrowser({
 
             {/* Coordinates display */}
             <button
+                data-tour-id="browser-coordinates"
                 type="button"
                 onClick={() => setIsRulerCollapsed((prev) => !prev)}
                 className="text-xs ml-auto tabular-nums rounded px-1.5 py-1 transition-colors hover:bg-black/5 dark:hover:bg-white/10 text-right truncate shrink-0"
@@ -13180,6 +13568,7 @@ export default function GenomeBrowser({
             }}
         >
             <button
+                data-tour-id="browser-recenter"
                 onClick={handleRecenterSelectedGene}
                 disabled={!hasGeneCoords(selectedGene)}
                 className="shrink-0 p-1.5 rounded-md transition-colors hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center"
@@ -13589,6 +13978,75 @@ export default function GenomeBrowser({
                     style={{ display: 'block' }}
                 />
 
+                {/* Markers over the track gutter, so a tutorial can point at GF, GR and
+                    SL. They exist only to be spotlit: the gutter is painted on the canvas
+                    and hit-tested by geometry (see drawToggle), so there is no element to
+                    anchor on otherwise, and adding real buttons would mean two code paths
+                    for the same toggle. `pointer-events-none` keeps every click going to
+                    the canvas exactly as before — the tutorial's steps about these are
+                    look-only, and turning tracks on and off is taught through the Tracks
+                    button in the bar above, which is real DOM. */}
+                {/* Only once the tracks have been laid out. Rendered before that it is a
+                    sliver at the top of the panel, and anything measuring it — a tutorial
+                    card placing itself beside it — lands in the wrong place and then jumps
+                    when the real height arrives. */}
+                {gutterMarkerHeight > 0 && (
+                    <div
+                        aria-hidden="true"
+                        data-tour-id="browser-track-gutter"
+                        className="absolute pointer-events-none"
+                        // Down to the foot of the last track rather than the foot of the
+                        // canvas: the canvas keeps whatever empty space the panel has, and
+                        // a spotlight that took in all of it framed mostly nothing.
+                        style={{ left: 0, top: 0, width: LHS_WIDTH, height: gutterMarkerHeight }}
+                    />
+                )}
+                {/* Written out one by one rather than mapped over a list, because the
+                    tutorial's anchor test scans this source for literal `data-tour-id`
+                    attributes — an id that arrives in a variable is invisible to it, and
+                    a renamed anchor would then fail in front of a user instead of in the
+                    suite. */}
+                {layout.forwardBgHeight > 0 && (
+                    <div
+                        aria-hidden="true"
+                        data-tour-id="browser-track-gf"
+                        className="absolute pointer-events-none"
+                        style={gutterMarkerStyle(layout.FORWARD_Y, layout.forwardBgHeight)}
+                    />
+                )}
+                {layout.reverseBgHeight > 0 && (
+                    <div
+                        aria-hidden="true"
+                        data-tour-id="browser-track-gr"
+                        className="absolute pointer-events-none"
+                        style={gutterMarkerStyle(layout.REVERSE_Y, layout.reverseBgHeight)}
+                    />
+                )}
+                {/* The reverse track's band, full width. Nothing points *at* it; it is
+                    what a step's card is placed against when the step spotlights the whole
+                    track and the card would otherwise land on the genes being described. */}
+                {layout.reverseBgHeight > 0 && (
+                    <div
+                        aria-hidden="true"
+                        data-tour-id="browser-track-gr-band"
+                        className="absolute pointer-events-none"
+                        style={{
+                            left: LHS_WIDTH,
+                            top: layout.REVERSE_Y,
+                            width: Math.max(1, viewWidth - LHS_WIDTH),
+                            height: layout.reverseBgHeight,
+                        }}
+                    />
+                )}
+                {showSequenceTrack && layout.SEQUENCE_Y >= 0 && (
+                    <div
+                        aria-hidden="true"
+                        data-tour-id="browser-track-sl"
+                        className="absolute pointer-events-none"
+                        style={gutterMarkerStyle(layout.SEQUENCE_Y, layout.seqBgHeight)}
+                    />
+                )}
+
                 {sidebarTooltip && (
                     <div
                         className="pointer-events-none fixed z-30 px-2 py-1 text-[11px] rounded shadow-md"
@@ -13873,8 +14331,35 @@ export default function GenomeBrowser({
                         : colors.pillText
                     return (
                         <Fragment key={control.id}>
+                        {control.isExpandedControl && control.geneLabel && (
+                            <span
+                                aria-hidden="true"
+                                className="absolute font-sans whitespace-nowrap pointer-events-none"
+                                style={{
+                                    left: control.x,
+                                    top: control.geneLabelY - EXPANDED_FOOTER_LABEL_TOP_OFFSET,
+                                    minHeight: 11,
+                                    padding: '0 2px',
+                                    borderRadius: 2,
+                                    backgroundColor: control.trackBackground || colors.bg,
+                                    color: colors.geneLabelText,
+                                    fontSize: '11px',
+                                    lineHeight: '11px',
+                                    zIndex: 12,
+                                }}
+                            >
+                                {control.geneLabel}
+                            </span>
+                        )}
                         {control.hasPrimary && (
                         <button
+                            // DOM over the canvas, so a tutorial can point at it without
+                            // the marker-div trick the track gutter needs. `engaged` is
+                            // what lets an arrival set the gene's transcripts rather than
+                            // toggle them: the pill shows a collapse action exactly when
+                            // the gene is already expanded.
+                            data-tour-id={`browser-gene-transcripts-${control.id}`}
+                            data-tutorial-engaged={control.action === 'collapse' ? 'true' : 'false'}
                             onClick={(e) => {
                                 e.stopPropagation()
                                 const expand = control.action !== 'collapse'
@@ -13913,7 +14398,7 @@ export default function GenomeBrowser({
                             aria-label={control.title}
                             className="absolute p-0 m-0 border-0 font-semibold transition-opacity hover:opacity-85"
                             style={{
-                                left: control.x,
+                                left: control.controlX,
                                 top: control.y,
                                 width: control.width,
                                 minWidth: control.width,
@@ -13940,6 +14425,10 @@ export default function GenomeBrowser({
                             the way back has to live on the gene itself. */}
                         {control.hiddenCount > 0 && (
                             <button
+                                // The way back, and the only thing on screen saying a
+                                // transcript is missing at all — so a tutorial has to be
+                                // able to point at it.
+                                data-tour-id={`browser-gene-hidden-transcripts-${control.id}`}
                                 onClick={(e) => {
                                     e.stopPropagation()
                                     onGeneTranscriptViewChangeRef.current?.(control.id, { hidden: [], ghostId: null })
@@ -13948,7 +14437,7 @@ export default function GenomeBrowser({
                                 aria-label={`Show ${control.hiddenCount} hidden transcript${control.hiddenCount === 1 ? '' : 's'}`}
                                 className="absolute p-0 m-0 border-0 font-semibold transition-opacity hover:opacity-85"
                                 style={{
-                                    left: control.x + (control.hasPrimary ? control.width + CONTROL_GAP_PX : 0),
+                                    left: control.controlX + (control.hasPrimary ? control.width + CONTROL_GAP_PX : 0),
                                     top: control.y,
                                     width: control.restoreWidth,
                                     minWidth: control.restoreWidth,
@@ -13981,6 +14470,7 @@ export default function GenomeBrowser({
                 {geneNoteOverlay.bubbles.map((bubble) => (
                     <button
                         key={`note-${bubble.id}`}
+                        data-tour-id={`browser-gene-note-${bubble.id}`}
                         type="button"
                         onClick={(e) => {
                             // Without this the canvas click handler runs too and

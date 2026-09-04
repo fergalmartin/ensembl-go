@@ -4,6 +4,7 @@ import TranscriptSplicingHeatmap from './TranscriptSplicingHeatmap'
 import FeatureExplorerExonsPanel from './FeatureExplorerExonsPanel'
 import FeatureExplorerSequencesPanel from './FeatureExplorerSequencesPanel'
 import FeatureExplorerProteinsPanel from './FeatureExplorerProteinsPanel'
+import FeatureExplorerStructurePanel from './FeatureExplorerStructurePanel'
 import ExportSequencesPanel from './ExportSequencesPanel'
 import FeatureExplorerGenomeStrip from './FeatureExplorerGenomeStrip'
 import ScreenshotExportModal from './ScreenshotExportModal'
@@ -71,8 +72,17 @@ const FEATURE_SECTION_JUMPS = [
   { key: 'transcript', label: 'Transcript' },
   { key: 'exons', label: 'Exons' },
   { key: 'proteins', label: 'Proteins' },
+  { key: 'structure', label: 'Structure' },
   { key: 'export', label: 'Export' },
 ]
+
+// The genome strip is a browsing aid for the top of the page. Once the user has
+// scrolled into the feature sections it is only costing vertical space, so it
+// retreats into the header bar and returns when they scroll back up. The two
+// thresholds give it hysteresis so a strip that is collapsing (which shortens
+// the content and nudges scrollTop) cannot immediately re-expand itself.
+const GENOME_STRIP_COLLAPSE_SCROLL = 24
+const GENOME_STRIP_EXPAND_SCROLL = 8
 
 const LOCKED_ICON_PATH = 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6zm9 14H6V10h12v10zm-6-3c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z'
 const SPLICE_LOCK_ICON_SIZE = 21
@@ -606,6 +616,10 @@ export default function FeatureExplorerView({
   const exonDetailScreenshotRef = useRef(null)
   const proteinsSectionRef = useRef(null)
   const proteinsScreenshotRef = useRef(null)
+  const structureSectionRef = useRef(null)
+  const structureScreenshotRef = useRef(null)
+  // The structure panel supplies its own raster snapshot; see below.
+  const structureSnapshotRef = useRef(null)
   const exportSectionRef = useRef(null)
   const exonInfoPopupRef = useRef(null)
   const {
@@ -795,6 +809,42 @@ export default function FeatureExplorerView({
       }),
     }
   }, [isLight])
+
+  // The structure panel renders through WebGL inside an iframe, and neither
+  // survives DOM serialisation: foreignObject rasterises a canvas as a blank
+  // rectangle and cannot reach into another document at all. The viewer hands
+  // back a PNG of what it drew, which is composited over the iframe's footprint.
+  const buildStructureScreenshotSnapshot = useCallback(async () => {
+    const root = structureScreenshotRef.current
+    if (!root) throw new Error('Screenshot target is no longer available.')
+
+    const base = buildFeatureScreenshotSnapshot(root)
+    const frame = root.querySelector('iframe')
+    const capture = structureSnapshotRef.current
+    if (!frame || typeof capture !== 'function') return base
+
+    let dataUri = ''
+    try {
+      dataUri = String((await capture(root))?.canvasDataUri || '')
+    } catch {
+      dataUri = ''
+    }
+    if (!dataUri.startsWith('data:image/')) return base
+
+    const rootRect = root.getBoundingClientRect()
+    const frameRect = frame.getBoundingClientRect()
+    const image = [
+      '<image',
+      `x="${Math.round(frameRect.left - rootRect.left)}"`,
+      `y="${Math.round(frameRect.top - rootRect.top)}"`,
+      `width="${Math.round(frameRect.width)}"`,
+      `height="${Math.round(frameRect.height)}"`,
+      'preserveAspectRatio="xMidYMid meet"',
+      `xlink:href="${dataUri}" />`,
+    ].join(' ')
+
+    return { ...base, svgMarkup: base.svgMarkup.replace('</svg>', `${image}</svg>`) }
+  }, [buildFeatureScreenshotSnapshot])
 
   const buildSpliceGraphScreenshotSnapshot = useCallback(() => {
     const root = spliceGraphScreenshotRef.current
@@ -1679,6 +1729,7 @@ export default function FeatureExplorerView({
     if (sectionKey === 'transcript') return transcriptsSectionRef.current
     if (sectionKey === 'exons') return exonsSectionRef.current
     if (sectionKey === 'proteins') return proteinsSectionRef.current
+    if (sectionKey === 'structure') return structureSectionRef.current
     if (sectionKey === 'export') return exportSectionRef.current
     return null
   }, [])
@@ -1699,6 +1750,42 @@ export default function FeatureExplorerView({
     if (!Number.isFinite(nextTop)) return
     container.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' })
   }, [getFeatureSectionScrollTop])
+
+  // Auto-retract of the genome strip. `genomeStripAutoRef` remembers what the
+  // scroll position last asked for; an explicit click on the chevron overrides
+  // it until the scroll position crosses a threshold again, so the listener
+  // never argues with a choice the user just made.
+  const genomeStripAutoRef = useRef(false)
+  const genomeStripManualRef = useRef(false)
+
+  const toggleGenomeStrip = useCallback(() => {
+    genomeStripManualRef.current = true
+    setGenomeStripCollapsed((prev) => !prev)
+  }, [])
+
+  useEffect(() => {
+    const container = contentScrollRef.current
+    if (!container || otherGenomes.length === 0) return undefined
+
+    // Handled straight off the scroll event rather than inside a rAF: the work
+    // is one comparison and an early return, and a rAF would tie a layout the
+    // user is looking at to a frame callback that is throttled whenever the
+    // window is not being painted.
+    const apply = () => {
+      const top = container.scrollTop
+      const desired = genomeStripAutoRef.current
+        ? top > GENOME_STRIP_EXPAND_SCROLL
+        : top >= GENOME_STRIP_COLLAPSE_SCROLL
+      if (desired === genomeStripAutoRef.current) return
+      genomeStripAutoRef.current = desired
+      genomeStripManualRef.current = false
+      setGenomeStripCollapsed(desired)
+    }
+
+    container.addEventListener('scroll', apply, { passive: true })
+    apply()
+    return () => container.removeEventListener('scroll', apply)
+  }, [otherGenomes.length, hasGenome])
 
   const transcriptRowHeight = TRANSCRIPT_TRACK_ROW_HEIGHT
   const transcriptControlsMeasureRef = useRef(null)
@@ -2085,6 +2172,7 @@ export default function FeatureExplorerView({
         'feature-exon-atlas',
         'feature-exon-detail',
         'feature-protein-panel',
+        'feature-structure-panel',
       ]) {
         removeScreenshotTarget(targetId)
       }
@@ -2130,9 +2218,14 @@ export default function FeatureExplorerView({
     makeDescriptor('feature-protein-panel', 'protein panel', proteinsScreenshotRef, {
       prefix: 'ens_feature_protein_panel',
     })
+    makeDescriptor('feature-structure-panel', 'structure panel', structureScreenshotRef, {
+      prefix: 'ens_feature_structure_panel',
+      buildExportSnapshot: () => buildStructureScreenshotSnapshot(),
+    })
   }, [
     buildFeatureScreenshotSnapshot,
     buildSpliceGraphScreenshotSnapshot,
+    buildStructureScreenshotSnapshot,
     clickedExonInfo,
     onScreenshotModeChange,
     removeScreenshotTarget,
@@ -2206,7 +2299,7 @@ export default function FeatureExplorerView({
           {otherGenomes.length > 0 && (
             <button
               type="button"
-              onClick={() => setGenomeStripCollapsed((prev) => !prev)}
+              onClick={toggleGenomeStrip}
               className={`w-7 h-7 flex-shrink-0 rounded border flex items-center justify-center transition-colors ${isLight
                 ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
                 : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
@@ -3274,6 +3367,19 @@ export default function FeatureExplorerView({
                   onTranscriptDragEnd={onTranscriptDragEnd}
                 />
                 </div>
+              </div>
+
+              <div ref={structureSectionRef}>
+                <FeatureExplorerStructurePanel
+                  theme={theme}
+                  resolvedGene={resolved?.gene || null}
+                  sequenceGenome={activeGenomeKey || 'reference'}
+                  displayOrderIds={displayOrderIds}
+                  activeTranscriptIds={activeTranscriptIds}
+                  transcriptById={transcriptById}
+                  containerRef={structureScreenshotRef}
+                  onRegisterScreenshot={(builder) => { structureSnapshotRef.current = builder }}
+                />
               </div>
 
               <div ref={exportSectionRef}>

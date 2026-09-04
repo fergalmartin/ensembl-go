@@ -29,7 +29,7 @@ import {
 /**
  * PathInput — A file/directory path field with optional native "Browse" button.
  */
-function PathInput({ label, value, onChange, type = 'file', theme, helpText, onBrowse }) {
+function PathInput({ label, value, onChange, type = 'file', theme, helpText, onBrowse, tourId = '' }) {
     const isLight = theme === 'light'
     const inputRef = useRef(null)
 
@@ -54,6 +54,7 @@ function PathInput({ label, value, onChange, type = 'file', theme, helpText, onB
             <div className="flex gap-2">
                 <input
                     ref={inputRef}
+                    data-tour-id={tourId || undefined}
                     type="text"
                     value={value || ''}
                     onChange={(e) => onChange(e.target.value)}
@@ -84,7 +85,7 @@ function PathInput({ label, value, onChange, type = 'file', theme, helpText, onB
 /**
  * CollapsibleSection — A titled card that can be expanded/collapsed.
  */
-function CollapsibleSection({ title, icon, defaultOpen = true, theme, children }) {
+function CollapsibleSection({ title, icon, defaultOpen = true, theme, tourId = '', children }) {
     const [open, setOpen] = useState(defaultOpen)
     const isLight = theme === 'light'
 
@@ -95,6 +96,7 @@ function CollapsibleSection({ title, icon, defaultOpen = true, theme, children }
             }`}>
             <button
                 type="button"
+                data-tour-id={tourId || undefined}
                 onClick={() => setOpen(o => !o)}
                 className={`w-full flex items-center justify-between px-6 py-4 text-left transition-colors ${isLight
                     ? 'hover:bg-gray-50'
@@ -707,10 +709,11 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
                 )}
 
                 {/* ── 2. Outputs ────────────────────────────────────────────── */}
-                <CollapsibleSection title="Outputs" icon={<OutputsIcon />} theme={theme} defaultOpen={true}>
+                <CollapsibleSection title="Outputs" icon={<OutputsIcon />} theme={theme} defaultOpen={true} tourId="config-section-outputs">
 
                     <p className={subLabel}>Cache Directory</p>
                     <PathInput
+                        tourId="config-output-dir"
                         label="Output Directory"
                         value={config.output_dir}
                         onChange={(v) => updateField('output_dir', v)}
@@ -777,7 +780,7 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
                 </CollapsibleSection>
 
                 {/* ── 4. Configuration file ─────────────────────────────────── */}
-                <CollapsibleSection title="Configuration" icon={<ConfigurationIcon />} theme={theme} defaultOpen={false}>
+                <CollapsibleSection title="Configuration" icon={<ConfigurationIcon />} theme={theme} defaultOpen={false} tourId="config-section-configuration">
 
                     {/* Save to file */}
                     <p className={subLabel}>Save Configuration</p>
@@ -815,6 +818,7 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
                             Browse
                         </button>
                         <button
+                            data-tour-id="config-save"
                             onClick={handleSaveAs}
                             disabled={saving || !configPath.trim()}
                             className={`shrink-0 h-10 ${btnPrimary}`}

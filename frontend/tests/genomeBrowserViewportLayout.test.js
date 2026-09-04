@@ -294,3 +294,29 @@ test('a whole-pixel bar is passed through unchanged', () => {
 test('band snapping rejects nonsense input', () => {
   assert.equal(alignBandToBar({ barTop: NaN, barHeight: 52 }), null)
 })
+
+test("a locus around the focused gene clears the drawer that is over the track", () => {
+  // The drawer is `absolute right-0` — it overlays the canvas rather than narrowing it, so
+  // the window never shrank and a range centred across the full track puts the far end of
+  // the gene underneath it. The tutorial's REG4 step is the case that showed it: its
+  // declared window is symmetrical around the gene, which is exactly wrong once ~19% of
+  // the right-hand side is covered.
+  const REG4 = { start: 119_794_017, end: 119_811_580 }
+  const declared = { start: 119_790_017, end: 119_815_580 }
+  const trackWidth = 1550
+  const drawer = 300
+  const visible = trackWidth - drawer
+  const pixelOf = (bp, range) => ((bp - range.start) / (range.end - range.start)) * trackWidth
+
+  assert.ok(pixelOf(REG4.end, declared) > visible, 'the unframed window must hide the gene end')
+
+  const framed = frameRangeWithRightInset({
+    ...declared, trackWidthPx: trackWidth, rightInsetPx: drawer,
+  })
+  const left = pixelOf(REG4.start, framed)
+  const right = pixelOf(REG4.end, framed)
+  assert.ok(right <= visible, `the gene still runs under the drawer, to ${right}`)
+  assert.ok(left > 0, 'and has not been pushed off the left edge')
+  // Centred in what stays visible, rather than in the whole track.
+  assert.ok(Math.abs(left - (visible - right)) < 1, 'the gene is not centred in the visible width')
+})

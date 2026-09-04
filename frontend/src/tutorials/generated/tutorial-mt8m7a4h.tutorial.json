@@ -1,0 +1,2765 @@
+{
+  "format": "ensembl-go-tutorial",
+  "schemaVersion": 1,
+  "id": "tutorial-mt8m7a4h",
+  "revision": 2882,
+  "title": "Genome Playlists",
+  "blurb": "This tutorial introduces genome playlists, which are a way of creating and accessing sets of genomes. These might be the genomes you like to work with most, or could be around a particular theme (e.g. livestock, model organisms, humans etc.).",
+  "estimatedMinutes": 5,
+  "usesDemoGenome": false,
+  "completionBody": "Tutorial complete.",
+  "author": "",
+  "createdAt": "2026-08-25T12:01:58.529Z",
+  "updatedAt": "2026-09-03T11:09:18.358154Z",
+  "datasets": [
+    {
+      "id": "embedded:tmnt-leonardo-v1@1",
+      "recipeId": "tmnt-leonardo-v1",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Green sea turtle (Leonardo)",
+      "fixtureId": "turtles-and-friends",
+      "source": {
+        "type": "synthetic-fixture",
+        "fixture": "turtles-and-friends",
+        "character": "Leonardo",
+        "containsRealSequence": false
+      }
+    },
+    {
+      "id": "embedded:tmnt-michelangelo-v1@1",
+      "recipeId": "tmnt-michelangelo-v1",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Hawksbill turtle (Michelangelo)",
+      "fixtureId": "turtles-and-friends",
+      "source": {
+        "type": "synthetic-fixture",
+        "fixture": "turtles-and-friends",
+        "character": "Michelangelo",
+        "containsRealSequence": false
+      }
+    },
+    {
+      "id": "embedded:tmnt-donatello-v1@1",
+      "recipeId": "tmnt-donatello-v1",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Leatherback turtle (Donatello)",
+      "fixtureId": "turtles-and-friends",
+      "source": {
+        "type": "synthetic-fixture",
+        "fixture": "turtles-and-friends",
+        "character": "Donatello",
+        "containsRealSequence": false
+      }
+    },
+    {
+      "id": "embedded:tmnt-raphael-v1@1",
+      "recipeId": "tmnt-raphael-v1",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Loggerhead turtle (Raphael)",
+      "fixtureId": "turtles-and-friends",
+      "source": {
+        "type": "synthetic-fixture",
+        "fixture": "turtles-and-friends",
+        "character": "Raphael",
+        "containsRealSequence": false
+      }
+    },
+    {
+      "id": "embedded:tmnt-splinter-v1@1",
+      "recipeId": "tmnt-splinter-v1",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Brown rat (Splinter)",
+      "fixtureId": "turtles-and-friends",
+      "source": {
+        "type": "synthetic-fixture",
+        "fixture": "turtles-and-friends",
+        "character": "Splinter",
+        "containsRealSequence": false
+      }
+    },
+    {
+      "id": "embedded:tmnt-april-v1@1",
+      "recipeId": "tmnt-april-v1",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Human (April)",
+      "fixtureId": "turtles-and-friends",
+      "source": {
+        "type": "synthetic-fixture",
+        "fixture": "turtles-and-friends",
+        "character": "April",
+        "containsRealSequence": false
+      }
+    },
+    {
+      "id": "embedded:tmnt-rocksteady-v1@1",
+      "recipeId": "tmnt-rocksteady-v1",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Black rhinoceros (Rocksteady)",
+      "fixtureId": "turtles-and-friends",
+      "source": {
+        "type": "synthetic-fixture",
+        "fixture": "turtles-and-friends",
+        "character": "Rocksteady",
+        "containsRealSequence": false
+      }
+    },
+    {
+      "id": "embedded:tmnt-bebop-v1@1",
+      "recipeId": "tmnt-bebop-v1",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Common warthog (Bebop)",
+      "fixtureId": "turtles-and-friends",
+      "source": {
+        "type": "synthetic-fixture",
+        "fixture": "turtles-and-friends",
+        "character": "Bebop",
+        "containsRealSequence": false
+      }
+    }
+  ],
+  "steps": [
+    {
+      "id": "new-step-1",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "section": "Intro to genome playlists",
+      "title": "Getting started with playlists",
+      "body": "Genome playlist are an easy way to group a set of genome that are available everytime you launch Ensembl Go. You can have as many playlists as you like and switching between them is easy. ",
+      "cardPosition": {
+        "x": 0.3269,
+        "y": 0.3218
+      }
+    },
+    {
+      "id": "getting-started-with-playlists-2",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_selector"
+          }
+        }
+      },
+      "section": "Intro to genome playlists",
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_selector"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_selector"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "title": "Open Genome Selector",
+      "body": "Genome are created/edited via the Genome Selector. Click on it now.",
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "app.viewButton",
+            "version": 1,
+            "params": {
+              "buttonId": "genome_selector"
+            }
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "open-genome-selector-3",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "section": "Intro to genome playlists",
+      "view": "genome_selector",
+      "spotlight": {
+        "target": {
+          "id": "selector.genomeList",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "title": "Some demo genomes",
+      "body": "The genome list has been populated with some demo genomes: 4 turtles, a rat, a human a, rhino and a warthog.",
+      "cardPosition": {
+        "x": 0.6391861979166666,
+        "y": 0.21356784326424869
+      }
+    },
+    {
+      "id": "some-demo-genomes-4",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "section": "Intro to genome playlists",
+      "view": "genome_selector",
+      "spotlight": {
+        "target": {
+          "id": "selector.addToPlaylist",
+          "version": 1,
+          "params": {
+            "genomeKey": "demo::tutorial_black_rhinoceros_rocksteady::Rocksteady_v1::dataset::legacy/unknown"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "title": "The playlist icon",
+      "cardPosition": {
+        "x": 0.5025,
+        "y": 0.3141
+      },
+      "body": "Each genome row has a playlist icon on the far right hand side."
+    },
+    {
+      "id": "the-playlist-icon-5",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "all-clicks",
+        "targets": [
+          {
+            "id": "selector.checkbox",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_green_sea_turtle_leonardo"
+            }
+          },
+          {
+            "id": "selector.checkbox",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_hawksbill_turtle_michelangelo"
+            }
+          },
+          {
+            "id": "selector.checkbox",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_leatherback_turtle_donatello"
+            }
+          },
+          {
+            "id": "selector.checkbox",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_loggerhead_turtle_raphael"
+            }
+          }
+        ]
+      },
+      "section": "Building a playlist",
+      "view": "genome_selector",
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_green_sea_turtle_leonardo"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_hawksbill_turtle_michelangelo"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_leatherback_turtle_donatello"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_loggerhead_turtle_raphael"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "title": "Adding genomes to a playlist",
+      "cardPosition": {
+        "x": 0.504,
+        "y": 0.2199
+      },
+      "body": "Here we're going to try adding the 4 turtles to a single playlist. Start by selecting the four highlighted checkboxes for the turtle genomes.",
+      "reveals": [
+        {
+          "target": {
+            "id": "selector.genome",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_green_sea_turtle_leonardo"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "selector.genome",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_hawksbill_turtle_michelangelo"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "selector.genome",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_leatherback_turtle_donatello"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "selector.genome",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_loggerhead_turtle_raphael"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "holdMs": 650,
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_green_sea_turtle_leonardo"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_hawksbill_turtle_michelangelo"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_leatherback_turtle_donatello"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_loggerhead_turtle_raphael"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": []
+        },
+        {
+          "type": "playlists",
+          "playlists": []
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ]
+    },
+    {
+      "id": "adding-genomes-to-a-playlist-6",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "section": "Building a playlist",
+      "view": "genome_selector",
+      "interactionPolicy": {
+        "targets": []
+      },
+      "title": "Active genomes",
+      "cardPosition": {
+        "x": 0.19574804687500003,
+        "y": 0.2505326910621762
+      },
+      "reveals": [],
+      "holdMs": 650,
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": []
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ],
+      "body": "Now we can see the four genomes appear in the top bar of the app. ",
+      "spotlight": {
+        "target": {
+          "id": "app.genomePills",
+          "version": 1
+        }
+      }
+    },
+    {
+      "id": "active-genomes-7",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "selector.addSelectedToPlaylist",
+          "version": 1
+        }
+      },
+      "section": "Building a playlist",
+      "view": "genome_selector",
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.addSelectedToPlaylist",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "cardPosition": {
+        "x": 0.4964,
+        "y": 0.2776
+      },
+      "reveals": [],
+      "holdMs": 650,
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": []
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "selector.addSelectedToPlaylist",
+            "version": 1
+          },
+          "offset": 24
+        }
+      ],
+      "body": "Now that we have selected our genomes, we can use this button to add all selected genomes simultaneously to a playlist. We could use the icons on each genome row (regardless of whether a genome is select) to individually  add the genomes to a playlist, but this is quicker when we want to add multiple genomes to a playlist. Try clicking the button now.",
+      "title": "Adding selected genomes to a playlist",
+      "spotlight": {
+        "target": {
+          "id": "selector.addSelectedToPlaylist",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "selector.addSelectedToPlaylist",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "adding-selected-genomes-to-a-playlist-8",
+      "title": "The playlist dialog",
+      "body": "This box allows us to add the selected genomes to either existing playlists or create a new one. In our case we don't have any existing playlists so we'll create a new one.",
+      "section": "Building a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.6561,
+        "y": 0.0355
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": []
+        },
+        {
+          "type": "dialog",
+          "dialog": "playlistMembership"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.playlistDialog",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "the-playlist-dialog-9",
+      "title": "Name the playlist",
+      "body": "The only required info is a playlist name, let's call this playlist \"Turtles\". Enter the name into the box and hit Next to continue.",
+      "section": "Building a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.6733,
+        "y": 0.1332
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": []
+        },
+        {
+          "type": "dialog",
+          "dialog": "playlistMembership"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.playlistDialogNewName",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.playlistDialogNewName",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "selector.playlistDialogNewName",
+            "version": 1
+          },
+          "capability": "input",
+          "value": "Turtles",
+          "overwrite": true,
+          "submit": false
+        }
+      },
+      "holdMs": 400
+    },
+    {
+      "id": "name-the-playlist-10",
+      "title": "Add a description",
+      "body": "A description is optional, but are useful if you have a lot of different playlists, particularly when there are overlapping sets of genomes. Try adding a description and then click Next to continue.",
+      "section": "Building a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.72,
+        "y": 0.2
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": []
+        },
+        {
+          "type": "dialog",
+          "dialog": "playlistMembership",
+          "fields": {
+            "name": "Turtles"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.playlistDialogNewDescription",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.playlistDialogNewDescription",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "selector.playlistDialogNewDescription",
+            "version": 1
+          },
+          "capability": "input",
+          "value": "The four turtle genomes.",
+          "submit": false
+        }
+      },
+      "holdMs": 400
+    },
+    {
+      "id": "describe-it-11",
+      "title": "Save the playlist",
+      "body": "To finish creating the new playlist, click the 'Add genomes' button below. If we were adding genomes to an existing playlist, this button would become active once one or more existing playlists were selected.",
+      "section": "Building a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "selector.playlistDialogSave",
+          "version": 1
+        }
+      },
+      "cardPosition": {
+        "x": 0.72,
+        "y": 0.2
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": []
+        },
+        {
+          "type": "dialog",
+          "dialog": "playlistMembership",
+          "fields": {
+            "name": "Turtles",
+            "description": "The four turtle genomes."
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.playlistDialogSave",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.playlistDialogSave",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "selector.playlistDialogSave",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "holdMs": 900
+    },
+    {
+      "id": "save-the-playlist-12",
+      "title": "The Genome Playlists panel",
+      "body": "This panel is used to view an manage playlists. The first entry, 'All genomes', is not actually a playlist. It's the default selection for Genome Selector and selecting it shows (but doesn't select) all local genomes in the genome list section. Selecting an actual playlist here will both set the genomes pills on the top bar to match the playlist and filter the genome list in Genome Selector to just those genomes.",
+      "section": "Building a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.4394,
+        "y": 0.5263
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "selector.playlistBar",
+            "version": 1
+          },
+          "offset": 40
+        }
+      ],
+      "openSectionTarget": {
+        "id": "selector.playlistBarToggle",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "spotlight": {
+        "target": {
+          "id": "selector.playlistBar",
+          "version": 1
+        }
+      },
+      "sectionContentTarget": {
+        "id": "selector.playlistList",
+        "version": 1
+      }
+    },
+    {
+      "id": "your-playlists-live-here-13",
+      "title": "The Playlist action button",
+      "body": "The easiest way to select/switch playlist is to use the Playlist action button. This button is accessible from anywhere in the Ensembl Go app and clicking it drops down a list of available playlists. There will also be a 'Previous session' playlist automatically created based on the genomes you had active when you last closed the Ensembl Go app.",
+      "section": "Using a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.445,
+        "y": 0.0826
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_playlist"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "the-playlist-button-14",
+      "title": "Clear the selected genomes pill buttons",
+      "body": "To demonstrate loading a playlist, use the highlighted icons to remove the 4 genomes from the top bar. This also has the effect of deselecting them in Genome Selector.",
+      "section": "Using a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "all-clicks",
+        "targets": [
+          {
+            "id": "app.genomePillRemove",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_green_sea_turtle_leonardo"
+            }
+          },
+          {
+            "id": "app.genomePillRemove",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_hawksbill_turtle_michelangelo"
+            }
+          },
+          {
+            "id": "app.genomePillRemove",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_leatherback_turtle_donatello"
+            }
+          },
+          {
+            "id": "app.genomePillRemove",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_loggerhead_turtle_raphael"
+            }
+          }
+        ]
+      },
+      "cardPosition": {
+        "x": 0.1747,
+        "y": 0.2478
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "app.genomePillRemove",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_green_sea_turtle_leonardo"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "app.genomePillRemove",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_hawksbill_turtle_michelangelo"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "app.genomePillRemove",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_leatherback_turtle_donatello"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "app.genomePillRemove",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_loggerhead_turtle_raphael"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.genomePillRemove",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_green_sea_turtle_leonardo"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "app.genomePillRemove",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_hawksbill_turtle_michelangelo"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "app.genomePillRemove",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_leatherback_turtle_donatello"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "app.genomePillRemove",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_loggerhead_turtle_raphael"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "app.genomePillRemove",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_green_sea_turtle_leonardo"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "app.genomePillRemove",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_hawksbill_turtle_michelangelo"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "app.genomePillRemove",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_leatherback_turtle_donatello"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "app.genomePillRemove",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_loggerhead_turtle_raphael"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "holdMs": 650
+    },
+    {
+      "id": "clear-the-top-bar-15",
+      "title": "Loading the playlist",
+      "body": "With the four genomes removed, we're now going to re-select them using the Playlist action button.",
+      "section": "Using a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_playlist"
+          }
+        }
+      },
+      "cardPosition": {
+        "x": 0.4434,
+        "y": 0.0828
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": []
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_playlist"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_playlist"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "app.viewButton",
+            "version": 1,
+            "params": {
+              "buttonId": "genome_playlist"
+            }
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "getting-them-back-16",
+      "title": "Chose the Turtles playlist",
+      "body": "Every playlist you have is listed here, though we only have one for the moment. Click on 'Turtles' to re-select the four turtle genomes",
+      "section": "Using a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "app.playlistOption",
+          "version": 1,
+          "params": {
+            "playlist": "turtles"
+          }
+        }
+      },
+      "cardPosition": {
+        "x": 0.2338,
+        "y": 0.2116
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "app.playlistPopover",
+            "version": 1
+          }
+        }
+      ],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": []
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "dialog": "playlistPopover"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.playlistOption",
+          "version": 1,
+          "params": {
+            "playlist": "turtles"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.playlistOption",
+              "version": 1,
+              "params": {
+                "playlist": "turtles"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "app.playlistOption",
+            "version": 1,
+            "params": {
+              "playlist": "turtles"
+            }
+          },
+          "capability": "activate"
+        }
+      },
+      "holdMs": 900,
+      "deferUntilReady": false
+    },
+    {
+      "id": "choose-turtles-17",
+      "title": "Check the top bar",
+      "body": "You should now see the four turtle genome pill buttons in the top bar above. As selected genomes these buttons will be present in every view of the view of the app until the playlist is changed or they're manually de-selected.",
+      "section": "Using a playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.0157,
+        "y": 0.2637
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ],
+          "selected": "Turtles"
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.genomePills",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "all-four-back-again-18",
+      "title": "A second playlist",
+      "body": "To demonstrate switching playlists, we're going to create another playlist with things that are not turtles, i.e. the rat, the human, the rhinoceros and the warthog.",
+      "section": "A second playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "all-clicks",
+        "targets": [
+          {
+            "id": "selector.checkbox",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_brown_rat_splinter"
+            }
+          },
+          {
+            "id": "selector.checkbox",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_human_april"
+            }
+          },
+          {
+            "id": "selector.checkbox",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_black_rhinoceros_rocksteady"
+            }
+          },
+          {
+            "id": "selector.checkbox",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_common_warthog_bebop"
+            }
+          }
+        ]
+      },
+      "cardPosition": {
+        "x": 0.6527,
+        "y": 0.0556
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "selector.genome",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_brown_rat_splinter"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "selector.genome",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_human_april"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "selector.genome",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_black_rhinoceros_rocksteady"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "selector.genome",
+            "version": 1,
+            "params": {
+              "speciesKey": "tutorial_common_warthog_bebop"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": []
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_brown_rat_splinter"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_human_april"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_black_rhinoceros_rocksteady"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_common_warthog_bebop"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_brown_rat_splinter"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_human_april"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_black_rhinoceros_rocksteady"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "tutorial_common_warthog_bebop"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "holdMs": 650
+    },
+    {
+      "id": "a-second-playlist-19",
+      "title": "A click the add all to playlist button",
+      "body": "We use the same button as before to all four at once. Again, we could add each genome individually with the playlist icons on their corresponding rows, but this is faster since they're all getting added to one list.",
+      "section": "A second playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "selector.addSelectedToPlaylist",
+          "version": 1
+        }
+      },
+      "cardPosition": {
+        "x": 0.5024,
+        "y": 0.2797
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-splinter-v1",
+            "tmnt-april-v1",
+            "tmnt-rocksteady-v1",
+            "tmnt-bebop-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "selector.addSelectedToPlaylist",
+            "version": 1
+          },
+          "offset": 24
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.addSelectedToPlaylist",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.addSelectedToPlaylist",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "selector.addSelectedToPlaylist",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "holdMs": 650
+    },
+    {
+      "id": "add-them-together-20",
+      "title": "Name it Not turtles",
+      "body": "Name the playlist 'Not turtles' and click Next.",
+      "section": "A second playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.72,
+        "y": 0.2
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-splinter-v1",
+            "tmnt-april-v1",
+            "tmnt-rocksteady-v1",
+            "tmnt-bebop-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "dialog": "playlistMembership"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.playlistDialogNewName",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.playlistDialogNewName",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "selector.playlistDialogNewName",
+            "version": 1
+          },
+          "capability": "input",
+          "value": "Not turtles",
+          "overwrite": true,
+          "submit": false
+        }
+      },
+      "holdMs": 400
+    },
+    {
+      "id": "name-it-not-turtles-21",
+      "title": "Create it",
+      "body": "This time we'll skip adding a description and just add the genomes to the new playlist using the 'Add genomes' button.",
+      "section": "A second playlist",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "selector.playlistDialogSave",
+          "version": 1
+        }
+      },
+      "cardPosition": {
+        "x": 0.6688,
+        "y": 0.28
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-splinter-v1",
+            "tmnt-april-v1",
+            "tmnt-rocksteady-v1",
+            "tmnt-bebop-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "dialog",
+          "dialog": "playlistMembership",
+          "fields": {
+            "name": "Not turtles"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.playlistDialogSave",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.playlistDialogSave",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "selector.playlistDialogSave",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "holdMs": 2200
+    },
+    {
+      "id": "the-not-turtles-set",
+      "title": "The Not turtles set",
+      "body": "Our four non-turtle genomes are now present in the top bar.",
+      "section": "Switching playlists",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.1935,
+        "y": 0.2582
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-splinter-v1",
+            "tmnt-april-v1",
+            "tmnt-rocksteady-v1",
+            "tmnt-bebop-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            },
+            {
+              "name": "Not turtles",
+              "description": "Everything else in the tutorial set.",
+              "genomes": [
+                "tmnt-splinter-v1",
+                "tmnt-april-v1",
+                "tmnt-rocksteady-v1",
+                "tmnt-bebop-v1"
+              ]
+            }
+          ],
+          "selected": "Not turtles"
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.genomePills",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "deferUntilReady": true,
+      "ensure": [
+        "notifications-clear"
+      ]
+    },
+    {
+      "id": "save-it-22",
+      "title": "Switching between them",
+      "body": "Now use the Playlist action button to show the two playlists.",
+      "section": "Switching playlists",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_playlist"
+          }
+        }
+      },
+      "cardPosition": {
+        "x": 0.4456,
+        "y": 0.0771
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-splinter-v1",
+            "tmnt-april-v1",
+            "tmnt-rocksteady-v1",
+            "tmnt-bebop-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            },
+            {
+              "name": "Not turtles",
+              "description": "Everything else in the tutorial set.",
+              "genomes": [
+                "tmnt-splinter-v1",
+                "tmnt-april-v1",
+                "tmnt-rocksteady-v1",
+                "tmnt-bebop-v1"
+              ]
+            }
+          ],
+          "selected": "Not turtles"
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_playlist"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_playlist"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "app.viewButton",
+            "version": 1,
+            "params": {
+              "buttonId": "genome_playlist"
+            }
+          },
+          "capability": "activate"
+        }
+      },
+      "ensure": [
+        "notifications-clear"
+      ]
+    },
+    {
+      "id": "both-playlists-listed",
+      "title": "Both playlists",
+      "body": "Both playlists are listed, and the tick mark beside 'Not turtles' shows that it is the currently loaded playlist in terms of the selected genomes.",
+      "section": "Switching playlists",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.2381,
+        "y": 0.1481
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "app.playlistPopover",
+            "version": 1
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-splinter-v1",
+            "tmnt-april-v1",
+            "tmnt-rocksteady-v1",
+            "tmnt-bebop-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            },
+            {
+              "name": "Not turtles",
+              "description": "Everything else in the tutorial set.",
+              "genomes": [
+                "tmnt-splinter-v1",
+                "tmnt-april-v1",
+                "tmnt-rocksteady-v1",
+                "tmnt-bebop-v1"
+              ]
+            }
+          ],
+          "selected": "Not turtles"
+        },
+        {
+          "type": "dialog",
+          "dialog": "playlistPopover"
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      },
+      "deferUntilReady": false
+    },
+    {
+      "id": "switching-between-them-23",
+      "title": "Switch to Turtles",
+      "body": "Now try clicking 'Turtles' to change the playlist and as a result the selected genomes.",
+      "section": "Switching playlists",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "app.playlistOption",
+          "version": 1,
+          "params": {
+            "playlist": "turtles"
+          }
+        }
+      },
+      "cardPosition": {
+        "x": 0.2395,
+        "y": 0.1503
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "app.playlistPopover",
+            "version": 1
+          }
+        }
+      ],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-splinter-v1",
+            "tmnt-april-v1",
+            "tmnt-rocksteady-v1",
+            "tmnt-bebop-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            },
+            {
+              "name": "Not turtles",
+              "description": "Everything else in the tutorial set.",
+              "genomes": [
+                "tmnt-splinter-v1",
+                "tmnt-april-v1",
+                "tmnt-rocksteady-v1",
+                "tmnt-bebop-v1"
+              ]
+            }
+          ],
+          "selected": "Not turtles"
+        },
+        {
+          "type": "dialog",
+          "dialog": "playlistPopover"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.playlistOption",
+          "version": 1,
+          "params": {
+            "playlist": "turtles"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.playlistOption",
+              "version": 1,
+              "params": {
+                "playlist": "turtles"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "app.playlistOption",
+            "version": 1,
+            "params": {
+              "playlist": "turtles"
+            }
+          },
+          "capability": "activate"
+        }
+      },
+      "holdMs": 400,
+      "deferUntilReady": false
+    },
+    {
+      "id": "the-turtles-are-back",
+      "title": "The turtles are back",
+      "body": "The top bar now shows the four turtle genomes once again.",
+      "section": "Switching playlists",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.1935,
+        "y": 0.2538
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            },
+            {
+              "name": "Not turtles",
+              "description": "Everything else in the tutorial set.",
+              "genomes": [
+                "tmnt-splinter-v1",
+                "tmnt-april-v1",
+                "tmnt-rocksteady-v1",
+                "tmnt-bebop-v1"
+              ]
+            }
+          ],
+          "selected": "Turtles"
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.genomePills",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "deferUntilReady": false
+    },
+    {
+      "id": "and-back-again-25",
+      "title": "Editing and deleting",
+      "body": "Back in the Genome Playlists panel, both playlists are listed. The pencil icon renames a playlist or changes which genomes are in it while the bin icon deletes it. Deleting a playlist never removes the genomes themselves , only the set.",
+      "section": "Managing playlists",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.1076,
+        "y": 0.0425
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "selector.playlistEdit",
+            "version": 1,
+            "params": {
+              "playlist": "turtles"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "selector.playlistDelete",
+            "version": 1,
+            "params": {
+              "playlist": "turtles"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            },
+            {
+              "name": "Not turtles",
+              "description": "Everything else in the tutorial set.",
+              "genomes": [
+                "tmnt-splinter-v1",
+                "tmnt-april-v1",
+                "tmnt-rocksteady-v1",
+                "tmnt-bebop-v1"
+              ]
+            }
+          ],
+          "selected": "Turtles"
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "selector.playlistBar",
+            "version": 1
+          },
+          "offset": 12
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.playlistList",
+          "version": 1
+        }
+      },
+      "openSectionTarget": {
+        "id": "selector.playlistBarToggle",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "editing-and-deleting-28",
+      "section": "Managing playlists",
+      "view": "genome_selector",
+      "action": {
+        "type": "none"
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "cardPosition": {
+        "x": 0.33339427083333334,
+        "y": 0.3808611965673575
+      },
+      "reveals": [],
+      "arrive": [
+        {
+          "type": "selectorList",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "fitAllRows": true,
+          "preserveOrder": true,
+          "lockScroll": true,
+          "center": true
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": [
+            "tmnt-leonardo-v1",
+            "tmnt-michelangelo-v1",
+            "tmnt-donatello-v1",
+            "tmnt-raphael-v1"
+          ]
+        },
+        {
+          "type": "playlists",
+          "playlists": [
+            {
+              "name": "Turtles",
+              "description": "The four turtle genomes.",
+              "genomes": [
+                "tmnt-leonardo-v1",
+                "tmnt-michelangelo-v1",
+                "tmnt-donatello-v1",
+                "tmnt-raphael-v1"
+              ]
+            },
+            {
+              "name": "Not turtles",
+              "description": "Everything else in the tutorial set.",
+              "genomes": [
+                "tmnt-splinter-v1",
+                "tmnt-april-v1",
+                "tmnt-rocksteady-v1",
+                "tmnt-bebop-v1"
+              ]
+            }
+          ],
+          "selected": "Turtles"
+        },
+        {
+          "type": "dialog",
+          "dialog": "none"
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "selector.playlistBar",
+            "version": 1
+          },
+          "offset": 12
+        }
+      ],
+      "openSectionTarget": {
+        "id": "selector.playlistBarToggle",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "title": "Genome playlists tutorial complete",
+      "body": "You should now be familiar most of the genome playlist functionality. You can experiment with your own genomes of interest in terms of editing/expanding existing playlists."
+    }
+  ]
+}

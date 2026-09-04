@@ -76,6 +76,23 @@ export function parseGenomeKey(value, defaultProvider = DEFAULT_PROVIDER) {
   }
 }
 
+/**
+ * A readable name for a genome we only know by its key.
+ *
+ * Notes outlive the genomes they were written against — a genome can be dropped
+ * from the top bar or deleted from disk and the notes stay — so anywhere those
+ * notes are listed needs to render `ensembl::Homo_sapiens::GCA_000001405.29` as
+ * something a person recognises.
+ */
+export function genomeKeyDisplayLabels(genomeKey) {
+  const { species_key: speciesKey, assembly } = parseGenomeKey(genomeKey)
+  const speciesName = String(speciesKey || '').replaceAll('_', ' ').trim()
+  const displayName = speciesName
+    ? `${speciesName.charAt(0).toUpperCase()}${speciesName.slice(1)}`
+    : 'Unavailable genome'
+  return { displayName, displayAssembly: assembly, tooltip: String(genomeKey || '') }
+}
+
 export function buildGenomeKey(provider, speciesKey, assembly, options = {}) {
   const normalizedProvider = normalizeGenomeProvider(provider, options)
   const normalizedSpeciesKey = String(speciesKey || '').trim()

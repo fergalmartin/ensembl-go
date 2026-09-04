@@ -1,7 +1,12 @@
 const DEFAULT_EDGE_GUTTER_PX = 30
 const DEFAULT_LABEL_PADDING_X = 4
-const DEFAULT_LABEL_ASCENT_PX = 10
-const DEFAULT_LABEL_DESCENT_PX = 4
+// The label's own box around its baseline, for 11px Lato. Exported because anything
+// deciding whether a label collides with something — another label, or the ruler — needs
+// the same two numbers this module places them with.
+export const LABEL_ASCENT_PX = 10
+export const LABEL_DESCENT_PX = 4
+const DEFAULT_LABEL_ASCENT_PX = LABEL_ASCENT_PX
+const DEFAULT_LABEL_DESCENT_PX = LABEL_DESCENT_PX
 const DEFAULT_COLLISION_GAP_X = 4
 const DEFAULT_COLLISION_GAP_Y = 1
 const DEFAULT_MIN_GENE_WIDTH_PX = 8
@@ -19,7 +24,26 @@ const DEFAULT_FOOTER_EDGE_GUTTER_PX = 6
 export const GENE_FOOTER_LABEL_BASELINE_OFFSET = 16
 export const GENE_FOOTER_CONTROL_TOP_OFFSET = 20
 export const TRANSCRIPT_FOOTER_CONTROL_HEIGHT = 16
-export const GENE_FOOTER_TRACK_OVERFLOW = 8
+/** How far below the last transcript's mid-line the footer row actually reaches: the
+ *  deeper of its two forms, the collapsed `+N` control. */
+export const GENE_FOOTER_ROW_BOTTOM_OFFSET = GENE_FOOTER_CONTROL_TOP_OFFSET + TRANSCRIPT_FOOTER_CONTROL_HEIGHT
+
+/** The room a track has to keep below its last row for that footer to sit inside it.
+ *
+ *  Derived rather than a constant, because the offsets above are absolute pixels tuned for
+ *  the ordinary 42px row pitch, and a flattened track's pitch is 18. A fixed reserve that
+ *  is generous in one layout is six pixels short in the other — and when the panel is
+ *  compact the ruler is placed flush against the last track, so those six pixels land on
+ *  the ruler rather than in a margin. */
+export function geneFooterTrackOverflow(transcriptLayoutMetrics, flattened = false) {
+  const rowPitch = Number(transcriptLayoutMetrics?.rowPitch) || 0
+  const midOffset = Number(transcriptLayoutMetrics?.midOffset) || 0
+  // The flattened branch sizes its tracks from the row *gap*, one row-gap tighter than the
+  // pitch the offsets below are measured against, so that has to be given back.
+  const rowGap = flattened ? (Number(transcriptLayoutMetrics?.rowGap) || 0) : 0
+  return Math.max(0, Math.round(midOffset + GENE_FOOTER_ROW_BOTTOM_OFFSET - rowPitch + rowGap))
+}
+export const GENE_FOOTER_VIEWPORT_BOTTOM_GAP = 12
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -111,6 +135,56 @@ export function getTranscriptFooterControlState(totalTranscripts, visibleTranscr
     action: 'collapse',
     label: 'X',
     title: 'Collapse transcript list',
+  }
+}
+
+/**
+ * Keep an expanded gene footer reachable while its natural position is
+ * still below the visible part of the canvas. The footer moves down with the
+ * viewport until the final transcript catches up, then resumes its normal
+ * content position beneath that transcript.
+ */
+export function placeGeneFooterWithinViewport(
+  footer,
+  viewport,
+  {
+    controlHeight = TRANSCRIPT_FOOTER_CONTROL_HEIGHT,
+    bottomGap = GENE_FOOTER_VIEWPORT_BOTTOM_GAP,
+  } = {},
+) {
+  if (!footer) return null
+
+  const viewportTop = Number(viewport?.top)
+  const viewportBottom = Number(viewport?.bottom)
+  if (
+    !Number.isFinite(viewportTop)
+    || !Number.isFinite(viewportBottom)
+    || viewportBottom <= viewportTop
+    || !Number.isFinite(Number(footer.topY))
+    || !Number.isFinite(Number(footer.controlY))
+    || !Number.isFinite(Number(footer.labelY))
+  ) {
+    return footer
+  }
+
+  // Do not advertise a gene which has not entered the viewport yet. Once its
+  // first row has appeared, the footer remains reachable until its natural
+  // position itself reaches the visible bottom.
+  if (Number(footer.topY) >= viewportBottom) return footer
+
+  const safeHeight = Math.max(0, Number(controlHeight) || 0)
+  const safeGap = Math.max(0, Number(bottomGap) || 0)
+  const maxControlY = viewportBottom - safeGap - safeHeight
+  if (Number(footer.controlY) <= maxControlY) return footer
+
+  const shiftY = maxControlY - Number(footer.controlY)
+  return {
+    ...footer,
+    labelY: Number(footer.labelY) + shiftY,
+    controlY: maxControlY,
+    naturalLabelY: Number(footer.labelY),
+    naturalControlY: Number(footer.controlY),
+    isViewportPinned: true,
   }
 }
 
@@ -331,4 +405,24 @@ export function placeNonOverlappingGeneLabels(candidates, options = {}) {
   }
 
   return placed.sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+}
+/**
+ * Whether something belonging to a track would be drawn into the ruler.
+ *
+ * The ruler is its own band, and a gene label or footer control that reaches into it is
+ * unreadable over the ticks and makes the ticks unreadable too. It happens where the two
+ * are flush: a compact panel puts the ruler immediately after the last track, so anything
+ * that overflows its track by even a few pixels lands on it rather than in a margin.
+ *
+ * A backstop, not the fix — a track that reserves the room its footer needs never reaches
+ * here. It is worth having because the arithmetic has several inputs (row pitch, mid
+ * offset, gap, which layout is on) and being wrong about one of them should cost a hidden
+ * label rather than a ruler drawn through a gene symbol.
+ */
+export function intersectsRuler(top, bottom, rulerY, rulerHeight) {
+  const height = Number(rulerHeight) || 0
+  if (height <= 0) return false
+  const y = Number(rulerY)
+  if (!Number.isFinite(y)) return false
+  return Number(bottom) > y && Number(top) < y + height
 }

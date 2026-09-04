@@ -1,0 +1,57 @@
+/* The viewer fills its iframe; the parent panel owns all surrounding chrome. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: Lato, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+#viewport {
+  position: absolute;
+  inset: 0;
+}
+
+/* Shown before a model arrives and whenever loading fails. Sits above the
+   Mol* canvas so a failure is never a silently blank rectangle. */
+.status {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6b7280;
+  background: #ffffff;
+}
+
+.status[hidden] {
+  display: none;
+}
+
+.status.is-error {
+  color: #b91c1c;
+}
+
+body.theme-dark .status {
+  color: #9ca3af;
+  background: #1f2937;
+}
+
+body.theme-dark .status.is-error {
+  color: #fca5a5;
+}
+
+/* With hideCanvasControls: ['all'] Mol* still renders the empty wrapper its
+   buttons used to live in, which leaves a 32×4px box in the top-right corner
+   that keeps pointer-events and so swallows any camera drag started inside it.
+   Nothing is left to show, so the container goes too. */
+.msp-viewport-controls {
+  display: none;
+}

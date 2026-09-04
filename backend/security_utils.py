@@ -30,6 +30,23 @@ NCBI_DATASETS_FETCH_PATH_RE = re.compile(
     r"^/datasets/fetch_h/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*$"
 )
 
+# Protein annotation services. These are read-only metadata lookups rather than
+# genome downloads, so they get their own validator: the download allowlist is
+# about bulk assembly files and should not grow hosts that have nothing to do
+# with them.
+ALPHAFOLD_HOST = "alphafold.ebi.ac.uk"
+ALPHAFOLD_PATH_PREFIXES = ("/api/prediction/", "/files/")
+UNIPROT_HOST = "rest.uniprot.org"
+UNIPROT_PATH_PREFIXES = ("/uniprotkb/",)
+INTERPRO_HOST = "www.ebi.ac.uk"
+INTERPRO_PATH_PREFIXES = ("/interpro/api/",)
+
+ANNOTATION_SERVICE_ALLOWLIST = {
+    ALPHAFOLD_HOST: ALPHAFOLD_PATH_PREFIXES,
+    UNIPROT_HOST: UNIPROT_PATH_PREFIXES,
+    INTERPRO_HOST: INTERPRO_PATH_PREFIXES,
+}
+
 CONFIG_EXPORT_EXTENSIONS = {".cfg", ".json"}
 EXPORT_FORMAT_EXTENSIONS = {
     "svg": ".svg",
@@ -132,6 +149,25 @@ def validate_remote_download_url(url: str) -> str:
         raise HTTPException(status_code=400, detail="NCBI API URL path is not allowed")
 
     raise HTTPException(status_code=400, detail="Download URL host is not allowed")
+
+
+def validate_annotation_service_url(url: str) -> str:
+    """Allow only the protein-annotation lookups the Feature Explorer performs.
+
+    Kept separate from ``validate_remote_download_url`` because these are small
+    metadata reads against fixed API paths, not genome downloads, and mixing the
+    two would let a genome download reach an annotation host or vice versa.
+    """
+    parsed = _parse_https_url(url, "Annotation service")
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+
+    prefixes = ANNOTATION_SERVICE_ALLOWLIST.get(host)
+    if prefixes is None:
+        raise HTTPException(status_code=400, detail="Annotation service host is not allowed")
+    if "/../" in path or not any(path.startswith(prefix) for prefix in prefixes):
+        raise HTTPException(status_code=400, detail="Annotation service URL path is not allowed")
+    return str(url).strip()
 
 
 def normalize_trackhub_data_url(url: str) -> str:

@@ -45,6 +45,31 @@ Track Hub imports require HTTPS, reject credentials, and block localhost/private
 host targets. Imported Track Hub files are written with atomic temp-file
 replacement and bounded by a 2 GB per-file limit.
 
+Protein annotation lookups use a separate, narrower allowlist
+(`validate_annotation_service_url`) covering read-only metadata endpoints only:
+`alphafold.ebi.ac.uk` under `/api/prediction/` and `/files/`,
+`rest.uniprot.org` under `/uniprotkb/`, and `www.ebi.ac.uk` under
+`/interpro/api/`. It is kept apart from the genome-download allowlist so neither
+can reach the other's hosts. Downloaded AlphaFold models are capped at 96 MB and
+written with the same atomic temp-file replacement.
+
+## Sandboxed 3D Structure Viewer
+
+The Feature Explorer's Structure panel renders AlphaFold models with Mol*
+(via PDBe Mol*), which requires `'unsafe-eval'`. Rather than weaken the
+renderer's policy — the renderer holds the per-launch API token over the Electron
+context bridge — the viewer runs in an iframe served from the loopback backend
+under its own Content-Security-Policy, with `connect-src` limited to that origin
+plus the `data:` URI Mol* instantiates its WebAssembly from. The app's own policy
+is unchanged apart from `frame-src` for loopback.
+
+Because a frame navigation and the viewer's own subresource fetches cannot carry
+a header, routes under `/structure/` take the API token from the query string.
+That exception is confined to this prefix: the query token is not accepted on
+`/api/**`, and loopback and origin checks still apply. Electron's
+`will-frame-navigate` holds sub-frames to the same loopback rule as the top
+frame.
+
 ## Data Locations
 
 Development cache defaults to `backend/cache`. Packaged builds use the user's

@@ -1,0 +1,2330 @@
+{
+  "format": "ensembl-go-tutorial",
+  "schemaVersion": 1,
+  "id": "browser-in-depth",
+  "revision": 1,
+  "title": "The Genome Browser",
+  "blurb": "Tracks, panning, zooming down to the bases, transcript layout, gene-class filters, the focus drawer and notes — on a real slice of human chromosome 1. Runs on temporary data and leaves your own setup untouched.",
+  "estimatedMinutes": 10,
+  "usesDemoGenome": true,
+  "completionBody": "That is the browser: two bars of controls, three tracks, and a drawer that goes from a gene down to its amino acids. Your own genomes work exactly the same way, with rather more in them. The tutorial’s temporary genome and its note have been cleared away, and your own settings were never touched.",
+  "author": "",
+  "createdAt": "2026-08-25T00:00:00Z",
+  "updatedAt": "2026-08-25T00:00:00Z",
+  "datasets": [],
+  "defaultArrive": [
+    {
+      "type": "browserControls",
+      "detail": false,
+      "flatten": false,
+      "expanded": false
+    }
+  ],
+  "steps": [
+    {
+      "id": "welcome",
+      "section": "Getting oriented",
+      "placement": "center",
+      "title": "A closer look at the genome browser",
+      "body": "This tutorial covers the genome browser in more detail. It doesn't cover every possible feature or control, but is designed to help you get proficient in the basics of browsing.",
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-browser",
+      "section": "Getting oriented",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "title": "Open the Genome Browser",
+      "body": "Click the highlighted icon in the apps list to open the genome browser. For this demo we'll be looking at a small region of chromosome 1 on GRCh38. You learn some of the basic controls and look at different tracks and features.",
+      "advanceOn": {
+        "type": "view",
+        "view": "genome_browser"
+      },
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_browser"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_browser"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "the-track",
+      "section": "Getting oriented",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:118,800,000-119,800,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": false
+        }
+      ],
+      "title": "About the data",
+      "body": "We've loaded a megabase of chromosome 1. The browser window with its various tracks is highlighted below. A ruler on top shows markers for the position on the genome. The current window contains several genes and is zoomed out to the point where individual genes are represent by solid blocks.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "global-controls",
+      "section": "General controls",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:118,800,000-119,800,000"
+      },
+      "title": "The general controls",
+      "body": "The general control bar is used to adjust the browsers of all active genomes. In this case we only have one active genome, GRCh38, however its possible to have multiple genomes active at once. This control bar applies effects to all active genomes and has several controls only available when more than one genome is present.",
+      "spotlight": {
+        "target": {
+          "id": "browser.globalControls",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "genome-controls",
+      "section": "General controls",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:118,800,000-119,800,000"
+      },
+      "title": "Genome specific controls",
+      "body": "Each active genome also have it's own individual control bar. The one for GRCh38 is highlight above. These controls mostly pertain to searching for features, changing location or changing aspects of what's displayed for that particular genome.",
+      "spotlight": {
+        "target": {
+          "id": "browser.toolbar",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "region-select",
+      "section": "General controls",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:118,800,000-119,800,000"
+      },
+      "title": "Region select",
+      "body": "The above dropdown can be used to move between the different primary regions within the genome. Regions that are <5kb are filtered out of the list, however these are still accessible via search.",
+      "spotlight": {
+        "target": {
+          "id": "browser.regionSelect",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "search",
+      "section": "General controls",
+      "view": "genome_browser",
+      "placement": "left",
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:118,800,000-119,800,000"
+      },
+      "title": "Search a region",
+      "body": "The box takes a gene name or a region. Press the value below to drop it into the box, then hit Return or use the search button beside it to jump to the region. These coordinates frame HAO2 and some flanking sequence.",
+      "copy": "1:119,368,000-119,395,000",
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.regionSearched"
+      },
+      "holdMs": 2000,
+      "cardPosition": {
+        "x": 0.016,
+        "y": 0.069
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.locationSearchField",
+          "version": 1
+        }
+      },
+      "copyTarget": {
+        "id": "browser.locationSearch",
+        "version": 1
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.locationSearch",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.locationSearchGo",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.locationSearch",
+            "version": 1
+          },
+          "capability": "input",
+          "value": "1:119,368,000-119,395,000",
+          "submit": true,
+          "overwrite": true
+        },
+        "options": {
+          "skipIfShowing": "1:119,368,000-119,395,000"
+        }
+      }
+    },
+    {
+      "id": "search-result",
+      "section": "General controls",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:119,368,000-119,395,000"
+      },
+      "title": "HAO2 region",
+      "body": "The browser has moved to region copied into the search box, centered on HAO2. A region search frames those coordinates exactly in the browser track.",
+      "cardPosition": {
+        "x": 0.0177,
+        "y": 0.0716
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "track-gutter",
+      "section": "General controls",
+      "view": "genome_browser",
+      "placement": "right",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:119,368,000-119,395,000"
+      },
+      "title": "The left hand menu",
+      "body": "This section gives some control over the browser tracks. In this case we have the three default tracks. GF represents genes on the forward strand, GF represents genes on the reverse strand and SL is the sequence level track, which becomes visible when zoomed sufficiently in. The power buttons can be user to toggle the tracks on/off and tracks can be reordered via click and drag.",
+      "spotlight": {
+        "target": {
+          "id": "browser.trackGutter",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "moving-about",
+      "section": "Moving through the genome",
+      "view": "genome_browser",
+      "placement": "top",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:119,368,000-119,395,000"
+      },
+      "title": "Panning and zooming",
+      "body": "By default, a two-finger swipe up or down on a trackpad  (or the mouse wheel) zooms the track, and click-and-drag or a two-finger swipe sideways pans along it. Other control schemes are available in the configuration menu. Try panning and zooming before moving on to the next step.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          },
+          "capability": "set-locus",
+          "browserView": {
+            "moves": [
+              {
+                "type": "browserView",
+                "locus": "1:118,440,000-120,120,000"
+              },
+              {
+                "type": "browserView",
+                "locus": "1:118,470,000-119,400,000"
+              },
+              {
+                "type": "browserView",
+                "locus": "1:118,860,000-119,015,000"
+              }
+            ],
+            "pauseMs": 1500,
+            "skipIfMoved": true
+          }
+        }
+      }
+    },
+    {
+      "id": "transcript-detail",
+      "section": "Moving through the genome",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:118,860,000-119,015,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": false
+        }
+      ],
+      "title": "Genes and transcripts",
+      "body": "Here we've centered on the TBX15 gene, which has three transcripts. Only the canonical transcript is displayed by default.  The canonical transcript has several exons and the gene is on the reverse strand (the GR track).",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "gene-transcripts-expand",
+      "section": "Moving through the genome",
+      "view": "genome_browser",
+      "placement": "right",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:118,860,000-119,015,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": false
+        },
+        {
+          "type": "browserControls",
+          "geneTranscripts": {
+            "gene": "ENSG00000092607",
+            "expanded": false
+          }
+        }
+      ],
+      "title": "Viewing alternative transcripts",
+      "body": "The tag under the gene counts the transcripts it is not currently showing, there are two more for TBX15. Click the label to show the remaining transcripts.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.geneTranscripts",
+          "version": 1,
+          "params": {
+            "geneId": "ENSG00000092607"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.geneTranscripts",
+              "version": 1,
+              "params": {
+                "geneId": "ENSG00000092607"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "gene-transcripts-expanded",
+      "section": "Moving through the genome",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:118,860,000-119,015,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": false
+        },
+        {
+          "type": "browserControls",
+          "geneTranscripts": {
+            "gene": "ENSG00000092607",
+            "expanded": true
+          }
+        }
+      ],
+      "title": "The expanded transcript set",
+      "body": "All three TBX15 transcripts are drawn now, one under the other. The reverse track has grown taller to display them.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "gene-transcripts-flatten",
+      "section": "Moving through the genome",
+      "view": "genome_browser",
+      "placement": "right",
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:118,860,000-119,015,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": false
+        },
+        {
+          "type": "browserControls",
+          "geneTranscripts": {
+            "gene": "ENSG00000092607",
+            "expanded": true
+          }
+        }
+      ],
+      "title": "Flatten to compact",
+      "body": "For genes with multiple transcripts we can use the Flatten button to reduce the space between the transcript rows. This can be useful when there are several transcripts for a gene to help it fit more neatly in the browser track. Try clicking it now.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.flatten",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.flatten",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "gene-transcripts-collapse",
+      "section": "Moving through the genome",
+      "view": "genome_browser",
+      "placement": "right",
+      "cardPosition": {
+        "x": 0.2569,
+        "y": 0.5382
+      },
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:118,860,000-119,015,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": true,
+          "expanded": false
+        },
+        {
+          "type": "browserControls",
+          "geneTranscripts": {
+            "gene": "ENSG00000092607",
+            "expanded": true
+          }
+        }
+      ],
+      "title": "Hiding the alternatives again",
+      "body": "If you want to remove the alternative transcripts and revert to just the canonical, you can use the X label. Try clicking it now.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.geneTranscripts",
+          "version": 1,
+          "params": {
+            "geneId": "ENSG00000092607"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.geneTranscripts",
+              "version": 1,
+              "params": {
+                "geneId": "ENSG00000092607"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "gene-transcripts-collapsed",
+      "section": "Moving through the genome",
+      "view": "genome_browser",
+      "placement": "top",
+      "cardPosition": {
+        "x": 0.3678,
+        "y": 0.5382
+      },
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:118,860,000-119,015,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": true,
+          "expanded": false
+        },
+        {
+          "type": "browserControls",
+          "geneTranscripts": {
+            "gene": "ENSG00000092607",
+            "expanded": false
+          }
+        }
+      ],
+      "title": "Canonical only",
+      "body": "We're now back to having just the canonical transcript and the label has changed back to the hidden transcript count.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "zoom-sequence",
+      "section": "Moving through the genome",
+      "view": "genome_browser",
+      "placement": "top",
+      "interaction": "zoom-only",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:118,849,061-119,004,061"
+      },
+      "title": "Viewing the sequence level",
+      "body": "Try zooming in on the browser window below to make the sequence level track visible. At a window size of <= 1kb, the track becomes visible with coloured blocks representing the bases. Further zooming with cause the single letter nucleotide codes will appear on the base blocks.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          },
+          "capability": "set-locus",
+          "value": "1:118,926,536-118,926,586",
+          "browserView": {
+            "durationMs": 2400,
+            "pauseMs": 1800,
+            "skipIfMoved": true,
+            "skipIfSequenceVisible": true
+          }
+        }
+      }
+    },
+    {
+      "id": "deep-genes",
+      "section": "Displaying transcripts",
+      "view": "genome_browser",
+      "placement": "top",
+      "cardPosition": {
+        "x": 0.3631,
+        "y": 0.0155
+      },
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": false
+        }
+      ],
+      "title": "Further compacting transcript information",
+      "body": "PHGDH on the left has thirty-eight annotated transcripts and HMGCS2 on the right has twenty-two. This is a lot of information to display in the browser window and even Flatten would not fit all the transcripts onto the window at once. While you can always scroll up/down to view the entire set of transcripts, the next control will help for genes with very large numbers of transcripts.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "expand-transcripts",
+      "section": "Displaying transcripts",
+      "view": "genome_browser",
+      "placement": "right",
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": false
+        }
+      ],
+      "title": "Show every transcript",
+      "body": "Before we look at compacting the transcript display, we'll use the Expand Transcripts button to expand all transcripts for the genes within the current browser window. This avoids having to manually click the '+' label for each multi-transcript gene in the window to expand all the transcripts. Try clicking it now.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "cardPosition": {
+        "x": 0.6059,
+        "y": 0.0298
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.expandTranscripts",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.expandTranscripts",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "expanded-transcripts",
+      "section": "Displaying transcripts",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": true
+        }
+      ],
+      "title": "All the transcript rows",
+      "body": "Now that we've expanded the transcripts, each transcript gets its own row in the browser. In this example there are so many transcripts that they go off the bottom edge of the window, and manually scrolling up and down becomes necessary to see them all. The next control will help us get around this issue.",
+      "cardPosition": {
+        "x": 0.02,
+        "y": 0.02
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.expandTranscripts",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "detail",
+      "section": "Displaying transcripts",
+      "view": "genome_browser",
+      "placement": "right",
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": true
+        }
+      ],
+      "title": "The Detail button",
+      "body": "The Detail button packs the expanded transcript rows much closer together. It also changes the height of the exons themselves to pack much more information over a small area. This is good for getting an overall picture of the transcripts in a gene where it has a large amount of transcripts. Try clicking the Detail button now.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.detail",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.detail",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "detail-result",
+      "section": "Displaying transcripts",
+      "view": "genome_browser",
+      "placement": "right",
+      "align": "end",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": true,
+          "flatten": false,
+          "expanded": true
+        }
+      ],
+      "title": "Highly compacted transcripts",
+      "body": "Every transcript is still present, but the rows and their labels are packed much more tightly. Fine grained per-transcript information has been reduced, but the overall details of the transcripts in the gene are clearer.",
+      "cardPosition": {
+        "x": 0.2723,
+        "y": 0.0216
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.detail",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "detail-off",
+      "section": "Displaying transcripts",
+      "view": "genome_browser",
+      "placement": "right",
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": true,
+          "flatten": false,
+          "expanded": true
+        }
+      ],
+      "title": "Turn Detail off again",
+      "body": "Detail and Flatten solve different layout problems, so we will demonstrate them separately. Click Detail again, or press Next, to restore the normal transcript spacing before moving on.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.detail",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.detail",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "layout-back",
+      "section": "Displaying transcripts",
+      "view": "genome_browser",
+      "placement": "right",
+      "cardPosition": {
+        "x": 0.6135,
+        "y": 0.0155
+      },
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": true
+        }
+      ],
+      "title": "Collapsing all transcript in the window",
+      "body": "Earlier we used the Expand Transcripts button to expand all transcripts in the window, and all transcripts are still currently expanded. You may have noticed that the icon for the button has slightly changed and now has a single transcript with an upward arrow below. This is to denote that the button will now collapse all genes in the window back to just the canonical transcripts. Try clicking it now.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.expandTranscripts",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.expandTranscripts",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "gene-classes",
+      "section": "Filtering gene types",
+      "view": "genome_browser",
+      "placement": "left",
+      "cardPosition": {
+        "x": 0.3326,
+        "y": 0.0911
+      },
+      "align": "end",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "detail": false,
+          "flatten": false,
+          "expanded": false,
+          "biotypes": "all"
+        }
+      ],
+      "title": "Classes of gene",
+      "body": "On the far right of the general control bar there are also controls for showing/hiding different classes of genes.",
+      "spotlight": {
+        "target": {
+          "id": "browser.biotypes",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "only-protein-coding",
+      "section": "Filtering gene types",
+      "view": "genome_browser",
+      "placement": "left",
+      "cardPosition": {
+        "x": 0.3273,
+        "y": 0.0672
+      },
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "biotypes": "all"
+        }
+      ],
+      "title": "Hide a class of gene",
+      "body": "In the current window there are a mix of protein-coding and long non-coding genes, try clicking the 'Long non-coding' check box to hide the long non-coding genes.",
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "browser.biotype.lncRNA",
+          "version": 1
+        }
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.biotypes",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.biotype.lncRNA",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.biotype.lncRNA",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "protein-coding-result",
+      "section": "Filtering gene types",
+      "view": "genome_browser",
+      "placement": "left",
+      "cardPosition": {
+        "x": 0.3249,
+        "y": 0.0155
+      },
+      "align": "end",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,635,000-119,785,000"
+        },
+        {
+          "type": "browserControls",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ]
+        }
+      ],
+      "title": "The window without them",
+      "body": "The three long non-coding genes have left the track, while ZNF697, PHGDH and HMGCS2 remain. The filter changes which genes are drawn; it does not alter the annotation stored on disk, and ticking it again brings them back.",
+      "spotlight": {
+        "target": {
+          "id": "browser.biotypes",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "find-reg4",
+      "section": "Focusing on a gene",
+      "view": "genome_browser",
+      "placement": "left",
+      "cardPosition": {
+        "x": 0.0379,
+        "y": 0.0155
+      },
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:119,635,000-119,785,000"
+      },
+      "title": "Search a gene symbol",
+      "body": "Now we're going to try focusing on a particular gene. Putting a gene in focus mode changes some aspects of the browser window. You can focus on genes by clicking on the gene itself, but in this case we'll focus automatically by searching a particular gene symbol. Type ‘REG4’ and then press Return  or hit the search button.",
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.geneFocused"
+      },
+      "holdMs": 1800,
+      "spotlight": {
+        "target": {
+          "id": "browser.locationSearchField",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.locationSearch",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.locationSearchGo",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.locationSearch",
+            "version": 1
+          },
+          "capability": "input",
+          "value": "REG4",
+          "submit": true,
+          "overwrite": true
+        }
+      }
+    },
+    {
+      "id": "focus-bar",
+      "section": "Focusing on a gene",
+      "view": "genome_browser",
+      "placement": "top",
+      "cardPosition": {
+        "x": 0.01,
+        "y": 0.0155
+      },
+      "spotlightRingShadow": false,
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "undo": "unfocus-gene",
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:119,790,017-119,815,580"
+      },
+      "title": "The gene in focus",
+      "body": "Focusing on a gene brings in several new elements: the gene gets it's boundaries denoted by red vertical dashed lines, the gene is centered in the view, other genes get dimmed, a gene focus bar appears with some metadata on the gene and a gene drawer appears on the right hand side. The focus bar is highlighted below.",
+      "spotlight": {
+        "target": {
+          "id": "browser.focusBar",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "pan-away",
+      "section": "Focusing on a gene",
+      "view": "genome_browser",
+      "placement": "top",
+      "cardPosition": {
+        "x": 0.015,
+        "y": 0.0155
+      },
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:119,790,017-119,815,580"
+      },
+      "title": "Browser away from the gene",
+      "body": "A focused gene stays focused however far you travel from it. Try zooming/panning with the gene in focus below and then click Next when you're ready to continue.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          },
+          "capability": "set-locus",
+          "value": "1:118,440,000-120,120,000",
+          "browserView": {
+            "skipIfMoved": true
+          }
+        }
+      }
+    },
+    {
+      "id": "recentre",
+      "section": "Focusing on a gene",
+      "view": "genome_browser",
+      "placement": "right",
+      "cardPosition": {
+        "x": 0.01,
+        "y": 0.0858
+      },
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:118,440,000-120,120,000"
+      },
+      "title": "Re-centering on the gene",
+      "body": "The view is currently zoomed on and we can no longer see REG4. You can automatically re-center the view on the gene of focus by clicking the crosshair button highlighted below.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "holdMs": 3000,
+      "spotlight": {
+        "target": {
+          "id": "browser.recenter",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.recenter",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.recenter",
+            "version": 1
+          },
+          "capability": "activate"
+        },
+        "options": {
+          "skipIfFeatureFramed": "1:119,794,017-119,811,580"
+        }
+      }
+    },
+    {
+      "id": "drawer",
+      "section": "Browsing a gene in detail",
+      "view": "genome_browser",
+      "placement": "left",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "drawerTranscripts": "collapsed"
+        }
+      ],
+      "title": "The focus drawer",
+      "body": "A focus drawer also appears once a gene is in focus. This drawer can be used for a variety of things. You can show/hide particular transcripts, access the a variety of sequences associated with each transcript and even write notes that get attached to the gene.",
+      "spotlight": {
+        "target": {
+          "id": "browser.focusDrawer",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "show-transcripts",
+      "section": "Browsing a gene in detail",
+      "view": "genome_browser",
+      "placement": "top",
+      "cardPosition": {
+        "x": 0.6651,
+        "y": 0.1516
+      },
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "drawerTranscripts": "collapsed"
+        }
+      ],
+      "title": "Listing all transcripts in the drawer",
+      "body": "Click the highlighted downward arrow to show the full list of transcripts for REG4.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "focus.transcriptsExpand",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "focus.transcriptsExpand",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "hide-transcript",
+      "section": "Browsing a gene in detail",
+      "view": "genome_browser",
+      "placement": "top",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "drawerTranscripts": "expanded"
+        }
+      ],
+      "title": "Modifying the transcript set",
+      "body": "Expanding the list in the drawer also expands the set in browser window. We're going to hide one of the transcripts. You can do this by clicking the highlighted show/hide button beside the transcript id in the drawer.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "focus.transcriptHide",
+          "version": 1,
+          "params": {
+            "transcriptId": "ENST00000530654"
+          }
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "focus.transcriptHide",
+              "version": 1,
+              "params": {
+                "transcriptId": "ENST00000530654"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "hidden-transcript",
+      "section": "Browsing a gene in detail",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "drawerTranscripts": "expanded",
+          "hiddenTranscript": {
+            "transcript": "ENST00000530654",
+            "hidden": true
+          }
+        }
+      ],
+      "title": "One fewer transcript",
+      "body": "REG4-204 has left the track, and the gene now carries a ‘Show 1 hidden’ label. Hiding is a view of the annotation rather than a change to it, and that label is both the reminder and the way back.",
+      "spotlight": {
+        "target": {
+          "id": "browser.geneHiddenTranscripts",
+          "version": 1,
+          "params": {
+            "geneId": "ENSG00000134193"
+          }
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "highlight-transcript",
+      "section": "Browsing a gene in detail",
+      "view": "genome_browser",
+      "placement": "top",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "drawerTranscripts": "expanded",
+          "hiddenTranscript": {
+            "transcript": "ENST00000530654",
+            "hidden": true
+          },
+          "pinnedTranscript": "none"
+        }
+      ],
+      "title": "Pinning transcripts",
+      "body": "Now one of the transcripts is hidden in the browser window",
+      "advanceOn": {
+        "type": "manual"
+      },
+      "holdMs": 3000,
+      "spotlight": {
+        "target": {
+          "id": "focus.transcriptRow",
+          "version": 1,
+          "params": {
+            "transcriptId": "ENST00000256585"
+          }
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "focus.transcriptRow",
+              "version": 1,
+              "params": {
+                "transcriptId": "ENST00000256585"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "focus.transcriptRow",
+            "version": 1,
+            "params": {
+              "transcriptId": "ENST00000256585"
+            }
+          },
+          "capability": "activate"
+        },
+        "options": {
+          "skipIfEngaged": true
+        }
+      }
+    },
+    {
+      "id": "transcript-info",
+      "section": "Browsing a gene in detail",
+      "view": "genome_browser",
+      "placement": "left",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "drawerTranscripts": "expanded"
+        }
+      ],
+      "title": "Go deeper",
+      "body": "The information mark opens a panel beside the drawer with the transcript’s exons, its identifiers and its sequence. It is the same mark the genome pill carries: there is more to read here.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "focus.transcriptInfo",
+          "version": 1,
+          "params": {
+            "transcriptId": "ENST00000256585"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "focus.transcriptInfo",
+              "version": 1,
+              "params": {
+                "transcriptId": "ENST00000256585"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "sequences",
+      "section": "Browsing a gene in detail",
+      "view": "genome_browser",
+      "placement": "left",
+      "align": "center",
+      "deferUntilReady": true,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "transcriptDetail": "open",
+          "transcriptSequence": "genomic"
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        }
+      ],
+      "title": "Seven sequences",
+      "body": "Genomic, cDNA, CDS, protein, UTR, exons and introns — each derived from the annotation and each copyable as FASTA. Compare CDS with its protein translation using either highlighted button, then use Next. If the tutorial demonstrates it, CDS is shown first and protein second.",
+      "advanceOn": {
+        "type": "manual"
+      },
+      "spotlight": {
+        "target": {
+          "id": "focus.sequenceCodingTypes",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "focus.transcriptDetail",
+        "version": 1
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "focus.transcriptDetail",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "focus.sequenceType",
+              "version": 1,
+              "params": {
+                "featureType": "cds"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "focus.sequenceType",
+              "version": 1,
+              "params": {
+                "featureType": "protein"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "focus.sequenceType",
+              "version": 1,
+              "params": {
+                "featureType": "cds"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "focus.sequenceType",
+              "version": 1,
+              "params": {
+                "featureType": "protein"
+              }
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "pauseMs": 4000,
+          "endPauseMs": 4000,
+          "skipIfEngaged": true
+        }
+      }
+    },
+    {
+      "id": "close-transcript-detail",
+      "section": "Browsing a gene in detail",
+      "view": "genome_browser",
+      "placement": "top",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "transcriptDetail": "open",
+          "transcriptSequence": "protein"
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        }
+      ],
+      "title": "Close transcript details",
+      "body": "Use the X to close the transcript information panel and return to the gene drawer. The Notes section is underneath it, and the tutorial continues as soon as the panel closes.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "focus.transcriptDetailClose",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "focus.transcriptDetail",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "focus.transcriptDetailClose",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "focus.transcriptDetailClose",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "add-note",
+      "section": "Adding notes",
+      "view": "genome_browser",
+      "placement": "left",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "transcriptDetail": "closed",
+          "tutorialNote": "none"
+        }
+      ],
+      "title": "Write something down",
+      "body": "Notes belong to a gene rather than to a view, so one written here is waiting for you the next time you focus this gene — in the browser, or in the Notes app. This starts one.",
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.noteCreated"
+      },
+      "spotlight": {
+        "target": {
+          "id": "focus.notesAdd",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "focus.notesAdd",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "focus.notesAdd",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "write-note",
+      "section": "Adding notes",
+      "view": "genome_browser",
+      "placement": "left",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "noteEditor": "open"
+        }
+      ],
+      "title": "Say what you found",
+      "body": "Type whatever you would want to read later. The tutorial writes ‘Five transcripts, one MANE Select’ — anything you type instead works just as well.",
+      "advanceOn": {
+        "type": "manual"
+      },
+      "spotlight": {
+        "target": {
+          "id": "focus.noteBody",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "focus.noteBody",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "focus.noteBody",
+            "version": 1
+          },
+          "capability": "input",
+          "value": "Five transcripts, one MANE Select",
+          "submit": false
+        }
+      }
+    },
+    {
+      "id": "note-icon",
+      "section": "Adding notes",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "noteEditor": "open"
+        }
+      ],
+      "title": "The note is on the gene",
+      "body": "As soon as the note exists, an icon appears above the top-left corner of REG4. That mark stays with the gene wherever you encounter it in the browser.",
+      "spotlight": {
+        "target": {
+          "id": "browser.geneNote",
+          "version": 1,
+          "params": {
+            "geneId": "ENSG00000134193"
+          }
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "unfocus",
+      "section": "Adding notes",
+      "view": "genome_browser",
+      "placement": "left",
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "arrive": [
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        },
+        {
+          "type": "browserControls",
+          "noteEditor": "open"
+        }
+      ],
+      "title": "Close the focus drawer",
+      "body": "Use the X beside the gene identifier to clear REG4 as the gene in focus and close its drawer. The note stays attached to the gene after the drawer closes.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "focus.dismiss",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.focusDrawerOpen",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "focus.dismiss",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "focus.dismiss",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "note-bubble",
+      "section": "Adding notes",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:119,790,017-119,815,580"
+      },
+      "title": "The gene remembers",
+      "body": "REG4 now carries a mark on the track, which is how a gene tells you there is something written about it. Clicking it focuses the gene and opens your notes on it — worth knowing, but there is no need to now.",
+      "spotlight": {
+        "target": {
+          "id": "browser.geneNote",
+          "version": 1,
+          "params": {
+            "geneId": "ENSG00000134193"
+          }
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "finish",
+      "section": "Wrapping up",
+      "placement": "center",
+      "title": "That is the browser",
+      "body": "Two bars of controls, three tracks, a drawer that goes from a gene down to its amino acids, and notes that stay with the gene. The same controls work on any genome you download.",
+      "interactionPolicy": {
+        "targets": []
+      }
+    }
+  ]
+}
