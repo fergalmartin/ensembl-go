@@ -338,7 +338,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     ctx.fillStyle=colors.background;rounded(ctx,labelX,y-7,width,14,4);ctx.fill()
     ctx.strokeStyle=selected?'#d9a638':colors.border;ctx.lineWidth=1;rounded(ctx,labelX+.5,y-6.5,width-1,13,4);ctx.stroke()
     ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.fillText(label,labelX+4,y+3)
-    hits.push({kind:'blockjump',rowId:marker.rowId,block:marker.block,
+    hits.push({kind:'blockjump',rowId:marker.rowId,block:marker.block,fragmentId:f.id,
       x:Math.min(anchor,labelX),y:y-9,width:Math.abs(labelX+width/2-anchor)+width/2+4,height:18})
   }
   // Where a dragged row would land, drawn over everything so the answer is

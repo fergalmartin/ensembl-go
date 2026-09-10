@@ -122,17 +122,22 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       interaction.current={kind:'reorder',point,rowId:hit.rowId,fragmentId:hit.fragmentId,wasPicked:already,fromLabel:true,camera:{...p.state.camera}}
       event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
     }
-    if(hit?.kind==='blockjump'){onHighlight(hit.rowId);onSourceBlock?.(hit.block);return}
+    if(hit?.kind==='blockjump'){
+      onHighlight(hit.rowId)
+      interaction.current={kind:'reorder',point,rowId:hit.rowId,fragmentId:hit.fragmentId,
+        jumpBlock:hit.block,fromConnector:true,camera:{...p.state.camera}}
+      event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
+    }
     if(hit?.kind==='connection')onInspect(hit)
     // Either end of a connector is a handle on the row in the block at that end.
     // A row whose name sits beside an earlier chunk has no other handle in the
     // chunk the path runs into, which is where it most needs one.
-    if(hit?.kind==='connection'&&hit.points&&!state.original){
+    if(hit?.kind==='connection'&&hit.points){
       const head=hit.points[0],tail=hit.points[hit.points.length-1]
       const intoTail=Math.hypot(point.x-tail.x,point.y-tail.y)<=Math.hypot(point.x-head.x,point.y-head.y)
       interaction.current={kind:'reorder',point,rowId:hit.connection.rowId,
         fragmentId:intoTail?hit.connection.to.id:hit.connection.from.id,
-        camera:{...p.state.camera}}
+        fromConnector:true,camera:{...p.state.camera}}
       event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
     }
     const selected=state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera),state.camera)
@@ -164,6 +169,9 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(current.kind==='pan')onCamera({...current.camera,x:current.camera.x-dx/current.camera.scale,y:current.camera.y-dy})
     if(current.kind==='move')setDrag({fragmentId:current.fragment.id,x:current.fragment.x+dx/current.camera.scale,y:current.fragment.y+dy/ROW_HEIGHT})
     if(current.kind==='reorder'){
+      if(current.fromConnector&&!current.dragging&&Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>4){
+        current.kind='pan';onCamera({...current.camera,x:current.camera.x-dx/current.camera.scale,y:current.camera.y-dy});return
+      }
       if(Math.abs(dy)>ROW_HEIGHT/2||current.dragging){current.dragging=true
         setReorder({rowId:current.rowId,...reorderTarget(current,point.y),y:point.y})}
       return
@@ -182,6 +190,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       // A press that never travelled is still a click on the name; one that did
       // drops the row where it was let go.
       if(current.dragging)onReorderRow?.(current.rowId,reorderTarget(current,point.y).target,current.fragmentId)
+      else if(current.jumpBlock!=null)onSourceBlock?.(current.jumpBlock)
       else if(current.fromLabel&&current.wasPicked)onSelection(removeRowPicks(state.selection,current.rowId))
       setReorder(null)
     }
