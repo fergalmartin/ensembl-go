@@ -1,12 +1,14 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './data.js'
-import { cellRanges, firstBlocks, rowSlot, rowCount } from './layers.js'
+import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, routedPath, pathIsOccluded } from './layers.js'
 import { renderResolution } from './renderResolution'
 import { denseOriginal } from './originalLayout'
 import { FEATURE_COLORS } from '../FeatureLegend'
 
 import { NUCLEOTIDE_COLORS, NUCLEOTIDE_TEXT_COLOR, NUCLEOTIDE_LETTER_THRESHOLD, getBaseColor } from '../../utils/nucleotideStyle'
 import { monoFont } from '../../utils/typography'
-export const panelRect=(f,camera)=>({x:MARGIN_X+(f.x-camera.x)*camera.scale,y:MARGIN_Y+f.y*ROW_HEIGHT-camera.y,width:(f.end-f.start)*camera.scale,height:rowCount(f)*ROW_HEIGHT})
+// The left edge is the exact affine position; the body is compressed into the
+// rect minus a constant pixel gap, leaving a channel before the next block.
+export const panelRect=(f,camera)=>({...panelGeometry(f,camera,MARGIN_X),y:MARGIN_Y+f.y*ROW_HEIGHT-camera.y,height:rowCount(f)*ROW_HEIGHT})
 export function pointInPanel(px,py,f,camera){const r=panelRect(f,camera);return px>=r.x&&px<=r.x+r.width&&py>=r.y-HEADER_HEIGHT&&py<=r.y+r.height}
 function rounded(ctx,x,y,w,h,r=5){ctx.beginPath();ctx.roundRect(x,y,Math.max(0,w),Math.max(0,h),r)}
 function dashed(ctx,x,y,width,height,color) {
@@ -31,28 +33,52 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   const first=firstBlocks(drawLayer),byId=new Map(inventory.map(r=>[r.id,r])),hits=[]
   ctx.font='11px "IBM Plex Mono", monospace'
   // Strings are drawn first so the sequence panels cover their endpoints.
+  // Panels paint over strings, so a string skipping blocks it is not in would be
+  // buried. Those are routed below the stack instead; the lane sits under the
+  // deepest drawn panel, kept on screen, with a few offsets so parallel routes
+  // stay readable.
+  const drawnRects=drawLayer.fragments.filter(f=>!f.aggregate).map(f=>({sourceBlock:f.sourceBlock,...panelRect(f,camera)}))
+  const stackBottom=drawnRects.length?Math.max(...drawnRects.map(r=>r.y+r.height)):MARGIN_Y
+  // The row stack usually runs past the bottom of the viewport, so the lane
+  // settles into the clear band just inside the canvas rather than below a
+  // stack bottom that is not on screen.
+  const laneTop=Math.min(Math.max(stackBottom+16,MARGIN_Y+16),size.height-34)
+  let routed=0
+  const routedQueue=[]
   for(const connection of connections) {
     const originalA=fragmentById.get(connection.from.id),originalB=fragmentById.get(connection.to.id)
     if(!originalA||!originalB)continue
     const selected=state.highlighted===connection.rowId
     if(dense&&!selected)continue
     const a=panelRect(originalA,camera),b=panelRect(originalB,camera)
-    const ax=a.x+(connection.fromEnd-originalA.start)*camera.scale,bx=b.x+(connection.toStart-originalB.start)*camera.scale
+    const ax=a.x+(connection.fromEnd-originalA.start)*a.scale,bx=b.x+(connection.toStart-originalB.start)*b.scale
     const ay=a.y+(rowSlot(originalA,originalA.rowIds.indexOf(connection.rowId))+0.5)*ROW_HEIGHT
     const by=b.y+(rowSlot(originalB,originalB.rowIds.indexOf(connection.rowId))+0.5)*ROW_HEIGHT
     if(Math.max(ax,bx)<0||Math.min(ax,bx)>size.width||Math.min(ay,by)>size.height||Math.max(ay,by)<0)continue
     const reach=Math.max(28,Math.abs(bx-ax)*0.42)
     const backwards=bx<ax,arc=backwards?30:0
+    const buried=pathIsOccluded(connection,drawnRects)
     ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9';ctx.lineWidth=selected?3:1.8;ctx.globalAlpha=state.highlighted&&!selected?0.3:0.95
-    ctx.beginPath();ctx.moveTo(ax,ay);ctx.bezierCurveTo(ax+reach,ay-arc,bx-reach,by-arc,bx,by);ctx.stroke();ctx.globalAlpha=1
-    const points=Array.from({length:17},(_,i)=>{const t=i/16,u=1-t;return {x:u*u*u*ax+3*u*u*t*(ax+reach)+3*u*t*t*(bx-reach)+t*t*t*bx,y:u*u*u*ay+3*u*u*t*(ay-arc)+3*u*t*t*(by-arc)+t*t*t*by}})
+    let points,mx,my
+    if(buried){
+      // A block stack taller than the viewport reaches past any lane, so a
+      // routed string is stroked after the panels instead of under them. That is
+      // the point of routing it: it has to stay readable where it bypasses them.
+      const lane=Math.min(laneTop+(routed++%4)*6,size.height-10)
+      points=routedPath(ax,ay,bx,by,lane)
+      routedQueue.push({points,selected,rowId:connection.rowId})
+      mx=(points[2].x+points[3].x)/2;my=lane
+    } else {
+      ctx.beginPath();ctx.moveTo(ax,ay);ctx.bezierCurveTo(ax+reach,ay-arc,bx-reach,by-arc,bx,by);ctx.stroke();ctx.globalAlpha=1
+      points=Array.from({length:17},(_,i)=>{const t=i/16,u=1-t;return {x:u*u*u*ax+3*u*u*t*(ax+reach)+3*u*t*t*(bx-reach)+t*t*t*bx,y:u*u*u*ay+3*u*u*t*(ay-arc)+3*u*t*t*(by-arc)+t*t*t*by}})
+      mx=(ax+bx)/2;my=(ay+by)/2-arc*.75
+    }
     hits.push({kind:'connection',connection,points})
-    const mx=(ax+bx)/2,my=(ay+by)/2-arc*.75
     const count=counts[connection.id],value=state.connectionUnit==='bases'?count?.bases:connection.columns
     const label=value==null?'?':value<0?`↔ ${Math.abs(value).toLocaleString()}`:value.toLocaleString()
     ctx.font=`${selected?'bold ':''}10px "IBM Plex Mono", monospace`
     const labelWidth=ctx.measureText(label).width+10
-    if((Math.abs(bx-ax)>38||backwards)&&(!state.original||connection.columns!=null)){ctx.fillStyle=colors.background;rounded(ctx,mx-labelWidth/2,my-8,labelWidth,15,4);ctx.fill();ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.textAlign='center';ctx.fillText(label,mx,my+3);ctx.textAlign='left';hits.push({kind:'connection',x:mx-labelWidth/2,y:my-10,width:labelWidth,height:20,connection})}
+    if((buried?Math.abs(mx-ax)>18:Math.abs(bx-ax)>38||backwards)&&(!state.original||connection.columns!=null)){ctx.fillStyle=colors.background;rounded(ctx,mx-labelWidth/2,my-8,labelWidth,15,4);ctx.fill();ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.textAlign='center';ctx.fillText(label,mx,my+3);ctx.textAlign='left';hits.push({kind:'connection',x:mx-labelWidth/2,y:my-10,width:labelWidth,height:20,connection})}
   }
   for(const f of drawLayer.fragments) {
     const r=panelRect(f,camera),w=Math.max(1,r.width)
@@ -78,9 +104,9 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     if(aligned&&!f.compact){ctx.strokeStyle=colors.border;ctx.globalAlpha=.28;for(let y=Math.max(r.y,MARGIN_Y+Math.floor(camera.y/ROW_HEIGHT)*ROW_HEIGHT-camera.y);y<Math.min(size.height,r.y+r.height);y+=ROW_HEIGHT)ctx.strokeRect(r.x+.5,y+.5,w,ROW_HEIGHT);ctx.globalAlpha=1}
     ctx.fillStyle=colors.head;ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,HEADER_HEIGHT)
     ctx.strokeStyle=state.selection.some(s=>s.fragmentId===f.id)?layer.color:colors.border;ctx.lineWidth=1;ctx.strokeRect(r.x+.5,r.y-HEADER_HEIGHT+.5,w,r.height+HEADER_HEIGHT)
-    const leftVisible=Math.max(0,-r.x),firstCol=f.start+leftVisible/camera.scale,step=niceStep(camera.scale)
+    const leftVisible=Math.max(0,-r.x),firstCol=f.start+leftVisible/r.scale,step=niceStep(camera.scale)
     ctx.font='10px "IBM Plex Mono", monospace';ctx.fillStyle=colors.muted
-    if(!dense)for(let col=Math.ceil(firstCol/step)*step;col<f.end;col+=step){const x=r.x+(col-f.start)*camera.scale;if(x>size.width)break;ctx.fillText((col+1).toLocaleString(),x+3,r.y-9);ctx.fillRect(x,r.y-5,1,5)}
+    if(!dense)for(let col=Math.ceil(firstCol/step)*step;col<f.end;col+=step){const x=r.x+(col-f.start)*r.scale;if(x>size.width)break;ctx.fillText((col+1).toLocaleString(),x+3,r.y-9);ctx.fillRect(x,r.y-5,1,5)}
     ctx.fillStyle=layer.color;ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,2)
 
     for(let index=0;index<f.rowIds.length;index++) {
@@ -96,14 +122,14 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
           const total=Object.values(bin).reduce((n,v)=>n+v,0),canonical='ACGT'.split('').reduce((n,c)=>n+(bin[c]||0),0),div=overviewRow.divergence_bins?.[i]?.fraction
           for(const [ra,rz] of ranges){const start=Math.max(a,ra),end=Math.min(z,rz);if(end<=start)continue
             ctx.fillStyle=bin['-']===total?colors.background:div==null?(canonical?(light?'#7baeb5':'#448d99'):'#877b9f'):`hsl(${168-div*130} ${light?30:36}% ${light?65:49}%)`
-            ctx.fillRect(r.x+(start-f.start)*camera.scale,y+3,(end-start)*camera.scale,ROW_HEIGHT-6)
+            ctx.fillRect(r.x+(start-f.start)*r.scale,y+3,(end-start)*r.scale,ROW_HEIGHT-6)
           }
         })
       }
       for(const [rangeStart,rangeEnd] of ranges){
-        const start=Math.max(rangeStart,data?.start??rangeStart,Math.floor(f.start-r.x/camera.scale)),end=Math.min(rangeEnd,data?.end??rangeEnd,Math.ceil(f.start+(size.width-r.x)/camera.scale))
+        const start=Math.max(rangeStart,data?.start??rangeStart,Math.floor(f.start-r.x/r.scale)),end=Math.min(rangeEnd,data?.end??rangeEnd,Math.ceil(f.start+(size.width-r.x)/r.scale))
         if(end<=start)continue
-        const x=r.x+(start-f.start)*camera.scale,width=(end-start)*camera.scale
+        const x=r.x+(start-f.start)*r.scale,width=(end-start)*r.scale
         if(!row||row.missing||row.sequence==null&&data?.detail){
           ctx.fillStyle=colors.void;ctx.fillRect(x,y+2,width,ROW_HEIGHT-4)
           if(width>24&&!dense)dashed(ctx,x,y+2,width,ROW_HEIGHT-4,row?.missing?colors.border:light?'#e0e6ed':'#243247')
@@ -113,7 +139,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         if(data.detail){
           for(let col=start;col<end;col++){
             const base=row.sequence[col-data.start]
-            const left=Math.round(r.x+(col-f.start)*camera.scale),right=Math.round(r.x+(col+1-f.start)*camera.scale)
+            const left=Math.round(r.x+(col-f.start)*r.scale),right=Math.round(r.x+(col+1-f.start)*r.scale)
             const width=Math.max(.5,right-left),top=y+1,height=24
             ctx.fillStyle=base==='-'?colors.background:getBaseColor(base,baseColors)
             ctx.fillRect(left,top,width,height)
@@ -134,10 +160,10 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             if(z<=a)return
             const total=Object.values(bin).reduce((a,b)=>a+b,0),canonical='ACGT'.split('').reduce((n,c)=>n+(bin[c]||0),0),div=row.divergence_bins?.[i]?.fraction
             ctx.fillStyle=bin['-']===total?colors.background:div==null?(canonical?(light?'#7baeb5':'#448d99'):'#877b9f'):`hsl(${168-div*130} ${light?30:36}% ${light?65:49}%)`
-            ctx.fillRect(r.x+(a-f.start)*camera.scale,y+3,(z-a)*camera.scale,ROW_HEIGHT-6)
-            if(bin['-']===total){ctx.strokeStyle=colors.border;ctx.lineWidth=.5;ctx.strokeRect(r.x+(a-f.start)*camera.scale,y+3,(z-a)*camera.scale,ROW_HEIGHT-6)}
-            if((bin['-']||0)>0){ctx.fillStyle=colors.background;ctx.fillRect(r.x+(a-f.start)*camera.scale,y+ROW_HEIGHT-6,(z-a)*camera.scale*(bin['-']/Math.max(1,total)),3)}
-            if(canonical===0&&!(bin['-']===total))dashed(ctx,r.x+(a-f.start)*camera.scale,y+3,(z-a)*camera.scale,ROW_HEIGHT-6,colors.border)
+            ctx.fillRect(r.x+(a-f.start)*r.scale,y+3,(z-a)*r.scale,ROW_HEIGHT-6)
+            if(bin['-']===total){ctx.strokeStyle=colors.border;ctx.lineWidth=.5;ctx.strokeRect(r.x+(a-f.start)*r.scale,y+3,(z-a)*r.scale,ROW_HEIGHT-6)}
+            if((bin['-']||0)>0){ctx.fillStyle=colors.background;ctx.fillRect(r.x+(a-f.start)*r.scale,y+ROW_HEIGHT-6,(z-a)*r.scale*(bin['-']/Math.max(1,total)),3)}
+            if(canonical===0&&!(bin['-']===total))dashed(ctx,r.x+(a-f.start)*r.scale,y+3,(z-a)*r.scale,ROW_HEIGHT-6,colors.border)
           })
         }
         if(state.annotations){
@@ -148,8 +174,8 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             const type=feature.type,color=FEATURE_COLORS[type]?.bg||'#60a5fa'
             ctx.fillStyle=color
             const h=type==='cds'?7:type==='exon'?4:3
-            ctx.fillRect(r.x+(a-f.start)*camera.scale,y+ROW_HEIGHT-h,(z-a)*camera.scale,h)
-            if(type==='cds'&&camera.scale>=4){ctx.fillStyle='#bfdbfe';for(let p=a;p<z;p+=6)ctx.fillRect(r.x+(p-f.start)*camera.scale,y+ROW_HEIGHT-h,Math.min(3,z-p)*camera.scale,h)}
+            ctx.fillRect(r.x+(a-f.start)*r.scale,y+ROW_HEIGHT-h,(z-a)*r.scale,h)
+            if(type==='cds'&&camera.scale>=4){ctx.fillStyle='#bfdbfe';for(let p=a;p<z;p+=6)ctx.fillRect(r.x+(p-f.start)*r.scale,y+ROW_HEIGHT-h,Math.min(3,z-p)*r.scale,h)}
           }
         }
       }
@@ -164,14 +190,14 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         const y=r.y+rowSlot(f,index)*ROW_HEIGHT
         if(y+ROW_HEIGHT<0||y>size.height)continue
         for(const [a,z] of cellRanges(placed,id)){
-          const x=r.x+(a-f.start)*camera.scale,width=(z-a)*camera.scale
+          const x=r.x+(a-f.start)*r.scale,width=(z-a)*r.scale
           ctx.fillStyle=placed.color+'35';ctx.fillRect(x,y,width,ROW_HEIGHT)
           ctx.strokeStyle=placed.color;ctx.lineWidth=2;ctx.strokeRect(x,y+1,width,ROW_HEIGHT-2)
         }
       }
     }
     for(const selected of state.selection.filter(s=>s.fragmentId===f.id)){
-      const x=r.x+(selected.start-f.start)*camera.scale,width=(selected.end-selected.start)*camera.scale
+      const x=r.x+(selected.start-f.start)*r.scale,width=(selected.end-selected.start)*r.scale
       for(const id of selected.rowIds){const i=f.rowIds.indexOf(id);if(i<0)continue;const y=r.y+rowSlot(f,i)*ROW_HEIGHT;ctx.fillStyle='#82d4bc40';ctx.fillRect(x,y,width,ROW_HEIGHT);ctx.strokeStyle='#87deca';ctx.lineWidth=1;ctx.strokeRect(x,y,width,ROW_HEIGHT)}
     }
     ctx.restore()
@@ -233,6 +259,15 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     }
   }
   if(dense){ctx.fillStyle=colors.muted;ctx.font='11px Lato, sans-serif';ctx.fillText(drawLayer.fragments.some(f=>f.aggregate)?'Block presence · filled width = fraction of blocks containing each sequence · click a header to zoom':'Source-block overview · zoom in for coordinates and chunk actions',MARGIN_X+8,13)}
+  for(const route of routedQueue){
+    ctx.strokeStyle=route.selected?'#f2c766':light?'#526f91':'#9eb9d9'
+    ctx.lineWidth=route.selected?3:1.8
+    ctx.globalAlpha=state.highlighted&&!route.selected?0.32:0.95
+    ctx.beginPath();ctx.moveTo(route.points[0].x,route.points[0].y)
+    for(let i=1;i<route.points.length-1;i++)ctx.arcTo(route.points[i].x,route.points[i].y,route.points[i+1].x,route.points[i+1].y,6)
+    ctx.lineTo(route.points.at(-1).x,route.points.at(-1).y);ctx.stroke()
+  }
+  ctx.globalAlpha=1
   if(selectionRect){ctx.fillStyle='#78cfbb27';ctx.fillRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.strokeStyle='#8ee1ce';ctx.setLineDash([5,3]);ctx.strokeRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.setLineDash([])}
   if(!layer.fragments.length){ctx.fillStyle=colors.muted;ctx.font='14px Lato, sans-serif';ctx.textAlign='center';ctx.fillText('This layer is empty. Move a selection here from another layer.',size.width/2,size.height/2);ctx.textAlign='left'}
   if(ghost){ctx.fillStyle=colors.head;ctx.fillRect(0,0,size.width,34);ctx.fillStyle=layer.color;ctx.font='bold 13px Lato, sans-serif';ctx.fillText(layer.name,16,23)}

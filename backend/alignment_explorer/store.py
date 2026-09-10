@@ -15,7 +15,17 @@ from contextlib import contextmanager
 DNA = set('ACGTRYSWKMBDHVN-?.')
 CANONICAL = set('ACGT')
 CHUNK = 65536
+# Nominal separation between source blocks in the stored layout, in alignment
+# columns. It is a layout device, never a biological distance. Every gap is the
+# same, so blocks stay evenly spaced at any camera position. The visible
+# separation the reader actually sees is drawn in screen space by the renderer
+# (see BLOCK_EDGE_GAP in the frontend), because block lengths span three orders
+# of magnitude and no column count can look right beside both a 955-column and a
+# 1,000,000-column block.
 SOURCE_GAP = 32
+# Bump whenever the spacing formula changes so existing datasets rebuild the
+# disposable layout index instead of keeping positions from the old formula.
+LAYOUT_VERSION = 3
 _LAYOUT_LOCK = threading.Lock()
 
 
@@ -252,14 +262,25 @@ class AlignmentStore:
     def ensure_layout(self):
         # Disposable index upgrade for existing datasets. SQLite computes the
         # prefix sum on disk; no all-block inventory is sent to the browser.
-        with self.connect() as db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE name='source_layout'").fetchone(): return
+        if self._layout_current(): return
         with _LAYOUT_LOCK, self.connect() as db:
-            if db.execute("SELECT 1 FROM sqlite_master WHERE name='source_layout'").fetchone(): return
+            if self._layout_current(db): return
+            db.execute('DROP TABLE IF EXISTS source_layout')
             db.execute('CREATE TABLE source_layout(block INTEGER PRIMARY KEY, x INTEGER NOT NULL, end_x INTEGER NOT NULL, row_count INTEGER NOT NULL)')
-            db.execute('INSERT INTO source_layout SELECT b.id, coalesce(sum(b.length+?) OVER (ORDER BY b.id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0), coalesce(sum(b.length+?) OVER (ORDER BY b.id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0)+b.length, (SELECT count(*) FROM rows r WHERE r.block=b.id) FROM blocks b', (SOURCE_GAP,SOURCE_GAP))
+            prefix = 'coalesce(sum(b.length+?) OVER (ORDER BY b.id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0)'
+            db.execute(f'INSERT INTO source_layout SELECT b.id, {prefix}, {prefix}+b.length, (SELECT count(*) FROM rows r WHERE r.block=b.id) FROM blocks b',
+                       (SOURCE_GAP, SOURCE_GAP))
             db.execute('CREATE INDEX source_layout_x ON source_layout(x)')
             db.execute('CREATE INDEX source_layout_rows ON source_layout(row_count)')
+            db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', ('layout_version', json.dumps(LAYOUT_VERSION)))
+
+    def _layout_current(self, db=None):
+        """A layout index built by this version of the spacing formula."""
+        if db is None:
+            with self.connect() as handle: return self._layout_current(handle)
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='source_layout'").fetchone(): return False
+        row = db.execute("SELECT value FROM meta WHERE key='layout_version'").fetchone()
+        return bool(row) and json.loads(row['value']) == LAYOUT_VERSION
 
     def layout_info(self, block=None):
         self.ensure_layout()

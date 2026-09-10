@@ -152,3 +152,108 @@ test('subpixel detail is summarized once and never drawn as flickering base stri
   assert.equal(summary.rows[1].divergence_bins[0].different,1)
   assert.equal(renderResolution(data,.5),summary,'repeat camera frames reuse the prepared summary')
 })
+
+test('grouped block descriptors are never coordinate-selection targets',async()=>{
+  const {coordinateFragments}=await import('../src/components/alignment-explorer/layers.js')
+  // Mirrors useOriginalBlocks: an aggregate's end is end_x-x, spanning several
+  // blocks plus the layout gaps between them, and its rowIds are the union of
+  // rows present anywhere in the group. Offering it as "Block 1 · 1–2096"
+  // would address alignment columns that do not exist.
+  const grouped=createFragment(1,0,2096,['a','b'],{id:'aggregate:1:20',x:0,aggregate:{first:1,last:20,count:20,presence:{a:20,b:3}}})
+  const single=createFragment(21,0,640,['a'],{id:'original:21',x:2128})
+  assert.deepEqual(coordinateFragments({fragments:[grouped,single]}),[single])
+  assert.deepEqual(coordinateFragments({fragments:[grouped]}),[])
+  assert.deepEqual(coordinateFragments(null),[])
+  // Drag selection has always skipped them; both paths must agree.
+  assert.deepEqual(selectionRect({fragments:[grouped]},{x1:0,x2:2096,y1:-99,y2:99},true),[])
+})
+
+test('the grouped overview reports the block span it shows, not the first block',async()=>{
+  const {visibleSourceRange}=await import('../src/components/alignment-explorer/layers.js')
+  // Two aggregates covering blocks 1-100 and 101-200, laid out end to end.
+  const group=(first,last,x,width)=>createFragment(first,0,width,['a'],{id:`aggregate:${first}:${last}`,x,aggregate:{first,last,count:last-first+1,presence:{a:1}}})
+  const overview=[group(1,100,0,21000),group(101,200,21000,22000)]
+  // Whole file in view: naming block 1 here would claim the view sits on the
+  // first block while it actually shows all 200.
+  const whole=visibleSourceRange(overview,{x:0,scale:900/43000},1080)
+  assert.deepEqual(whole,{grouped:true,first:1,last:200})
+  // Scrolled onto the second group only.
+  assert.deepEqual(visibleSourceRange(overview,{x:30000,scale:900/12000},1080),{grouped:true,first:101,last:200})
+  // Zoomed into a single block, the anchor block is still the current one.
+  const single=createFragment(12,0,54340,['a'],{id:'original:12',x:80000})
+  assert.deepEqual(visibleSourceRange([single],{x:80000,scale:.02},1080),{grouped:false,first:12,last:12})
+  assert.equal(visibleSourceRange([],{x:0,scale:1},1080),null)
+})
+
+test('the drawn column and the selected column are the same column',async()=>{
+  const {columnScale,layerXToColumn,BLOCK_EDGE_GAP,blockGap,panelGeometry}=await import('../src/components/alignment-explorer/layers.js')
+  const MARGIN_X=156
+  const panelRect=(f,camera)=>panelGeometry(f,camera,MARGIN_X)
+  // Blocks are compressed into their rect minus a pixel channel, so the painter
+  // and the screen->column inverse must use the same mapping or a click lands on
+  // a different column than the one drawn under the cursor.
+  for(const [span,scale] of [[3387,0.21],[65137,0.014],[1000000,0.0007],[955,8]]){
+    const f=createFragment(1,0,span,['a'],{x:5000})
+    const camera={x:4000,y:0,scale}
+    const r=panelRect(f,camera)
+    for(const column of [0,1,Math.floor(span/2),span-1]){
+      const painted=r.x+(column-f.start)*r.scale
+      const layerX=camera.x+(painted-MARGIN_X)/camera.scale
+      // Exact equality would be hostage to float rounding at a column boundary;
+      // what matters is that the inverse lands on the column that was drawn.
+      assert.ok(Math.abs(layerXToColumn(f,camera,layerX)-column)<1e-6,`span ${span} scale ${scale} column ${column}`)
+    }
+    // The channel is real, and never eats more than a quarter of a narrow block.
+    assert.ok(Math.abs((span*camera.scale-r.width)-blockGap(f,camera))<1e-6)
+    assert.ok(blockGap(f,camera)<=BLOCK_EDGE_GAP)
+    assert.ok(blockGap(f,camera)<=span*camera.scale*0.25+1e-9)
+    assert.equal(r.scale,columnScale(f,camera))
+    // The left edge stays on its exact affine position: camera.x keeps its meaning.
+    assert.equal(r.x,MARGIN_X+(f.x-camera.x)*camera.scale)
+  }
+})
+
+test('adjacent blocks are separated by the same pixel channel at every zoom',async()=>{
+  const {BLOCK_EDGE_GAP,panelGeometry}=await import('../src/components/alignment-explorer/layers.js')
+  const panelRect=(f,camera)=>panelGeometry(f,camera,156)
+  // A short block beside a very long one: the stored layout spaces them equally
+  // in columns, and the drawn channel between them is equal in pixels too.
+  const short=createFragment(1,0,2000,['a'],{x:0})
+  const long=createFragment(2,0,900000,['a'],{x:2032})
+  for(const scale of [0.0005,0.002,0.02,0.2]){
+    const camera={x:0,y:0,scale}
+    const a=panelRect(short,camera),b=panelRect(long,camera)
+    const channel=b.x-(a.x+a.width)
+    // 32 stored columns plus the drawn channel, whatever the zoom.
+    assert.ok(channel>=Math.min(BLOCK_EDGE_GAP,2000*scale*0.25),`scale ${scale} channel ${channel}`)
+    assert.ok(channel<=BLOCK_EDGE_GAP+32*scale+1e-6,`scale ${scale} channel ${channel}`)
+  }
+})
+
+test('a string skipping blocks is routed clear of the panels that would bury it',async()=>{
+  const {routedPath,pathIsOccluded}=await import('../src/components/alignment-explorer/layers.js')
+  const rect=(sourceBlock,x,width)=>({sourceBlock,x,width,y:100,height:200})
+  const link=(from,to)=>({from:{sourceBlock:from},to:{sourceBlock:to}})
+  const drawn=[rect(4,0,100),rect(5,140,100),rect(6,280,100),rect(7,420,100)]
+  // Adjacent blocks have nothing in between: the direct curve stays visible.
+  assert.equal(pathIsOccluded(link(4,5),drawn),false)
+  // Skipping blocks 5 and 6 would run the string underneath both panels.
+  assert.equal(pathIsOccluded(link(4,7),drawn),true)
+  // Order on screen does not change what stands between the endpoints.
+  assert.equal(pathIsOccluded(link(7,4),drawn),true)
+  // Blocks that are not drawn cannot bury anything.
+  assert.equal(pathIsOccluded(link(4,7),[rect(4,0,100),rect(7,420,100)]),false)
+
+  const path=routedPath(100,120,400,180,360,11)
+  assert.deepEqual(path,[{x:100,y:120},{x:111,y:120},{x:111,y:360},{x:389,y:360},{x:389,y:180},{x:400,y:180}])
+  // It leaves and enters at the rows it actually connects, and every part of the
+  // long run sits in the lane below the blocks rather than across them.
+  assert.deepEqual(path.at(0),{x:100,y:120})
+  assert.deepEqual(path.at(-1),{x:400,y:180})
+  assert.ok(path.slice(1,-1).every(p=>p.y===120||p.y===180||p.y===360))
+  assert.ok(path.filter(p=>p.y===360).length===2)
+  // A backwards link turns the other way so it still clears its own block.
+  const back=routedPath(400,120,100,180,360,11)
+  assert.equal(back[1].x,389)
+  assert.equal(back[3].x,111)
+})

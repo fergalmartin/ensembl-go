@@ -124,11 +124,73 @@ export function firstBlocks(layer) {
   for(const f of [...layer.fragments].sort((a,b)=>a.x-b.x||a.y-b.y))for(const id of f.rowIds)if(!result.has(id))result.set(id,f.id)
   return result
 }
-export function selectionRect(layer,rect,columnsOnly=false) {
+/** Fragments that a source column number can address. Aggregate descriptors
+ * stand for a run of source blocks, so their start/end are display units
+ * spanning those blocks and the layout gaps between them — a column inside one
+ * names no real alignment position. Drag selection already skips them below;
+ * coordinate entry must use this. */
+export function coordinateFragments(layer) {
+  return (layer?.fragments||[]).filter(f=>!f.aggregate)
+}
+/** Separation drawn between adjacent source blocks, in screen pixels.
+ *
+ * Blocks are evenly spaced in the stored layout, but that spacing is measured in
+ * alignment columns and block lengths span three orders of magnitude, so no
+ * column count reads well beside both a 955-column and a 1,000,000-column block.
+ * The separation the reader sees is therefore drawn here instead: each block's
+ * body is compressed into its own rect minus this gap, leaving a constant pixel
+ * channel before the next block at every zoom.
+ *
+ * The block's LEFT edge stays on its exact affine position, so camera.x keeps its
+ * meaning and zoom anchoring, camera bounds and layout-region requests are all
+ * unaffected. Only positions within a block shift, by at most this gap. */
+export const BLOCK_EDGE_GAP=34
+/** Never eat a narrow block to feed the channel beside it. */
+export const blockGap=(f,camera)=>Math.min(BLOCK_EDGE_GAP,(f.end-f.start)*camera.scale*0.25)
+/** Pixels per alignment column inside a block, slightly under camera.scale. */
+export function columnScale(f,camera) {
+  const span=Math.max(1,f.end-f.start)
+  return Math.max(Number.EPSILON,(span*camera.scale-blockGap(f,camera))/span)
+}
+/** Inverse of the painter's column placement: an undistorted layer-space x back
+ * to the source column actually drawn there. Without a camera this is the plain
+ * linear mapping, which is what layer geometry tests describe. */
+/** Route a string that skips blocks it is not a member of.
+ *
+ * Panels are painted over strings so a block's own cells stay readable, so a
+ * direct curve between two non-adjacent blocks is buried under every block in
+ * between and appears to stop at the edge of its own block. Such a string leaves
+ * its block into the channel beside it, drops to a clear lane below the stack,
+ * runs across, and rises into its destination — visible for its whole length.
+ *
+ * Returns the corner points; the caller rounds and strokes them. `lane` is the
+ * y of the horizontal run, `drop` how far into the channel the turn happens. */
+export function routedPath(ax,ay,bx,by,lane,drop=11) {
+  const forward=bx>=ax
+  const out=ax+(forward?drop:-drop),into=bx-(forward?drop:-drop)
+  return [{x:ax,y:ay},{x:out,y:ay},{x:out,y:lane},{x:into,y:lane},{x:into,y:by},{x:bx,y:by}]
+}
+/** A string is buried whenever a block it does not belong to stands between its
+ * endpoints. Comparing block numbers is not enough: only panels actually drawn
+ * can occlude it, and the endpoints may be ordered either way on screen. */
+export function pathIsOccluded(connection,rects) {
+  const from=connection.from.sourceBlock,to=connection.to.sourceBlock
+  const low=Math.min(from,to),high=Math.max(from,to)
+  return rects.some(r=>r.sourceBlock>low&&r.sourceBlock<high)
+}
+export function panelGeometry(f,camera,marginX) {
+  const scale=columnScale(f,camera)
+  return {x:marginX+(f.x-camera.x)*camera.scale,width:(f.end-f.start)*scale,scale}
+}
+export function layerXToColumn(f,camera,x) {
+  if(!camera)return x-f.x+f.start
+  return f.start+(x-f.x)*camera.scale/columnScale(f,camera)
+}
+export function selectionRect(layer,rect,columnsOnly=false,camera=null) {
   const selected=[]
   for(const f of layer.fragments){
     if(f.aggregate)continue
-    const start=Math.max(f.start,Math.floor(rect.x1-f.x+f.start)),end=Math.min(f.end,Math.ceil(rect.x2-f.x+f.start))
+    const start=Math.max(f.start,Math.floor(layerXToColumn(f,camera,rect.x1))),end=Math.min(f.end,Math.ceil(layerXToColumn(f,camera,rect.x2)))
     if(end<=start)continue
     const ids=f.rowIds.filter((id,i)=>{
       const y=f.y+rowSlot(f,i)
@@ -184,11 +246,11 @@ export function validateLayerWorkspace(value,ids) {
 }
 
 /** Hit-test highlighted cells in layout coordinates, including sparse merged rows. */
-export function selectedCellAt(layer, selections, point) {
+export function selectedCellAt(layer, selections, point, camera = null) {
   return selections.some(selection => {
     const fragment = layer.fragments.find(f => f.id === selection.fragmentId)
     if (!fragment) return false
-    const column = fragment.start + Math.floor(point.x - fragment.x)
+    const column = Math.floor(layerXToColumn(fragment, camera, point.x))
     if (column < selection.start || column >= selection.end) return false
     return selection.rowIds.some(id => {
       const index = fragment.rowIds.indexOf(id)
@@ -235,6 +297,22 @@ export function chunkFasta(fragment,rows) {
 export function sourceViewAnchor(fragments,camera) {
   const distance=f=>Math.max(f.x-camera.x,0,camera.x-(f.x+f.end-f.start))
   return fragments.reduce((best,f)=>!best||distance(f)<distance(best)?f:best,null)
+}
+/** Which source blocks the Original view is actually showing. Zoomed in, the
+ * anchor block is the current one. At overview scales every visible descriptor
+ * stands for a run of blocks, so no single block is current: naming the anchor's
+ * first block there claims the view is at block 1 while it shows the whole file.
+ * Report the span the visible groups cover instead. */
+export function visibleSourceRange(fragments,camera,viewportWidth) {
+  const anchor=sourceViewAnchor(fragments,camera)
+  if(!anchor)return null
+  if(!anchor.aggregate)return {grouped:false,first:anchor.sourceBlock,last:anchor.sourceBlock}
+  // A layout response groups uniformly, and useOriginalBlocks never overlays two
+  // overview levels, so the visible descriptors are all aggregates here.
+  const span=Math.max(40,viewportWidth-MARGIN_X-24)/Math.max(Number.EPSILON,camera.scale)
+  const shown=fragments.filter(f=>f.aggregate&&f.x<camera.x+span&&f.x+(f.end-f.start)>camera.x)
+  const pool=shown.length?shown:[anchor]
+  return {grouped:true,first:Math.min(...pool.map(f=>f.aggregate.first)),last:Math.max(...pool.map(f=>f.aggregate.last))}
 }
 /** Store Original's camera relative to its visible source block, independent of
  * the disposable sliding strip and its current neighbours. */

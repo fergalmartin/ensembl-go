@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from alignment_explorer.store import AlignmentStore, maf_blocks, stable_id, locate_column, parse_metadata, CHUNK
+from alignment_explorer.store import AlignmentStore, maf_blocks, stable_id, locate_column, parse_metadata, CHUNK, SOURCE_GAP, LAYOUT_VERSION
 from alignment_explorer.api import create_router
 from alignment_explorer.adapters import import_native, graph_preview, project_graph
 from fastapi import FastAPI
@@ -212,3 +212,35 @@ class LayoutPerformanceTests(unittest.TestCase):
         expected=[(a,b) for a,b in zip(ref[CHUNK-8:CHUNK+4],other[CHUNK-8:CHUNK+4]) if a in 'ACGT' and b in 'ACGT']
         self.assertEqual(sum(b['comparable'] for b in row['divergence_bins']),len(expected))
         self.assertEqual(sum(b['different'] for b in row['divergence_bins']),sum(a!=b for a,b in expected))
+
+    def test_block_spacing_is_equal_regardless_of_block_length(self):
+        # Unequal spacing reads as if the distance between blocks meant
+        # something. It never does, so every gap is the same width whatever the
+        # blocks either side of it happen to be.
+        lengths=[1000,50000,400000,2000]
+        for length in lengths:
+            self.store.add_block([{'source':'a','sequence':'A'*length}])
+        blocks={b['block']:b for b in self.store.layout_region(0,self.store.layout_info()['layout_end'])['blocks']}
+        gaps=[blocks[i+1]['x']-blocks[i]['end_x'] for i in (1,2,3)]
+        self.assertEqual(gaps,[SOURCE_GAP]*3)
+        self.assertTrue(all(blocks[i]['end_x']<blocks[i+1]['x'] for i in (1,2,3)))
+        # Each block still spans exactly its own column count.
+        for i,length in enumerate(lengths,start=1):
+            self.assertEqual(blocks[i]['end_x']-blocks[i]['x'],length)
+
+    def test_a_layout_index_from_an_older_spacing_formula_is_rebuilt(self):
+        for _ in range(4):
+            self.store.add_block([{'source':'a','sequence':'A'*10000}])
+        before=self.store.layout_info()['layout_end']
+        # Simulate an index left by an earlier release: right shape, stale
+        # positions, no version marker.
+        with self.store.connect() as db:
+            db.execute('UPDATE source_layout SET x=x*2, end_x=end_x*2')
+            db.execute("DELETE FROM meta WHERE key='layout_version'")
+        # Read the stale rows directly: layout_info would rebuild them first.
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT max(end_x) FROM source_layout').fetchone()[0],before*2)
+        # Any layout read discards the stale index and rebuilds it in place.
+        self.assertEqual(self.store.layout_info()['layout_end'],before)
+        with self.store.connect() as db:
+            self.assertEqual(json.loads(db.execute("SELECT value FROM meta WHERE key='layout_version'").fetchone()['value']),LAYOUT_VERSION)

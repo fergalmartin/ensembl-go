@@ -86,7 +86,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(hit?.kind==='layer'){onBlockToLayer?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='label'){onHighlight(state.highlighted===hit.rowId?'':hit.rowId);return}
     if(hit?.kind==='connection')onInspect(hit)
-    const selected=state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera))
+    const selected=state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera),state.camera)
     const kind=space.current||event.button===1?'pan':selected?'transfer':hit?.kind==='header'&&!state.original?'move':state.mode==='pan'?'pan':'select'
     const fragment=kind==='move'?layer.fragments.find(f=>f.id===hit.fragmentId):null
     const cell=hit?.connection?.rowId||layer.fragments.map(f=>{const r=panelRect(f,state.camera),index=f.rowIds.findIndex((_,i)=>point.y>=r.y+rowSlot(f,i)*ROW_HEIGHT&&point.y<r.y+(rowSlot(f,i)+1)*ROW_HEIGHT);return point.x>=r.x&&point.x<r.x+r.width&&index>=0?f.rowIds[index]:null}).find(Boolean)
@@ -95,12 +95,12 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
   function pointerMove(event){
     const point=canvasPoint(event),current=interaction.current
     if(!current){
-      setOverSelection(state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera)))
+      setOverSelection(state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera),state.camera))
       const hit=[...hits.current].reverse().find(h=>hitCanvasItem(h,point))
       host.current.title=hit?.kind==='aggregate'?`Zoom into source blocks ${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.first}–${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.last}`:hit?.kind==='rows'?'Collapse or align absent rows for this block':hit?.kind==='copy'?'Copy chunk as aligned FASTA':hit?.kind==='layer'?'Create a layer from this source block':''
       if(hit?.kind==='connection'){onInspect(hit);return}
       for(const f of layer.fragments){const r=panelRect(f,state.camera),index=f.rowIds.findIndex((_,i)=>point.y>=r.y+rowSlot(f,i)*ROW_HEIGHT&&point.y<r.y+(rowSlot(f,i)+1)*ROW_HEIGHT)
-        if(point.x>=r.x&&point.x<r.x+r.width&&index>=0){if(f.aggregate){onInspect({kind:'aggregate',rowId:f.rowIds[index],aggregate:f.aggregate});return}const column=f.start+Math.floor((point.x-r.x)/state.camera.scale),row=tiles[f.id]?.data?.rows.find(r=>r.id===f.rowIds[index]);onInspect({kind:'cell',rowId:f.rowIds[index],fragment:f,column,base:hasCell(f,f.rowIds[index],column)?row?.sequence?.[column-(tiles[f.id]?.data?.start||0)]:'Unselected cell',placed:(state.placedOverlay||[]).filter(p=>p.sourceBlock===f.sourceBlock&&hasCell(p,f.rowIds[index],column)).map(p=>p.name),features:(annotations[f.id]?.[f.rowIds[index]]||[]).filter(a=>column>=a.start&&column<=a.end)});return}}
+        if(point.x>=r.x&&point.x<r.x+r.width&&index>=0){if(f.aggregate){onInspect({kind:'aggregate',rowId:f.rowIds[index],aggregate:f.aggregate});return}const column=f.start+Math.floor((point.x-r.x)/r.scale),row=tiles[f.id]?.data?.rows.find(r=>r.id===f.rowIds[index]);onInspect({kind:'cell',rowId:f.rowIds[index],fragment:f,column,base:hasCell(f,f.rowIds[index],column)?row?.sequence?.[column-(tiles[f.id]?.data?.start||0)]:'Unselected cell',placed:(state.placedOverlay||[]).filter(p=>p.sourceBlock===f.sourceBlock&&hasCell(p,f.rowIds[index],column)).map(p=>p.name),features:(annotations[f.id]?.[f.rowIds[index]]||[]).filter(a=>column>=a.start&&column<=a.end)});return}}
       return
     }
     if(current.kind==='transfer'){
@@ -128,7 +128,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     }
     if(current.kind==='select'){
       const a=layoutPoint(current.point,current.camera),b=layoutPoint(point,current.camera)
-      onSelection(selectRectangle(layer,{x1:Math.min(a.x,b.x),x2:Math.max(a.x,b.x)+.001,y1:Math.min(a.y,b.y),y2:Math.max(a.y,b.y)+.001},state.mode==='columns'))
+      onSelection(selectRectangle(layer,{x1:Math.min(a.x,b.x),x2:Math.max(a.x,b.x)+.001,y1:Math.min(a.y,b.y),y2:Math.max(a.y,b.y)+.001},state.mode==='columns',current.camera))
     }
     interaction.current=null;setDrag(null);setRectangle(null);setOverSelection(false)
   }
