@@ -22,7 +22,10 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
       tasks.push({key,label:`Block ${request.block}`,priority:Math.max(0,x-camera.x-size.width/camera.scale,camera.x-x-(layer.fragments.find(f=>f.id===id)?.end||request.end)+(layer.fragments.find(f=>f.id===id)?.start||0)),run:async signal=>({data:await api(`/datasets/${dataset.id}/region`,request,signal),request})})
       // A bounded coarse fallback for this block is warmed independently of exact
       // rows. It covers a wider region so edges do not disappear during zoom-out.
-      if(!request.summary){
+      // At every zoom, not only close in. A wide coarse tile is what covers the
+      // ground a pan opens up before its own tile arrives; without one, zoomed
+      // out, whatever the pan exposed simply stayed blank.
+      {
         const length=layer.fragments.find(f=>f.sourceBlock===request.block)?.end||request.end
         const width=Math.max(4096,request.end-request.start),start=Math.max(0,request.start-width*2),end=Math.min(length,request.end+width*2)
         const coarse={...request,start,end,summary:true,bins:128}
@@ -63,7 +66,10 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   // Where the loaded window ends, the path does not. Ask only for the nearest
   // occurrence off each end, so this stays two indexed lookups whatever the
   // dataset's size, and re-ask only when the window itself moves.
-  const solid=layer?.fragments.filter(f=>!f.aggregate)||[]
+  // Only Original. A working layer holds the chunks someone chose, so the blocks
+  // beyond its edges are not part of it and pointing at them says nothing about
+  // the layer; the markers only crowded the chunk labels sharing that space.
+  const solid=layer?.id==='original'?layer.fragments.filter(f=>!f.aggregate):[]
   const loaded=solid.length?{lo:Math.min(...solid.map(f=>f.sourceBlock)),hi:Math.max(...solid.map(f=>f.sourceBlock)),
     ids:[...new Set(solid.flatMap(f=>f.rowIds))].sort()}:null
   let neighbours=null

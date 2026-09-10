@@ -35,7 +35,10 @@ export function visibleRequest(fragment,camera,size) {
   const quantum=Math.max(256,step*128)
   const visibleStart=fragment.start+Math.max(0,(0-x)/camera.scale)
   const visibleEnd=fragment.start+Math.max(0,(size.width-x)/camera.scale)
-  const start=Math.max(fragment.start,Math.floor(visibleStart/quantum)*quantum)
+  // Padded on both sides. With padding only after the view, panning back the way
+  // you came immediately exposes columns the request never asked for, and they
+  // stay blank until a whole new tile lands.
+  const start=Math.max(fragment.start,Math.floor(visibleStart/quantum)*quantum-quantum)
   const end=Math.min(fragment.end,Math.ceil(visibleEnd/quantum)*quantum+quantum)
   if(end<=start)return null
   return { block:fragment.sourceBlock,start,end,ids:[...new Set([fragment.rowIds[0],...ids])],bins:clamp(Math.ceil((end-start)/step),16,2048),focus:fragment.rowIds[0],summary:camera.scale<0.65 }
