@@ -618,3 +618,30 @@ test('a coordinate filter takes each row its own overlapping columns',async()=>{
   assert.deepEqual(rangeChunks(matches,[73]).map(c=>c.sourceBlock),[73])
   assert.deepEqual(rangeChunks(null,[47]),[])
 })
+
+test('filter terms work as a collected list, not only as typed text',async()=>{
+  const {parseTerms,filterSequences,isDefaultFilter,SEQUENCE_FILTER}=await import('../src/components/alignment-explorer/filters.js')
+  // Terms arrive as a list once they are chips, and as typed text before that.
+  assert.deepEqual(parseTerms(['Human',' Gorilla ','']),['human','gorilla'])
+  assert.deepEqual(parseTerms('Human, gorilla'),['human','gorilla'])
+  assert.deepEqual(parseTerms([]),[])
+  assert.deepEqual(parseTerms(undefined),[])
+
+  const rows=[
+    {id:'1',source:'homo_sapiens.1',blocks:200,bases:1,genome_key:null},
+    {id:'2',source:'gorilla_gorilla.1',blocks:180,bases:1,genome_key:null},
+    {id:'3',source:'ancestral_sequences.Ancestor_1',blocks:4,bases:1,genome_key:null},
+  ]
+  // A list of chips filters exactly as the equivalent typed text did.
+  assert.deepEqual(filterSequences(rows,{include:['homo','gorilla']}).map(r=>r.id),['1','2'])
+  assert.deepEqual(filterSequences(rows,{include:'homo gorilla'}).map(r=>r.id),['1','2'])
+  assert.deepEqual(filterSequences(rows,{exclude:['ancestral']}).map(r=>r.id),['1','2'])
+  // Removing the last chip is the same as never having filtered.
+  assert.deepEqual(filterSequences(rows,{include:[]}).map(r=>r.id),['1','2','3'])
+
+  // An empty term list still counts as untouched, so clearing the chips stops
+  // the panel treating the sequence side as narrowing anything.
+  assert.equal(isDefaultFilter({...SEQUENCE_FILTER},SEQUENCE_FILTER),true)
+  assert.equal(isDefaultFilter({...SEQUENCE_FILTER,include:[]},SEQUENCE_FILTER),true)
+  assert.equal(isDefaultFilter({...SEQUENCE_FILTER,include:['human']},SEQUENCE_FILTER),false)
+})

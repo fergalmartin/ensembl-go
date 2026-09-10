@@ -192,3 +192,12 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 
 
 .al-filter.wide .al-filter-coords { grid-column:1 / -1; }
+
+.al-terms-field { display:flex; flex-direction:column; gap:4px; }
+.al-terms-field > label { display:flex; flex-direction:column; gap:3px; font-size:11px; }
+.al-terms-field > label small { opacity:.65; font-weight:400; }
+.al-terms { display:flex; flex-wrap:wrap; gap:4px; list-style:none; margin:0; padding:0; }
+.al-terms li { display:flex; align-items:center; gap:4px; padding:1px 3px 1px 7px; border-radius:10px;
+  border:1px solid var(--al-border,#3a4d65); background:#ffffff0f; font-size:10px; }
+.al-terms li button { background:none; border:0; padding:0 3px; font-size:12px; line-height:1; opacity:.6; }
+.al-terms li button:hover { opacity:1; }

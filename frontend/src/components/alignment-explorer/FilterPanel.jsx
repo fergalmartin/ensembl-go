@@ -1,9 +1,32 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from './data'
 import FilterGrid from './FilterGrid'
-import { SEQUENCE_FILTER, BLOCK_FILTER, filterSequences, filterBlocks, effectiveChoice, filterChunks, rangeChunks, isDefaultFilter } from './filters'
+import { parseTerms, SEQUENCE_FILTER, BLOCK_FILTER, filterSequences, filterBlocks, effectiveChoice, filterChunks, rangeChunks, isDefaultFilter } from './filters'
 
 const number = value => (value ?? 0).toLocaleString()
+
+function TermInput({label,hint,placeholder,terms,onChange}) {
+  const [draft,setDraft]=useState('')
+  const add=()=>{
+    const next=[...terms]
+    for(const term of parseTerms(draft))if(!next.includes(term))next.push(term)
+    onChange(next);setDraft('')
+  }
+  return <div className="al-terms-field">
+    <label>{label} <small>{hint}</small>
+      <input placeholder={placeholder} value={draft} onChange={e=>setDraft(e.target.value)}
+        onKeyDown={e=>{
+          if(e.key==='Enter'){e.preventDefault();add()}
+          else if(e.key===','){e.preventDefault();add()}
+          else if(e.key==='Backspace'&&!draft&&terms.length)onChange(terms.slice(0,-1))
+        }}/>
+    </label>
+    {!!terms.length&&<ul className="al-terms">
+      {terms.map(term=><li key={term}><span>{term}</span>
+        <button type="button" aria-label={`Remove ${term}`} onClick={()=>onChange(terms.filter(t=>t!==term))}>×</button></li>)}
+    </ul>}
+  </div>
+}
 
 function Range({label,unit,from,to,onFrom,onTo}) {
   return <label className="al-filter-range"><span>{label}{unit?<small> {unit}</small>:null}</span>
@@ -130,10 +153,10 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
 
     {ready&&tab==='sequences'&&<div className="al-filter-body">
       <div className="al-filter-controls">
-      <label>Include <small>any of these words</small>
-        <input placeholder="human gorilla" value={sequenceFilter.include} onChange={e=>setSequenceFilter({...sequenceFilter,include:e.target.value})}/></label>
-      <label>Exclude <small>none of these words</small>
-        <input placeholder="ancestor" value={sequenceFilter.exclude} onChange={e=>setSequenceFilter({...sequenceFilter,exclude:e.target.value})}/></label>
+      <TermInput label="Include" hint="keeps any of these words · Enter to add" placeholder="human"
+        terms={sequenceFilter.include} onChange={v=>setSequenceFilter({...sequenceFilter,include:v})}/>
+      <TermInput label="Exclude" hint="drops any of these words · Enter to add" placeholder="ancestor"
+        terms={sequenceFilter.exclude} onChange={v=>setSequenceFilter({...sequenceFilter,exclude:v})}/>
       <label>Local genome
         <select value={sequenceFilter.genome} onChange={e=>setSequenceFilter({...sequenceFilter,genome:e.target.value})}>
           <option value="any">Linked or not</option><option value="linked">Linked only</option><option value="unlinked">Not linked</option>

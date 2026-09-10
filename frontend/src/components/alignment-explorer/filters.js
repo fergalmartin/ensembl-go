@@ -4,13 +4,15 @@
  * panel can show what a filter would keep before anything is applied to the view.
  */
 
-export const SEQUENCE_FILTER = {include:'',exclude:'',minBlocks:'',maxBlocks:'',minBases:'',maxBases:'',genome:'any'}
-export const BLOCK_FILTER = {numbers:'',include:'',exclude:'',minLength:'',maxLength:'',minRows:'',maxRows:''}
+export const SEQUENCE_FILTER = {include:[],exclude:[],minBlocks:'',maxBlocks:'',minBases:'',maxBases:'',genome:'any'}
+export const BLOCK_FILTER = {numbers:'',include:[],exclude:[],minLength:'',maxLength:'',minRows:'',maxRows:''}
 
-/** Split a box of words. Commas and spaces both separate, because people type
- * both and neither is worth being strict about. */
-export const parseTerms = text =>
-  String(text||'').split(/[\s,]+/).map(t=>t.trim().toLowerCase()).filter(Boolean)
+/** Terms, from either a list already collected or a box of words still being
+ * typed. Commas and spaces both separate, because people type both and neither
+ * is worth being strict about. */
+export const parseTerms = value =>
+  (Array.isArray(value)?value:String(value||'').split(/[\s,]+/))
+    .map(term=>String(term).trim().toLowerCase()).filter(Boolean)
 
 /** Include is any-of and exclude is none-of: "human gorilla" keeps either, and
  * an exclusion always wins, so a term can be taken back out of a broad include. */
@@ -76,7 +78,10 @@ export function filterBlocks(blocks,filter={},within=null) {
 }
 
 export const isDefaultFilter = (filter,defaults) =>
-  Object.keys(defaults).every(key=>(filter?.[key]??defaults[key])===defaults[key])
+  Object.keys(defaults).every(key=>{
+    const base=defaults[key],value=filter?.[key]??base
+    return Array.isArray(base)?parseTerms(value).length===0:value===base
+  })
 
 /** What a filter actually applies to.
  *
