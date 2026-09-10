@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from './data'
+import FilterGrid from './FilterGrid'
 import { SEQUENCE_FILTER, BLOCK_FILTER, filterSequences, filterBlocks, effectiveChoice, filterChunks, rangeChunks, isDefaultFilter } from './filters'
 
-const LIST_CAP = 300
 const number = value => (value ?? 0).toLocaleString()
 
 function Range({label,unit,from,to,onFrom,onTo}) {
@@ -21,7 +21,7 @@ function Range({label,unit,from,to,onFrom,onTo}) {
  * can say "those sequences, but only in blocks over 100kb".
  */
 export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyToOriginal,filterApplied,onClearFilter,onError}) {
-  const [tab,setTab]=useState('sequences')
+  const [tab,setTab]=useState('sequences'),[wide,setWide]=useState(false)
   const [summary,setSummary]=useState(null)
   const [sequenceFilter,setSequenceFilter]=useState(SEQUENCE_FILTER)
   const [blockFilter,setBlockFilter]=useState(BLOCK_FILTER)
@@ -94,18 +94,35 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
     const match=genomes.find(g=>[g.species_key,g.assembly,g.name].includes(key))
     return match?.common_name||match?.scientific_name||key
   }
-  const toggle=(set,value,apply)=>{const next=new Set(set);next.has(value)?next.delete(value):next.add(value);apply(next)}
 
-  const shownSequences=sequences.slice(0,LIST_CAP),shownBlocks=blocks.slice(0,LIST_CAP)
+  const sequenceColumns=useMemo(()=>[
+    {key:'name',title:'Sequence',width:'minmax(150px,2fr)',value:s=>s.label||s.source},
+    {key:'blocks',title:'Blocks',width:'70px',numeric:true,value:s=>s.blocks||0,render:s=>number(s.blocks)},
+    {key:'columns',title:'Columns',width:'104px',numeric:true,value:s=>s.columns||0,render:s=>number(s.columns)},
+    {key:'bases',title:'Bases',width:'104px',numeric:true,value:s=>s.bases||0,
+      render:s=>s.placed?number(s.bases):'—'},
+    {key:'absent',title:'Absent',width:'70px',numeric:true,value:s=>s.empty||0,render:s=>s.empty?number(s.empty):'—'},
+    {key:'genome',title:'Local genome',width:'minmax(110px,1fr)',value:s=>genomeLabel(s.genome_key)||'',
+      render:s=>s.genome_key?`${genomeLabel(s.genome_key)}${s.chrom?` · ${s.chrom}`:''}`:'—'},
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ],[genomes])
+  const blockColumns=useMemo(()=>[
+    {key:'block',title:'Block',width:'80px',numeric:true,value:b=>b.id,render:b=>`Block ${b.id}`},
+    {key:'length',title:'Columns',width:'110px',numeric:true,value:b=>b.length||0,render:b=>number(b.length)},
+    {key:'rows',title:'Sequences',width:'90px',numeric:true,value:b=>b.available||0,render:b=>number(b.available)},
+    {key:'absent',title:'Absent',width:'70px',numeric:true,value:b=>(b.rows||0)-(b.available||0),
+      render:b=>b.rows>b.available?number(b.rows-b.available):'—'},
+  ],[])
   const ready=!!summary
 
-  return <aside className="al-filter" aria-label="Filter sequences and blocks">
+  return <aside className={`al-filter ${wide?"wide":""}`} aria-label="Filter sequences and blocks">
     <div className="al-filter-head">
       <strong>Filter</strong>
       <div className="al-filter-tabs" role="tablist">
         <button role="tab" aria-selected={tab==='sequences'} className={tab==='sequences'?'selected':''} onClick={()=>setTab('sequences')}>Sequences</button>
         <button role="tab" aria-selected={tab==='blocks'} className={tab==='blocks'?'selected':''} onClick={()=>setTab('blocks')}>Blocks</button>
       </div>
+      <button aria-pressed={wide} title={wide?'Narrow the panel':'Expand to the full grid'} onClick={()=>setWide(v=>!v)}>{wide?'⇤':'⇥'}</button>
       <button className="al-close" aria-label="Close filter" onClick={onClose}>×</button>
     </div>
 
@@ -113,6 +130,7 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
     {ready&&summary.truncated?.sequences&&<p className="al-hint">Showing the first {number(summary.sequences.length)} of {number(summary.total.sequences)} sequences.</p>}
 
     {ready&&tab==='sequences'&&<div className="al-filter-body">
+      <div className="al-filter-controls">
       <label>Include <small>any of these words</small>
         <input placeholder="human gorilla" value={sequenceFilter.include} onChange={e=>setSequenceFilter({...sequenceFilter,include:e.target.value})}/></label>
       <label>Exclude <small>none of these words</small>
@@ -130,19 +148,13 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
         <button onClick={()=>setChosenSequences(new Set(sequences.map(s=>s.id)))}>Tick all shown</button>
         <button disabled={!chosenSequences.size} onClick={()=>setChosenSequences(new Set())}>Untick all</button>
       </div>
-      <div className="al-filter-list" role="group" aria-label="Sequences">
-        {shownSequences.map(s=><label key={s.id} className="al-filter-row">
-          <input type="checkbox" checked={chosenSequences.size?chosenSequences.has(s.id):true}
-            onChange={()=>toggle(chosenSequences.size?chosenSequences:new Set(sequences.map(x=>x.id)),s.id,setChosenSequences)}/>
-          <span className="al-filter-name">{s.label||s.source}</span>
-          <small>{number(s.blocks)} blocks · {number(s.columns)} columns{s.placed?` · ${number(s.bases)} bases`:''}{s.empty?` · ${number(s.empty)} absent`:''}{s.genome_key?` · ${genomeLabel(s.genome_key)}`:''}</small>
-        </label>)}
-        {sequences.length>LIST_CAP&&<p className="al-hint">Showing the first {LIST_CAP} of {number(sequences.length)}. Narrow the words to see the rest.</p>}
-        {!sequences.length&&<p className="al-hint">Nothing matches these words.</p>}
       </div>
+      <FilterGrid rows={sequences} columns={sequenceColumns} rowKey={s=>s.id} chosen={chosenSequences}
+        onChosen={setChosenSequences} label="Sequences" empty="Nothing matches these words."/>
     </div>}
 
     {ready&&tab==='blocks'&&<div className="al-filter-body">
+      <div className="al-filter-controls">
       {within&&<p className="al-hint">Limited to the {number(within.size)} blocks holding the {number(chosenSequenceIds.length)} chosen sequences.</p>}
       <div className="al-filter-coords">
         <span>Genomic range <small>in each chosen sequence's own coordinates, 1-based</small></span>
@@ -166,16 +178,9 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
         <button onClick={()=>setChosenBlocks(new Set(blocks.map(b=>b.id)))}>Tick all shown</button>
         <button disabled={!chosenBlocks.size} onClick={()=>setChosenBlocks(new Set())}>Untick all</button>
       </div>
-      <div className="al-filter-list" role="group" aria-label="Blocks">
-        {shownBlocks.map(b=><label key={b.id} className="al-filter-row">
-          <input type="checkbox" checked={chosenBlocks.size?chosenBlocks.has(b.id):true}
-            onChange={()=>toggle(chosenBlocks.size?chosenBlocks:new Set(blocks.map(x=>x.id)),b.id,setChosenBlocks)}/>
-          <span className="al-filter-name">Block {b.id}</span>
-          <small>{number(b.length)} columns · {number(b.available)} sequences{b.rows>b.available?` · ${number(b.rows-b.available)} absent`:''}</small>
-        </label>)}
-        {blocks.length>LIST_CAP&&<p className="al-hint">Showing the first {LIST_CAP} of {number(blocks.length)}.</p>}
-        {!blocks.length&&<p className="al-hint">No blocks match.</p>}
       </div>
+      <FilterGrid rows={blocks} columns={blockColumns} rowKey={b=>b.id} chosen={chosenBlocks}
+        onChosen={setChosenBlocks} label="Blocks" empty="No blocks match."/>
     </div>}
 
     {ready&&<div className="al-filter-foot">
