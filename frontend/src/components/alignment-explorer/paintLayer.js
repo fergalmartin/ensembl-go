@@ -21,6 +21,9 @@ function dashed(ctx,x,y,width,height,color) {
 // a feature; it waits until the camera makes it one. Only ever adds gaps on
 // zooming in, never removes them.
 const MIN_VISIBLE_GAP=2
+// One colour for everything picked out, so a picked block's outline and the name
+// of a picked sequence read as the same act rather than two unrelated marks.
+const PICKED='#edc263'
 function niceStep(scale){const raw=80/scale,mag=10**Math.floor(Math.log10(raw));return [1,2,5,10].map(x=>x*mag).find(x=>x>=raw)||mag*10}
 function rowChunks(fragment,rowId){return cellRanges(fragment,rowId)}
 
@@ -126,8 +129,10 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     ctx.fillStyle=colors.head;ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,HEADER_HEIGHT)
     // Pointing at a block's header picks the whole block out of the row of them.
     if(hovered){ctx.fillStyle=light?'#26374d12':'#cfe0f812';ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,r.height+HEADER_HEIGHT)}
-    ctx.strokeStyle=state.selection.some(s=>s.fragmentId===f.id)?layer.color:hovered?colors.text:colors.border
-    ctx.lineWidth=hovered?1.5:1;ctx.strokeRect(r.x+.5,r.y-HEADER_HEIGHT+.5,w,r.height+HEADER_HEIGHT);ctx.lineWidth=1
+    // A block picked by its header is outlined in the colour a picked name takes.
+    const blockPicked=state.selection.some(s=>s.kind==='block'&&s.fragmentId===f.id)
+    ctx.strokeStyle=blockPicked?PICKED:state.selection.some(s=>s.fragmentId===f.id)?layer.color:hovered?colors.text:colors.border
+    ctx.lineWidth=blockPicked?2:hovered?1.5:1;ctx.strokeRect(r.x+.5,r.y-HEADER_HEIGHT+.5,w,r.height+HEADER_HEIGHT);ctx.lineWidth=1
     const leftVisible=Math.max(0,-r.x),firstCol=f.start+leftVisible/r.scale,step=niceStep(camera.scale)
     ctx.font='10px "IBM Plex Mono", monospace';ctx.fillStyle=colors.muted
     if(!dense)for(let col=Math.ceil(firstCol/step)*step;col<f.end;col+=step){const x=r.x+(col-f.start)*r.scale;if(x>size.width)break;ctx.fillText((col+1).toLocaleString(),x+3,r.y-9);ctx.fillRect(x,r.y-5,1,5)}
@@ -249,7 +254,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       if(drawLayer.fragments.some(other=>{if(other.id===f.id)return false;const rect=panelRect(other,camera);return box.x<rect.x+rect.width&&box.x+box.width>rect.x&&box.y<rect.y+rect.height&&box.y+box.height>rect.y-HEADER_HEIGHT})||labelBoxes.some(b=>box.x<b.x+b.width&&box.x+box.width>b.x&&box.y<b.y+b.height&&box.y+box.height>b.y))continue
       labelBoxes.push(box)
       ctx.strokeStyle=colors.background;ctx.lineWidth=3;ctx.lineJoin='round';ctx.strokeText(label,labelX,y+17)
-      ctx.fillStyle=lit.has(id)?'#edc263':colors.text;ctx.fillText(label,labelX,y+17)
+      ctx.fillStyle=lit.has(id)?PICKED:colors.text;ctx.fillText(label,labelX,y+17)
       hits.push({kind:'label',rowId:id,fragmentId:f.id,x:labelX-3,y,width:width+6,height:ROW_HEIGHT})
     }
     // Source block identity stays above the coordinate range, even on a tiny chunk.
@@ -287,7 +292,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     for(const {row,y} of gutter){
       if(!row||y+ROW_HEIGHT<0||y>size.height)continue
       let label=row.label||row.source||row.id;ctx.font='11px Lato, sans-serif';while(label.length&&ctx.measureText(label).width>MARGIN_X-18)label=label.slice(0,-2)+'…'
-      ctx.fillStyle=lit.has(row.id)?'#edc263':colors.text;ctx.textAlign='right';ctx.fillText(label,MARGIN_X-10,y+17);ctx.textAlign='left'
+      ctx.fillStyle=lit.has(row.id)?PICKED:colors.text;ctx.textAlign='right';ctx.fillText(label,MARGIN_X-10,y+17);ctx.textAlign='left'
       hits.push({kind:'label',rowId:row.id,x:0,y,width:MARGIN_X,height:ROW_HEIGHT})
     }
   }
