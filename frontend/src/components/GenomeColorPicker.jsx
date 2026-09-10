@@ -125,6 +125,10 @@ export default function GenomeColorPicker({
     palette,
     currentColor = '',
     defaultColor = DEFAULT_GENOME_COLOR,
+    // What the colour is shown against. Defaults to the genome track it was
+    // written for; anything else colouring something that is not a genome passes
+    // its own, rather than previewing genes it does not have.
+    renderPreview,
     onApply,
     onClose,
 }) {
@@ -182,7 +186,7 @@ export default function GenomeColorPicker({
                 </div>
 
                 <div className="px-5 py-4 space-y-4">
-                    <GenomeColorPreview color={selected} isLight={isLight} />
+                    {renderPreview ? renderPreview(selected) : <GenomeColorPreview color={selected} isLight={isLight} />}
 
                     <div>
                         <div className={`text-xs font-semibold uppercase tracking-wide mb-2 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>

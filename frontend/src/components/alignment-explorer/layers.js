@@ -1,6 +1,11 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT } from './layout.js'
+import { BUILTIN_GENOME_COLOR_PALETTE } from '../../genomeColorSchemes.js'
 /** Alignment fragments reference immutable source columns. Layout never changes biology. */
-export const PALETTE = ['#76cdb6', '#85b5ec', '#d4adeb', '#e8bd7e', '#ed98ac', '#9dc981']
+/** Layers take the genome palette, so a colour means the same thing wherever it
+ * is seen in the app and the picker offers exactly what is already on screen
+ * elsewhere. New layers cycle it; editing a layer opens the same picker the
+ * genome selector uses. */
+export const PALETTE = BUILTIN_GENOME_COLOR_PALETTE
 export const clamp = (v, min, max) => Math.max(min, Math.min(max, v))
 export const newId = () => crypto.randomUUID()
 export const defaultCamera = () => ({ x: 0, y: 0, scale: 2 })

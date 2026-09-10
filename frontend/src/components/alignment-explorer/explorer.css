@@ -207,3 +207,9 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-filter-flag { font-size:11px; white-space:nowrap; }
 .al-filter-flag.selected { border-color:#edc263; color:#edc263; background:#edc2631a; }
 .al-filter-flag:disabled { opacity:.35; }
+
+.al-layer-colour { display:flex; align-items:center; gap:8px; }
+.al-layer-colour i { width:20px; height:20px; border-radius:6px; border:1px solid #ffffff33; flex:0 0 auto; }
+
+.al-colour-preview { display:flex; flex-direction:column; gap:6px; padding:14px; border-radius:8px; background:#0f1826; }
+.al-colour-preview span { height:12px; border-radius:3px; display:block; }
