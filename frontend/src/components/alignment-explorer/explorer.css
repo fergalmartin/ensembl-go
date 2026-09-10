@@ -127,3 +127,32 @@
 .al-section>.al-row-mode { display:flex; flex-direction:column; align-items:stretch; gap:6px; }
 .al-row-mode select { width:100%; }
 .al-row-mode small { line-height:1.5; }
+
+/* The filter opens as a second column beside the sidebar, so the lists stay
+   visible while the alignment is still on screen behind them. */
+.al-filter { display:flex; flex-direction:column; width:330px; min-width:330px; border-right:1px solid var(--al-border,#3a4d65);
+  background:var(--al-panel,#1c293d); overflow:hidden; }
+.al-filter-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--al-border,#3a4d65); }
+.al-filter-head strong { font-size:12px; letter-spacing:.02em; }
+.al-filter-head .al-close { margin-left:auto; }
+.al-filter-tabs { display:flex; gap:3px; }
+.al-filter-tabs button { font-size:11px; padding:3px 9px; }
+.al-filter-body { display:flex; flex-direction:column; gap:7px; padding:9px 10px; overflow:auto; flex:1; min-height:0; }
+.al-filter-body > label { display:flex; flex-direction:column; gap:3px; font-size:11px; }
+.al-filter-body > label small { opacity:.65; font-weight:400; }
+.al-filter-range { display:grid; grid-template-columns:1fr 62px 62px; align-items:center; gap:5px; font-size:11px; }
+.al-filter-range input { width:100%; padding:3px!important; }
+.al-filter-actions { display:flex; align-items:center; gap:5px; font-size:11px; flex-wrap:wrap; }
+.al-filter-actions span { opacity:.75; margin-right:auto; }
+.al-filter-actions button { font-size:10px; padding:2px 7px; }
+.al-filter-list { display:flex; flex-direction:column; gap:1px; overflow:auto; max-height:46vh;
+  border:1px solid var(--al-border,#3a4d65); border-radius:5px; padding:4px; }
+.al-filter-row { display:grid; grid-template-columns:auto 1fr; gap:2px 7px; align-items:center; padding:3px 4px; border-radius:4px; font-size:11px; }
+.al-filter-row:hover { background:#ffffff0d; }
+.al-filter-row small { grid-column:2; opacity:.6; font-size:10px; }
+.al-filter-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.al-filter-foot { display:flex; flex-direction:column; gap:5px; padding:9px 10px; border-top:1px solid var(--al-border,#3a4d65); }
+.al-filter-foot small { opacity:.65; font-size:10px; }
+.al-filter-active { display:flex; flex-direction:column; gap:3px; margin-top:6px; padding:6px 8px; border-radius:5px;
+  border:1px solid #edc26355; background:#edc2631a; font-size:11px; }
+.al-filter-active small { opacity:.75; font-size:10px; }

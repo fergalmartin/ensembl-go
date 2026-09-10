@@ -320,3 +320,62 @@ class LayoutPerformanceTests(unittest.TestCase):
         # view can point at the block under the cursor without another request.
         self.assertEqual(merged['edges'][0]['x'],merged['x'])
         self.assertEqual(merged['edges'][-1]['end_x'],merged['end_x'])
+
+    def test_summary_counts_blocks_bases_and_columns_per_sequence(self):
+        self.store.add_block([{'source':'a','sequence':'ACGT'*10},{'source':'b','sequence':'AC--'*10}])
+        self.store.add_block([{'source':'a','sequence':'ACGTA'}])
+        self.store.update_metadata([{'source':'a','genome_key':'human','chrom':'1'}])
+        summary=self.store.summary()
+        rows={r['source']:r for r in summary['sequences']}
+        # Blocks a sequence appears in, and the alignment columns of those blocks.
+        self.assertEqual(rows['a']['blocks'],2)
+        self.assertEqual(rows['a']['columns'],45)
+        self.assertEqual(rows['b']['blocks'],1)
+        self.assertEqual(rows['b']['columns'],40)
+        # These rows carry no source coordinates, so ungapped bases are not
+        # derivable and are reported as none counted rather than as zero bases.
+        self.assertEqual(rows['a']['placed'],0)
+        self.assertEqual(rows['b']['placed'],0)
+        # Explicit links travel with the sequence so the panel can filter on them.
+        self.assertEqual(rows['a']['genome_key'],'human')
+        self.assertIsNone(rows['b']['genome_key'])
+        blocks={b['id']:b for b in summary['blocks']}
+        self.assertEqual((blocks[1]['length'],blocks[1]['available']),(40,2))
+        self.assertEqual((blocks[2]['length'],blocks[2]['available']),(5,1))
+        self.assertEqual(summary['total'],{'sequences':2,'blocks':2})
+
+    def test_summary_counts_ungapped_bases_where_coordinates_exist(self):
+        # MAF rows as the importer yields them: start/size are ungapped.
+        self.store.add_block([
+            {'source':'a.1','sequence':'ACGT','start':10,'end':14,'strand':'+','source_length':100,'coordinates':True},
+            {'source':'b.1','sequence':'AC--','start':20,'end':22,'strand':'+','source_length':100,'coordinates':True}])
+        rows={r['source']:r for r in self.store.summary()['sequences']}
+        # MAF start/size are ungapped, so the gapped row counts fewer bases than
+        # the columns it spans.
+        self.assertEqual((rows['a.1']['bases'],rows['a.1']['columns']),(4,4))
+        self.assertEqual((rows['b.1']['bases'],rows['b.1']['columns']),(2,4))
+        self.assertEqual(rows['b.1']['placed'],1)
+
+    def test_summary_reports_truncation_rather_than_silently_dropping_rows(self):
+        for _ in range(5): self.store.add_block([{'source':'a','sequence':'ACGT'}])
+        limited=self.store.summary(limit=2)
+        self.assertEqual(len(limited['blocks']),2)
+        self.assertTrue(limited['truncated']['blocks'])
+        self.assertEqual(limited['total']['blocks'],5)
+        self.assertFalse(self.store.summary()['truncated']['blocks'])
+
+    def test_blocks_with_reports_which_sequences_each_block_holds(self):
+        self.store.add_block([{'source':'a','sequence':'ACGT'},{'source':'b','sequence':'ACGT'}])
+        self.store.add_block([{'source':'a','sequence':'ACGT'}])
+        self.store.add_block([{'source':'c','sequence':'ACGT'}])
+        a,b,c=(stable_id(x) for x in 'abc')
+        found=self.store.blocks_with([a,b])
+        self.assertEqual([e['block'] for e in found],[1,2])
+        # Block 2 holds only 'a'; a layer built from this must not invent a row
+        # for 'b' there, so the membership matters and not just the block number.
+        self.assertEqual(sorted(found[0]['ids']),sorted([a,b]))
+        self.assertEqual(found[1]['ids'],[a])
+        self.assertEqual(self.store.blocks_with([]),[])
+        # An empty component is not a presence.
+        self.store.add_block([{'source':'z','sequence':'ACGT'},{'source':c,'sequence':None,'empty_status':'C','start':0,'end':0}])
+        self.assertEqual([e['block'] for e in self.store.blocks_with([c])],[3])

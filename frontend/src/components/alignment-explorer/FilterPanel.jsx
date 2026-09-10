@@ -1,0 +1,153 @@
+import { useEffect, useMemo, useState } from 'react'
+import { api } from './data'
+import { SEQUENCE_FILTER, BLOCK_FILTER, filterSequences, filterBlocks, effectiveChoice, filterChunks, isDefaultFilter } from './filters'
+
+const LIST_CAP = 300
+const number = value => (value ?? 0).toLocaleString()
+
+function Range({label,unit,from,to,onFrom,onTo}) {
+  return <label className="al-filter-range"><span>{label}{unit?<small> {unit}</small>:null}</span>
+    <input type="number" min="0" placeholder="min" value={from} onChange={e=>onFrom(e.target.value)}/>
+    <input type="number" min="0" placeholder="max" value={to} onChange={e=>onTo(e.target.value)}/>
+  </label>
+}
+
+/** Filter the alignment down to a working set of sequences and blocks.
+ *
+ * The two lists are not independent: narrowing sequences narrows the blocks on
+ * offer to the ones that actually hold them, which is what makes "these eight
+ * primates, wherever they appear" a single move rather than a manual hunt
+ * through two hundred blocks. Block criteria still apply on top, so the reader
+ * can say "those sequences, but only in blocks over 100kb".
+ */
+export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyToOriginal,filterApplied,onClearFilter,onError}) {
+  const [tab,setTab]=useState('sequences')
+  const [summary,setSummary]=useState(null)
+  const [sequenceFilter,setSequenceFilter]=useState(SEQUENCE_FILTER)
+  const [blockFilter,setBlockFilter]=useState(BLOCK_FILTER)
+  const [chosenSequences,setChosenSequences]=useState(new Set())
+  const [chosenBlocks,setChosenBlocks]=useState(new Set())
+  const [membership,setMembership]=useState(null)
+
+  useEffect(()=>{
+    if(!dataset)return
+    let cancelled=false
+    api(`/datasets/${dataset.id}/summary`).then(value=>{if(!cancelled)setSummary(value)})
+      .catch(e=>{if(!cancelled)onError(e.message)})
+    return()=>{cancelled=true}
+  },[dataset,onError])
+
+  const sequences=useMemo(()=>filterSequences(summary?.sequences||[],sequenceFilter),[summary,sequenceFilter])
+  const chosenSequenceIds=useMemo(()=>effectiveChoice(sequences,chosenSequences),[sequences,chosenSequences])
+  const narrowed=!isDefaultFilter(sequenceFilter,SEQUENCE_FILTER)||chosenSequences.size>0
+
+  // Which blocks hold the chosen sequences. Asked for only while the sequence
+  // side is actually narrowing something, so the untouched panel costs nothing.
+  const wanted=dataset&&narrowed&&chosenSequenceIds.length?chosenSequenceIds:null
+  useEffect(()=>{
+    if(!wanted)return
+    let cancelled=false
+    api(`/datasets/${dataset.id}/blocks-with`,{ids:wanted.slice(0,5000)})
+      .then(value=>{if(!cancelled)setMembership({for:wanted,blocks:value.blocks})})
+      .catch(e=>{if(!cancelled)onError(e.message)})
+    return()=>{cancelled=true}
+  },[dataset,wanted,onError])
+  // Only the answer to the current selection counts; an older one is ignored
+  // rather than briefly narrowing the block list by the wrong sequences.
+  const known=membership?.for===wanted?membership.blocks:null
+
+  const within=useMemo(()=>known?new Set(known.map(m=>m.block)):null,[known])
+  const blocks=useMemo(()=>filterBlocks(summary?.blocks||[],blockFilter,within),[summary,blockFilter,within])
+  const chosenBlockIds=useMemo(()=>effectiveChoice(blocks,chosenBlocks),[blocks,chosenBlocks])
+  const lengths=useMemo(()=>new Map((summary?.blocks||[]).map(b=>[b.id,b.length])),[summary])
+  const chunks=useMemo(()=>filterChunks(known,chosenBlockIds,chosenSequenceIds,lengths),[known,chosenBlockIds,chosenSequenceIds,lengths])
+  const cells=chunks.reduce((n,c)=>n+(c.end-c.start)*c.rowIds.length,0)
+
+  const genomeLabel=key=>{
+    if(!key)return null
+    const match=genomes.find(g=>[g.species_key,g.assembly,g.name].includes(key))
+    return match?.common_name||match?.scientific_name||key
+  }
+  const toggle=(set,value,apply)=>{const next=new Set(set);next.has(value)?next.delete(value):next.add(value);apply(next)}
+
+  const shownSequences=sequences.slice(0,LIST_CAP),shownBlocks=blocks.slice(0,LIST_CAP)
+  const ready=!!summary
+
+  return <aside className="al-filter" aria-label="Filter sequences and blocks">
+    <div className="al-filter-head">
+      <strong>Filter</strong>
+      <div className="al-filter-tabs" role="tablist">
+        <button role="tab" aria-selected={tab==='sequences'} className={tab==='sequences'?'selected':''} onClick={()=>setTab('sequences')}>Sequences</button>
+        <button role="tab" aria-selected={tab==='blocks'} className={tab==='blocks'?'selected':''} onClick={()=>setTab('blocks')}>Blocks</button>
+      </div>
+      <button className="al-close" aria-label="Close filter" onClick={onClose}>×</button>
+    </div>
+
+    {!ready&&<p className="al-hint">Reading the alignment inventory…</p>}
+    {ready&&summary.truncated?.sequences&&<p className="al-hint">Showing the first {number(summary.sequences.length)} of {number(summary.total.sequences)} sequences.</p>}
+
+    {ready&&tab==='sequences'&&<div className="al-filter-body">
+      <label>Include <small>any of these words</small>
+        <input placeholder="human gorilla" value={sequenceFilter.include} onChange={e=>setSequenceFilter({...sequenceFilter,include:e.target.value})}/></label>
+      <label>Exclude <small>none of these words</small>
+        <input placeholder="ancestor" value={sequenceFilter.exclude} onChange={e=>setSequenceFilter({...sequenceFilter,exclude:e.target.value})}/></label>
+      <label>Local genome
+        <select value={sequenceFilter.genome} onChange={e=>setSequenceFilter({...sequenceFilter,genome:e.target.value})}>
+          <option value="any">Linked or not</option><option value="linked">Linked only</option><option value="unlinked">Not linked</option>
+        </select></label>
+      <Range label="Blocks" from={sequenceFilter.minBlocks} to={sequenceFilter.maxBlocks}
+        onFrom={v=>setSequenceFilter({...sequenceFilter,minBlocks:v})} onTo={v=>setSequenceFilter({...sequenceFilter,maxBlocks:v})}/>
+      <Range label="Aligned bases" from={sequenceFilter.minBases} to={sequenceFilter.maxBases}
+        onFrom={v=>setSequenceFilter({...sequenceFilter,minBases:v})} onTo={v=>setSequenceFilter({...sequenceFilter,maxBases:v})}/>
+      <div className="al-filter-actions">
+        <span>{number(sequences.length)} of {number(summary.sequences.length)} match</span>
+        <button onClick={()=>setChosenSequences(new Set(sequences.map(s=>s.id)))}>Tick all shown</button>
+        <button disabled={!chosenSequences.size} onClick={()=>setChosenSequences(new Set())}>Untick all</button>
+      </div>
+      <div className="al-filter-list" role="group" aria-label="Sequences">
+        {shownSequences.map(s=><label key={s.id} className="al-filter-row">
+          <input type="checkbox" checked={chosenSequences.size?chosenSequences.has(s.id):true}
+            onChange={()=>toggle(chosenSequences.size?chosenSequences:new Set(sequences.map(x=>x.id)),s.id,setChosenSequences)}/>
+          <span className="al-filter-name">{s.label||s.source}</span>
+          <small>{number(s.blocks)} blocks · {number(s.columns)} columns{s.placed?` · ${number(s.bases)} bases`:''}{s.empty?` · ${number(s.empty)} absent`:''}{s.genome_key?` · ${genomeLabel(s.genome_key)}`:''}</small>
+        </label>)}
+        {sequences.length>LIST_CAP&&<p className="al-hint">Showing the first {LIST_CAP} of {number(sequences.length)}. Narrow the words to see the rest.</p>}
+        {!sequences.length&&<p className="al-hint">Nothing matches these words.</p>}
+      </div>
+    </div>}
+
+    {ready&&tab==='blocks'&&<div className="al-filter-body">
+      {within&&<p className="al-hint">Limited to the {number(within.size)} blocks holding the {number(chosenSequenceIds.length)} chosen sequences.</p>}
+      <label>Block numbers <small>e.g. 1-20, 44, 60-70</small>
+        <input placeholder="all" value={blockFilter.numbers} onChange={e=>setBlockFilter({...blockFilter,numbers:e.target.value})}/></label>
+      <Range label="Columns" from={blockFilter.minLength} to={blockFilter.maxLength}
+        onFrom={v=>setBlockFilter({...blockFilter,minLength:v})} onTo={v=>setBlockFilter({...blockFilter,maxLength:v})}/>
+      <Range label="Sequences in block" from={blockFilter.minRows} to={blockFilter.maxRows}
+        onFrom={v=>setBlockFilter({...blockFilter,minRows:v})} onTo={v=>setBlockFilter({...blockFilter,maxRows:v})}/>
+      <div className="al-filter-actions">
+        <span>{number(blocks.length)} of {number(summary.blocks.length)} match</span>
+        <button onClick={()=>setChosenBlocks(new Set(blocks.map(b=>b.id)))}>Tick all shown</button>
+        <button disabled={!chosenBlocks.size} onClick={()=>setChosenBlocks(new Set())}>Untick all</button>
+      </div>
+      <div className="al-filter-list" role="group" aria-label="Blocks">
+        {shownBlocks.map(b=><label key={b.id} className="al-filter-row">
+          <input type="checkbox" checked={chosenBlocks.size?chosenBlocks.has(b.id):true}
+            onChange={()=>toggle(chosenBlocks.size?chosenBlocks:new Set(blocks.map(x=>x.id)),b.id,setChosenBlocks)}/>
+          <span className="al-filter-name">Block {b.id}</span>
+          <small>{number(b.length)} columns · {number(b.available)} sequences{b.rows>b.available?` · ${number(b.rows-b.available)} absent`:''}</small>
+        </label>)}
+        {blocks.length>LIST_CAP&&<p className="al-hint">Showing the first {LIST_CAP} of {number(blocks.length)}.</p>}
+        {!blocks.length&&<p className="al-hint">No blocks match.</p>}
+      </div>
+    </div>}
+
+    {ready&&<div className="al-filter-foot">
+      <strong>{number(chosenSequenceIds.length)} sequences · {number(chosenBlockIds.length)} blocks</strong>
+      {chunks.length?<small>{number(chunks.length)} chunks · {number(cells)} cells</small>
+        :<small>Narrow the sequences to build a layer from the result.</small>}
+      <button className="primary" disabled={!chunks.length} onClick={()=>onNewLayer(chunks)}>New layer from filter</button>
+      <button onClick={()=>onApplyToOriginal({sequences:chosenSequenceIds,blocks:chosenBlockIds})}>Show only these in Original</button>
+      {filterApplied&&<button onClick={onClearFilter}>Clear filter from Original</button>}
+    </div>}
+  </aside>
+}

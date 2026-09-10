@@ -209,6 +209,17 @@ def create_router(cache_root=None, annotation_provider=None):
             return {'connections':result}
         except (KeyError, ValueError, TypeError) as exc: raise HTTPException(400, 'Invalid connection coordinates') from exc
 
+    @router.get('/datasets/{dataset_id}/summary')
+    def summary(dataset_id: str, limit: int = Query(20000, ge=1, le=200000)):
+        return store_for(dataset_id).summary(limit)
+
+    @router.post('/datasets/{dataset_id}/blocks-with')
+    def blocks_with(dataset_id: str, payload: dict):
+        ids = payload.get('ids', [])
+        if not isinstance(ids, list) or len(ids) > 5000: raise HTTPException(400, 'Request at most 5,000 sequences')
+        if not all(isinstance(i, str) for i in ids): raise HTTPException(400, 'Invalid sequence identifier')
+        return {'blocks': store_for(dataset_id).blocks_with(ids)}
+
     @router.post('/datasets/{dataset_id}/neighbours')
     def neighbours(dataset_id: str, payload: dict):
         ids = payload.get('ids', [])

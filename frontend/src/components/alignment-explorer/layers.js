@@ -4,7 +4,7 @@ export const PALETTE = ['#76cdb6', '#85b5ec', '#d4adeb', '#e8bd7e', '#ed98ac', '
 export const clamp = (v, min, max) => Math.max(min, Math.min(max, v))
 export const newId = () => crypto.randomUUID()
 export const defaultCamera = () => ({ x: 0, y: 0, scale: 2 })
-export const emptyWorkspace = () => ({ version: 2, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', tilted: false, annotations: false, connectionUnit: 'columns', highlighted: '', selection: [], camera: defaultCamera() })
+export const emptyWorkspace = () => ({ version: 2, filter: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', tilted: false, annotations: false, connectionUnit: 'columns', highlighted: '', selection: [], camera: defaultCamera() })
 export function createFragment(sourceBlock, start, end, rowIds, options = {}) {
   return { id: newId(), sourceBlock, start, end, rowIds: [...new Set(rowIds)], x: 0, y: 0, slots: null, ...options }
 }

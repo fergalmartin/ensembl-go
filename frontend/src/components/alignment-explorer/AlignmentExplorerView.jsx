@@ -8,6 +8,7 @@ import { layoutOriginal } from './originalLayout'
 import useOriginalBlocks from './useOriginalBlocks'
 import useLayerData from './useLayerData'
 import { exactGenomeLinks } from './associations'
+import FilterPanel from './FilterPanel'
 import { api, download, demoAlignment } from './data'
 import { emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, sourceViewAnchor, workspaceForSave, coordinateFragments, visibleSourceRange } from './layers'
 import { NUCLEOTIDE_COLORS, NUCLEOTIDE_LETTER_THRESHOLD } from '../../utils/nucleotideStyle'
@@ -17,7 +18,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const [dataset,setDataset]=useState(null),[inventory,setInventory]=useState([]),[blocks,setBlocks]=useState({blocks:[],total:0}),[source,setSource]=useState(null)
   const [state,setState]=useState(emptyWorkspace),[size,setSize]=useState({width:900,height:500}),[job,setJob]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('')
   const [dialog,setDialog]=useState(null),[path,setPath]=useState(''),[merge,setMerge]=useState(null),[layerName,setLayerName]=useState(''),[target,setTarget]=useState('new'),[inspect,setInspect]=useState(null),[fallback,setFallback]=useState(false),[revision,setRevision]=useState(0)
-  const [selectionDrag,setSelectionDrag]=useState(null)
+  const [selectionDrag,setSelectionDrag]=useState(null),[filterOpen,setFilterOpen]=useState(false)
   const explorerRoot=useRef(null)
   const [rowQuery,setRowQuery]=useState(''),[selectRows,setSelectRows]=useState([]),[range,setRange]=useState({fragment:'',start:1,end:100}),[link,setLink]=useState({row:'',genome:'',chrom:''})
   const history=useRef({past:[],future:[]}),stateRef=useRef(state),canvas=useRef(null),file=useRef(null),metadata=useRef(null),workspace=useRef(null),epoch=useRef(0),blockNav=useRef(0),incomingHandled=useRef(null),genomesRef=useRef(genomes)
@@ -28,7 +29,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const undo=useCallback(redo=>{const from=redo?history.current.future:history.current.past,to=redo?history.current.past:history.current.future;if(from.length){to.push(stateRef.current);const next=from.pop();stateRef.current=next;setState(next)}},[])
   
   const sourceFragments=useOriginalBlocks(dataset,source,state.camera,size,blocks.total,state.original,setError,revision)
-  const originalFragments=useMemo(()=>layoutOriginal(sourceFragments,inventory.map(r=>r.id),state.originalRows||'aligned',state.blockRows||{},dataset?.max_source_rows),[sourceFragments,inventory,state.originalRows,state.blockRows,dataset?.max_source_rows])
+  const originalFragments=useMemo(()=>layoutOriginal(sourceFragments,inventory.map(r=>r.id),state.originalRows||'aligned',state.blockRows||{},dataset?.max_source_rows,state.filter),[sourceFragments,inventory,state.originalRows,state.blockRows,dataset?.max_source_rows,state.filter])
   const original=useMemo(()=>({id:'original',name:'Original alignment',color:'#b9c5d9',fragments:originalFragments,rowExtent:Math.max(inventory.length,2*(dataset?.max_source_rows||0)+3),extent:dataset?.layout_end||source?.layout_end||source?.length||1}),[originalFragments,dataset?.layout_end,source?.layout_end,source?.length,inventory.length,dataset?.max_source_rows])
   const allLayers=useMemo(()=>[original,...state.layers],[original,state.layers])
   const active=state.original?original:state.layers.find(l=>l.id===state.active)||original
@@ -38,14 +39,18 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const {tiles,annotations,connections,offWindow,counts,pending,warnings,gaps,displayCamera}=useLayerData(dataset,layer,renderState.camera,size,state.annotations,revision,setError)
   const canvasState=useMemo(()=>({...renderState,camera:displayCamera}),[renderState,displayCamera])
   const ids=useMemo(()=>inventory.map(r=>r.id),[inventory])
-  const displayInventory=useMemo(()=>inventory.map(row=>{
+  const filteredInventory=useMemo(()=>{
+    const allowed=state.filter?.sequences?.length?new Set(state.filter.sequences):null
+    return allowed?inventory.filter(row=>allowed.has(row.id)):inventory
+  },[inventory,state.filter])
+  const displayInventory=useMemo(()=>filteredInventory.map(row=>{
     const key=row.metadata?.genome_key
     if(!key)return row
     const genome=genomes.find(g=>genomeKeyCandidates(g).includes(key)),fallback=genomeKeyDisplayLabels(key)
     const name=genome?.common_name||genome?.scientific_name||fallback.displayName
     const label=row.label===key?genome?.assembly_name||fallback.displayAssembly:row.label
     return {...row,label:`${name} · ${label}`}
-  }),[inventory,genomes])
+  }),[filteredInventory,genomes])
   const switchLayer=useCallback(id=>{setInspect(null);setState(s=>({...s,original:id==='original',active:id==='original'?s.active:id,selection:[],camera:id==='original'?fitCamera({fragments:original.fragments.filter(f=>f.sourceBlock===s.sourceBlock&&!f.aggregate).slice(0,1)},size.width,size.height):s.layers.find(l=>l.id===id)?.camera||s.camera}))},[original,size])
   const fit=()=>camera(fitCamera(state.original?{fragments:[sourceViewAnchor(originalFragments,state.camera)].filter(Boolean)}:active,size.width,size.height))
 
@@ -118,6 +123,15 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
       if(token!==blockNav.current)return
       setSource(result);patch({sourceBlock:Number(id),original:true,selection:[],camera:fitCamera({fragments:[createFragment(result.block,0,result.length,result.rows.map(r=>r.id),{x:result.layout_start||0})]},size.width,size.height)})
     }catch(e){if(token===blockNav.current)setError(e.message)}
+  }
+  function layerFromFilter(chunks){
+    if(!chunks.length)return
+    const next=createLayer(`Filtered ${state.layers.length+1}`,state.layers.length,
+      chunks.map(c=>createFragment(c.sourceBlock,c.start,c.end,c.rowIds)))
+    const tidied=tidyLayer(next,ids,chunkGap(next.fragments,size.width))
+    tidied.camera=fitCamera(tidied,size.width,size.height)
+    commit(s=>({...s,layers:[...s.layers,tidied],active:tidied.id,original:false,selection:[],camera:tidied.camera}))
+    setFilterOpen(false);setNotice(`Layer built from the filter: ${chunks.length} chunks.`)
   }
   function transfer(copy=false,destinationId=target){
     const newLayer=destinationId==='new'?createLayer(layerName.trim()||`Layer ${state.layers.length+1}`,state.layers.length):null
@@ -201,12 +215,25 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
 </details>
         <details className="al-section" open={selectionRows>0?true:undefined}><summary>Selection</summary><p className="al-hint">Click a sequence name or a block header to pick it, or drag with Select or Columns to pick a region. Picks add up; click one again to drop it. Then drag any of them to a layer or ＋ New layer.</p><button disabled={!selectableFragments.length} title={selectableFragments.length?undefined:'Zoom in to an individual source block to select by coordinates.'} onClick={()=>{const f=selectableFragments[0];setRange({fragment:f?.id||'',start:(f?.start||0)+1,end:Math.min(f?.end||100,(f?.start||0)+100)});setSelectRows([]);setDialog('select')}}>Select by coordinates</button>        {!!selectionRows&&<div className="al-selection-bar" role="region" aria-label="Selected region actions"><strong>{selectionRows?`${selectionRows} ${selectionRows===1?'sequence':'sequences'} picked`:'Nothing picked'}</strong><small>{selectionRows?`${state.selection.length} ${state.selection.length===1?'pick':'picks'} · ${selectionCells.toLocaleString()} cells`:'Click a name or a block header, or drag with Select or Columns.'}</small>{!!selectionRows&&<><select aria-label="Move selection to layer" value={target} onChange={e=>setTarget(e.target.value)}><option value="new">New layer…</option>{state.layers.filter(l=>l.id!==state.active||state.original).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select>{target==='new'&&<input aria-label="New layer name" placeholder={`Layer ${state.layers.length+1}`} value={layerName} onChange={e=>setLayerName(e.target.value)}/>}<button className="primary" onClick={()=>transfer(false)}>{state.original?'Place in layer':'Move to layer'}</button>{!state.original&&<button onClick={()=>transfer(true)}>Copy instead</button>}<button onClick={()=>patch({selection:[]})}>Clear selection</button></>}</div>}
 </details>
+        <details className="al-section" open={filterOpen?true:undefined}><summary>Filter</summary>
+          <p className="al-hint">Narrow the alignment to the sequences and blocks you want, then build a layer from them or show only those in Original.</p>
+          <button className={filterOpen?'selected':''} aria-expanded={filterOpen} onClick={()=>setFilterOpen(v=>!v)}>{filterOpen?'Close filter':'Filter sequences & blocks'}</button>
+          {state.filter&&<div className="al-filter-active" role="status"><strong>Original is filtered</strong>
+            <small>{(state.filter.sequences||[]).length.toLocaleString()} sequences · {(state.filter.blocks||[]).length.toLocaleString()} blocks</small>
+            <button onClick={()=>patch({filter:null})}>Clear filter</button></div>}
+        </details>
         <details className="al-section"><summary>Alignment & loading</summary><strong className="al-dataset-name">{dataset.name}</strong><button onClick={()=>setDialog('open')}>Open alignment</button><div className="al-source"><strong>Source blocks</strong><select aria-label="Source alignment block" value={state.sourceBlock} onChange={e=>sourceBlock(Number(e.target.value))}>{blocks.blocks.map(b=><option key={b.id} value={b.id}>Block {b.id} · {b.length.toLocaleString()} columns</option>)}</select>{blocks.total>blocks.blocks.length&&<label>Open block number<input type="number" min="1" max={blocks.total} defaultValue={state.sourceBlock} onKeyDown={e=>{if(e.key==='Enter')sourceBlock(Number(e.target.value))}}/></label>}<small>{blocks.total} source blocks · {inventory.length} sequences</small><button onClick={()=>setDialog('links')}>Genome links & annotations</button></div>
 </details>
         <details className="al-section"><summary>Display & annotations</summary>{state.original&&<label className="al-row-mode">Sequence rows<select aria-label="Original sequence rows" value={state.originalRows||'aligned'} onChange={e=>patch({originalRows:e.target.value,blockRows:{}})}><option value="aligned">Align across source blocks</option><option value="compact">Collapse absent rows</option></select><small>Use the row icon on an individual block to override this.</small></label>}<button className={state.tilted?'selected':''} disabled={fallback} onClick={()=>patch({tilted:!state.tilted})}>{state.tilted?'Flat view':'3D layers'}</button><label className="al-check"><input type="checkbox" checked={state.annotations} onChange={e=>patch({annotations:e.target.checked})}/>Annotations</label>        <div className="al-legend"><span><i style={{background:baseColors.baseA}}/>A <i style={{background:baseColors.baseC}}/>C <i style={{background:baseColors.baseG}}/>G <i style={{background:baseColors.baseT}}/>T</span><span>Outlined — Gap · N Unknown · hatching No coverage</span><span>Strings: omitted alignment columns · ↔ overlap · ? different source blocks</span>{state.annotations&&<FeatureLegend theme={theme} horizontal/>}</div><p className="al-hint">Drag chunk headers to arrange pieces. Drag a layer onto another to merge. Click a cell or a string to follow one sequence's path.</p></details>
         <details className="al-section"><summary>Workspace & export</summary><div className="al-actions"><button disabled={!history.current.past.length} onClick={()=>undo(false)}>Undo</button><button disabled={!history.current.future.length} onClick={()=>undo(true)}>Redo</button></div><button onClick={save}>Save workspace</button><button onClick={()=>workspace.current.click()}>Load workspace</button><button onClick={()=>{const url=canvas.current?.image();if(url){const a=document.createElement('a');a.href=url;a.download=`${dataset.name}-${active.name}.png`;a.click()}}}>Export image</button></details>
         </div>
       </aside>
+      {filterOpen&&<FilterPanel dataset={dataset} genomes={genomes} onError={setError}
+        filterApplied={!!state.filter}
+        onClose={()=>setFilterOpen(false)}
+        onNewLayer={layerFromFilter}
+        onApplyToOriginal={value=>{patch({filter:value,original:true});setNotice(`Original filtered to ${value.sequences.length.toLocaleString()} sequences and ${value.blocks.length.toLocaleString()} blocks. The source is unchanged.`)}}
+        onClearFilter={()=>patch({filter:null})}/>}
       <main className="al-main"><div className="al-toolbar" data-alignment-control-bar><div className="al-tools">{[['pan','Pan'],['rectangle','Select'],['columns','Columns']].map(([mode,label])=><button key={mode} className={state.mode===mode?'selected':''} aria-pressed={state.mode===mode} onClick={()=>patch({mode})}>{label}</button>)}</div><button disabled={state.original||!active.fragments.length} onClick={()=>commit(s=>{const tidied=tidyLayer(active,ids,chunkGap(active.fragments,size.width)),view=fitCamera(tidied,size.width,size.height);return {...s,layers:s.layers.map(l=>l.id===active.id?{...tidied,camera:view}:l),camera:view}})}>Auto arrange</button>{state.original&&<div className="al-source-nav" title={sourceRange?.grouped?'This overview groups source blocks. Enter a block number to open one.':undefined}><button aria-label="Previous source block" disabled={!!sourceRange?.grouped||visibleSourceBlock<=1} onClick={()=>sourceBlock(visibleSourceBlock-1)}>‹</button><label>{sourceRange?.grouped?`Blocks ${sourceRange.first}–${sourceRange.last}`:'Block'} <input aria-label="Jump to source block" type="number" min="1" max={blocks.total} placeholder={sourceRange?.grouped?'Block…':undefined} key={sourceRange?.grouped?'grouped':visibleSourceBlock} defaultValue={sourceRange?.grouped?'':visibleSourceBlock} onKeyDown={e=>{if(e.key==='Enter'){const id=Number(e.currentTarget.value);if(Number.isInteger(id)&&id>=1&&id<=blocks.total)sourceBlock(id)}}}/></label><button aria-label="Next source block" disabled={!!sourceRange?.grouped||visibleSourceBlock>=blocks.total} onClick={()=>sourceBlock(visibleSourceBlock+1)}>›</button></div>}<strong className="al-active-name" style={{borderColor:layer.color}}>{layer.name}</strong><button title="Reset view to whole layer" aria-label="Reset view" onClick={fit}>↺</button><LayerCycle layers={allLayers} active={layer.id} onChoose={switchLayer} dataset={dataset} inventory={displayInventory} light={theme==='light'} revision={revision}/></div>
         <LayerCanvas ref={canvas} layer={layer} layers={allLayers} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onAggregate={f=>camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={value=>patch({selection:value,mode:'pan'})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:id})} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock}/>
         <div className="al-status"><span>{pending?'Loading regional detail…':layer.fragments.some(f=>f.aggregate)?'Block presence overview':renderState.camera.scale>=NUCLEOTIDE_LETTER_THRESHOLD?'Sequence detail':renderState.camera.scale>=.65?'Base patterns':'Binned agreement to first row'}{fallback?' · Canvas fallback':''}</span><span>{inspect?.kind==='aggregate'?`${namedRow?.label||''} · present in ${inspect.aggregate.presence?.[inspect.rowId]||0} of ${inspect.aggregate.count} source blocks (${inspect.aggregate.first}–${inspect.aggregate.last})`:inspect?.kind==='connection'?`${inventory.find(r=>r.id===inspect.connection.rowId)?.label||'Sequence'} · ${inspect.connection.columns==null?'Different source blocks: alignment distance unavailable':inspect.connection.columns<0?`${-inspect.connection.columns} overlapping alignment columns`:`${inspect.connection.columns} omitted alignment columns`} · ${counts[inspect.connection.id]?.bases??'?'} ungapped bases`:inspect?.kind==='cell'?`${namedRow?.label||''} · block ${inspect.fragment.sourceBlock}, column ${(inspect.column+1).toLocaleString()}${inspect.base?` · ${inspect.base}`:''}${inspect.placed?.length?` · In layers: ${inspect.placed.join(', ')}`:''}${inspect.features?.length?` · ${inspect.features.map(f=>f.type).join(', ')}`:''}`:'Click a name or a block header to pick it \u00b7 click a cell or a string to follow its path.'}</span></div>

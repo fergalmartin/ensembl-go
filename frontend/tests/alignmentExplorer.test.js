@@ -506,3 +506,90 @@ test('auto arrange stacks overlapping chunks and keeps their columns aligned',as
     assert.ok(p.x2<=q.x1||q.x2<=p.x1||p.y2<=q.y1||q.y2<=p.y1,`${i} and ${j} overlap`)
   }
 })
+
+test('filters narrow sequences by words, links and size',async()=>{
+  const {filterSequences,parseTerms,matchesTerms}=await import('../src/components/alignment-explorer/filters.js')
+  const rows=[
+    {id:'1',source:'homo_sapiens.1',blocks:200,bases:23165866,genome_key:'human'},
+    {id:'2',source:'gorilla_gorilla.1',blocks:180,bases:19000000,genome_key:null},
+    {id:'3',source:'ancestral_sequences.Ancestor_2006_1',blocks:4,bases:12000,genome_key:null},
+  ]
+  // Include is any-of, so two species can be asked for at once.
+  assert.deepEqual(filterSequences(rows,{include:'homo gorilla'}).map(r=>r.id),['1','2'])
+  // Exclude always wins, so a term can be taken back out of a broad include.
+  assert.deepEqual(filterSequences(rows,{include:'a',exclude:'ancestral'}).map(r=>r.id),['1','2'])
+  // Ancestors and unplaced rows are the usual reason to want one side or other.
+  assert.deepEqual(filterSequences(rows,{genome:'linked'}).map(r=>r.id),['1'])
+  assert.deepEqual(filterSequences(rows,{genome:'unlinked'}).map(r=>r.id),['2','3'])
+  // Ranges, with a blank bound meaning no bound rather than zero.
+  assert.deepEqual(filterSequences(rows,{minBlocks:'100'}).map(r=>r.id),['1','2'])
+  assert.deepEqual(filterSequences(rows,{maxBlocks:'100'}).map(r=>r.id),['3'])
+  assert.deepEqual(filterSequences(rows,{minBases:'',maxBases:''}).map(r=>r.id),['1','2','3'])
+  // An empty filter keeps everything, so the panel opens on the whole alignment.
+  assert.equal(filterSequences(rows,{}).length,3)
+  assert.deepEqual(parseTerms(' Human, gorilla  '),['human','gorilla'])
+  assert.equal(matchesTerms('Homo sapiens',[],[]),true)
+})
+
+test('block filters read number ranges and narrow to the chosen sequences',async()=>{
+  const {filterBlocks,parseNumberRanges}=await import('../src/components/alignment-explorer/filters.js')
+  const blocks=[{id:1,length:1000,rows:20,available:20},{id:5,length:900000,rows:30,available:28},{id:44,length:50000,rows:4,available:4}]
+  assert.deepEqual(parseNumberRanges('1-20, 44, 60-70'),[[1,20],[44,44],[60,70]])
+  // Reversed ends are read the way round they were meant.
+  assert.deepEqual(parseNumberRanges('20-1'),[[1,20]])
+  // Half-typed input is ignored rather than filtering everything out.
+  assert.deepEqual(parseNumberRanges('1-'),[])
+  assert.deepEqual(filterBlocks(blocks,{numbers:'1-10'}).map(b=>b.id),[1,5])
+  assert.deepEqual(filterBlocks(blocks,{minLength:'40000'}).map(b=>b.id),[5,44])
+  assert.deepEqual(filterBlocks(blocks,{minRows:'10'}).map(b=>b.id),[1,5])
+  // Narrowing sequences narrows the blocks on offer; block criteria still apply on top.
+  assert.deepEqual(filterBlocks(blocks,{},new Set([5,44])).map(b=>b.id),[5,44])
+  assert.deepEqual(filterBlocks(blocks,{minLength:'100000'},new Set([5,44])).map(b=>b.id),[5])
+})
+
+test('ticking nothing means the filter is the choice; ticking makes the ticks the choice',async()=>{
+  const {effectiveChoice,filterChunks}=await import('../src/components/alignment-explorer/filters.js')
+  const filtered=[{id:'a'},{id:'b'},{id:'c'}]
+  // A reader who narrows to three does not then have to tick three boxes.
+  assert.deepEqual(effectiveChoice(filtered,new Set()),['a','b','c'])
+  assert.deepEqual(effectiveChoice(filtered,null),['a','b','c'])
+  assert.deepEqual(effectiveChoice(filtered,new Set(['b'])),['b'])
+  // A tick left behind by an earlier filter cannot come back through a later one.
+  assert.deepEqual(effectiveChoice(filtered,new Set(['b','zz'])),['b'])
+  // If the filter has moved past every tick, the filter is the choice again
+  // rather than the panel silently applying to nothing.
+  assert.deepEqual(effectiveChoice(filtered,new Set(['zz'])),['a','b','c'])
+
+  // A chunk per chosen block, holding only the sequences that block really has:
+  // 'c' is not in block 5, and inventing a row for it would put cells in a layer
+  // that are not in the alignment.
+  const membership=[{block:5,ids:['a','b']},{block:9,ids:['a','c']}]
+  const lengths=new Map([[5,1000],[9,2000]])
+  assert.deepEqual(filterChunks(membership,[5,9],['a','c'],lengths),
+    [{sourceBlock:5,start:0,end:1000,rowIds:['a']},{sourceBlock:9,start:0,end:2000,rowIds:['a','c']}])
+  // Blocks not chosen contribute nothing, and neither does one with no length known.
+  assert.deepEqual(filterChunks(membership,[9],['a'],lengths),[{sourceBlock:9,start:0,end:2000,rowIds:['a']}])
+  assert.deepEqual(filterChunks(membership,[5,9],['zz'],lengths),[])
+  assert.deepEqual(filterChunks(null,[5],['a'],lengths),[])
+})
+
+test('the Original filter hides rows and blocks without touching the source',async()=>{
+  const {layoutOriginal}=await import('../src/components/alignment-explorer/originalLayout.js')
+  const f1=createFragment(1,0,100,['a','b','c'],{id:'f1',x:0})
+  const f2=createFragment(2,0,100,['a','c'],{id:'f2',x:132})
+  const ids=['a','b','c']
+  // No filter: everything is laid out, as Original always has been.
+  assert.equal(layoutOriginal([f1,f2],ids).length,2)
+  assert.deepEqual(layoutOriginal([f1,f2],ids)[0].rowIds,['a','b','c'])
+  // Rows outside the filter are not laid out, and the survivors close up rather
+  // than leaving the gaps where the hidden ones were.
+  const rows=layoutOriginal([f1,f2],ids,'aligned',{},undefined,{sequences:['a','c']})
+  assert.deepEqual(rows[0].rowIds,['a','c'])
+  assert.deepEqual(rows[0].slots,[0,1])
+  assert.equal(rows[0].layoutRows,2)
+  // Blocks outside the filter drop out of the view.
+  const only=layoutOriginal([f1,f2],ids,'aligned',{},undefined,{blocks:[2]})
+  assert.deepEqual(only.map(f=>f.sourceBlock),[2])
+  // An empty filter is no filter, so clearing brings everything straight back.
+  assert.equal(layoutOriginal([f1,f2],ids,'aligned',{},undefined,{sequences:[],blocks:[]}).length,2)
+})

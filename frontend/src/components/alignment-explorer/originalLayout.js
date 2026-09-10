@@ -2,15 +2,26 @@ import { rowCount } from './layers.js'
 
 /** Stable rows use sequence identity, never active-genome identity. Per-block
  * compaction preserves the first shared row as its vertical anchor. */
-export function layoutOriginal(fragments,ids,mode='aligned',overrides={}) {
-  const rank=new Map(ids.map((id,i)=>[id,i]))
-  return fragments.map(f=>{
-    if(f.aggregate)return {...f,layoutRows:ids.length,slots:f.rowIds.map(id=>rank.get(id)??0)}
+/** `filter` narrows what Original shows without touching the source: rows outside
+ * it are not laid out and blocks outside it are dropped from the view. Original
+ * stays the complete alignment; this is a lens over it, and clearing the filter
+ * brings everything straight back. */
+export function layoutOriginal(fragments,ids,mode='aligned',overrides={},_maxRows=undefined,filter=null) {
+  const allowedRows=filter?.sequences?.length?new Set(filter.sequences):null
+  const allowedBlocks=filter?.blocks?.length?new Set(filter.blocks):null
+  const visible=allowedRows?ids.filter(id=>allowedRows.has(id)):ids
+  const rank=new Map(visible.map((id,i)=>[id,i]))
+  return fragments.filter(f=>{
+    if(!allowedBlocks)return true
+    if(f.aggregate)return true
+    return allowedBlocks.has(f.sourceBlock)
+  }).map(f=>{
+    if(f.aggregate)return {...f,layoutRows:visible.length,slots:f.rowIds.map(id=>rank.get(id)??0)}
     const compact=(overrides[f.sourceBlock]||mode)==='compact'
-    const ordered=f.rowIds.filter(id=>!compact||!f.availableRows||f.availableRows.includes(id)).sort((a,b)=>(rank.get(a)??0)-(rank.get(b)??0))
+    const ordered=f.rowIds.filter(id=>(!allowedRows||allowedRows.has(id))&&(!compact||!f.availableRows||f.availableRows.includes(id))).sort((a,b)=>(rank.get(a)??0)-(rank.get(b)??0))
     const slots=ordered.map(id=>rank.get(id)??0)
     const y=compact?(mode==='compact'?0:slots.length?Math.min(...slots):0):0
-    return {...f,rowIds:ordered,y,slots:compact?null:slots,layoutRows:compact?ordered.length:ids.length,compact}
+    return {...f,rowIds:ordered,y,slots:compact?null:slots,layoutRows:compact?ordered.length:visible.length,compact}
   })
 }
 

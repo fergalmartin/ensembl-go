@@ -293,6 +293,69 @@ class AlignmentStore:
             item=db.execute('SELECT x FROM source_layout WHERE block=?',(block,)).fetchone() if block else None
         return {'max_source_rows':max_rows,'layout_end':last['end_x'] if last else 0,'layout_start':item['x'] if item else 0}
 
+    def summary(self, limit=20000):
+        """Per-sequence and per-block figures for the filter panel.
+
+        Both inventories are aggregated in the database rather than by walking
+        chunks: `rows` already carries each sequence's span in each block, so a
+        sequence's block count and aligned bases are one grouped scan. Nothing
+        here reads sequence text.
+
+        `columns` counts the alignment columns of the blocks a sequence appears
+        in, and is always known. `bases` counts ungapped bases, which is only
+        derivable where the row carries source coordinates: MAF start/size are
+        ungapped, while a plain FASTA row has none. `placed` says how many blocks
+        contributed, so a caller can tell no bases from none counted rather than
+        showing an alignment 0 bases everywhere.
+        """
+        self.ensure_layout()
+        with self.connect() as db:
+            total_sequences = db.execute('SELECT count(*) FROM sequences').fetchone()[0]
+            total_blocks = db.execute('SELECT count(*) FROM blocks').fetchone()[0]
+            sequences = [dict(r) for r in db.execute(
+                '''SELECT s.id, s.source, s.label, s.metadata,
+                          count(r.block) AS blocks,
+                          coalesce(sum(CASE WHEN r.empty_status IS NULL AND r.coordinates THEN r.end - r.start END), 0) AS bases,
+                          coalesce(sum(CASE WHEN r.empty_status IS NULL AND r.coordinates THEN 1 END), 0) AS placed,
+                          coalesce(sum(CASE WHEN r.empty_status IS NULL THEN b.length END), 0) AS columns,
+                          coalesce(sum(r.empty_status IS NOT NULL), 0) AS empty
+                   FROM sequences s
+                   LEFT JOIN rows r ON r.id = s.id
+                   LEFT JOIN blocks b ON b.id = r.block
+                   GROUP BY s.id ORDER BY s.rowid LIMIT ?''', (limit,))]
+            for row in sequences:
+                metadata = json.loads(row.pop('metadata') or '{}')
+                row['genome_key'] = metadata.get('genome_key')
+                row['chrom'] = metadata.get('chrom')
+                row['assembly'] = metadata.get('assembly')
+            blocks = [dict(r) for r in db.execute(
+                '''SELECT b.id, b.length,
+                          count(r.id) AS rows,
+                          coalesce(sum(r.empty_status IS NULL), 0) AS available
+                   FROM blocks b LEFT JOIN rows r ON r.block = b.id
+                   GROUP BY b.id ORDER BY b.id LIMIT ?''', (limit,))]
+        return {'sequences': sequences, 'blocks': blocks,
+                'truncated': {'sequences': total_sequences > len(sequences), 'blocks': total_blocks > len(blocks)},
+                'total': {'sequences': total_sequences, 'blocks': total_blocks}}
+
+    def blocks_with(self, ids, limit=200000):
+        """Blocks holding any of these sequences, and which of them each holds.
+
+        Narrowing one list by the other needs the block numbers; building a layer
+        from the result needs the membership too, because a selected sequence is
+        not in every selected block and inventing rows for the ones it misses
+        would put cells in a layer that are not in the alignment.
+        """
+        if not ids: return []
+        marks = ','.join('?' * len(ids))
+        found = {}
+        with self.connect() as db:
+            for row in db.execute(
+                f'SELECT block, id FROM rows WHERE id IN ({marks}) AND empty_status IS NULL ORDER BY block LIMIT ?',
+                (*ids, limit)):
+                found.setdefault(row['block'], []).append(row['id'])
+        return [{'block': block, 'ids': members} for block, members in sorted(found.items())]
+
     def outside_neighbours(self, ids, lo, hi):
         """Nearest block holding each sequence outside the block range [lo, hi].
 
