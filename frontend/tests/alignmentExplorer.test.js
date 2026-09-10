@@ -736,3 +736,51 @@ test('moving a row inside a chunk redeals that chunk only',async()=>{
   const plain=createFragment(1,0,100,['a','b','c'],{id:'f2'})
   assert.deepEqual(order(reorderFragmentRow(plain,'a',2)),['b','c','a'])
 })
+
+test('a highlighted row can always be unhighlighted, whatever is loaded',async()=>{
+  const {togglePicks,rowPicks,removeRowPicks,pickedRowIds}=await import('../src/components/alignment-explorer/layers.js')
+  const f=n=>createFragment(n,0,100,['a','b'],{id:`original:${n}`})
+  const near={fragments:[f(4),f(5)]}
+  let selection=togglePicks([],rowPicks(near,'a'))
+  assert.deepEqual([...pickedRowIds(selection)],['a'])
+
+  // Pan, and the row's picks are now built from different fragments. togglePicks
+  // cannot take back picks it was not handed, so it adds instead: this is what
+  // left a row highlighted with no way to clear it.
+  const far={fragments:[f(5),f(6)]}
+  const viaToggle=togglePicks(selection,rowPicks(far,'a'))
+  assert.ok(pickedRowIds(viaToggle).has('a'),'toggling after a pan still leaves the row picked')
+  assert.ok(viaToggle.length>selection.length,'and it added rather than removed')
+
+  // Removing by row is not hostage to any of that.
+  assert.deepEqual(removeRowPicks(selection,'a'),[])
+  assert.deepEqual([...pickedRowIds(removeRowPicks(viaToggle,'a'))],[])
+  // It leaves other rows and other kinds of pick alone.
+  const mixed=[...rowPicks(near,'a'),...rowPicks(near,'b'),{kind:'block',fragmentId:'original:4',start:0,end:100,rowIds:['a','b']}]
+  const left=removeRowPicks(mixed,'a')
+  assert.deepEqual([...pickedRowIds(left)],['b'])
+  assert.equal(left.filter(p=>p.kind==='block').length,1)
+  assert.deepEqual(removeRowPicks([],'a'),[])
+})
+
+test('in Original a skipped link stays skipped while its blocks are still loading',async()=>{
+  const {pathIsOccluded}=await import('../src/components/alignment-explorer/layers.js')
+  const link={from:{sourceBlock:4},to:{sourceBlock:9}}
+  const adjacent={from:{sourceBlock:4},to:{sourceBlock:5}}
+  const rect=sourceBlock=>({sourceBlock,x:0,width:10,y:0,height:10})
+
+  // Original holds every block of the file. The answer must be the same whether
+  // the blocks in between have arrived yet or not, or a link flicks between a
+  // curve and a pair of markers as tiles land.
+  assert.equal(pathIsOccluded(link,[rect(4),rect(9)],true),true)
+  assert.equal(pathIsOccluded(link,[rect(4),rect(6),rect(9)],true),true)
+  assert.equal(pathIsOccluded(link,[],true),true)
+  // Adjacent blocks have nothing between them at any moment.
+  assert.equal(pathIsOccluded(adjacent,[],true),false)
+  assert.equal(pathIsOccluded(adjacent,[rect(4),rect(5)],true),false)
+
+  // A layer holds only the chunks someone chose, so what is present is the whole
+  // truth: blocks 5 to 8 are simply not there to bury anything.
+  assert.equal(pathIsOccluded(link,[rect(4),rect(9)]),false)
+  assert.equal(pathIsOccluded(link,[rect(4),rect(6),rect(9)]),true)
+})

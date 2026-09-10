@@ -1,5 +1,5 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './data.js'
-import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded, BLOCK_EDGE_GAP, blockAtLayoutX, pickedRowIds } from './layers.js'
+import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded, sourceViewAnchor, BLOCK_EDGE_GAP, blockAtLayoutX, pickedRowIds } from './layers.js'
 import { renderResolution } from './renderResolution'
 import { visibleGaps } from './gapMemory'
 import { denseOriginal } from './originalLayout'
@@ -64,7 +64,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     const backwards=bx<ax,arc=backwards?30:0
     // A link that skips blocks is carried by a marker on each block edge rather
     // than a line routed around everything in between.
-    if(pathIsOccluded(connection,drawnRects))continue
+    if(pathIsOccluded(connection,drawnRects,!!state.original))continue
     ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9';ctx.lineWidth=selected?3:1.8;ctx.globalAlpha=anyLit&&!selected?0.3:0.95
     ctx.beginPath();ctx.moveTo(ax,ay);ctx.bezierCurveTo(ax+reach,ay-arc,bx-reach,by-arc,bx,by);ctx.stroke()
     const points=Array.from({length:17},(_,i)=>{const t=i/16,u=1-t;return {x:u*u*u*ax+3*u*u*t*(ax+reach)+3*u*t*t*(bx-reach)+t*t*t*bx,y:u*u*u*ay+3*u*u*t*(ay-arc)+3*u*t*t*(by-arc)+t*t*t*by}})
@@ -285,7 +285,11 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   if(state.original){
     ctx.fillStyle=colors.background;ctx.fillRect(0,0,MARGIN_X,size.height)
     ctx.strokeStyle=colors.border;ctx.beginPath();ctx.moveTo(MARGIN_X-.5,0);ctx.lineTo(MARGIN_X-.5,size.height);ctx.stroke()
-    const focused=[...drawLayer.fragments].filter(f=>!f.aggregate&&panelRect(f,camera).y<size.height&&panelRect(f,camera).y+panelRect(f,camera).height>0).sort((a,b)=>Math.abs(a.x-camera.x)-Math.abs(b.x-camera.x))[0]
+    // The block the view is over, not the one whose start is nearest. A wide
+    // block whose start is far off to the left still fills the screen, and
+    // naming a small neighbour instead put the gutter on a different block's
+    // rows from the ones being looked at.
+    const focused=sourceViewAnchor(drawLayer.fragments.filter(f=>!f.aggregate&&panelRect(f,camera).y<size.height&&panelRect(f,camera).y+panelRect(f,camera).height>0),camera)
     const compactAnchor=focused?.compact?focused:null
     const gutter=compactAnchor?compactAnchor.rowIds.map((id,i)=>({row:byId.get(id),y:panelRect(compactAnchor,camera).y+rowSlot(compactAnchor,i)*ROW_HEIGHT})):inventory.map((row,i)=>({row,y:MARGIN_Y+i*ROW_HEIGHT-camera.y}))
     if(compactAnchor){ctx.fillStyle=colors.muted;ctx.font='10px Lato, sans-serif';ctx.fillText(`Rows: block ${compactAnchor.sourceBlock}`,8,14)}
@@ -301,7 +305,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   // chevron on the block edge and the block at the other end, drawn after the
   // panels so nothing buries them. Clicking one opens that block.
   ctx.font='10px "IBM Plex Mono", monospace'
-  for(const marker of blockJumpMarkers(connections,offWindow,drawnRects)){
+  for(const marker of blockJumpMarkers(connections,offWindow,drawnRects,!!state.original)){
     const f=fragmentById.get(marker.fragmentId)
     if(!f)continue
     const index=f.rowIds.indexOf(marker.rowId)

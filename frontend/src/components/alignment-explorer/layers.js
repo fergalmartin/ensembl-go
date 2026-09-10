@@ -138,6 +138,15 @@ export function togglePicks(selection,picks) {
   return [...selection.filter(p=>!ids.has(pickId(p))),...picks]
 }
 
+/** Drop every pick of a row, whatever it was picked from.
+ *
+ * togglePicks can only take back the picks it is handed, and the picks for a row
+ * are built from the fragments currently loaded. Pan or zoom between the two
+ * clicks and that set has changed, so the second click added rather than
+ * removed and the row could not be unhighlighted at all. */
+export const removeRowPicks = (selection,rowId) =>
+  selection.filter(pick=>!(pick.kind==='row'&&pick.rowIds.includes(rowId)))
+
 export const pickedRowIds = selection =>
   new Set(selection.filter(p=>p.kind==='row').flatMap(p=>p.rowIds))
 
@@ -392,10 +401,10 @@ export function columnScale(f,camera) {
  * `flow` the direction the path travels, so both ends of one link point the same
  * way. A link whose far end is outside the loaded window contributes only the
  * end that exists. */
-export function blockJumpMarkers(connections,offWindow,rects) {
+export function blockJumpMarkers(connections,offWindow,rects,everyBlockExists=false) {
   const markers=[]
   for(const c of connections){
-    if(!pathIsOccluded(c,rects))continue
+    if(!pathIsOccluded(c,rects,everyBlockExists))continue
     const flow=c.to.sourceBlock>c.from.sourceBlock?1:-1
     markers.push({id:`${c.id}:out`,fragmentId:c.from.id,rowId:c.rowId,edge:flow,flow,block:c.to.sourceBlock})
     markers.push({id:`${c.id}:in`,fragmentId:c.to.id,rowId:c.rowId,edge:-flow,flow,block:c.from.sourceBlock})
@@ -407,9 +416,15 @@ export function blockJumpMarkers(connections,offWindow,rects) {
 /** A string is buried whenever a block it does not belong to stands between its
  * endpoints. Comparing block numbers is not enough: only panels actually drawn
  * can occlude it, and the endpoints may be ordered either way on screen. */
-export function pathIsOccluded(connection,rects) {
+export function pathIsOccluded(connection,rects,everyBlockExists=false) {
   const from=connection.from.sourceBlock,to=connection.to.sourceBlock
   const low=Math.min(from,to),high=Math.max(from,to)
+  // Original holds every block of the file, so a link that skips one is buried
+  // whether or not that block has loaded yet. Deciding from what is drawn made
+  // the answer change as tiles arrived, and a link flicked between a curve and
+  // a pair of markers while zooming. A layer holds only the chunks someone
+  // chose, so there the blocks actually present are the whole truth.
+  if(everyBlockExists)return high-low>1
   return rects.some(r=>r.sourceBlock>low&&r.sourceBlock<high)
 }
 export function panelGeometry(f,camera,marginX) {

@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { hitCanvasItem } from './originalLayout'
 import { paintLayer, panelRect } from './paintLayer'
 import { MARGIN_X, HEADER_HEIGHT, MARGIN_Y, ROW_HEIGHT } from './data'
-import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks } from './layers'
+import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks, removeRowPicks } from './layers'
 import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWheelAction } from '../../utils/browsingControls'
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
@@ -182,7 +182,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       // A press that never travelled is still a click on the name; one that did
       // drops the row where it was let go.
       if(current.dragging)onReorderRow?.(current.rowId,reorderTarget(current,point.y).target,current.fragmentId)
-      else if(current.fromLabel&&current.wasPicked)onSelection(togglePicks(state.selection,rowPicks(layer,current.rowId)))
+      else if(current.fromLabel&&current.wasPicked)onSelection(removeRowPicks(state.selection,current.rowId))
       setReorder(null)
     }
     if(current.kind==='move'){
