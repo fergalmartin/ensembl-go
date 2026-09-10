@@ -418,3 +418,91 @@ test('a wheel over the name list scrolls the rows, not the track',async()=>{
   assert.equal(wheelScrollsRowList(20,{dx:0,dy:0},MARGIN_X),false)
   assert.equal(wheelScrollsRowList(20,undefined,MARGIN_X),false)
 })
+
+test('names, blocks and regions are picked into one list and toggle off',async()=>{
+  const {togglePicks,blockPick,rowPicks,pickedRowIds,resolvePicks}=await import('../src/components/alignment-explorer/layers.js')
+  const f1=createFragment(1,0,100,['a','b','c'],{id:'f1'}),f2=createFragment(2,0,80,['a','c'],{id:'f2'})
+  const layer={fragments:[f1,f2]}
+
+  // A name picks its whole extent in every fragment holding it, so the parts of
+  // the path off screen come too.
+  let sel=togglePicks([],rowPicks(layer,'a'))
+  assert.deepEqual(sel.map(p=>[p.fragmentId,p.start,p.end,p.rowIds]),[['f1',0,100,['a']],['f2',0,80,['a']]])
+  assert.deepEqual([...pickedRowIds(sel)],['a'])
+  // A second name adds rather than replaces.
+  sel=togglePicks(sel,rowPicks(layer,'c'))
+  assert.deepEqual([...pickedRowIds(sel)].sort(),['a','c'])
+  // Clicking the same name again takes just that one back out.
+  sel=togglePicks(sel,rowPicks(layer,'a'))
+  assert.deepEqual([...pickedRowIds(sel)],['c'])
+  // 'b' is only in f1, so picking it adds one entry.
+  assert.equal(togglePicks(sel,rowPicks(layer,'b')).length,3)
+
+  // Blocks and regions live in the same list, so they can be mixed and moved together.
+  sel=togglePicks(sel,[blockPick(f2)])
+  sel=togglePicks(sel,[{kind:'region',fragmentId:'f1',start:10,end:20,rowIds:['b']}])
+  // 'c' is in both fragments, so it stands as two row picks.
+  assert.deepEqual(sel.map(p=>p.kind).sort(),['block','region','row','row'])
+  // Toggling a block off leaves everything else alone.
+  assert.deepEqual(togglePicks(sel,[blockPick(f2)]).map(p=>p.kind).sort(),['region','row','row'])
+})
+
+test('a picked block takes the whole block; regions elsewhere stay separate',async()=>{
+  const {resolvePicks,blockPick}=await import('../src/components/alignment-explorer/layers.js')
+  const f1=createFragment(1,0,100,['a','b'],{id:'f1'})
+  const selection=[
+    blockPick(f1),
+    {kind:'row',fragmentId:'f1',start:0,end:100,rowIds:['a']},
+    {kind:'region',fragmentId:'f1',start:10,end:20,rowIds:['b']},
+    {kind:'region',fragmentId:'f2',start:5,end:15,rowIds:['a']},
+  ]
+  const resolved=resolvePicks(selection)
+  // Everything inside the picked block folds into it; cutting the row and region
+  // out separately would only fragment what was asked for whole.
+  assert.deepEqual(resolved.map(p=>[p.kind,p.fragmentId]),[['block','f1'],['region','f2']])
+  // With no block picked, the pieces stay the pieces they were.
+  assert.deepEqual(resolvePicks(selection.slice(1)).map(p=>[p.kind,p.fragmentId]),
+    [['row','f1'],['region','f1'],['region','f2']])
+})
+
+test('several picks on one fragment all move, taking their cells from the source',async()=>{
+  const {moveSelection,createLayer,emptyWorkspace,cellRanges}=await import('../src/components/alignment-explorer/layers.js')
+  const cells=frs=>{const out=[];for(const f of frs)for(const id of f.rowIds)for(const [a,z] of cellRanges(f,id))for(let i=a;i<z;i++)out.push(`${f.sourceBlock}:${id}:${i}`);return out.sort()}
+  const fragment=createFragment(1,0,30,['a','b'],{id:'f1'})
+  const layer=createLayer('Working',0,[fragment])
+  const state={...emptyWorkspace(),layers:[layer],active:layer.id,selection:[
+    {kind:'region',fragmentId:'f1',start:0,end:10,rowIds:['a']},
+    {kind:'region',fragmentId:'f1',start:20,end:30,rowIds:['b']},
+  ]}
+  const target=createLayer('Region')
+  const next=moveSelection(state,target.id,{targetLayer:target})
+  const moved=next.layers.find(l=>l.id===target.id).fragments
+  // Both regions arrive, as the two pieces they were drawn as.
+  assert.equal(moved.length,2)
+  assert.deepEqual(moved.map(f=>[f.start,f.end,f.rowIds]).sort(),[[0,10,['a']],[20,30,['b']]])
+  // No cell is lost and none is duplicated: the second pick cut what the first left.
+  assert.deepEqual(cells(next.layers.flatMap(l=>l.fragments)),cells([fragment]))
+})
+
+test('auto arrange stacks overlapping chunks and keeps their columns aligned',async()=>{
+  const {tidyLayer,createLayer}=await import('../src/components/alignment-explorer/layers.js')
+  // Two chunks of block 1 share columns 40-60; a third is clear of both.
+  const a=createFragment(1,0,60,['x'],{id:'a'}),b=createFragment(1,40,100,['y'],{id:'b'}),c=createFragment(1,200,240,['x'],{id:'c'})
+  const tidy=tidyLayer(createLayer('L',0,[a,b,c]),['x','y'],64)
+  const at=id=>tidy.fragments.find(f=>f.id===id)
+  // The overlapping pair is aligned on source coordinates, so column 50 is at the
+  // same place in both, and stacked so they do not collide.
+  assert.equal(at('b').x-at('a').x,40)
+  assert.notEqual(at('a').y,at('b').y)
+  // The chunk clear of them keeps being packed rather than inheriting the empty
+  // columns that lay between them in the source.
+  assert.ok(at('c').x<200)
+  assert.equal(at('c').y,0)
+  // Nothing overlaps once placed.
+  const box=f=>({x1:f.x,x2:f.x+f.end-f.start,y1:f.y,y2:f.y+Math.max(...f.slots,-1)+1})
+  const boxes=tidy.fragments.map(box)
+  for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++){
+    const p=boxes[i],q=boxes[j]
+    assert.ok(p.x2<=q.x1||q.x2<=p.x1||p.y2<=q.y1||q.y2<=p.y1,`${i} and ${j} overlap`)
+  }
+})

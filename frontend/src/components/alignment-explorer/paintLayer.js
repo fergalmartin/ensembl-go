@@ -1,5 +1,5 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './data.js'
-import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded, BLOCK_EDGE_GAP, blockAtLayoutX } from './layers.js'
+import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded, BLOCK_EDGE_GAP, blockAtLayoutX, pickedRowIds } from './layers.js'
 import { renderResolution } from './renderResolution'
 import { visibleGaps } from './gapMemory'
 import { denseOriginal } from './originalLayout'
@@ -32,6 +32,12 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   ctx.fillStyle=colors.background;ctx.fillRect(0,0,size.width,size.height)
   ctx.fillStyle=light?'#ced8e599':'#51617a33'
   for(let x=16;x<size.width;x+=28)for(let y=16;y<size.height;y+=28)ctx.fillRect(x,y,1,1)
+  // Several sequences can be picked at once now, so emphasis is a set: picking a
+  // name lights its whole path, and clicking a cell or a string still lights one
+  // without disturbing what is picked.
+  const lit=pickedRowIds(state.selection||[])
+  if(state.highlighted)lit.add(state.highlighted)
+  const anyLit=lit.size>0
   const drawLayer=drag?.fragmentId?{...layer,fragments:layer.fragments.map(f=>f.id===drag.fragmentId?{...f,x:drag.x,y:drag.y}:f)}:layer
   const dense=denseOriginal(drawLayer,camera,size),aligned=state.original&&((state.originalRows||'aligned')==='aligned'||drawLayer.fragments.some(f=>f.aggregate))
   const headerBoxes=[],labelBoxes=[],fragmentById=new Map(drawLayer.fragments.map(f=>[f.id,f]))
@@ -44,7 +50,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   for(const connection of connections) {
     const originalA=fragmentById.get(connection.from.id),originalB=fragmentById.get(connection.to.id)
     if(!originalA||!originalB)continue
-    const selected=state.highlighted===connection.rowId
+    const selected=lit.has(connection.rowId)
     if(dense&&!selected)continue
     const a=panelRect(originalA,camera),b=panelRect(originalB,camera)
     const ax=a.x+(connection.fromEnd-originalA.start)*a.scale,bx=b.x+(connection.toStart-originalB.start)*b.scale
@@ -56,7 +62,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     // A link that skips blocks is carried by a marker on each block edge rather
     // than a line routed around everything in between.
     if(pathIsOccluded(connection,drawnRects))continue
-    ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9';ctx.lineWidth=selected?3:1.8;ctx.globalAlpha=state.highlighted&&!selected?0.3:0.95
+    ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9';ctx.lineWidth=selected?3:1.8;ctx.globalAlpha=anyLit&&!selected?0.3:0.95
     ctx.beginPath();ctx.moveTo(ax,ay);ctx.bezierCurveTo(ax+reach,ay-arc,bx-reach,by-arc,bx,by);ctx.stroke()
     const points=Array.from({length:17},(_,i)=>{const t=i/16,u=1-t;return {x:u*u*u*ax+3*u*u*t*(ax+reach)+3*u*t*t*(bx-reach)+t*t*t*bx,y:u*u*u*ay+3*u*u*t*(ay-arc)+3*u*t*t*(by-arc)+t*t*t*by}})
     const mx=(ax+bx)/2,my=(ay+by)/2-arc*.75
@@ -85,7 +91,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         const id=f.rowIds[i],y=MARGIN_Y+rowSlot(f,i)*ROW_HEIGHT-camera.y
         if(y+ROW_HEIGHT<0||y>size.height)continue
         const fraction=(f.aggregate.presence?.[id]||0)/f.aggregate.count
-        ctx.fillStyle=state.highlighted===id?'#f2c766':light?'#598b9d':'#66a9b6';ctx.globalAlpha=state.highlighted&&state.highlighted!==id ? .35 : .4+.6*fraction
+        ctx.fillStyle=lit.has(id)?'#f2c766':light?'#598b9d':'#66a9b6';ctx.globalAlpha=anyLit&&!lit.has(id) ? .35 : .4+.6*fraction
         ctx.fillRect(left,y+4,Math.max(1,(right-left)*fraction),ROW_HEIGHT-8);ctx.globalAlpha=1
       }
       if(hover?.fragmentId===f.id){
@@ -130,8 +136,8 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     for(let index=0;index<f.rowIds.length;index++) {
       const id=f.rowIds[index],y=r.y+rowSlot(f,index)*ROW_HEIGHT
       if(y+ROW_HEIGHT<0||y>size.height)continue
-      const row=rowData.get(id),ranges=rowChunks(f,id),selected=state.highlighted===id
-      ctx.globalAlpha=state.highlighted&&!selected?0.36:1
+      const row=rowData.get(id),ranges=rowChunks(f,id),selected=lit.has(id)
+      ctx.globalAlpha=anyLit&&!selected?0.36:1
       ctx.fillStyle=colors.void;ctx.fillRect(r.x,y,w,ROW_HEIGHT)
       const background=tile?.overview,overviewRow=background?.rows.find(row=>row.id===id)
       if(background&&background!==data&&overviewRow?.bins){
@@ -235,7 +241,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       const id=f.rowIds[index],y=r.y+rowSlot(f,index)*ROW_HEIGHT
       if(state.original||dense||first.get(id)!==f.id||y+ROW_HEIGHT<0||y>size.height)continue
       let label=byId.get(id)?.label||byId.get(id)?.source||id
-      ctx.font=`${state.highlighted===id?'bold ':''}11px Lato, sans-serif`
+      ctx.font=`${lit.has(id)?'bold ':''}11px Lato, sans-serif`
       if(ctx.measureText(label).width>140){while(label.length&&ctx.measureText(label+'…').width>140)label=label.slice(0,-1);label+='…'}
       const width=ctx.measureText(label).width,labelRight=r.x-10,labelX=labelRight-width
       if(labelRight<0||labelX>size.width)continue
@@ -243,7 +249,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       if(drawLayer.fragments.some(other=>{if(other.id===f.id)return false;const rect=panelRect(other,camera);return box.x<rect.x+rect.width&&box.x+box.width>rect.x&&box.y<rect.y+rect.height&&box.y+box.height>rect.y-HEADER_HEIGHT})||labelBoxes.some(b=>box.x<b.x+b.width&&box.x+box.width>b.x&&box.y<b.y+b.height&&box.y+box.height>b.y))continue
       labelBoxes.push(box)
       ctx.strokeStyle=colors.background;ctx.lineWidth=3;ctx.lineJoin='round';ctx.strokeText(label,labelX,y+17)
-      ctx.fillStyle=state.highlighted===id?'#edc263':colors.text;ctx.fillText(label,labelX,y+17)
+      ctx.fillStyle=lit.has(id)?'#edc263':colors.text;ctx.fillText(label,labelX,y+17)
       hits.push({kind:'label',rowId:id,fragmentId:f.id,x:labelX-3,y,width:width+6,height:ROW_HEIGHT})
     }
     // Source block identity stays above the coordinate range, even on a tiny chunk.
@@ -281,7 +287,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     for(const {row,y} of gutter){
       if(!row||y+ROW_HEIGHT<0||y>size.height)continue
       let label=row.label||row.source||row.id;ctx.font='11px Lato, sans-serif';while(label.length&&ctx.measureText(label).width>MARGIN_X-18)label=label.slice(0,-2)+'…'
-      ctx.fillStyle=state.highlighted===row.id?'#edc263':colors.text;ctx.textAlign='right';ctx.fillText(label,MARGIN_X-10,y+17);ctx.textAlign='left'
+      ctx.fillStyle=lit.has(row.id)?'#edc263':colors.text;ctx.textAlign='right';ctx.fillText(label,MARGIN_X-10,y+17);ctx.textAlign='left'
       hits.push({kind:'label',rowId:row.id,x:0,y,width:MARGIN_X,height:ROW_HEIGHT})
     }
   }
@@ -295,7 +301,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     if(!f)continue
     const index=f.rowIds.indexOf(marker.rowId)
     if(index<0)continue
-    const selected=state.highlighted===marker.rowId
+    const selected=lit.has(marker.rowId)
     if(dense&&!selected)continue
     const r=panelRect(f,camera)
     const y=r.y+(rowSlot(f,index)+0.5)*ROW_HEIGHT
@@ -316,7 +322,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     if(labelX+width<MARGIN_X||labelX>size.width)continue
     ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9'
     ctx.lineWidth=selected?2.2:1.5
-    ctx.globalAlpha=state.highlighted&&!selected?0.35:0.95
+    ctx.globalAlpha=anyLit&&!selected?0.35:0.95
     ctx.beginPath();ctx.moveTo(anchor,y);ctx.lineTo(near,y);ctx.stroke()
     ctx.beginPath();ctx.moveTo(cx-marker.flow*4,y-4);ctx.lineTo(cx,y);ctx.lineTo(cx-marker.flow*4,y+4);ctx.stroke()
     ctx.globalAlpha=1

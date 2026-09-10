@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { hitCanvasItem } from './originalLayout'
 import { paintLayer, panelRect } from './paintLayer'
 import { MARGIN_X, HEADER_HEIGHT, MARGIN_Y, ROW_HEIGHT } from './data'
-import { clamp, hasCell, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList } from './layers'
+import { clamp, hasCell, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks } from './layers'
 import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWheelAction } from '../../utils/browsingControls'
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
@@ -103,14 +103,14 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(hit?.kind==='rows'){onToggleRows?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='copy'){onCopyChunk?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='layer'){onBlockToLayer?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
-    if(hit?.kind==='label'){onHighlight(state.highlighted===hit.rowId?'':hit.rowId);return}
+    if(hit?.kind==='label'){onSelection(togglePicks(state.selection,rowPicks(layer,hit.rowId)));return}
     if(hit?.kind==='blockjump'){onHighlight(hit.rowId);onSourceBlock?.(hit.block);return}
     if(hit?.kind==='connection')onInspect(hit)
     const selected=state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera),state.camera)
-    const kind=space.current||event.button===1?'pan':selected?'transfer':hit?.kind==='header'&&!state.original?'move':state.mode==='pan'?'pan':'select'
+    const kind=space.current||event.button===1?'pan':selected?'transfer':hit?.kind==='header'?(state.original?'header':'move'):state.mode==='pan'?'pan':'select'
     const fragment=kind==='move'?layer.fragments.find(f=>f.id===hit.fragmentId):null
     const cell=hit?.connection?.rowId||layer.fragments.map(f=>{const r=panelRect(f,state.camera),index=f.rowIds.findIndex((_,i)=>point.y>=r.y+rowSlot(f,i)*ROW_HEIGHT&&point.y<r.y+(rowSlot(f,i)+1)*ROW_HEIGHT);return point.x>=r.x&&point.x<r.x+r.width&&index>=0?f.rowIds[index]:null}).find(Boolean)
-    interaction.current={kind,point,cell,clientX:event.clientX,clientY:event.clientY,camera:{...p.state.camera},fragment};event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault()
+    interaction.current={kind,point,cell,clientX:event.clientX,clientY:event.clientY,camera:{...p.state.camera},fragment,headerId:hit?.fragmentId};event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault()
   }
   function pointerMove(event){
     const point=canvasPoint(event),current=interaction.current
@@ -147,10 +147,17 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(current.kind==='move'){
       const dx=point.x-current.point.x,dy=point.y-current.point.y
       if(Math.abs(dx)+Math.abs(dy)>2)onMove(current.fragment.id,current.fragment.x+dx/current.camera.scale,current.fragment.y+dy/ROW_HEIGHT)
+      else if(current.fragment)onSelection(togglePicks(state.selection,[blockPick(current.fragment)]))
+    }
+    if(current.kind==='header'){
+      const f=layer.fragments.find(x=>x.id===current.headerId)
+      if(f&&Math.hypot(point.x-current.point.x,point.y-current.point.y)<4)onSelection(togglePicks(state.selection,[blockPick(f)]))
     }
     if(current.kind==='select'){
       const a=layoutPoint(current.point,current.camera),b=layoutPoint(point,current.camera)
-      onSelection(selectRectangle(layer,{x1:Math.min(a.x,b.x),x2:Math.max(a.x,b.x)+.001,y1:Math.min(a.y,b.y),y2:Math.max(a.y,b.y)+.001},state.mode==='columns',current.camera))
+      const drawn=selectRectangle(layer,{x1:Math.min(a.x,b.x),x2:Math.max(a.x,b.x)+.001,y1:Math.min(a.y,b.y),y2:Math.max(a.y,b.y)+.001},state.mode==='columns',current.camera)
+      // Regions accumulate, so several can be picked out before moving them.
+      onSelection(togglePicks(state.selection,drawn.map(r=>({...r,kind:'region'}))))
     }
     interaction.current=null;setDrag(null);setRectangle(null);setOverSelection(false)
   }

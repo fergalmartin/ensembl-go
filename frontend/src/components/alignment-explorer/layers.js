@@ -55,12 +55,30 @@ export function moveSelection(workspace,targetId,{copy=false,targetLayer=null,vi
   const source=workspace.layers.find(l=>l.id===workspace.active)
   if(!source||!workspace.selection.length)return workspace
   let fragments=source.fragments, extracted=[]
-  for(const selection of workspace.selection) {
-    const fragment=fragments.find(f=>f.id===selection.fragmentId)
+  // Several picks can land on one fragment now, so each is cut from what the
+  // previous ones left rather than from the original. Cutting each from the
+  // original would hand back overlapping chunks and lose cells from the source.
+  const grouped=new Map()
+  for(const pick of resolvePicks(workspace.selection)){
+    if(!grouped.has(pick.fragmentId))grouped.set(pick.fragmentId,[])
+    grouped.get(pick.fragmentId).push(pick)
+  }
+  for(const [fragmentId,picks] of grouped){
+    const fragment=fragments.find(f=>f.id===fragmentId)
     if(!fragment)continue
-    const cut=cutFragment(fragment,selection)
-    if(cut.extracted)extracted.push(cut.extracted)
-    if(!copy)fragments=fragments.flatMap(f=>f.id===fragment.id?cut.remaining:[f])
+    let remaining=[fragment]
+    for(const pick of picks){
+      const next=[],taken=[]
+      for(const part of remaining){
+        const cut=cutFragment(part,pick)
+        if(cut.extracted)taken.push(cut.extracted)
+        next.push(...cut.remaining)
+      }
+      // One pick is one chunk wherever its pieces sit side by side again.
+      if(taken.length)extracted.push(...combineOverlaps(taken))
+      remaining=next
+    }
+    if(!copy)fragments=fragments.flatMap(f=>f.id===fragmentId?remaining:[f])
   }
   if(!extracted.length)return workspace
   let layers=workspace.layers.map(l=>l.id===source.id?{...l,fragments}:l)
@@ -87,16 +105,96 @@ export function combineOverlaps(fragments, rowOrder=[]) {
     return createFragment(g.sourceBlock,g.start,g.end,ids,{x:Math.min(...g.items.map(f=>f.x)),y:Math.min(...g.items.map(f=>f.y)),coverage})
   })
 }
+/** What the reader has picked, in one list.
+ *
+ * A pick is a rectangle over one fragment: `region` from a drag, `row` from a
+ * sequence name, `block` from a block header. Keeping all three in one list is
+ * what lets them be combined and dragged into a layer together, rather than a
+ * name selection and a rectangle selection being separate ideas that cannot mix.
+ */
+export const pickId = pick => `${pick.kind}:${pick.fragmentId}:${pick.start}:${pick.end}:${[...pick.rowIds].sort().join(',')}`
+
+export const blockPick = fragment =>
+  ({kind:'block',fragmentId:fragment.id,start:fragment.start,end:fragment.end,rowIds:[...fragment.rowIds]})
+
+/** A sequence picked by name covers its whole extent in every loaded fragment
+ * holding it, so picking a name reaches the parts of the path off screen too. */
+export function rowPicks(layer,rowId) {
+  return layer.fragments.filter(f=>!f.aggregate&&f.rowIds.includes(rowId))
+    .map(f=>({kind:'row',fragmentId:f.id,start:f.start,end:f.end,rowIds:[rowId]}))
+}
+
+/** Add picks, or remove them when every one is already picked, so a second click
+ * on the same name or header takes it back out. */
+export function togglePicks(selection,picks) {
+  if(!picks.length)return selection
+  const ids=new Set(picks.map(pickId)),present=new Set(selection.map(pickId))
+  if(picks.every(p=>present.has(pickId(p))))return selection.filter(p=>!ids.has(pickId(p)))
+  return [...selection.filter(p=>!ids.has(pickId(p))),...picks]
+}
+
+export const pickedRowIds = selection =>
+  new Set(selection.filter(p=>p.kind==='row').flatMap(p=>p.rowIds))
+
+/** Reduce picks to the chunks to extract.
+ *
+ * A picked block takes the whole block: the rows and regions picked inside it are
+ * already part of it, and cutting them out separately would only fragment what
+ * the reader asked for whole. Everywhere else rows and regions stay distinct
+ * chunks, so sub-regions over different blocks arrive as the pieces they were. */
+export function resolvePicks(selection) {
+  const whole=new Set(selection.filter(p=>p.kind==='block').map(p=>p.fragmentId))
+  const seen=new Set(),result=[]
+  for(const pick of selection){
+    if(pick.kind!=='block'&&whole.has(pick.fragmentId))continue
+    const id=pickId(pick)
+    if(seen.has(id))continue
+    seen.add(id);result.push(pick)
+  }
+  return result
+}
 export function layerOverlap(source,target) {
   return source.fragments.some(a=>target.fragments.some(b=>overlap(a,b)))
 }
+/** Arrange chunks left to right, stacking any that share source columns.
+ *
+ * Chunks that overlap cannot sit side by side without their shared columns
+ * landing at different places, which is the one thing the horizontal axis has to
+ * mean here. Overlapping chunks are instead aligned on their source coordinates
+ * and stacked into vertical bands that do not collide, so a column read across a
+ * band is the same column in every chunk of it.
+ *
+ * Chunks that do not overlap keep being packed, so a layer of scattered pieces
+ * does not inherit the empty megabases that lay between them in the source. */
 export function tidyLayer(layer,rowOrder=[], gap=64) {
   const rows=[...new Set(layer.fragments.flatMap(f=>f.rowIds))].sort((a,b)=>rowOrder.indexOf(a)-rowOrder.indexOf(b))
+  const clusters=[]
+  for(const f of [...layer.fragments].sort(sourceOrder)){
+    const last=clusters.at(-1)
+    if(last&&last.sourceBlock===f.sourceBlock&&f.start<last.end){last.items.push(f);last.end=Math.max(last.end,f.end)}
+    else clusters.push({sourceBlock:f.sourceBlock,start:f.start,end:f.end,items:[f]})
+  }
   let x=0
-  const fragments=[...layer.fragments].sort(sourceOrder).map(f=>{
-    const next={...f,x,y:0,slots:f.rowIds.map(id=>rows.indexOf(id))}
-    x+=f.end-f.start+gap;return next
-  })
+  const fragments=[]
+  for(const cluster of clusters){
+    const bands=[]
+    for(const f of cluster.items){
+      let band=bands.findIndex(items=>items.every(o=>f.start>=o.end||f.end<=o.start))
+      if(band<0){bands.push([]);band=bands.length-1}
+      bands[band].push(f)
+    }
+    let y=0
+    for(const band of bands){
+      let height=0
+      for(const f of band){
+        const slots=f.rowIds.map(id=>rows.indexOf(id))
+        fragments.push({...f,x:x+f.start-cluster.start,y,slots})
+        height=Math.max(height,Math.max(...slots,-1)+1)
+      }
+      y+=height
+    }
+    x+=cluster.end-cluster.start+gap
+  }
   return {...layer,fragments}
 }
 export function mergeLayers(workspace,sourceId,targetId,combine,rowOrder=[]) {
