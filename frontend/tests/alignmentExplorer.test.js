@@ -714,3 +714,25 @@ test('a saved row order survives rows arriving and leaving',async()=>{
   for(const custom of [['c'],['d','c','b','a'],['zz'],['b','b']])
     assert.deepEqual([...resolveRowOrder(['a','b','c','d'],custom)].sort(),['a','b','c','d'])
 })
+
+test('moving a row inside a chunk redeals that chunk only',async()=>{
+  const {reorderFragmentRow,rowSlot,rowCount}=await import('../src/components/alignment-explorer/layers.js')
+  // A chunk in the second band: its slots start at 4, not 0.
+  const f=createFragment(1,0,100,['a','b','c'],{id:'f1',slots:[4,5,6]})
+  const order=frag=>[...frag.rowIds].sort((x,y)=>rowSlot(frag,frag.rowIds.indexOf(x))-rowSlot(frag,frag.rowIds.indexOf(y)))
+  assert.deepEqual(order(f),['a','b','c'])
+  // Dropped on the chunk's last slot, 'a' becomes its last row.
+  const moved=reorderFragmentRow(f,'a',6)
+  assert.deepEqual(order(moved),['b','c','a'])
+  // The slots in use are redealt, never grown, so the chunk keeps its band and
+  // cannot gain a hole: aligning it against a neighbour still works.
+  assert.deepEqual([...moved.slots].sort((x,y)=>x-y),[4,5,6])
+  assert.equal(rowCount(moved),rowCount(f))
+  assert.deepEqual([...moved.rowIds].sort(),['a','b','c'])
+  // Dropped above everything.
+  assert.deepEqual(order(reorderFragmentRow(f,'c',0)),['c','a','b'])
+  // A row the chunk does not have, or a chunk with no slots at all.
+  assert.equal(reorderFragmentRow(f,'zz',0),f)
+  const plain=createFragment(1,0,100,['a','b','c'],{id:'f2'})
+  assert.deepEqual(order(reorderFragmentRow(plain,'a',2)),['b','c','a'])
+})

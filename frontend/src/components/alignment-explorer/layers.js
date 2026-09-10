@@ -233,6 +233,26 @@ export function moveRow(order,id,toIndex) {
   return [...rest.slice(0,at),id,...rest.slice(at)]
 }
 
+/** Move a row within one chunk, leaving every other chunk where it is.
+ *
+ * A chunk carries its own row order, and a name sits beside the chunk it belongs
+ * to, so dragging that name moves the row among the rows of that block and
+ * nothing else. Chunks further along keep their own arrangement; they are
+ * reordered by dragging into them in turn.
+ *
+ * The slots already in use are kept and only redealt, so the chunk occupies the
+ * same band it did and a move can never grow it or leave a hole in it. */
+export function reorderFragmentRow(fragment,rowId,targetSlot) {
+  if(!fragment?.rowIds?.includes(rowId))return fragment
+  const positions=fragment.rowIds.map((_,i)=>i).sort((a,b)=>rowSlot(fragment,a)-rowSlot(fragment,b))
+  const slotValues=positions.map(i=>rowSlot(fragment,i))
+  const ordered=positions.map(i=>fragment.rowIds[i])
+  const toIndex=ordered.filter(id=>id!==rowId).filter((_,i)=>slotValues[i]<targetSlot).length
+  const next=moveRow(ordered,rowId,toIndex)
+  const slotFor=new Map(next.map((id,i)=>[id,slotValues[i]]))
+  return {...fragment,slots:fragment.rowIds.map(id=>slotFor.get(id))}
+}
+
 export function layerConnections(layer) {
   const byRow=new Map(), result=[]
   for(const f of layer.fragments)for(const id of f.rowIds){if(!byRow.has(id))byRow.set(id,[]);byRow.get(id).push(f)}

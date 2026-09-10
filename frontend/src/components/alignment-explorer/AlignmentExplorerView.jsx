@@ -12,7 +12,7 @@ import FilterPanel from './FilterPanel'
 import GenomeColorPicker from '../GenomeColorPicker'
 import { genomeColorPalette } from '../../genomeColorSchemes'
 import { api, download, demoAlignment } from './data'
-import { emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, sourceViewAnchor, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRow } from './layers'
+import { emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, sourceViewAnchor, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRow, reorderFragmentRow } from './layers'
 import { NUCLEOTIDE_COLORS, NUCLEOTIDE_LETTER_THRESHOLD } from '../../utils/nucleotideStyle'
 import './explorer.css'
 
@@ -140,8 +140,13 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     commit(s=>({...s,layers:[...s.layers,tidied],active:tidied.id,original:false,selection:[],camera:tidied.camera}))
     setFilterOpen(false)
   }
-  function reorderRow(rowId,toIndex){
-    commit(s=>({...s,rowOrder:moveRow(resolveRowOrder(inventory.map(r=>r.id),s.rowOrder),rowId,toIndex)}))
+  function reorderRow(rowId,target,fragmentId){
+    // Original aligns every sequence to one row across the whole file, so a move
+    // there is a move of that shared order. A layer's chunks each carry their
+    // own, so a move there is a move within the chunk whose name was dragged.
+    if(state.original)return commit(s=>({...s,rowOrder:moveRow(resolveRowOrder(inventory.map(r=>r.id),s.rowOrder),rowId,target)}))
+    commit(s=>({...s,layers:s.layers.map(l=>l.id!==s.active?l:{...l,
+      fragments:l.fragments.map(f=>f.id===fragmentId?reorderFragmentRow(f,rowId,target):f)})}))
   }
   function transfer(copy=false,destinationId=target){
     const newLayer=destinationId==='new'?createLayer(layerName.trim()||`Layer ${state.layers.length+1}`,state.layers.length):null

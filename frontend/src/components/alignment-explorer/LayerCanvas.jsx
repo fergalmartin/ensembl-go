@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { hitCanvasItem } from './originalLayout'
 import { paintLayer, panelRect } from './paintLayer'
 import { MARGIN_X, HEADER_HEIGHT, MARGIN_Y, ROW_HEIGHT } from './data'
-import { clamp, hasCell, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks } from './layers'
+import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks } from './layers'
 import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWheelAction } from '../../utils/browsingControls'
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
@@ -84,6 +84,16 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     e.camera.updateMatrixWorld(true);e.scene.updateMatrixWorld(true);e.renderer.render(e.scene,e.camera)
   },[layer,layers,state,inventory,tiles,annotations,connections,offWindow,counts,gaps,light,size,drag,hover,reorder,rectangle])
   const rowIndexAt=y=>Math.round((y-MARGIN_Y+state.camera.y)/ROW_HEIGHT)
+  // In Original a row belongs to one shared order; in a layer it belongs to the
+  // chunk its name sits beside, so the drop is measured against that chunk.
+  function reorderTarget(current,y){
+    if(state.original)return {target:clamp(rowIndexAt(y),0,Math.max(0,inventory.length-1)),index:clamp(rowIndexAt(y),0,Math.max(0,inventory.length-1))}
+    const f=layer.fragments.find(x=>x.id===current.fragmentId)
+    if(!f)return {target:0,index:0}
+    const top=panelRect(f,state.camera).y
+    const slot=clamp(Math.round((y-top)/ROW_HEIGHT),0,Math.max(0,rowCount(f)-1))
+    return {target:slot,index:(top-MARGIN_Y+state.camera.y)/ROW_HEIGHT+slot}
+  }
   function pointerHover(point){
     // A block or merged block under the cursor, with the layout position inside
     // it so a merged block can point at the individual block being pointed at.
@@ -105,7 +115,11 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(hit?.kind==='copy'){onCopyChunk?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='layer'){onBlockToLayer?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='label'){
-      interaction.current={kind:'reorder',point,rowId:hit.rowId,fromLabel:true,camera:{...p.state.camera}}
+      // Highlight on the press, so the row is picked out before it is dragged
+      // anywhere. A click that goes nowhere toggles it back off on release.
+      const already=state.selection.some(pick=>pick.kind==='row'&&pick.rowIds.includes(hit.rowId))
+      if(!already)onSelection(togglePicks(state.selection,rowPicks(layer,hit.rowId)))
+      interaction.current={kind:'reorder',point,rowId:hit.rowId,fragmentId:hit.fragmentId,wasPicked:already,camera:{...p.state.camera}}
       event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
     }
     if(hit?.kind==='blockjump'){onHighlight(hit.rowId);onSourceBlock?.(hit.block);return}
@@ -140,7 +154,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(current.kind==='move')setDrag({fragmentId:current.fragment.id,x:current.fragment.x+dx/current.camera.scale,y:current.fragment.y+dy/ROW_HEIGHT})
     if(current.kind==='reorder'){
       if(Math.abs(dy)>ROW_HEIGHT/2||current.dragging){current.dragging=true
-        setReorder({rowId:current.rowId,index:clamp(rowIndexAt(point.y),0,Math.max(0,inventory.length-1)),y:point.y})}
+        setReorder({rowId:current.rowId,...reorderTarget(current,point.y),y:point.y})}
       return
     }
     if(current.kind==='select')setRectangle({x:Math.min(current.point.x,point.x),y:state.mode==='columns'?0:Math.min(current.point.y,point.y),width:Math.abs(dx),height:state.mode==='columns'?size.height:Math.abs(dy)})
@@ -156,8 +170,8 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(current.kind==='reorder'){
       // A press that never travelled is still a click on the name; one that did
       // drops the row where it was let go.
-      if(current.dragging)onReorderRow?.(current.rowId,clamp(rowIndexAt(point.y),0,Math.max(0,inventory.length-1)))
-      else if(current.fromLabel)onSelection(togglePicks(state.selection,rowPicks(layer,current.rowId)))
+      if(current.dragging)onReorderRow?.(current.rowId,reorderTarget(current,point.y).target,current.fragmentId)
+      else if(current.wasPicked)onSelection(togglePicks(state.selection,rowPicks(layer,current.rowId)))
       setReorder(null)
     }
     if(current.kind==='move'){
