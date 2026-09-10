@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { hitCanvasItem } from './originalLayout'
 import { paintLayer, panelRect } from './paintLayer'
 import { MARGIN_X, HEADER_HEIGHT, MARGIN_Y, ROW_HEIGHT } from './data'
-import { clamp, hasCell, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn } from './layers'
+import { clamp, hasCell, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList } from './layers'
 import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWheelAction } from '../../utils/browsingControls'
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
@@ -37,11 +37,19 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     observer.observe(el)
     const wheel=event=>{
       if(interaction.current?.kind==='transfer'){event.preventDefault();return}
-      const p=latest.current, descriptor=readWheelEvent(event,{pageHeight:p.size.height}),gesture=beginWheelGesture(e.gesture,descriptor,event.timeStamp)
+      const p=latest.current, descriptor=readWheelEvent(event,{pageHeight:p.size.height})
+      const camera=p.navigationCamera||p.state.camera
+      // Scrolling the name list scrolls the rows, carrying the alignment with it.
+      // Left of the gutter edge the horizontal controls would otherwise take the
+      // wheel and there would be no way to move down a long list of sequences.
+      if(wheelScrollsRowList(canvasPoint(event).x,descriptor,MARGIN_X)){
+        event.preventDefault();event.stopPropagation()
+        p.onCamera({...camera,y:camera.y+descriptor.dy});return
+      }
+      const gesture=beginWheelGesture(e.gesture,descriptor,event.timeStamp)
       const intent=resolveWheelAction(descriptor,resolveBrowsingControls(p.config),{gesture,canScrollPage:true});e.gesture={...gesture,mode:intent.nextGestureMode}
       if(intent.type==='none')return
       event.preventDefault();event.stopPropagation()
-      const camera=p.navigationCamera||p.state.camera
       if(intent.type==='page_scroll'){p.onCamera({...camera,y:camera.y+descriptor.dy});return}
       if(intent.type==='pan'){p.onCamera({...camera,x:camera.x+intent.dxPx/camera.scale});return}
       if(intent.type==='zoom'){

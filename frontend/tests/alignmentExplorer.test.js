@@ -399,3 +399,22 @@ test('every finer view of a remembered gap is still a gap',async()=>{
   // And every column either pass calls gap really is one.
   for(const column of fine)assert.equal(sequence[column],'-')
 })
+
+test('a wheel over the name list scrolls the rows, not the track',async()=>{
+  const {wheelScrollsRowList}=await import('../src/components/alignment-explorer/layers.js')
+  const MARGIN_X=156
+  // Over the gutter, a vertical wheel belongs to the row list.
+  assert.equal(wheelScrollsRowList(20,{dx:0,dy:40},MARGIN_X),true)
+  assert.equal(wheelScrollsRowList(155,{dx:3,dy:-40},MARGIN_X),true)
+  // Over the alignment it never does, however vertical: the track keeps its
+  // wheel behaviour everywhere the reader is actually looking at sequence.
+  assert.equal(wheelScrollsRowList(156,{dx:0,dy:40},MARGIN_X),false)
+  assert.equal(wheelScrollsRowList(900,{dx:0,dy:40},MARGIN_X),false)
+  // A sideways swipe over the gutter still pans the alignment, as it does
+  // everywhere else, rather than being swallowed by the list.
+  assert.equal(wheelScrollsRowList(20,{dx:-40,dy:0},MARGIN_X),false)
+  assert.equal(wheelScrollsRowList(20,{dx:40,dy:12},MARGIN_X),false)
+  // Nothing to do is not a scroll.
+  assert.equal(wheelScrollsRowList(20,{dx:0,dy:0},MARGIN_X),false)
+  assert.equal(wheelScrollsRowList(20,undefined,MARGIN_X),false)
+})

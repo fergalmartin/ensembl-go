@@ -209,6 +209,18 @@ export function blockAtLayoutX(fragment,layoutX) {
   if(!edges?.length)return null
   return edges.find(e=>layoutX>=e.x&&layoutX<e.end_x)||null
 }
+/** Whether a wheel event belongs to the row list rather than the track.
+ *
+ * The name gutter and the alignment share one vertical space, so scrolling the
+ * list has to carry the tracks with it; a wheel there driving the horizontal
+ * controls instead leaves the reader unable to move down a long row list at all.
+ * Only a vertically dominant wheel counts, so a sideways trackpad swipe over the
+ * gutter still pans the alignment as it does everywhere else. */
+export function wheelScrollsRowList(pointX,descriptor,marginX) {
+  if(!(pointX<marginX))return false
+  const dy=descriptor?.dy||0,dx=descriptor?.dx||0
+  return dy!==0&&Math.abs(dy)>Math.abs(dx)
+}
 export const BLOCK_EDGE_GAP=52
 /** Never eat a narrow block to feed the channel beside it. */
 export const blockGap=(f,camera)=>Math.min(BLOCK_EDGE_GAP,(f.end-f.start)*camera.scale*0.25)
