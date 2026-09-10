@@ -29,8 +29,15 @@ export function cycleRailGeometry(count, buttonRect, viewportHeight) {
 // 16px radius, so neither they nor their captions touch it.
 export const CYCLE_ACTION_OFFSET = 46
 export const CYCLE_ACTION_RADIUS = 18
+// Where a pointer sits on the rail, in face units. Shared so that anything
+// drawing a rail from cycleRailGeometry reads a cursor at the same place it drew
+// the dots: the two drifting apart is what makes a wheel feel unhooked from the
+// hand.
+export const cycleRailPosition = (y, rail, count) =>
+  clampWheelPosition(rail.spacing ? (y - rail.top - rail.padding) / rail.spacing : 0, count)
+
 export function cyclePointerIntent(x, y, rail, count, defaultAction) {
-  const position = clampWheelPosition(rail.spacing ? (y - rail.top - rail.padding) / rail.spacing : 0, count)
+  const position = cycleRailPosition(y, rail, count)
   const face = Math.round(position)
   const dx = x - rail.center
   const validY = y >= rail.top && y <= rail.top + rail.height

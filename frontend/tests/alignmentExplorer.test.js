@@ -645,3 +645,32 @@ test('filter terms work as a collected list, not only as typed text',async()=>{
   assert.equal(isDefaultFilter({...SEQUENCE_FILTER,include:[]},SEQUENCE_FILTER),true)
   assert.equal(isDefaultFilter({...SEQUENCE_FILTER,include:['human']},SEQUENCE_FILTER),false)
 })
+
+test('the cycle rail reads a cursor where it drew its dots',async()=>{
+  const {cycleRailGeometry,cycleRailPosition,cyclePointerDragged,CYCLE_DRAG_THRESHOLD}=await import('../src/utils/genomeWheel.js')
+  const button={left:400,right:440,bottom:100,top:80}
+  const rail=cycleRailGeometry(5,button,900)
+  // The rail hangs off the button and is centred on it, so it opens under the
+  // hand rather than at some offset the pointer mapping then has to guess at.
+  assert.equal(rail.center,420)
+  assert.equal(rail.top,108)
+  // A cursor on a dot reads as exactly that face. This is the pairing that was
+  // wrong: the rail drew dots at padding + i*spacing while the pointer was read
+  // against a different padding, so the indicator trailed the cursor.
+  for(let i=0;i<5;i++){
+    const dotY=rail.top+rail.padding+i*rail.spacing
+    assert.ok(Math.abs(cycleRailPosition(dotY,rail,5)-i)<1e-9,`dot ${i} did not read as face ${i}`)
+  }
+  // Halfway between two dots reads as halfway between two faces.
+  assert.ok(Math.abs(cycleRailPosition(rail.top+rail.padding+rail.spacing*1.5,rail,5)-1.5)<1e-9)
+  // Past either end it clamps rather than running off the list.
+  assert.equal(cycleRailPosition(-999,rail,5),0)
+  assert.equal(cycleRailPosition(9999,rail,5),4)
+
+  // A press that never travels is a click, which is what leaves the wheel open
+  // to follow the bare cursor; a deliberate drag always registers.
+  assert.equal(cyclePointerDragged({x:100,y:100},100,100),false)
+  assert.equal(cyclePointerDragged({x:100,y:100},100,100+CYCLE_DRAG_THRESHOLD),false)
+  assert.equal(cyclePointerDragged({x:100,y:100},100,100+CYCLE_DRAG_THRESHOLD+1),true)
+  assert.equal(cyclePointerDragged(null,100,999),false)
+})
