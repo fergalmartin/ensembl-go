@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { hitCanvasItem } from './originalLayout'
 import { paintLayer, panelRect } from './paintLayer'
 import { MARGIN_X, HEADER_HEIGHT, MARGIN_Y, ROW_HEIGHT } from './data'
-import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks, removeRowPicks, planeOf, planeViewport, planeFloor, zoomPlane } from './layers'
+import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks, removeRowPicks, planeOf, planeViewport, panelZoom, blockFitScale } from './layers'
 import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWheelAction } from '../../utils/browsingControls'
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
@@ -61,10 +61,9 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       if(intent.type==='pan'){p.onCamera({...camera,x:camera.x+intent.dxPx/plane/camera.scale});return}
       if(intent.type==='zoom'){
         const point=canvasPoint(event),x=intent.anchor==='center'?p.size.width/plane/2:point.x
-        // The same gesture, applied to the sheet instead of to the columns.
+        // The same gesture, walking the panel ladder instead of the columns.
         if(p.state.planeZoom){
-          const y=intent.anchor==='center'?p.size.height/plane/2:point.y
-          p.onCamera(zoomPlane(camera,1/intent.factor,{x,y},planeFloor(p.layer,camera,p.size)));return
+          p.onCamera(panelZoom(camera,1/intent.factor,{blockScale:blockFitScale(p.layer,camera,p.size),size:p.size}));return
         }
         const scale=clamp(camera.scale/intent.factor,Number.EPSILON,24),anchor=camera.x+(x-MARGIN_X)/camera.scale
         p.onCamera({...camera,scale,x:anchor-(x-MARGIN_X)/scale})
@@ -241,6 +240,6 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
   useEffect(()=>{const cancel=()=>{interaction.current=null;setDrag(null);setRectangle(null);latest.current.onSelectionDrag(null)};window.addEventListener('blur',cancel);return()=>window.removeEventListener('blur',cancel)},[])
   return <div className={`al-canvas ${state.mode==='pan'?'is-pan':'is-select'} ${state.selection.length?'has-selection':''} ${overSelection?'over-selection':''}`} ref={host} tabIndex={0} role="application" aria-label="Alignment panel. Use arrow keys to pan, plus and minus to zoom. Choose rectangle or columns to select. Drag highlighted cells to a sidebar layer or New layer. Drag chunk headers to arrange. Each header has a clipboard to copy FASTA; original source blocks also have a plus to create a layer."
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerLeave={()=>setHover(null)} onPointerCancel={cancelGesture} onLostPointerCapture={()=>{if(interaction.current)cancelGesture()}}
-    onKeyDown={e=>{if(interaction.current?.kind==='transfer'){if(e.key==='Escape'){e.preventDefault();cancelGesture()}return}if(e.key===' '){space.current=true;e.preventDefault()}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const plane=planeOf(state.camera);onCamera({...state.camera,x:state.camera.x+(e.key==='ArrowLeft'?-80:e.key==='ArrowRight'?80:0)/plane/state.camera.scale,y:state.camera.y+(e.key==='ArrowUp'?-80:e.key==='ArrowDown'?80:0)/plane})}if(['+','=','-'].includes(e.key)){e.preventDefault();const current=navigationCamera||state.camera,factor=e.key==='-'?1/1.4:1.4,plane=planeOf(current);if(state.planeZoom){onCamera(zoomPlane(current,factor,{x:size.width/plane/2,y:size.height/plane/2},planeFloor(layer,current,size)))}else{const scale=clamp(current.scale*factor,Number.EPSILON,24);onCamera({...current,scale,x:current.x+(size.width/plane/2-MARGIN_X)*(1/current.scale-1/scale)})}}if(e.key==='Escape')onSelection([])}} onKeyUp={e=>{if(e.key===' ')space.current=false}} onBlur={()=>{space.current=false}} />
+    onKeyDown={e=>{if(interaction.current?.kind==='transfer'){if(e.key==='Escape'){e.preventDefault();cancelGesture()}return}if(e.key===' '){space.current=true;e.preventDefault()}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const plane=planeOf(state.camera);onCamera({...state.camera,x:state.camera.x+(e.key==='ArrowLeft'?-80:e.key==='ArrowRight'?80:0)/plane/state.camera.scale,y:state.camera.y+(e.key==='ArrowUp'?-80:e.key==='ArrowDown'?80:0)/plane})}if(['+','=','-'].includes(e.key)){e.preventDefault();const current=navigationCamera||state.camera,factor=e.key==='-'?1/1.4:1.4,plane=planeOf(current);if(state.planeZoom){onCamera(panelZoom(current,factor,{blockScale:blockFitScale(layer,current,size),size}))}else{const scale=clamp(current.scale*factor,Number.EPSILON,24);onCamera({...current,scale,x:current.x+(size.width/plane/2-MARGIN_X)*(1/current.scale-1/scale)})}}if(e.key==='Escape')onSelection([])}} onKeyUp={e=>{if(e.key===' ')space.current=false}} onBlur={()=>{space.current=false}} />
 })
 export default LayerCanvas

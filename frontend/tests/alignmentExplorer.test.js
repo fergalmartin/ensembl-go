@@ -76,19 +76,70 @@ test('plane zoom leaves the point under the cursor where it is',async()=>{
     assert.ok(Math.abs(zoomed.plane*(MARGIN_Y+row-zoomed.y)-point.y*camera.plane)<1e-9)
   }
 })
-test('zooming out ends where the whole sheet is in view',async()=>{
-  const {constrainCamera,planeFloor}=await import('../src/components/alignment-explorer/layers.js')
-  const {MARGIN_Y,HEADER_HEIGHT,ROW_HEIGHT}=await import('../src/components/alignment-explorer/layout.js')
-  const rows=Array.from({length:400},(_,i)=>String(i))
-  const layer=createLayer('Tall',0,[createFragment(1,0,100,rows)])
+test('every view stops zooming out at the same workable limit',async()=>{
+  const {constrainCamera,PLANE_MIN}=await import('../src/components/alignment-explorer/layers.js')
   const size={width:1000,height:600}
-  const floor=planeFloor(layer,{scale:8},size)
-  assert.ok(floor<1,'400 rows cannot fit a 600 pixel window at full size')
-  assert.ok((MARGIN_Y+HEADER_HEIGHT+rows.length*ROW_HEIGHT+12)*floor<=size.height,'at the floor every row is on screen')
-  assert.equal(constrainCamera(layer,{x:0,y:0,scale:8,plane:floor/4},size).plane,floor,'and it does not shrink past it')
-  // Centred, so the whitespace is on both sides of the sheet rather than under it.
-  const top=(MARGIN_Y-constrainCamera(layer,{x:0,y:0,scale:8,plane:floor},size).y)*floor
-  assert.ok(top>0&&top<size.height/2)
+  // A small layer, a tall layer and Original all offer the same travel: stopping
+  // early because a layer happens to fit made the control look broken.
+  const small=createLayer('Small',0,[createFragment(1,0,100,['a','b'])])
+  const tall=createLayer('Tall',0,[createFragment(1,0,100,Array.from({length:400},(_,i)=>String(i)))])
+  const original={id:'original',extent:1e6,rowExtent:1363,fragments:[createFragment(1,0,1000,['a'])]}
+  for(const layer of [small,tall,original])
+    assert.equal(constrainCamera(layer,{x:0,y:0,scale:8,plane:PLANE_MIN/10},size).plane,PLANE_MIN)
+})
+test('zooming out in panel mode pulls the sheet toward the middle of the window',async()=>{
+  const {panelZoom,constrainCamera}=await import('../src/components/alignment-explorer/layers.js')
+  const {MARGIN_Y}=await import('../src/components/alignment-explorer/layout.js')
+  const size={width:1000,height:600}
+  // Rows well past the window, so the sheet is never small enough to be centred
+  // outright: this is the case that used to leave the blocks stuck at the top.
+  const layer=createLayer('Tall',0,[createFragment(1,0,4000,Array.from({length:400},(_,i)=>String(i)))])
+  const blockScale=constrainCamera(layer,{x:0,y:0,scale:0},size).scale
+  let camera=constrainCamera(layer,{x:0,y:0,scale:blockScale},size)
+  const topOfSheet=c=>(MARGIN_Y-c.y)*c.plane
+  const before=topOfSheet(camera)
+  for(let i=0;i<6;i++)camera=constrainCamera(layer,panelZoom(camera,1/1.4,{blockScale,size}),size)
+  assert.ok(camera.plane<1,'the sheet did shrink')
+  assert.ok(topOfSheet(camera)>before+40,`whitespace opened above the sheet (${before} -> ${topOfSheet(camera)})`)
+  assert.ok(topOfSheet(camera)<size.height/2,'without pushing it off the bottom')
+})
+test('panel zoom spends the column magnification before it shrinks the sheet',async()=>{
+  const {panelZoom,PLANE_MIN}=await import('../src/components/alignment-explorer/layers.js')
+  const size={width:1000,height:600},blockScale=.05
+  // From sequence detail: the way out walks down through the column zoom first,
+  // so the view passes through bases and binned columns to whole blocks instead
+  // of jumping from letters to a low-detail overview.
+  let camera={x:0,y:0,scale:12,plane:1}
+  const scales=[],planes=[]
+  for(let i=0;i<40;i++){camera=panelZoom(camera,1/1.4,{blockScale,size});scales.push(camera.scale);planes.push(camera.plane)}
+  assert.equal(planes[0],1,'the sheet is untouched while the columns are still magnified')
+  assert.ok(scales.some(s=>s<.65)&&scales.some(s=>s>=.65&&s<6),'it passes through base patterns and binned columns')
+  assert.equal(camera.scale,blockScale,'and stops widening once a block fills the width')
+  assert.equal(camera.plane,PLANE_MIN,'after which the sheet shrinks to the limit')
+  // Zooming back in reverses the same ladder rather than skipping a stage.
+  for(let i=0;i<40;i++)camera=panelZoom(camera,1.4,{blockScale,size})
+  assert.equal(camera.plane,1)
+  assert.ok(camera.scale>6,'the columns are magnified again')
+})
+test('panel mode opens on blocks, and leaving it puts the rows back at the top',async()=>{
+  const {enterPanelZoom,exitPanelZoom,BLOCK_DETAIL_SPAN,planeOf}=await import('../src/components/alignment-explorer/layers.js')
+  const {MARGIN_X}=await import('../src/components/alignment-explorer/layout.js')
+  const size={width:1000,height:600}
+  // A merged overview is a summary of a summary; shrinking one is what fell
+  // apart, so entering panel mode magnifies back to individual blocks.
+  const merged={x:5e6,y:0,scale:1000/4e6,plane:1}
+  const entered=enterPanelZoom(merged,size)
+  assert.ok(size.width/entered.scale<=BLOCK_DETAIL_SPAN,'individual blocks are drawn again')
+  const column=c=>c.x+(size.width/planeOf(c)/2-MARGIN_X)/c.scale
+  assert.ok(Math.abs(column(entered)-column(merged))<1e-6,'about the middle of the window')
+  // Sequence detail is already inside the band, so nothing jumps.
+  const close={x:100,y:0,scale:12,plane:1}
+  assert.deepEqual(enterPanelZoom(close,size),close)
+  const layer=createLayer('L',0,[createFragment(1,0,1000,['a','b'],{y:0})])
+  const left=exitPanelZoom({x:-4000,y:-900,scale:.5,plane:.2},layer,size)
+  assert.equal(left.plane,1)
+  assert.equal(left.y,0,'the rows come back to the top edge')
+  assert.ok(Math.abs(column(left)-column({x:-4000,y:-900,scale:.5,plane:.2}))<1e-6,'looking at the same column')
 })
 test('vertical scrolling remains available for large row inventories',async()=>{
   const {constrainCamera}=await import('../src/components/alignment-explorer/layers.js')

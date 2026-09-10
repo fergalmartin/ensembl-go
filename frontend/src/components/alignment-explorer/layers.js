@@ -501,38 +501,68 @@ export function viewBounds(layer) {
  * the plane factor and everything downstream is unchanged. The viewport the
  * painter is told about grows by the same factor, and that is where the
  * whitespace around the edges comes from. */
-export const PLANE_MIN=0.004
+/** How far out the sheet may be pushed. One limit for everything, so a layer
+ * offers the same travel as Original rather than stopping early because it
+ * happens to be small.
+ *
+ * Past roughly this point the drawing stops being an overview and becomes
+ * noise: rows fall under a pixel, a block is a few pixels of bar, and what is
+ * left is a scatter of marks that cannot be read or clicked. Ending here keeps
+ * every zoom in the range workable. */
+export const PLANE_MIN=0.15
 export const planeOf=camera=>clamp(Number(camera?.plane)||1,PLANE_MIN,1)
 /** The viewport the painter is given: real pixels over the plane factor, so
  * shrinking the sheet shows more of the world rather than less of it. */
 export const planeViewport=(size,camera)=>{const plane=planeOf(camera);return {width:size.width/plane,height:size.height/plane}}
-/** How far out the sheet may be pushed: far enough to hold all of it with a
- * margin of whitespace and no further, so zooming out ends somewhere meaningful.
- * A layer already smaller than the window keeps a quarter turn in hand, so the
- * control still does something rather than appearing broken. */
-export function planeFloor(layer,camera,size) {
-  const b=viewBounds(layer)
-  if(!b)return PLANE_MIN
-  const scale=Math.max(Number.EPSILON,Number(camera?.scale)||1)
-  const width=MARGIN_X+(b.right-b.left)*scale+24,height=MARGIN_Y+HEADER_HEIGHT+(b.bottom-b.top)+12
-  const fit=Math.min(size.width/Math.max(1,width),size.height/Math.max(1,height))
-  return clamp(Math.min(fit*.8,.75),PLANE_MIN,1)
+/** The scale at which the thing being looked at fills the width: one source
+ * block in Original, the whole arrangement in a layer. */
+export function blockFitScale(layer,camera,size) {
+  const solid=(layer?.fragments||[]).filter(f=>!f.aggregate)
+  const anchor=layer?.id==='original'?sourceViewAnchor(solid,camera):null
+  const target=anchor?{fragments:[anchor]}:layer?.id==='original'?null:layer
+  if(!target||!target.fragments?.length)return Math.max(Number.EPSILON,Number(camera?.scale)||1)
+  return fitCamera(target,size.width,size.height).scale
 }
-/** The whole arrangement at once: the columns fitted across the window and the
- * sheet shrunk until every row is on it too. Ordinary fit can only do the first
- * half, which on a file of a thousand sequences is the less interesting half.
+/** One zoom step in panel mode, always about the middle of the window.
  *
- * The two have to be solved together. The plane comes first, from the rows,
- * since that is the half nothing else can do; the columns are then fitted to the
- * viewport the plane opens up rather than to the window, or fitting the window
- * first and shrinking afterwards would leave the file a stamp in an empty
- * field. */
-export function fitPlane(layer,size) {
-  const b=viewBounds(layer)
-  if(!b)return defaultCamera()
-  const plane=clamp(Math.min(1,size.height/Math.max(1,MARGIN_Y+HEADER_HEIGHT+(b.bottom-b.top)+12)*.9),PLANE_MIN,1)
-  const scale=clamp(Math.max(40,size.width/plane-MARGIN_X-24)/Math.max(1,b.right-b.left),Number.EPSILON,18)
-  return {x:b.left,y:b.top,scale,plane}
+ * Zooming out spends the horizontal magnification first and only then starts
+ * shrinking the sheet. That is what makes the way out of sequence detail a walk
+ * - letters, then bases, then binned columns, then whole blocks, then the sheet
+ * pulling away - instead of a jump from letters to a low-detail overview with
+ * nothing in between. Zooming in reverses the same ladder, so a gesture and its
+ * opposite land back where they started.
+ *
+ * Anchoring on the middle rather than the cursor is what centres the view: every
+ * zoom out pulls the drawing toward the centre of the window, so whitespace
+ * opens above and below it instead of the blocks staying pinned under the ruler. */
+export function panelZoom(camera,factor,{blockScale,size,floor=PLANE_MIN}) {
+  const plane=planeOf(camera),out=factor<1
+  const centre={x:size.width/plane/2,y:size.height/plane/2}
+  if(out?camera.scale>blockScale*1.0001:plane>=1){
+    const scale=out?Math.max(blockScale,camera.scale*factor):clamp(camera.scale*factor,Number.EPSILON,24)
+    return {...camera,scale,x:camera.x+(centre.x-MARGIN_X)*(1/camera.scale-1/scale)}
+  }
+  return zoomPlane(camera,factor,centre,floor)
+}
+/** Entering panel mode lands on blocks.
+ *
+ * A merged overview is not something to shrink: those bars are already a summary
+ * of a summary, and scaling them down is where the drawing fell apart. Coming
+ * from one, the columns are magnified until individual blocks are drawn again.
+ * Coming from sequence detail nothing moves, because zooming out is about to
+ * walk down to the same place. */
+export function enterPanelZoom(camera,size) {
+  const span=Math.max(1,size.width/Math.max(Number.EPSILON,camera.scale))
+  if(!(span>BLOCK_DETAIL_SPAN))return {...camera,plane:1}
+  const scale=size.width/BLOCK_DETAIL_SPAN
+  return {...camera,plane:1,scale,x:camera.x+(size.width/2-MARGIN_X)*(1/camera.scale-1/scale)}
+}
+/** Leaving it puts the sheet back to full size with the rows against the top
+ * edge, keeping whatever column was in the middle of the window in the middle. */
+export function exitPanelZoom(camera,layer,size) {
+  const plane=planeOf(camera),b=viewBounds(layer)
+  const column=camera.x+(size.width/plane/2-MARGIN_X)/camera.scale
+  return {...camera,plane:1,x:column-(size.width/2-MARGIN_X)/camera.scale,y:b?b.top:0}
 }
 /** Plane zoom about a point, which stays where it is on screen. The point is in
  * plane units, the same ones the painter and every hit region use. */
@@ -554,13 +584,17 @@ export function constrainCamera(layer,camera,size) {
   if(!b)return defaultCamera()
   const minScale=Math.min(18,Math.max(40,size.width-MARGIN_X-24)/Math.max(1,b.right-b.left))
   const scale=clamp(Number(camera.scale)||minScale,minScale,24)
-  const plane=clamp(Number(camera.plane)||1,planeFloor(layer,{scale},size),1)
+  const plane=planeOf(camera)
   const view=planeViewport(size,{plane})
   const width=Math.max(40,view.width-MARGIN_X-24),height=Math.max(26,view.height-MARGIN_Y-12),span=width/scale
   const x=span>=b.right-b.left?b.left-(span-(b.right-b.left))/2:clamp(Number(camera.x)||0,b.left-span*.1,b.right-span*.9)
-  // Shrunken, the sheet sits in the middle of the window: that is what puts the
-  // whitespace on both sides of it instead of all of it underneath.
-  const y=b.bottom-b.top<=height?b.top-(plane<1?(height-(b.bottom-b.top))/2:0):clamp(Number(camera.y)||0,b.top-height*.1,b.bottom-height*.9)
+  // Shrunken, the sheet is held in the middle of the window: it may sit up to
+  // half a window down, which is what lets whitespace open above it. At full
+  // size it stays against the top edge, which is where reading starts.
+  // Sideways the old margins hold either way, so the first block still begins
+  // near the gutter rather than out in the middle of an empty window.
+  const room=plane<1?.5:.1,tail=plane<1?.5:.9
+  const y=b.bottom-b.top<=height?b.top-(plane<1?(height-(b.bottom-b.top))/2:0):clamp(Number(camera.y)||0,b.top-height*room,b.bottom-height*tail)
   return {x,y,scale,plane}
 }
 export function validateLayerWorkspace(value,ids) {

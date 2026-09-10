@@ -121,8 +121,9 @@
 .al-wheel .genome-wheel-drum { transition:transform 80ms linear; }
 .al-wheel .genome-wheel-status { bottom:35px; }
 @media(max-width:700px) { .al-sidebar { width:180px; flex-basis:180px; } .al-active-name { max-width:90px; } }
-.al-zoom-mode { display:flex; align-items:center; gap:3px; }
-.al-zoom-mode>span { font-size:11px; white-space:nowrap; color:var(--al-muted); padding-right:2px; }
+.al-zoom-mode { display:flex; align-items:center; gap:5px; font-size:11px; white-space:nowrap; color:var(--al-muted); }
+.al-zoom-mode select { padding:3px 4px!important; font-size:11px; }
+.al-zoom-mode b { font-variant-numeric:tabular-nums; color:var(--al-text,#e3eaf4); }
 .al-source-nav { display:flex; align-items:center; gap:3px; }
 .al-source-nav label { display:flex; align-items:center; gap:4px; font-size:11px; white-space:nowrap; }
 .al-source-nav input { width:58px; padding:3px!important; }

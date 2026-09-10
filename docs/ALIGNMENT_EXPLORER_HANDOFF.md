@@ -65,7 +65,13 @@ Panel zoom is implemented as a factor on the canvas transform, not as a second l
 
 Pointer coordinates are divided by the plane factor once, in `canvasPoint`. Nothing downstream knows about plane zoom, which is why dragging, picking and reordering keep working unchanged at any panel zoom. Below about three pixels a row is drawn as a single presence rect rather than bins, gaps and features, and below about four pixels a glyph is dropped while its hit region is kept — a row still answers to a click when it is too small to carry its name.
 
-`↺` fits the whole panel in Panel mode: the plane comes first, from the rows, and the columns are then fitted to the viewport the plane opens up. Fitting the window first and shrinking afterwards leaves the file a stamp in an empty field.
+Three rules bound the mode, all learned from it being wrong first:
+
+- **`PLANE_MIN` is 0.15, for every view.** Past roughly there rows fall under a pixel and a block is a few pixels of bar; what is left is a scatter of marks that can be neither read nor clicked. The same limit applies to a small layer as to Original — deriving a floor from the content made a layer stop at 75% and look broken.
+- **Panel mode shows blocks, and zoom is a ladder, not a scale factor.** `panelZoom` spends the horizontal magnification first and only then shrinks the sheet, so leaving sequence detail walks down through bases and binned columns to whole blocks instead of jumping to a low-detail overview. `enterPanelZoom` magnifies out of a merged overview back to individual blocks: merged bars are a summary of a summary and shrinking them is where the drawing fell apart. `useOriginalBlocks` therefore takes its merge width from the **real** window, not the enlarged one, so panel zoom never re-merges.
+- **Panel zoom is anchored on the middle of the window, never the cursor,** and `constrainCamera` lets the sheet sit up to half a window down while `plane < 1`. Together those are what centre the drawing and open whitespace above it; anchoring on the cursor with the old 10% margin left the blocks pinned under the ruler with all the space underneath. Sideways the ordinary margins still hold, so the first block begins near the gutter rather than out in an empty window. At full size the sheet returns to the top edge, and `exitPanelZoom` puts it there while keeping the column that was in the middle of the window.
+
+`↺` fits the same thing in either mode; in Panel it also takes the sheet to the far end of its travel.
 
 Base patterns and letters appear at closer zoom. Cached base detail is immediately converted into summaries at subpixel scales so it does not render as thin stripes while network summaries arrive. Wider cached summaries cover edges beneath newer detail where available. Pending data must never force the camera back to an earlier position.
 

@@ -12,7 +12,7 @@ import FilterPanel from './FilterPanel'
 import GenomeColorPicker from '../GenomeColorPicker'
 import { genomeColorPalette } from '../../genomeColorSchemes'
 import { api, download, demoAlignment } from './data'
-import { emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, sourceViewAnchor, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRowBefore, reorderFragmentRow, resolvePicks, planeViewport, fitPlane } from './layers'
+import { emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, sourceViewAnchor, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRowBefore, reorderFragmentRow, resolvePicks, planeViewport, enterPanelZoom, exitPanelZoom, PLANE_MIN } from './layers'
 import { NUCLEOTIDE_COLORS, NUCLEOTIDE_LETTER_THRESHOLD } from '../../utils/nucleotideStyle'
 import './explorer.css'
 
@@ -67,10 +67,20 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const switchLayer=useCallback(id=>{setInspect(null);setState(s=>({...s,original:id==='original',active:id==='original'?s.active:id,selection:[],camera:id==='original'?fitCamera({fragments:original.fragments.filter(f=>f.sourceBlock===s.sourceBlock&&!f.aggregate).slice(0,1)},size.width,size.height):s.layers.find(l=>l.id===id)?.camera||s.camera}))},[original,size])
   // Under plane zoom, resetting the view means all of it: the columns across the
   // window and the sheet shrunk until the rows are on it too.
-  const fit=()=>camera(state.planeZoom?fitPlane(layer,size):fitCamera(state.original?{fragments:[sourceViewAnchor(originalFragments,state.camera)].filter(Boolean)}:active,size.width,size.height))
-  // Leaving panel mode returns the sheet to full size, so the control is never a
-  // way to get stuck looking at something too small to read.
-  const zoomMode=panel=>{if(panel===!!state.planeZoom)return;if(panel)patch({planeZoom:true});else{patch({planeZoom:false});camera({...state.camera,plane:1})}}
+  // Reset fits the same thing in either mode; in panel mode it also takes the
+  // sheet to the far end of its travel, which is the whole point of being there.
+  const fit=()=>{
+    const view=fitCamera(state.original?{fragments:[sourceViewAnchor(originalFragments,state.camera)].filter(Boolean)}:active,size.width,size.height)
+    camera(state.planeZoom?{...view,plane:PLANE_MIN}:view)
+  }
+  // Entering panel mode lands on blocks; leaving it returns the sheet to full
+  // size with the rows against the top edge, so the control is never a way to
+  // get stuck looking at something too small to read.
+  const zoomMode=panel=>{
+    if(panel===!!state.planeZoom)return
+    patch({planeZoom:panel})
+    camera(panel?enterPanelZoom(state.camera,size):exitPanelZoom(state.camera,layer,size))
+  }
 
   const load=useCallback(async id=>{
     const token=++epoch.current;setBusy(true);setError('')
@@ -269,13 +279,11 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
         onNewLayer={layerFromFilter}
         onApplyToOriginal={value=>patch({filter:value,original:true})}
         onClearFilter={()=>patch({filter:null})}/>}
-      <main className="al-main"><div className="al-toolbar" data-alignment-control-bar><div className="al-tools">{[['pan','Pan'],['rectangle','Select'],['columns','Columns']].map(([mode,label])=><button key={mode} className={state.mode===mode?'selected':''} aria-pressed={state.mode===mode} onClick={()=>patch({mode})}>{label}</button>)}</div><button disabled={state.original||!active.fragments.length} onClick={()=>commit(s=>{const tidied=tidyLayer(active,ids,chunkGap(active.fragments,size.width)),view=fitCamera(tidied,size.width,size.height);return {...s,layers:s.layers.map(l=>l.id===active.id?{...tidied,camera:view}:l),camera:view}})}>Auto arrange</button><div className="al-zoom-mode" role="group" aria-label="Zoom mode"><span>Zoom mode</span>
-        <button className={state.planeZoom?'':'selected'} aria-pressed={!state.planeZoom}
-          title="Zoom the columns. Rows keep their height, which is what reading an alignment wants."
-          onClick={()=>zoomMode(false)}>Alignment</button>
-        <button className={state.planeZoom?'selected':''} aria-pressed={!!state.planeZoom}
-          title={'Zoom the whole panel as one flat sheet: blocks, names and labels shrink together and whitespace opens around the edges, so a tall layer can be seen end to end. \u21ba fits all of it. Dragging, picking and reordering carry on working.'}
-          onClick={()=>zoomMode(true)}>Panel{state.planeZoom&&renderState.camera.plane<1?` ${Math.round(renderState.camera.plane*100)}%`:''}</button></div>{state.original&&<div className="al-source-nav" title={sourceRange?.grouped?'This overview groups source blocks. Enter a block number to open one.':undefined}><button aria-label="Previous source block" disabled={!!sourceRange?.grouped||visibleSourceBlock<=1} onClick={()=>sourceBlock(visibleSourceBlock-1)}>‹</button><label>{sourceRange?.grouped?`Blocks ${sourceRange.first}–${sourceRange.last}`:'Block'} <input aria-label="Jump to source block" type="number" min="1" max={blocks.total} placeholder={sourceRange?.grouped?'Block…':undefined} key={sourceRange?.grouped?'grouped':visibleSourceBlock} defaultValue={sourceRange?.grouped?'':visibleSourceBlock} onKeyDown={e=>{if(e.key==='Enter'){const id=Number(e.currentTarget.value);if(Number.isInteger(id)&&id>=1&&id<=blocks.total)sourceBlock(id)}}}/></label><button aria-label="Next source block" disabled={!!sourceRange?.grouped||visibleSourceBlock>=blocks.total} onClick={()=>sourceBlock(visibleSourceBlock+1)}>›</button></div>}<button className={`al-filter-flag ${state.filter?'selected':''}`} disabled={!state.filter}
+      <main className="al-main"><div className="al-toolbar" data-alignment-control-bar><div className="al-tools">{[['pan','Pan'],['rectangle','Select'],['columns','Columns']].map(([mode,label])=><button key={mode} className={state.mode===mode?'selected':''} aria-pressed={state.mode===mode} onClick={()=>patch({mode})}>{label}</button>)}</div><button disabled={state.original||!active.fragments.length} onClick={()=>commit(s=>{const tidied=tidyLayer(active,ids,chunkGap(active.fragments,size.width)),view=fitCamera(tidied,size.width,size.height);return {...s,layers:s.layers.map(l=>l.id===active.id?{...tidied,camera:view}:l),camera:view}})}>Auto arrange</button><label className="al-zoom-mode"
+        title={'Alignment zooms the columns and leaves rows their height, which is what reading an alignment wants. Panel zooms the whole sheet: blocks, names and labels shrink together, the view centres, and whitespace opens around the edges. Dragging, picking and reordering carry on working in both.'}>Zoom mode
+        <select value={state.planeZoom?'panel':'alignment'} onChange={e=>zoomMode(e.target.value==='panel')}>
+          <option value="alignment">Alignment</option><option value="panel">Panel</option>
+        </select>{state.planeZoom&&renderState.camera.plane<1?<b>{Math.round(renderState.camera.plane*100)}%</b>:null}</label>{state.original&&<div className="al-source-nav" title={sourceRange?.grouped?'This overview groups source blocks. Enter a block number to open one.':undefined}><button aria-label="Previous source block" disabled={!!sourceRange?.grouped||visibleSourceBlock<=1} onClick={()=>sourceBlock(visibleSourceBlock-1)}>‹</button><label>{sourceRange?.grouped?`Blocks ${sourceRange.first}–${sourceRange.last}`:'Block'} <input aria-label="Jump to source block" type="number" min="1" max={blocks.total} placeholder={sourceRange?.grouped?'Block…':undefined} key={sourceRange?.grouped?'grouped':visibleSourceBlock} defaultValue={sourceRange?.grouped?'':visibleSourceBlock} onKeyDown={e=>{if(e.key==='Enter'){const id=Number(e.currentTarget.value);if(Number.isInteger(id)&&id>=1&&id<=blocks.total)sourceBlock(id)}}}/></label><button aria-label="Next source block" disabled={!!sourceRange?.grouped||visibleSourceBlock>=blocks.total} onClick={()=>sourceBlock(visibleSourceBlock+1)}>›</button></div>}<button className={`al-filter-flag ${state.filter?'selected':''}`} disabled={!state.filter}
   title={state.filter?`Original is filtered to ${(state.filter.sequences||[]).length.toLocaleString()} sequences and ${(state.filter.blocks||[]).length.toLocaleString()} blocks. Click to clear it; the source is unchanged.`:'Original is not filtered'}
   onClick={()=>patch({filter:null})}>{state.filter?'Filtered ✕':'Filter'}</button><strong className="al-active-name" style={{borderColor:layer.color}}>{layer.name}</strong><button title={state.planeZoom?'Fit the whole panel: every block across the window and every row down it':'Reset view to whole layer'} aria-label="Reset view" onClick={fit}>↺</button><LayerCycle layers={allLayers} active={layer.id} onChoose={switchLayer} dataset={dataset} inventory={displayInventory} light={theme==='light'} revision={revision}/></div>
         <LayerCanvas ref={canvas} layer={layer} layers={allLayers} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onAggregate={f=>camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={value=>patch({selection:value,mode:'pan'})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:id})} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock} onReorderRow={reorderRow}/>

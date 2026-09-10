@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, MARGIN_X } from './data'
-import { createFragment, mergeWidth, BLOCK_DETAIL_COUNT } from './layers'
+import { createFragment, mergeWidth, planeOf, BLOCK_DETAIL_COUNT } from './layers'
 import { TileScheduler } from './tileScheduler'
 
 /** Stable source coordinates with indexed viewport lookup. No sequential walk
@@ -15,7 +15,11 @@ export default function useOriginalBlocks(dataset,source,camera,size,_total,enab
   const span=Math.max(1,size.width/camera.scale),quantum=2**Math.ceil(Math.log2(span))
   const start=Math.max(0,Math.floor((camera.x-MARGIN_X/camera.scale-span*.5)/quantum)*quantum)
   const end=Math.min(extent,Math.max(start+1,Math.ceil((camera.x+span*1.5)/quantum)*quantum))
-  const merge=mergeWidth(span)
+  // Panel zoom shrinks the drawing; it does not coarsen it. The merge follows
+  // the real window rather than the enlarged one, so flicking to panel keeps
+  // individual blocks instead of collapsing them into bars that are already a
+  // summary of a summary.
+  const merge=mergeWidth(Math.max(1,size.width*planeOf(camera)/camera.scale))
   const key=`${dataset?.id}:${start}:${end}:${merge}`
   useEffect(()=>{
     if(!dataset||!enabled||end<=start){cache.setWanted([]);return}
