@@ -130,14 +130,15 @@
 
 /* The filter opens as a second column beside the sidebar, so the lists stay
    visible while the alignment is still on screen behind them. */
-.al-filter { display:flex; flex-direction:column; width:330px; min-width:330px; border-right:1px solid var(--al-border,#3a4d65);
-  background:var(--al-panel,#1c293d); overflow:hidden; }
+.al-filter { display:flex; flex-direction:column; width:min(58vw,780px); min-width:min(58vw,780px);
+  border-right:1px solid var(--al-border,#3a4d65); background:var(--al-panel,#1c293d); overflow-y:auto; }
+.al-filter-head { position:sticky; top:0; z-index:2; background:var(--al-panel,#1c293d); }
 .al-filter-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--al-border,#3a4d65); }
 .al-filter-head strong { font-size:12px; letter-spacing:.02em; }
 .al-filter-head .al-close { margin-left:auto; }
 .al-filter-tabs { display:flex; gap:3px; }
 .al-filter-tabs button { font-size:11px; padding:3px 9px; }
-.al-filter-body { display:flex; flex-direction:column; gap:7px; padding:9px 10px; overflow:hidden; flex:1; min-height:0; }
+.al-filter-body { display:flex; flex-direction:column; gap:7px; padding:9px 10px; }
 .al-filter-controls > label, .al-filter-body > label { display:flex; flex-direction:column; gap:3px; font-size:11px; }
 .al-filter-controls > label small, .al-filter-body > label small { opacity:.65; font-weight:400; }
 label.al-filter-range { display:grid; grid-template-columns:1fr 1fr; align-items:center; gap:3px 5px; font-size:11px; }
@@ -153,6 +154,9 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-filter-row small { grid-column:2; opacity:.6; font-size:10px; }
 .al-filter-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .al-filter-foot { display:flex; flex-direction:column; gap:5px; padding:9px 10px; border-top:1px solid var(--al-border,#3a4d65); }
+.al-grid-caption { display:flex; align-items:center; gap:8px; padding:3px 6px; font-size:11px; }
+.al-grid-caption button { background:none; border:0; font-size:11px; padding:1px 3px; font-weight:600; }
+.al-grid-caption span { opacity:.6; font-size:10px; margin-left:auto; }
 .al-filter-foot small { opacity:.65; font-size:10px; }
 .al-filter-active { display:flex; flex-direction:column; gap:3px; margin-top:6px; padding:6px 8px; border-radius:5px;
   border:1px solid #edc26355; background:#edc2631a; font-size:11px; }
@@ -167,10 +171,10 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 
 /* The panel expands to a full grid, where the whole inventory is browsable and
    the per-row figures have room to be columns rather than a squeezed caption. */
-.al-filter.wide { width:min(62vw,860px); min-width:min(62vw,860px); }
+
 .al-filter-head button[aria-pressed] { font-size:12px; padding:2px 7px; }
-.al-filter-controls { display:flex; flex-direction:column; gap:7px; overflow:auto; flex:0 0 auto; max-height:38vh; }
-.al-grid { display:flex; flex-direction:column; min-height:150px; flex:1;
+.al-filter-controls { display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; align-items:start; }
+.al-grid { display:flex; flex-direction:column;
   border:1px solid var(--al-border,#3a4d65); border-radius:5px; overflow:hidden; }
 .al-grid-head { display:grid; align-items:center; gap:6px; padding:4px 6px;
   background:var(--al-head,#24354c); border-bottom:1px solid var(--al-border,#3a4d65); }
@@ -178,13 +182,13 @@ label.al-filter-range input { width:100%; padding:3px!important; }
   opacity:.75; display:flex; align-items:center; gap:3px; overflow:hidden; }
 .al-grid-head button.selected { opacity:1; font-weight:600; }
 .al-grid-head button i { font-style:normal; font-size:8px; }
-.al-grid-body { overflow:auto; flex:1; min-height:0; }
+.al-grid-body { overflow:auto; }
 .al-grid-row { display:grid; align-items:center; gap:6px; padding:0 6px; font-size:11px; box-sizing:border-box; }
 .al-grid-row:hover { background:#ffffff0d; }
 .al-grid-row:not(.ticked) { opacity:.45; }
 .al-grid-row span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .al-grid-row span.numeric { text-align:right; font-family:"IBM Plex Mono",monospace; font-size:10px; opacity:.85; }
-.al-filter.wide .al-filter-controls { display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; align-content:start; }
+
 
 
 .al-filter.wide .al-filter-coords { grid-column:1 / -1; }

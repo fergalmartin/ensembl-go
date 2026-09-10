@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 const ROW_HEIGHT = 26
 const OVERSCAN = 6
+// A fixed window of rows, so the list never grows to push the actions below it
+// off the panel and never shrinks to nothing when the criteria above it are tall.
+const VISIBLE_ROWS = 20
 
 /** A sortable grid over the whole inventory.
  *
@@ -11,18 +14,10 @@ const OVERSCAN = 6
  * fixed, which is what lets the scrollbar be honest about how much is there.
  */
 export default function FilterGrid({rows,columns,rowKey,chosen,onChosen,label,empty}) {
-  const viewport=useRef(null)
   const [scrollTop,setScrollTop]=useState(0)
-  const [height,setHeight]=useState(320)
+  const [open,setOpen]=useState(true)
   const [sort,setSort]=useState({key:columns[0].key,direction:1})
-
-  useEffect(()=>{
-    const el=viewport.current
-    if(!el||typeof ResizeObserver==='undefined')return
-    const observer=new ResizeObserver(()=>setHeight(el.clientHeight))
-    observer.observe(el);setHeight(el.clientHeight)
-    return()=>observer.disconnect()
-  },[])
+  const height=VISIBLE_ROWS*ROW_HEIGHT
 
   const sorted=useMemo(()=>{
     const column=columns.find(c=>c.key===sort.key)||columns[0]
@@ -50,15 +45,19 @@ export default function FilterGrid({rows,columns,rowKey,chosen,onChosen,label,em
   }
 
   return <div className="al-grid" role="group" aria-label={label}>
-    <div className="al-grid-head" style={{gridTemplateColumns:`26px ${columns.map(c=>c.width).join(' ')}`}}>
+    <div className="al-grid-caption">
+      <button aria-expanded={open} onClick={()=>setOpen(v=>!v)}>{open?'▾':'▸'} {label}</button>
+      <span>{sorted.length.toLocaleString()} listed{chosen.size?` · ${chosen.size.toLocaleString()} ticked`:''}</span>
+    </div>
+    {open&&<div className="al-grid-head" style={{gridTemplateColumns:`26px ${columns.map(c=>c.width).join(' ')}`}}>
       <input type="checkbox" aria-label={allTicked?`Untick all ${label}`:`Tick all ${label}`} checked={allTicked}
         onChange={()=>onChosen(allTicked?new Set():new Set(sorted.map(rowKey)))}/>
       {columns.map(c=><button key={c.key} className={sort.key===c.key?'selected':''} title={`Sort by ${c.title}`}
         onClick={()=>setSort(s=>s.key===c.key?{key:c.key,direction:-s.direction}:{key:c.key,direction:1})}>
         {c.title}{sort.key===c.key?<i>{sort.direction>0?'▲':'▼'}</i>:null}
       </button>)}
-    </div>
-    <div className="al-grid-body" ref={viewport} onScroll={e=>setScrollTop(e.currentTarget.scrollTop)}>
+    </div>}
+    {open&&<div className="al-grid-body" style={{height}} onScroll={e=>setScrollTop(e.currentTarget.scrollTop)}>
       {!sorted.length&&<p className="al-hint">{empty}</p>}
       <div style={{height:sorted.length*ROW_HEIGHT,position:'relative'}}>
         {slice.map((row,i)=>{
@@ -71,6 +70,6 @@ export default function FilterGrid({rows,columns,rowKey,chosen,onChosen,label,em
           </label>
         })}
       </div>
-    </div>
+    </div>}
   </div>
 }

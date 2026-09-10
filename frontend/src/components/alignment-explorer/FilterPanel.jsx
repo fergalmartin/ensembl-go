@@ -21,7 +21,7 @@ function Range({label,unit,from,to,onFrom,onTo}) {
  * can say "those sequences, but only in blocks over 100kb".
  */
 export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyToOriginal,filterApplied,onClearFilter,onError}) {
-  const [tab,setTab]=useState('sequences'),[wide,setWide]=useState(false)
+  const [tab,setTab]=useState('sequences')
   const [summary,setSummary]=useState(null)
   const [sequenceFilter,setSequenceFilter]=useState(SEQUENCE_FILTER)
   const [blockFilter,setBlockFilter]=useState(BLOCK_FILTER)
@@ -115,14 +115,13 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
   ],[])
   const ready=!!summary
 
-  return <aside className={`al-filter ${wide?"wide":""}`} aria-label="Filter sequences and blocks">
+  return <aside className="al-filter" aria-label="Filter sequences and blocks">
     <div className="al-filter-head">
       <strong>Filter</strong>
       <div className="al-filter-tabs" role="tablist">
         <button role="tab" aria-selected={tab==='sequences'} className={tab==='sequences'?'selected':''} onClick={()=>setTab('sequences')}>Sequences</button>
         <button role="tab" aria-selected={tab==='blocks'} className={tab==='blocks'?'selected':''} onClick={()=>setTab('blocks')}>Blocks</button>
       </div>
-      <button aria-pressed={wide} title={wide?'Narrow the panel':'Expand to the full grid'} onClick={()=>setWide(v=>!v)}>{wide?'⇤':'⇥'}</button>
       <button className="al-close" aria-label="Close filter" onClick={onClose}>×</button>
     </div>
 
