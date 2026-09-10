@@ -8,7 +8,7 @@ import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWhee
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
  * coordinates and renderer drive the complete non-WebGL fallback. */
-const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navigationCamera, inventory, tiles, annotations, connections, offWindow, counts, light, config, onCamera, onCopyChunk, onBlockToLayer, onAggregate, onToggleRows, onSelection, onSelectionDrag, onSelectionDrop, onMove, onHighlight, onInspect, onSize, onFallback, onSourceBlock }, ref) {
+const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navigationCamera, inventory, tiles, annotations, connections, offWindow, counts, gaps, light, config, onCamera, onCopyChunk, onBlockToLayer, onAggregate, onToggleRows, onSelection, onSelectionDrag, onSelectionDrop, onMove, onHighlight, onInspect, onSize, onFallback, onSourceBlock }, ref) {
   const host = useRef(null), engine = useRef(null), latest = useRef(null), interaction = useRef(null), hits = useRef([]), space = useRef(false)
   const [size, setSize] = useState({width:800,height:500}), [drag,setDrag] = useState(null), [rectangle,setRectangle] = useState(null), [overSelection,setOverSelection] = useState(false), [hover,setHover] = useState(null)
   useLayoutEffect(()=>{ latest.current = {layer,layers,state,navigationCamera,inventory,tiles,annotations,connections,counts,light,config,onCamera,onSelection,onSelectionDrag,onSelectionDrop,onMove,onHighlight,onInspect,onSize,onFallback,size,drag,rectangle} })
@@ -61,7 +61,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       if(e.texture){e.texture.dispose();e.texture=new THREE.CanvasTexture(canvas);e.texture.colorSpace=THREE.SRGBColorSpace;e.texture.minFilter=THREE.LinearFilter;e.texture.magFilter=THREE.NearestFilter;e.mesh.material.map=e.texture;e.mesh.material.needsUpdate=true}
     }
     const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0)
-    hits.current=paintLayer(ctx,{layer,camera:state.camera,size,inventory,tiles,annotations,connections,offWindow,counts,state,drag,hover,selectionRect:rectangle,light})
+    hits.current=paintLayer(ctx,{layer,camera:state.camera,size,inventory,tiles,annotations,connections,offWindow,counts,state,drag,hover,gaps,selectionRect:rectangle,light})
     if(e.failed){e.fallback.width=canvas.width;e.fallback.height=canvas.height;e.fallback.getContext('2d').drawImage(canvas,0,0);return}
     e.renderer.setSize(size.width,size.height,false)
     e.camera.left=-size.width/2;e.camera.right=size.width/2;e.camera.top=size.height/2;e.camera.bottom=-size.height/2;e.camera.updateProjectionMatrix()
@@ -74,7 +74,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       m.position.set((i+1)*9,-(i+1)*14,-(i+1)*65);e.group.add(m)
     })
     e.camera.updateMatrixWorld(true);e.scene.updateMatrixWorld(true);e.renderer.render(e.scene,e.camera)
-  },[layer,layers,state,inventory,tiles,annotations,connections,offWindow,counts,light,size,drag,hover,rectangle])
+  },[layer,layers,state,inventory,tiles,annotations,connections,offWindow,counts,gaps,light,size,drag,hover,rectangle])
   function pointerHover(point){
     // A block or merged block under the cursor, with the layout position inside
     // it so a merged block can point at the individual block being pointed at.

@@ -331,3 +331,71 @@ test('pointing inside a merged block finds the block actually under the cursor',
   assert.equal(blockAtLayoutX({},500),null)
   assert.equal(blockAtLayoutX(null,500),null)
 })
+
+test('a gap found at any resolution is remembered and never fills back in',async()=>{
+  const {createGapMemory,rememberGaps,gapRanges,visibleGaps}=await import('../src/components/alignment-explorer/gapMemory.js')
+  const memory=createGapMemory()
+
+  // A coarse tile proves only the bins that are wholly gap. A bin merely
+  // containing gap says nothing about where inside it the gap falls, so it
+  // contributes nothing rather than a guess.
+  const coarse={start:0,end:400,bin_size:100,detail:false,rows:[{id:'a',bins:[
+    {A:60,'-':40},{'-':100},{'-':100},{C:100}]}]}
+  assert.deepEqual(gapRanges(coarse,coarse.rows[0]),[[100,200],[200,300]])
+  rememberGaps(memory,7,coarse)
+  assert.deepEqual(visibleGaps(memory,7,'a',0,400),[[100,300]])
+
+  // Detail over the same region gives exact runs. It can only ever add gap the
+  // coarse pass could not see; it can never contradict it.
+  const detail={start:0,end:400,detail:true,rows:[{id:'a',sequence:'A'.repeat(60)+'-'.repeat(240)+'C'.repeat(100)}]}
+  assert.deepEqual(gapRanges(detail,detail.rows[0]),[[60,300]])
+  rememberGaps(memory,7,detail)
+  assert.deepEqual(visibleGaps(memory,7,'a',0,400),[[60,300]])
+
+  // Replaying the coarse tile afterwards, as a repaint driven by an older tile
+  // would, must not shrink what is known.
+  rememberGaps(memory,7,coarse)
+  assert.deepEqual(visibleGaps(memory,7,'a',0,400),[[60,300]])
+
+  // Clipped to the window asked for, and kept apart per block and per row.
+  assert.deepEqual(visibleGaps(memory,7,'a',100,200),[[100,200]])
+  assert.deepEqual(visibleGaps(memory,7,'b',0,400),[])
+  assert.deepEqual(visibleGaps(memory,8,'a',0,400),[])
+
+  // Too narrow to be its own mark, so it waits for the camera rather than
+  // stippling the bottom of every block.
+  assert.deepEqual(visibleGaps(memory,7,'a',0,400,300),[])
+  assert.deepEqual(visibleGaps(memory,7,'a',0,400,240),[[60,300]])
+
+  // A row with no gap at all leaves nothing behind.
+  assert.deepEqual(gapRanges({start:0,end:4,detail:true,rows:[]},{id:'z',sequence:'ACGT'}),[])
+  assert.equal(rememberGaps(memory,7,{rows:[{id:'a',sequence:'ACGT'}],start:0,end:4,detail:true}),false)
+})
+
+test('every finer view of a remembered gap is still a gap',async()=>{
+  const {gapRanges}=await import('../src/components/alignment-explorer/gapMemory.js')
+  // The property the memory relies on: an all-gap bin cannot contain sequence at
+  // any finer resolution, so remembering it can never be wrong later.
+  // Deliberately not aligned to any bin grid: the coarse pass must then see
+  // strictly fewer gap columns than the fine one, which is the case that matters.
+  const sequence='A'.repeat(55)+'-'.repeat(190)+'G'.repeat(55)
+  const bin=(size)=>{
+    const rows=[{id:'a',bins:[]}]
+    for(let i=0;i<sequence.length;i+=size){
+      const counts={}
+      for(const c of sequence.slice(i,i+size))counts[c]=(counts[c]||0)+1
+      rows[0].bins.push(counts)
+    }
+    return {start:0,end:sequence.length,bin_size:size,detail:false,rows}
+  }
+  const covered=size=>{
+    const data=bin(size)
+    return gapRanges(data,data.rows[0]).flatMap(([a,z])=>{const out=[];for(let i=a;i<z;i++)out.push(i);return out})
+  }
+  const coarse=new Set(covered(50)),fine=new Set(covered(10))
+  assert.ok(coarse.size>0&&fine.size>coarse.size)
+  // Everything the coarse pass called gap is still gap when cut finer.
+  for(const column of coarse)assert.ok(fine.has(column),`column ${column} stopped being a gap`)
+  // And every column either pass calls gap really is one.
+  for(const column of fine)assert.equal(sequence[column],'-')
+})

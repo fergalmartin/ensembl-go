@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, visibleRequest, requestKey } from './data'
 import { layerConnections, offWindowLinks } from './layers'
 import { TileScheduler } from './tileScheduler'
+import { createGapMemory, rememberGaps } from './gapMemory'
 
 /** Independent, persistent tile requests. A slow block never prevents another
  * block rendering and camera movement never waits for the data pipeline. */
@@ -32,6 +33,11 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
     // Geometry changes within a quantized tile don't cancel running requests.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[cache,dataset?.id,signature,revision])
+  // Gaps are remembered across resolutions so one resolved at any zoom is never
+  // filled back in by a coarser tile driving a later repaint.
+  const gaps=useRef(null)
+  if(!gaps.current)gaps.current=createGapMemory()
+  useEffect(()=>{gaps.current=createGapMemory()},[dataset?.id,revision])
   const tiles={},annotations={},warnings=[];let pending=false
   const values=cache.values()
   for(const {id,request} of requests){
@@ -42,6 +48,7 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
     const fallback=matching.filter(item=>item.data.detail).sort((a,b)=>(b.data.end-b.data.start)-(a.data.end-a.data.start))[0]
     const item=exact||(request.summary?overview||fallback:fallback||overview)
     if(item)tiles[id]={data:item.data,overview:overview?.data}
+    for(const seen of matching)rememberGaps(gaps.current,seen.request.block,seen.data)
     if(cache.failed.has(key))tiles[id]={...tiles[id],error:cache.failed.get(key).message}
     if(!exact&&!cache.failed.has(key))pending=true
   }
@@ -57,13 +64,13 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   // occurrence off each end, so this stays two indexed lookups whatever the
   // dataset's size, and re-ask only when the window itself moves.
   const solid=layer?.fragments.filter(f=>!f.aggregate)||[]
-  const window=solid.length?{lo:Math.min(...solid.map(f=>f.sourceBlock)),hi:Math.max(...solid.map(f=>f.sourceBlock)),
+  const loaded=solid.length?{lo:Math.min(...solid.map(f=>f.sourceBlock)),hi:Math.max(...solid.map(f=>f.sourceBlock)),
     ids:[...new Set(solid.flatMap(f=>f.rowIds))].sort()}:null
   let neighbours=null
-  if(dataset&&window&&window.ids.length&&window.ids.length<=500){
-    const key=`neighbours:${dataset.id}:${window.lo}:${window.hi}:${window.ids.length}:${revision}`
+  if(dataset&&loaded&&loaded.ids.length&&loaded.ids.length<=500){
+    const key=`neighbours:${dataset.id}:${loaded.lo}:${loaded.hi}:${loaded.ids.length}:${revision}`
     neighbours=extraCache.get(key)||null
-    extraTasks.push({key,run:signal=>api(`/datasets/${dataset.id}/neighbours`,{ids:window.ids,lo:window.lo,hi:window.hi},signal)})
+    extraTasks.push({key,run:signal=>api(`/datasets/${dataset.id}/neighbours`,{ids:loaded.ids,lo:loaded.lo,hi:loaded.hi},signal)})
   }
   const offWindow=useMemo(()=>layer&&neighbours?offWindowLinks({...layer,fragments:solid},neighbours):[],
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,5 +93,5 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   useEffect(()=>{extraCache.setWanted(dataset?extraTasks:[])},[extraCache,dataset?.id,extraSignature]) // eslint-disable-line react-hooks/exhaustive-deps
   // Hover-only parent updates do not invalidate the canvas texture.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(()=>({tiles,annotations,connections,offWindow,counts,pending,warnings,displayCamera:camera}),[tick,signature,extraSignature,camera,layer,showAnnotations,dataset?.id,revision])
+  return useMemo(()=>({tiles,annotations,connections,offWindow,counts,pending,warnings,gaps:gaps.current,displayCamera:camera}),[tick,signature,extraSignature,camera,layer,showAnnotations,dataset?.id,revision])
 }

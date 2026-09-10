@@ -1,6 +1,7 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './data.js'
 import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded, BLOCK_EDGE_GAP, blockAtLayoutX } from './layers.js'
 import { renderResolution } from './renderResolution'
+import { visibleGaps } from './gapMemory'
 import { denseOriginal } from './originalLayout'
 import { FEATURE_COLORS } from '../FeatureLegend'
 
@@ -16,11 +17,15 @@ function dashed(ctx,x,y,width,height,color) {
   for(let a=x-height;a<x+width;a+=9){ctx.beginPath();ctx.moveTo(a,y+height);ctx.lineTo(a+height,y);ctx.stroke()}
   ctx.restore()
 }
+// A gap narrower than this is noise along the bottom of every block rather than
+// a feature; it waits until the camera makes it one. Only ever adds gaps on
+// zooming in, never removes them.
+const MIN_VISIBLE_GAP=2
 function niceStep(scale){const raw=80/scale,mag=10**Math.floor(Math.log10(raw));return [1,2,5,10].map(x=>x*mag).find(x=>x>=raw)||mag*10}
 function rowChunks(fragment,rowId){return cellRanges(fragment,rowId)}
 
 /** Paint an alignment layer to a viewport-sized texture: no chromosome-sized canvases. */
-export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,connections,offWindow=[],counts,state,drag,hover,selectionRect,ghost=false,light=false}) {
+export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,connections,offWindow=[],counts,state,drag,hover,gaps,selectionRect,ghost=false,light=false}) {
   const colors=light?{background:'#f6f8fb',panel:'#fff',text:'#27394c',muted:'#738196',border:'#cbd5e1',head:'#edf2f8',void:'#eef2f7'}:{background:'#152032',panel:'#1c293d',text:'#e3eaf4',muted:'#8f9fb3',border:'#3a4d65',head:'#24354c',void:'#152032'}
   const baseColors=NUCLEOTIDE_COLORS[light?'light':'dark']
   ctx.clearRect(0,0,size.width,size.height)
@@ -175,7 +180,6 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             ctx.fillStyle=bin['-']===total?colors.background:div==null?(canonical?(light?'#7baeb5':'#448d99'):'#877b9f'):`hsl(${168-div*130} ${light?30:36}% ${light?65:49}%)`
             ctx.fillRect(r.x+(a-f.start)*r.scale,y+3,(z-a)*r.scale,ROW_HEIGHT-6)
             if(bin['-']===total){ctx.strokeStyle=colors.border;ctx.lineWidth=.5;ctx.strokeRect(r.x+(a-f.start)*r.scale,y+3,(z-a)*r.scale,ROW_HEIGHT-6)}
-            if((bin['-']||0)>0){ctx.fillStyle=colors.background;ctx.fillRect(r.x+(a-f.start)*r.scale,y+ROW_HEIGHT-6,(z-a)*r.scale*(bin['-']/Math.max(1,total)),3)}
             if(canonical===0&&!(bin['-']===total))dashed(ctx,r.x+(a-f.start)*r.scale,y+3,(z-a)*r.scale,ROW_HEIGHT-6,colors.border)
           })
         }
@@ -190,6 +194,16 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             ctx.fillRect(r.x+(a-f.start)*r.scale,y+ROW_HEIGHT-h,(z-a)*r.scale,h)
             if(type==='cds'&&camera.scale>=4){ctx.fillStyle='#bfdbfe';for(let p=a;p<z;p+=6)ctx.fillRect(r.x+(p-f.start)*r.scale,y+ROW_HEIGHT-h,Math.min(3,z-p)*r.scale,h)}
           }
+        }
+      }
+      // Gaps last, from memory rather than from whichever tile is to hand, so one
+      // resolved at any zoom stays resolved instead of flickering as tiles swap.
+      if(gaps&&!f.aggregate){
+        const from=Math.max(f.start,f.start+(-r.x)/r.scale),to=Math.min(f.end,f.start+(size.width-r.x)/r.scale)
+        for(const [a,z] of visibleGaps(gaps,f.sourceBlock,id,from,to,MIN_VISIBLE_GAP/r.scale)){
+          const gx=r.x+(a-f.start)*r.scale,gw=(z-a)*r.scale
+          ctx.fillStyle=colors.background;ctx.fillRect(gx,y+3,gw,ROW_HEIGHT-6)
+          ctx.strokeStyle=colors.border;ctx.lineWidth=.5;ctx.strokeRect(gx+.5,y+3.5,Math.max(0,gw-1),ROW_HEIGHT-7);ctx.lineWidth=1
         }
       }
       ctx.globalAlpha=1
