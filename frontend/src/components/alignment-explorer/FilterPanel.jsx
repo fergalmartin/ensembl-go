@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from './data'
-import { SEQUENCE_FILTER, BLOCK_FILTER, filterSequences, filterBlocks, effectiveChoice, filterChunks, isDefaultFilter } from './filters'
+import { SEQUENCE_FILTER, BLOCK_FILTER, filterSequences, filterBlocks, effectiveChoice, filterChunks, rangeChunks, isDefaultFilter } from './filters'
 
 const LIST_CAP = 300
 const number = value => (value ?? 0).toLocaleString()
@@ -28,6 +28,8 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
   const [chosenSequences,setChosenSequences]=useState(new Set())
   const [chosenBlocks,setChosenBlocks]=useState(new Set())
   const [membership,setMembership]=useState(null)
+  const [range,setRange]=useState({start:'',end:''})
+  const [ranged,setRanged]=useState(null)
 
   useEffect(()=>{
     if(!dataset)return
@@ -56,11 +58,35 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
   // rather than briefly narrowing the block list by the wrong sequences.
   const known=membership?.for===wanted?membership.blocks:null
 
-  const within=useMemo(()=>known?new Set(known.map(m=>m.block)):null,[known])
+  // A genomic interval is read in each chosen sequence's own coordinates, so it
+  // is only asked for once a bounded set of sequences has been chosen.
+  const interval=useMemo(()=>{
+    const from=Number(range.start),to=Number(range.end)
+    if(range.start===''||range.end===''||!Number.isFinite(from)||!Number.isFinite(to)||to<from)return null
+    if(!chosenSequenceIds.length||chosenSequenceIds.length>200)return null
+    return {ids:chosenSequenceIds,start:Math.max(0,from-1),end:to}
+  },[range,chosenSequenceIds])
+  useEffect(()=>{
+    if(!dataset||!interval)return
+    let cancelled=false
+    api(`/datasets/${dataset.id}/blocks-in-range`,interval)
+      .then(value=>{if(!cancelled)setRanged({for:interval,matches:value.matches})})
+      .catch(e=>{if(!cancelled)onError(e.message)})
+    return()=>{cancelled=true}
+  },[dataset,interval,onError])
+  const matches=ranged?.for===interval?ranged.matches:null
+
+  const within=useMemo(()=>{
+    const byMembership=known?new Set(known.map(m=>m.block)):null
+    if(!matches)return byMembership
+    const byRange=new Set(matches.map(m=>m.block))
+    return byMembership?new Set([...byRange].filter(b=>byMembership.has(b))):byRange
+  },[known,matches])
   const blocks=useMemo(()=>filterBlocks(summary?.blocks||[],blockFilter,within),[summary,blockFilter,within])
   const chosenBlockIds=useMemo(()=>effectiveChoice(blocks,chosenBlocks),[blocks,chosenBlocks])
   const lengths=useMemo(()=>new Map((summary?.blocks||[]).map(b=>[b.id,b.length])),[summary])
-  const chunks=useMemo(()=>filterChunks(known,chosenBlockIds,chosenSequenceIds,lengths),[known,chosenBlockIds,chosenSequenceIds,lengths])
+  const chunks=useMemo(()=>matches?rangeChunks(matches,chosenBlockIds):filterChunks(known,chosenBlockIds,chosenSequenceIds,lengths),
+    [matches,known,chosenBlockIds,chosenSequenceIds,lengths])
   const cells=chunks.reduce((n,c)=>n+(c.end-c.start)*c.rowIds.length,0)
 
   const genomeLabel=key=>{
@@ -118,6 +144,17 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
 
     {ready&&tab==='blocks'&&<div className="al-filter-body">
       {within&&<p className="al-hint">Limited to the {number(within.size)} blocks holding the {number(chosenSequenceIds.length)} chosen sequences.</p>}
+      <div className="al-filter-coords">
+        <span>Genomic range <small>in each chosen sequence's own coordinates, 1-based</small></span>
+        <div className="al-filter-range">
+          <span/>
+          <input type="number" min="1" placeholder="from" value={range.start} onChange={e=>setRange({...range,start:e.target.value})}/>
+          <input type="number" min="1" placeholder="to" value={range.end} onChange={e=>setRange({...range,end:e.target.value})}/>
+        </div>
+        {chosenSequenceIds.length>200&&<small className="al-hint">Narrow to 200 sequences or fewer to filter on coordinates.</small>}
+        {matches&&<small className="al-hint">{number(matches.length)} rows overlap, in {number(new Set(matches.map(m=>m.block)).size)} blocks. A layer takes just the overlapping columns.</small>}
+        {interval&&!matches&&<small className="al-hint">Looking up the interval…</small>}
+      </div>
       <label>Block numbers <small>e.g. 1-20, 44, 60-70</small>
         <input placeholder="all" value={blockFilter.numbers} onChange={e=>setBlockFilter({...blockFilter,numbers:e.target.value})}/></label>
       <Range label="Columns" from={blockFilter.minLength} to={blockFilter.maxLength}

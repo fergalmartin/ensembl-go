@@ -593,3 +593,28 @@ test('the Original filter hides rows and blocks without touching the source',asy
   // An empty filter is no filter, so clearing brings everything straight back.
   assert.equal(layoutOriginal([f1,f2],ids,'aligned',{},undefined,{sequences:[],blocks:[]}).length,2)
 })
+
+test('a coordinate filter takes each row its own overlapping columns',async()=>{
+  const {rangeChunks}=await import('../src/components/alignment-explorer/filters.js')
+  // The same genomic numbers mean different places in different sequences, so
+  // within one block each matched row lands on its own column range.
+  const matches=[
+    {block:47,id:'human',start:5_317_521,end:5_348_311,columns:[1,43479]},
+    {block:47,id:'gorilla',start:5_317_521,end:5_348_311,columns:[900,44000]},
+    {block:73,id:'human',start:5_000_000,end:5_204_048,columns:[673441,1000000]},
+    {block:99,id:'human',start:1,end:2,columns:null},
+  ]
+  const chunks=rangeChunks(matches,[47,73,99])
+  assert.equal(chunks.length,2)
+  // The chunk spans both rows, but coverage keeps each to its own columns rather
+  // than handing back columns outside the interval for the narrower row.
+  assert.deepEqual([chunks[0].sourceBlock,chunks[0].start,chunks[0].end],[47,1,44000])
+  assert.deepEqual(chunks[0].coverage,{human:[[1,43479]],gorilla:[[900,44000]]})
+  assert.deepEqual(chunks[0].rowIds,['human','gorilla'])
+  // A row whose interval falls where it has no aligned bases gives no columns,
+  // so block 99 contributes no chunk at all.
+  assert.deepEqual(chunks.map(c=>c.sourceBlock),[47,73])
+  // Blocks not chosen contribute nothing.
+  assert.deepEqual(rangeChunks(matches,[73]).map(c=>c.sourceBlock),[73])
+  assert.deepEqual(rangeChunks(null,[47]),[])
+})

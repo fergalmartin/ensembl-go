@@ -356,6 +356,42 @@ class AlignmentStore:
                 found.setdefault(row['block'], []).append(row['id'])
         return [{'block': block, 'ids': members} for block, members in sorted(found.items())]
 
+    def blocks_in_range(self, ids, start, end, limit=2000):
+        """Blocks where any of these sequences covers a genomic interval.
+
+        The importer stores forward-strand source coordinates, converting MAF's
+        reverse-strand start/size on the way in, so one interval finds a row
+        whichever strand it is aligned on. `region_lookup(id,start,end)` carries
+        the lookup; no sequence text is read to find the blocks.
+
+        Alignment columns are resolved as well, so a layer built from a
+        coordinate filter holds the requested region rather than whole blocks.
+        A column pair comes back reversed on the minus strand, so it is ordered
+        here rather than leaving the caller to know that.
+        """
+        if not ids or end <= start: return []
+        marks = ','.join('?' * len(ids))
+        with self.connect() as db:
+            rows = db.execute(
+                f'SELECT block, id, start, end, strand FROM rows WHERE id IN ({marks}) '
+                'AND coordinates AND empty_status IS NULL AND end > ? AND start < ? ORDER BY block LIMIT ?',
+                (*ids, start, end, limit)).fetchall()
+        found = []
+        for row in rows:
+            overlap_start, overlap_end = max(start, row['start']), min(end, row['end'])
+            entry = {'block': row['block'], 'id': row['id'], 'start': overlap_start, 'end': overlap_end, 'columns': None}
+            try:
+                first = locate_column(self, row['block'], row['id'], overlap_start)
+                last = locate_column(self, row['block'], row['id'], overlap_end - 1)
+                entry['columns'] = [min(first, last), max(first, last) + 1]
+            except ValueError:
+                # The interval falls in a part of the row with no aligned bases.
+                # The block still overlaps, so it is reported without columns
+                # rather than dropped.
+                pass
+            found.append(entry)
+        return found
+
     def outside_neighbours(self, ids, lo, hi):
         """Nearest block holding each sequence outside the block range [lo, hi].
 

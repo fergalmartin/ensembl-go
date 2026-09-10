@@ -127,7 +127,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   function layerFromFilter(chunks){
     if(!chunks.length)return
     const next=createLayer(`Filtered ${state.layers.length+1}`,state.layers.length,
-      chunks.map(c=>createFragment(c.sourceBlock,c.start,c.end,c.rowIds)))
+      chunks.map(c=>createFragment(c.sourceBlock,c.start,c.end,c.rowIds,c.coverage?{coverage:c.coverage}:{})))
     const tidied=tidyLayer(next,ids,chunkGap(next.fragments,size.width))
     tidied.camera=fitCamera(tidied,size.width,size.height)
     commit(s=>({...s,layers:[...s.layers,tidied],active:tidied.id,original:false,selection:[],camera:tidied.camera}))

@@ -220,6 +220,18 @@ def create_router(cache_root=None, annotation_provider=None):
         if not all(isinstance(i, str) for i in ids): raise HTTPException(400, 'Invalid sequence identifier')
         return {'blocks': store_for(dataset_id).blocks_with(ids)}
 
+    @router.post('/datasets/{dataset_id}/blocks-in-range')
+    def blocks_in_range(dataset_id: str, payload: dict):
+        ids = payload.get('ids', [])
+        if not isinstance(ids, list) or not 0 < len(ids) <= 200: raise HTTPException(400, 'Choose between 1 and 200 sequences')
+        if not all(isinstance(i, str) for i in ids): raise HTTPException(400, 'Invalid sequence identifier')
+        try:
+            start, end = int(payload['start']), int(payload['end'])
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(400, 'Invalid genomic interval') from exc
+        if end <= start or start < 0: raise HTTPException(400, 'Invalid genomic interval')
+        return {'matches': store_for(dataset_id).blocks_in_range(ids, start, end)}
+
     @router.post('/datasets/{dataset_id}/neighbours')
     def neighbours(dataset_id: str, payload: dict):
         ids = payload.get('ids', [])

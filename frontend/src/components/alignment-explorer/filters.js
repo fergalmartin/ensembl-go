@@ -105,3 +105,32 @@ export function filterChunks(membership,blocks,sequenceIds,lengths) {
   }
   return result
 }
+
+/** Chunks for a coordinate filter.
+ *
+ * A genomic interval is read in each chosen sequence's own coordinates, so two
+ * species asked for the same numbers are asked about two different places, and
+ * within one block each matched row lands on its own column range. The chunk
+ * therefore carries per-row coverage rather than one rectangle: taking the union
+ * of the ranges would hand back columns that are outside the interval for every
+ * row but the widest.
+ *
+ * A row whose interval falls where it has no aligned bases has no columns to
+ * give and is left out, though its block still counts as overlapping.
+ */
+export function rangeChunks(matches,blocks) {
+  const chosen=new Set(blocks),byBlock=new Map()
+  for(const match of matches||[]){
+    if(!chosen.has(match.block)||!match.columns)continue
+    if(!byBlock.has(match.block))byBlock.set(match.block,[])
+    byBlock.get(match.block).push(match)
+  }
+  const result=[]
+  for(const [block,items] of [...byBlock].sort((a,b)=>a[0]-b[0])){
+    const start=Math.min(...items.map(m=>m.columns[0])),end=Math.max(...items.map(m=>m.columns[1]))
+    const coverage={}
+    for(const m of items)coverage[m.id]=[[m.columns[0],m.columns[1]]]
+    result.push({sourceBlock:block,start,end,rowIds:items.map(m=>m.id),coverage})
+  }
+  return result
+}

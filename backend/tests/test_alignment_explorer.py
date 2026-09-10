@@ -379,3 +379,39 @@ class LayoutPerformanceTests(unittest.TestCase):
         # An empty component is not a presence.
         self.store.add_block([{'source':'z','sequence':'ACGT'},{'source':c,'sequence':None,'empty_status':'C','start':0,'end':0}])
         self.assertEqual([e['block'] for e in self.store.blocks_with([c])],[3])
+
+    def test_blocks_in_range_finds_the_interval_on_either_strand(self):
+        # Forward and reverse rows of the same region. The importer converts MAF
+        # reverse start/size to forward coordinates, so one interval finds both.
+        self.store.add_block([
+            {'source':'fwd','sequence':'ACGT--ACGT','start':100,'end':108,'strand':'+','source_length':1000,'coordinates':True},
+            {'source':'rev','sequence':'ACGTACGTAC','start':100,'end':110,'strand':'-','source_length':1000,'coordinates':True}])
+        self.store.add_block([
+            {'source':'fwd','sequence':'ACGT','start':500,'end':504,'strand':'+','source_length':1000,'coordinates':True}])
+        fwd,rev=stable_id('fwd'),stable_id('rev')
+        # An interval inside block 1 finds both rows there and not block 2.
+        found=self.store.blocks_in_range([fwd,rev],102,106)
+        self.assertEqual(sorted({e['block'] for e in found}),[1])
+        self.assertEqual(sorted(e['id'] for e in found),sorted([fwd,rev]))
+        # The overlap is clamped to the interval, not the whole row.
+        self.assertTrue(all((e['start'],e['end'])==(102,106) for e in found))
+        # Columns come back in order whichever strand the row is on, and are
+        # inside the block, so a layer built from them holds the right region.
+        for entry in found:
+            self.assertIsNotNone(entry['columns'])
+            a,b=entry['columns']
+            self.assertLess(a,b)
+            self.assertGreaterEqual(a,0)
+            self.assertLessEqual(b,10)
+        # An interval only in the second block finds only that one.
+        self.assertEqual([e['block'] for e in self.store.blocks_in_range([fwd],501,503)],[2])
+        # Nothing outside any row, and an empty or backwards interval.
+        self.assertEqual(self.store.blocks_in_range([fwd],900,950),[])
+        self.assertEqual(self.store.blocks_in_range([fwd],100,100),[])
+        self.assertEqual(self.store.blocks_in_range([],0,1000),[])
+
+    def test_blocks_in_range_ignores_rows_without_coordinates(self):
+        # A plain FASTA row has no source coordinates to search, so it cannot be
+        # found by an interval rather than being matched at an invented zero.
+        self.store.add_block([{'source':'plain','sequence':'ACGT'}])
+        self.assertEqual(self.store.blocks_in_range([stable_id('plain')],0,10),[])

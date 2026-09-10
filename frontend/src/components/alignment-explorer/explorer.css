@@ -156,3 +156,10 @@
 .al-filter-active { display:flex; flex-direction:column; gap:3px; margin-top:6px; padding:6px 8px; border-radius:5px;
   border:1px solid #edc26355; background:#edc2631a; font-size:11px; }
 .al-filter-active small { opacity:.75; font-size:10px; }
+
+.al-filter-coords { display:flex; flex-direction:column; gap:4px; padding:7px 8px; border-radius:5px;
+  border:1px solid var(--al-border,#3a4d65); font-size:11px; }
+.al-filter-coords > span { display:flex; flex-direction:column; gap:2px; }
+.al-filter-coords small { opacity:.65; font-weight:400; font-size:10px; }
+.al-filter-coords .al-filter-range { grid-template-columns:0 1fr 1fr; }
+.al-filter-coords .al-hint { margin:0; font-size:10px; }
