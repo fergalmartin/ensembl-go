@@ -119,11 +119,22 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       // anywhere. A click that goes nowhere toggles it back off on release.
       const already=state.selection.some(pick=>pick.kind==='row'&&pick.rowIds.includes(hit.rowId))
       if(!already)onSelection(togglePicks(state.selection,rowPicks(layer,hit.rowId)))
-      interaction.current={kind:'reorder',point,rowId:hit.rowId,fragmentId:hit.fragmentId,wasPicked:already,camera:{...p.state.camera}}
+      interaction.current={kind:'reorder',point,rowId:hit.rowId,fragmentId:hit.fragmentId,wasPicked:already,fromLabel:true,camera:{...p.state.camera}}
       event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
     }
     if(hit?.kind==='blockjump'){onHighlight(hit.rowId);onSourceBlock?.(hit.block);return}
     if(hit?.kind==='connection')onInspect(hit)
+    // Either end of a connector is a handle on the row in the block at that end.
+    // A row whose name sits beside an earlier chunk has no other handle in the
+    // chunk the path runs into, which is where it most needs one.
+    if(hit?.kind==='connection'&&hit.points&&!state.original){
+      const head=hit.points[0],tail=hit.points[hit.points.length-1]
+      const intoTail=Math.hypot(point.x-tail.x,point.y-tail.y)<=Math.hypot(point.x-head.x,point.y-head.y)
+      interaction.current={kind:'reorder',point,rowId:hit.connection.rowId,
+        fragmentId:intoTail?hit.connection.to.id:hit.connection.from.id,
+        camera:{...p.state.camera}}
+      event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
+    }
     const selected=state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera),state.camera)
     const kind=space.current||event.button===1?'pan':selected?'transfer':hit?.kind==='header'?(state.original?'header':'move'):state.mode==='pan'?'pan':'select'
     const fragment=kind==='move'?layer.fragments.find(f=>f.id===hit.fragmentId):null
@@ -171,7 +182,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       // A press that never travelled is still a click on the name; one that did
       // drops the row where it was let go.
       if(current.dragging)onReorderRow?.(current.rowId,reorderTarget(current,point.y).target,current.fragmentId)
-      else if(current.wasPicked)onSelection(togglePicks(state.selection,rowPicks(layer,current.rowId)))
+      else if(current.fromLabel&&current.wasPicked)onSelection(togglePicks(state.selection,rowPicks(layer,current.rowId)))
       setReorder(null)
     }
     if(current.kind==='move'){
