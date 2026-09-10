@@ -37,10 +37,14 @@ export function hitCanvasItem(hit,point) {
   return point.x>=hit.x&&point.x<hit.x+hit.width&&point.y>=hit.y&&point.y<hit.y+hit.height
 }
 
-/** Choose a small, labelled overview when individual block controls cannot fit. */
-export function denseOriginal(layer,camera,size) {
+/** Choose a small, labelled overview when individual block controls cannot fit.
+ *
+ * `plane` converts the width a block is drawn at into the width it is seen at:
+ * under plane zoom a block can be hundreds of plane units wide and still far too
+ * small on screen to carry a ruler and three buttons. */
+export function denseOriginal(layer,camera,size,plane=1) {
   if(layer.id!=='original')return false
   const visible=layer.fragments.filter(f=>f.x<camera.x+size.width/camera.scale&&f.x+f.end-f.start>camera.x)
-  return visible.length>12||visible.length>2&&visible.filter(f=>(f.end-f.start)*camera.scale<90).length>visible.length/2
+  return visible.length>12||visible.length>2&&visible.filter(f=>(f.end-f.start)*camera.scale*plane<90).length>visible.length/2
 }
 export const originalHeight=layer=>Math.max(1,...layer.fragments.map(rowCount))

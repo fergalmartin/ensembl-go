@@ -56,6 +56,17 @@ There are two different overview meanings:
 1. **Within a source block:** binned agreement against the fragment's comparison row. Only canonical comparable bases enter mismatch fractions. Gaps and unknown/unavailable data are separate. This is not an evolutionary constraint score.
 2. **Across many source blocks:** grouped sequence-presence bars. Filled width represents the fraction of blocks containing the sequence. This is explicitly labelled as presence, not conservation. Sparse headers identify block ranges; clicking a header resolves that range into individual blocks.
 
+**Zoom mode** offers two zooms over the same view. **Alignment** (the default) is the horizontal zoom described above: it changes how many columns a pixel covers and leaves rows 26 pixels tall, which is what reading an alignment wants. **Panel** treats the drawing as one flat sheet and scales all of it, so blocks, names, labels and strings shrink together and whitespace opens around the edges; it is the only way to see a thousand-sequence file end to end, since rows otherwise always outrun the window.
+
+Panel zoom is implemented as a factor on the canvas transform, not as a second layout. The painter works in **plane units** — the coordinates it has always used — and is handed a viewport of `size / plane`, which is where the extra world comes from. Two rules keep it honest and must be preserved when editing `paintLayer`:
+
+- Geometry stays in plane units; anything that should hold its size on screen (glyph legibility thresholds, tick spacing, hairline widths, the dotted ground, the drop indicator) divides by the plane factor.
+- Resolution decisions use the **effective** scale, `camera.scale * plane`, not `camera.scale`. That governs `renderResolution`, `visibleRequest`, `denseOriginal` and the letter thresholds; using the raw scale would fetch and draw detail for a view nobody is looking at.
+
+Pointer coordinates are divided by the plane factor once, in `canvasPoint`. Nothing downstream knows about plane zoom, which is why dragging, picking and reordering keep working unchanged at any panel zoom. Below about three pixels a row is drawn as a single presence rect rather than bins, gaps and features, and below about four pixels a glyph is dropped while its hit region is kept — a row still answers to a click when it is too small to carry its name.
+
+`↺` fits the whole panel in Panel mode: the plane comes first, from the rows, and the columns are then fitted to the viewport the plane opens up. Fitting the window first and shrinking afterwards leaves the file a stamp in an empty field.
+
 Base patterns and letters appear at closer zoom. Cached base detail is immediately converted into summaries at subpixel scales so it does not render as thin stripes while network summaries arrive. Wider cached summaries cover edges beneath newer detail where available. Pending data must never force the camera back to an earlier position.
 
 ## Code map
@@ -90,7 +101,9 @@ Application integration:
 
 ## State and coordinate invariants
 
-The current workspace format is **version 2**. Important state includes `layers`, `active`, `original`, `sourceBlock`, `camera`, `selection`, `highlighted`, `tilted`, `annotations`, `originalRows` and `blockRows`.
+The current workspace format is **version 2**. Important state includes `layers`, `active`, `original`, `sourceBlock`, `camera`, `selection`, `highlighted`, `tilted`, `annotations`, `originalRows`, `blockRows` and `planeZoom`.
+
+A camera is `{x, y, scale, plane}`. `x` is the left edge in layout columns, `y` the vertical offset in plane pixels, `scale` the plane pixels per column and `plane` the uniform factor applied to the whole drawing (1 is full size). `constrainCamera` takes the floor under `scale` from the window at full size whatever `plane` is doing: deriving it from the shrunken viewport would drive the columns back out to the edges and there would never be any whitespace to see.
 
 A fragment carries `id`, `sourceBlock`, `start`, `end`, `rowIds`, display `x`/`y`, and optionally row `slots`, `layoutRows` and per-row `coverage` interval masks. Source intervals are zero-based and half-open. UI coordinates are labelled one-based. Display placement must never modify source coordinates.
 

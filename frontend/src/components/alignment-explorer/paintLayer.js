@@ -1,5 +1,5 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './data.js'
-import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded, sourceViewAnchor, BLOCK_EDGE_GAP, blockAtLayoutX, pickedRowIds } from './layers.js'
+import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded, sourceViewAnchor, BLOCK_EDGE_GAP, blockAtLayoutX, pickedRowIds, planeOf } from './layers.js'
 import { renderResolution } from './renderResolution'
 import { visibleGaps } from './gapMemory'
 import { denseOriginal } from './originalLayout'
@@ -33,8 +33,17 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   const baseColors=NUCLEOTIDE_COLORS[light?'light':'dark']
   ctx.clearRect(0,0,size.width,size.height)
   ctx.fillStyle=colors.background;ctx.fillRect(0,0,size.width,size.height)
+  // Everything here is drawn in plane units and the canvas carries the plane
+  // factor, so the alignment shrinks as one sheet. Marks that are interface
+  // rather than alignment - the dotted ground, glyphs, tick spacing, hairlines -
+  // divide by that factor to hold their size on screen. `size` is already the
+  // enlarged viewport, so the loops below stay the same length at any zoom.
+  const plane=planeOf(camera),onScreen=camera.scale*plane
+  const hair=w=>Math.max(w,1/plane),grid=28/plane,gridFrom=16/plane
+  // A glyph under about four pixels is texture, not a word.
+  const legible=11*plane>=4,flatRows=ROW_HEIGHT*plane<3,rowPad=ROW_HEIGHT*plane<6?0:4
   ctx.fillStyle=light?'#ced8e599':'#51617a33'
-  for(let x=16;x<size.width;x+=28)for(let y=16;y<size.height;y+=28)ctx.fillRect(x,y,1,1)
+  for(let x=gridFrom;x<size.width;x+=grid)for(let y=gridFrom;y<size.height;y+=grid)ctx.fillRect(x,y,1/plane,1/plane)
   // Several sequences can be picked at once now, so emphasis is a set: picking a
   // name lights its whole path, and clicking a cell or a string still lights one
   // without disturbing what is picked.
@@ -42,7 +51,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   if(state.highlighted)lit.add(state.highlighted)
   const anyLit=lit.size>0
   const drawLayer=drag?.fragmentId?{...layer,fragments:layer.fragments.map(f=>f.id===drag.fragmentId?{...f,x:drag.x,y:drag.y}:f)}:layer
-  const dense=denseOriginal(drawLayer,camera,size),aligned=state.original&&((state.originalRows||'aligned')==='aligned'||drawLayer.fragments.some(f=>f.aggregate))
+  const dense=denseOriginal(drawLayer,camera,size,plane),aligned=state.original&&((state.originalRows||'aligned')==='aligned'||drawLayer.fragments.some(f=>f.aggregate))
   const headerBoxes=[],labelBoxes=[],fragmentById=new Map(drawLayer.fragments.map(f=>[f.id,f]))
   const first=firstBlocks(drawLayer),byId=new Map(inventory.map(r=>[r.id,r])),hits=[]
   ctx.font='11px "IBM Plex Mono", monospace'
@@ -65,7 +74,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     // A link that skips blocks is carried by a marker on each block edge rather
     // than a line routed around everything in between.
     if(pathIsOccluded(connection,drawnRects,!!state.original))continue
-    ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9';ctx.lineWidth=selected?3:1.8;ctx.globalAlpha=anyLit&&!selected?0.3:0.95
+    ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9';ctx.lineWidth=hair(selected?3:1.8);ctx.globalAlpha=anyLit&&!selected?0.3:0.95
     ctx.beginPath();ctx.moveTo(ax,ay);ctx.bezierCurveTo(ax+reach,ay-arc,bx-reach,by-arc,bx,by);ctx.stroke()
     const points=Array.from({length:17},(_,i)=>{const t=i/16,u=1-t;return {x:u*u*u*ax+3*u*u*t*(ax+reach)+3*u*t*t*(bx-reach)+t*t*t*bx,y:u*u*u*ay+3*u*u*t*(ay-arc)+3*u*t*t*(by-arc)+t*t*t*by}})
     const mx=(ax+bx)/2,my=(ay+by)/2-arc*.75
@@ -77,14 +86,14 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     const label=value==null?'?':value<0?`↔ ${Math.abs(value).toLocaleString()}`:value.toLocaleString()
     ctx.font=`${selected?'bold ':''}10px "IBM Plex Mono", monospace`
     const labelWidth=ctx.measureText(label).width+10
-    if((Math.abs(bx-ax)>38||backwards)&&(!state.original||connection.columns!=null)){ctx.fillStyle=colors.background;rounded(ctx,mx-labelWidth/2,my-8,labelWidth,15,4);ctx.fill();ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.textAlign='center';ctx.fillText(label,mx,my+3);ctx.textAlign='left';hits.push({kind:'connection',x:mx-labelWidth/2,y:my-10,width:labelWidth,height:20,connection})}
+    if(legible&&(Math.abs(bx-ax)>38||backwards)&&(!state.original||connection.columns!=null)){ctx.fillStyle=colors.background;rounded(ctx,mx-labelWidth/2,my-8,labelWidth,15,4);ctx.fill();ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.textAlign='center';ctx.fillText(label,mx,my+3);ctx.textAlign='left';hits.push({kind:'connection',x:mx-labelWidth/2,y:my-10,width:labelWidth,height:20,connection})}
   }
   for(const f of drawLayer.fragments) {
     const r=panelRect(f,camera),w=Math.max(1,r.width)
     if(r.x>size.width||r.x+w<0||r.y-HEADER_HEIGHT>size.height||r.y+r.height<0)continue
     if(f.aggregate){
       const left=Math.max(MARGIN_X,r.x),right=Math.min(size.width,r.x+w),top=MARGIN_Y
-      ctx.strokeStyle=colors.border;ctx.strokeRect(left+.5,top-HEADER_HEIGHT,right-left,Math.min(size.height-top,r.height)+HEADER_HEIGHT)
+      ctx.strokeStyle=colors.border;ctx.lineWidth=hair(1);ctx.strokeRect(left+.5,top-HEADER_HEIGHT,right-left,Math.min(size.height-top,r.height)+HEADER_HEIGHT);ctx.lineWidth=1
       ctx.font='10px Lato, sans-serif';ctx.fillStyle=colors.muted
       const single=f.aggregate.first===f.aggregate.last
       const heading=single?`Block ${f.aggregate.first}`:`${f.aggregate.first}–${f.aggregate.last}`
@@ -95,7 +104,9 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         if(y+ROW_HEIGHT<0||y>size.height)continue
         const fraction=(f.aggregate.presence?.[id]||0)/f.aggregate.count
         ctx.fillStyle=lit.has(id)?'#f2c766':light?'#598b9d':'#66a9b6';ctx.globalAlpha=anyLit&&!lit.has(id) ? .35 : .4+.6*fraction
-        ctx.fillRect(left,y+4,Math.max(1,(right-left)*fraction),ROW_HEIGHT-8);ctx.globalAlpha=1
+        // Thin rows lose their padding and their minimum width in real pixels, so
+        // a sheet of them reads as one texture rather than dissolving into it.
+        ctx.fillRect(left,y+rowPad,Math.max(1/plane,(right-left)*fraction),ROW_HEIGHT-2*rowPad);ctx.globalAlpha=1
       }
       if(hover?.fragmentId===f.id){
         const bottom=Math.min(size.height,r.y+r.height)
@@ -121,10 +132,10 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       }
       hits.push({kind:'aggregate',fragmentId:f.id,x:left,y:top-HEADER_HEIGHT,width:right-left,height:HEADER_HEIGHT});continue
     }
-    const tile=tiles[f.id],data=renderResolution(tile?.data,camera.scale),rowData=new Map((data?.rows||[]).map(row=>[row.id,row]))
+    const tile=tiles[f.id],data=renderResolution(tile?.data,onScreen),rowData=new Map((data?.rows||[]).map(row=>[row.id,row]))
     ctx.save();ctx.beginPath();ctx.rect(Math.max(0,r.x),Math.max(0,r.y-HEADER_HEIGHT),Math.min(size.width,w+1),Math.min(size.height,r.height+HEADER_HEIGHT));ctx.clip()
     ctx.fillStyle=colors.background;ctx.fillRect(r.x,r.y,w,r.height)
-    if(aligned&&!f.compact){ctx.strokeStyle=colors.border;ctx.globalAlpha=.28;for(let y=Math.max(r.y,MARGIN_Y+Math.floor(camera.y/ROW_HEIGHT)*ROW_HEIGHT-camera.y);y<Math.min(size.height,r.y+r.height);y+=ROW_HEIGHT)ctx.strokeRect(r.x+.5,y+.5,w,ROW_HEIGHT);ctx.globalAlpha=1}
+    if(aligned&&!f.compact&&!flatRows){ctx.strokeStyle=colors.border;ctx.globalAlpha=.28;for(let y=Math.max(r.y,MARGIN_Y+Math.floor(camera.y/ROW_HEIGHT)*ROW_HEIGHT-camera.y);y<Math.min(size.height,r.y+r.height);y+=ROW_HEIGHT)ctx.strokeRect(r.x+.5,y+.5,w,ROW_HEIGHT);ctx.globalAlpha=1}
     const hovered=hover?.fragmentId===f.id
     ctx.fillStyle=colors.head;ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,HEADER_HEIGHT)
     // Pointing at a block's header picks the whole block out of the row of them.
@@ -132,10 +143,10 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     // A block picked by its header is outlined in the colour a picked name takes.
     const blockPicked=state.selection.some(s=>s.kind==='block'&&s.fragmentId===f.id)
     ctx.strokeStyle=blockPicked?PICKED:state.selection.some(s=>s.fragmentId===f.id)?layer.color:hovered?colors.text:colors.border
-    ctx.lineWidth=blockPicked?2:hovered?1.5:1;ctx.strokeRect(r.x+.5,r.y-HEADER_HEIGHT+.5,w,r.height+HEADER_HEIGHT);ctx.lineWidth=1
-    const leftVisible=Math.max(0,-r.x),firstCol=f.start+leftVisible/r.scale,step=niceStep(camera.scale)
+    ctx.lineWidth=hair(blockPicked?2:hovered?1.5:1);ctx.strokeRect(r.x+.5,r.y-HEADER_HEIGHT+.5,w,r.height+HEADER_HEIGHT);ctx.lineWidth=1
+    const leftVisible=Math.max(0,-r.x),firstCol=f.start+leftVisible/r.scale,step=niceStep(onScreen)
     ctx.font='10px "IBM Plex Mono", monospace';ctx.fillStyle=colors.muted
-    if(!dense)for(let col=Math.ceil(firstCol/step)*step;col<f.end;col+=step){const x=r.x+(col-f.start)*r.scale;if(x>size.width)break;ctx.fillText((col+1).toLocaleString(),x+3,r.y-9);ctx.fillRect(x,r.y-5,1,5)}
+    if(!dense&&legible)for(let col=Math.ceil(firstCol/step)*step;col<f.end;col+=step){const x=r.x+(col-f.start)*r.scale;if(x>size.width)break;ctx.fillText((col+1).toLocaleString(),x+3,r.y-9);ctx.fillRect(x,r.y-5,1,5)}
     ctx.fillStyle=layer.color;ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,2)
 
     for(let index=0;index<f.rowIds.length;index++) {
@@ -145,7 +156,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       ctx.globalAlpha=anyLit&&!selected?0.36:1
       ctx.fillStyle=colors.void;ctx.fillRect(r.x,y,w,ROW_HEIGHT)
       const background=tile?.overview,overviewRow=background?.rows.find(row=>row.id===id)
-      if(background&&background!==data&&overviewRow?.bins){
+      if(!flatRows&&background&&background!==data&&overviewRow?.bins){
         overviewRow.bins.forEach((bin,i)=>{
           const a=background.start+i*background.bin_size,z=Math.min(background.end,a+background.bin_size)
           const total=Object.values(bin).reduce((n,v)=>n+v,0),canonical='ACGT'.split('').reduce((n,c)=>n+(bin[c]||0),0),div=overviewRow.divergence_bins?.[i]?.fraction
@@ -165,6 +176,10 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
           if(width>160){ctx.fillStyle=colors.muted;ctx.font='10px Lato, sans-serif';ctx.fillText(tile?.error?'Unavailable · Retry loading':!data||!row?'Loading…':row?.missing?'No alignment coverage':'Unavailable',x+8,y+17)}
           continue
         }
+        // Below a few pixels a row is a mark rather than a sequence: one rect
+        // says "present here", and the bins, gaps and features it would carry
+        // are not resolvable at that size anyway.
+        if(flatRows){ctx.fillStyle=light?'#7baeb5':'#448d99';ctx.fillRect(x,y+rowPad,width,ROW_HEIGHT-2*rowPad);continue}
         if(data.detail){
           for(let col=start;col<end;col++){
             const base=row.sequence[col-data.start]
@@ -173,11 +188,11 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             ctx.fillStyle=base==='-'?colors.background:getBaseColor(base,baseColors)
             ctx.fillRect(left,top,width,height)
             if(base==='-'&&width>=2){ctx.strokeStyle=colors.border;ctx.lineWidth=.7;ctx.strokeRect(left+.5,top+.5,Math.max(0,width-1),height-1)}
-            if(camera.scale>=6&&width>=2){
+            if(onScreen>=6&&width>=2){
               ctx.strokeStyle=light?'rgba(0,0,0,0.35)':'rgba(255,255,255,0.25)';ctx.lineWidth=1
               ctx.beginPath();ctx.moveTo(right-.5,top+.5);ctx.lineTo(right-.5,top+height-.5);ctx.stroke()
             }
-            if(camera.scale>=NUCLEOTIDE_LETTER_THRESHOLD){
+            if(onScreen>=NUCLEOTIDE_LETTER_THRESHOLD){
               ctx.fillStyle=base==='-'?colors.muted:NUCLEOTIDE_TEXT_COLOR;ctx.font=monoFont(12);ctx.textAlign='center';ctx.textBaseline='middle'
               ctx.fillText(base.toUpperCase(),left+width/2,top+height/2)
               ctx.textAlign='left';ctx.textBaseline='alphabetic'
@@ -203,22 +218,22 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             ctx.fillStyle=color
             const h=type==='cds'?7:type==='exon'?4:3
             ctx.fillRect(r.x+(a-f.start)*r.scale,y+ROW_HEIGHT-h,(z-a)*r.scale,h)
-            if(type==='cds'&&camera.scale>=4){ctx.fillStyle='#bfdbfe';for(let p=a;p<z;p+=6)ctx.fillRect(r.x+(p-f.start)*r.scale,y+ROW_HEIGHT-h,Math.min(3,z-p)*r.scale,h)}
+            if(type==='cds'&&onScreen>=4){ctx.fillStyle='#bfdbfe';for(let p=a;p<z;p+=6)ctx.fillRect(r.x+(p-f.start)*r.scale,y+ROW_HEIGHT-h,Math.min(3,z-p)*r.scale,h)}
           }
         }
       }
       // Gaps last, from memory rather than from whichever tile is to hand, so one
       // resolved at any zoom stays resolved instead of flickering as tiles swap.
-      if(gaps&&!f.aggregate){
+      if(gaps&&!f.aggregate&&!flatRows){
         const from=Math.max(f.start,f.start+(-r.x)/r.scale),to=Math.min(f.end,f.start+(size.width-r.x)/r.scale)
-        for(const [a,z] of visibleGaps(gaps,f.sourceBlock,id,from,to,MIN_VISIBLE_GAP/r.scale)){
+        for(const [a,z] of visibleGaps(gaps,f.sourceBlock,id,from,to,MIN_VISIBLE_GAP/(r.scale*plane))){
           const gx=r.x+(a-f.start)*r.scale,gw=(z-a)*r.scale
           ctx.fillStyle=colors.background;ctx.fillRect(gx,y+3,gw,ROW_HEIGHT-6)
           ctx.strokeStyle=colors.border;ctx.lineWidth=.5;ctx.strokeRect(gx+.5,y+3.5,Math.max(0,gw-1),ROW_HEIGHT-7);ctx.lineWidth=1
         }
       }
       ctx.globalAlpha=1
-      if(selected){ctx.strokeStyle='#f2c766';ctx.lineWidth=1.5;ctx.strokeRect(r.x,y+1,w,ROW_HEIGHT-2)}
+      if(selected){ctx.strokeStyle='#f2c766';ctx.lineWidth=hair(1.5);ctx.strokeRect(r.x,y+1,w,ROW_HEIGHT-2)}
       ctx.strokeStyle=colors.border;ctx.globalAlpha=.18;ctx.beginPath();ctx.moveTo(r.x,y+ROW_HEIGHT);ctx.lineTo(r.x+w,y+ROW_HEIGHT);ctx.stroke();ctx.globalAlpha=1
     }
     // Optional provenance overlay on the immutable Original, never on by default.
@@ -244,7 +259,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     // there is no sticky opaque rectangle to erase bases or connecting strings.
     for(let index=0;index<f.rowIds.length;index++) {
       const id=f.rowIds[index],y=r.y+rowSlot(f,index)*ROW_HEIGHT
-      if(state.original||dense||first.get(id)!==f.id||y+ROW_HEIGHT<0||y>size.height)continue
+      if(state.original||dense||!legible||first.get(id)!==f.id||y+ROW_HEIGHT<0||y>size.height)continue
       let label=byId.get(id)?.label||byId.get(id)?.source||id
       ctx.font=`${lit.has(id)?'bold ':''}11px Lato, sans-serif`
       if(ctx.measureText(label).width>140){while(label.length&&ctx.measureText(label+'…').width>140)label=label.slice(0,-1);label+='…'}
@@ -263,7 +278,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     const headerBox={left:Math.max(MARGIN_X,headerLeft),right:Math.max(MARGIN_X,headerLeft)+Math.max(85,Math.min(150,headerRight-headerLeft))}
     const labelHeader=headerRight>MARGIN_X&&!headerBoxes.some(b=>headerBox.left<b.right+8&&headerBox.right>b.left-8)
     if(labelHeader)headerBoxes.push(headerBox)
-    if(!labelHeader)continue
+    if(!labelHeader||!legible)continue
     ctx.fillStyle=colors.text;ctx.font=monoFont(10)
     const compact=ctx.measureText(interval).width+12>headerRight-headerLeft
     const textX=compact?(headerLeft+headerRight)/2:headerLeft+6
@@ -292,15 +307,19 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     const focused=sourceViewAnchor(drawLayer.fragments.filter(f=>!f.aggregate&&panelRect(f,camera).y<size.height&&panelRect(f,camera).y+panelRect(f,camera).height>0),camera)
     const compactAnchor=focused?.compact?focused:null
     const gutter=compactAnchor?compactAnchor.rowIds.map((id,i)=>({row:byId.get(id),y:panelRect(compactAnchor,camera).y+rowSlot(compactAnchor,i)*ROW_HEIGHT})):inventory.map((row,i)=>({row,y:MARGIN_Y+i*ROW_HEIGHT-camera.y}))
-    if(compactAnchor){ctx.fillStyle=colors.muted;ctx.font='10px Lato, sans-serif';ctx.fillText(`Rows: block ${compactAnchor.sourceBlock}`,8,14)}
+    if(compactAnchor&&legible){ctx.fillStyle=colors.muted;ctx.font='10px Lato, sans-serif';ctx.fillText(`Rows: block ${compactAnchor.sourceBlock}`,8,14)}
     for(const {row,y} of gutter){
       if(!row||y+ROW_HEIGHT<0||y>size.height)continue
-      let label=row.label||row.source||row.id;ctx.font='11px Lato, sans-serif';while(label.length&&ctx.measureText(label).width>MARGIN_X-18)label=label.slice(0,-2)+'…'
-      ctx.fillStyle=lit.has(row.id)?PICKED:colors.text;ctx.textAlign='right';ctx.fillText(label,MARGIN_X-10,y+17);ctx.textAlign='left'
+      // The names stop being drawn long before they stop being targets: a row
+      // still answers to a click when it is too small to carry its own label.
+      if(legible){
+        let label=row.label||row.source||row.id;ctx.font='11px Lato, sans-serif';while(label.length&&ctx.measureText(label).width>MARGIN_X-18)label=label.slice(0,-2)+'…'
+        ctx.fillStyle=lit.has(row.id)?PICKED:colors.text;ctx.textAlign='right';ctx.fillText(label,MARGIN_X-10,y+17);ctx.textAlign='left'
+      }
       hits.push({kind:'label',rowId:row.id,x:0,y,width:MARGIN_X,height:ROW_HEIGHT})
     }
   }
-  if(dense){ctx.fillStyle=colors.muted;ctx.font='11px Lato, sans-serif';ctx.fillText(drawLayer.fragments.some(f=>f.aggregate)?'Block presence · filled width = fraction of blocks containing each sequence · click a header to zoom':'Source-block overview · zoom in for coordinates and chunk actions',MARGIN_X+8,13)}
+  if(dense&&legible){ctx.fillStyle=colors.muted;ctx.font='11px Lato, sans-serif';ctx.fillText(drawLayer.fragments.some(f=>f.aggregate)?'Block presence · filled width = fraction of blocks containing each sequence · click a header to zoom':'Source-block overview · zoom in for coordinates and chunk actions',MARGIN_X+8,13)}
   // Both ends of a skipped link, and any path leaving the loaded window: a
   // chevron on the block edge and the block at the other end, drawn after the
   // panels so nothing buries them. Clicking one opens that block.
@@ -330,31 +349,39 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     const cx=departing?near:anchor-marker.flow*2
     if(labelX+width<MARGIN_X||labelX>size.width)continue
     ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9'
-    ctx.lineWidth=selected?2.2:1.5
+    ctx.lineWidth=hair(selected?2.2:1.5)
     ctx.globalAlpha=anyLit&&!selected?0.35:0.95
     ctx.beginPath();ctx.moveTo(anchor,y);ctx.lineTo(near,y);ctx.stroke()
     ctx.beginPath();ctx.moveTo(cx-marker.flow*4,y-4);ctx.lineTo(cx,y);ctx.lineTo(cx-marker.flow*4,y+4);ctx.stroke()
     ctx.globalAlpha=1
-    ctx.fillStyle=colors.background;rounded(ctx,labelX,y-7,width,14,4);ctx.fill()
-    ctx.strokeStyle=selected?'#d9a638':colors.border;ctx.lineWidth=1;rounded(ctx,labelX+.5,y-6.5,width-1,13,4);ctx.stroke()
-    ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.fillText(label,labelX+4,y+3)
+    if(legible){
+      ctx.fillStyle=colors.background;rounded(ctx,labelX,y-7,width,14,4);ctx.fill()
+      ctx.strokeStyle=selected?'#d9a638':colors.border;ctx.lineWidth=1;rounded(ctx,labelX+.5,y-6.5,width-1,13,4);ctx.stroke()
+      ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.fillText(label,labelX+4,y+3)
+    }
     hits.push({kind:'blockjump',rowId:marker.rowId,block:marker.block,fragmentId:f.id,
       x:Math.min(anchor,labelX),y:y-9,width:Math.abs(labelX+width/2-anchor)+width/2+4,height:18})
   }
   // Where a dragged row would land, drawn over everything so the answer is
   // visible whichever block the cursor happens to be over.
   if(reorder){
-    const y=reorder.lineY
-    ctx.fillStyle=PICKED;ctx.globalAlpha=.9;ctx.fillRect(0,y-1,size.width,2);ctx.globalAlpha=1
-    ctx.beginPath();ctx.arc(MARGIN_X-6,y,4,0,Math.PI*2);ctx.fill()
+    // At its real size, whatever the plane is doing. Where a row will land is a
+    // piece of interface, and a hairline that shrinks with the sheet would be
+    // invisible in exactly the overview where rows are dragged the furthest.
+    ctx.save();ctx.scale(1/plane,1/plane)
+    const y=reorder.lineY*plane,gutterX=MARGIN_X*plane
+    ctx.fillStyle=PICKED;ctx.globalAlpha=.9;ctx.fillRect(0,y-1,size.width*plane,2);ctx.globalAlpha=1
+    ctx.beginPath();ctx.arc(gutterX-6,y,4,0,Math.PI*2);ctx.fill()
     const row=byId.get(reorder.rowId)
     const label=row?.label||row?.source||reorder.rowId
     ctx.font='bold 11px Lato, sans-serif'
     const width=ctx.measureText(label).width+14
-    const boxX=Math.min(Math.max(4,MARGIN_X-width-8),size.width-width-4)
-    ctx.fillStyle=colors.head;rounded(ctx,boxX,reorder.y-9,width,18,5);ctx.fill()
-    ctx.strokeStyle=PICKED;ctx.lineWidth=1;rounded(ctx,boxX+.5,reorder.y-8.5,width-1,17,5);ctx.stroke()
-    ctx.fillStyle=PICKED;ctx.fillText(label,boxX+7,reorder.y+4)
+    const boxY=reorder.y*plane
+    const boxX=Math.min(Math.max(4,gutterX-width-8),size.width*plane-width-4)
+    ctx.fillStyle=colors.head;rounded(ctx,boxX,boxY-9,width,18,5);ctx.fill()
+    ctx.strokeStyle=PICKED;ctx.lineWidth=1;rounded(ctx,boxX+.5,boxY-8.5,width-1,17,5);ctx.stroke()
+    ctx.fillStyle=PICKED;ctx.fillText(label,boxX+7,boxY+4)
+    ctx.restore()
   }
   if(selectionRect){ctx.fillStyle='#78cfbb27';ctx.fillRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.strokeStyle='#8ee1ce';ctx.setLineDash([5,3]);ctx.strokeRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.setLineDash([])}
   if(!layer.fragments.length){ctx.fillStyle=colors.muted;ctx.font='14px Lato, sans-serif';ctx.textAlign='center';ctx.fillText('This layer is empty. Move a selection here from another layer.',size.width/2,size.height/2);ctx.textAlign='left'}

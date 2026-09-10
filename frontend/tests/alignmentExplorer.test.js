@@ -16,7 +16,7 @@ test('strings use source order and omitted alignment columns regardless of place
 test('strings distinguish overlap and unknowable cross-block column gaps',()=>{const layer=createLayer('A',0,[createFragment(1,10,30,['a']),createFragment(1,20,40,['a']),createFragment(2,0,5,['a'])]);assert.deepEqual(layerConnections(layer).map(c=>c.columns),[-10,null])})
 test('auto arrange aligns identical rows in shared slots',()=>{const layer=createLayer('A',0,[createFragment(1,20,30,['b','c']),createFragment(1,0,10,['a','c'])]);const next=tidyLayer(layer,['a','b','c']);assert.deepEqual(next.fragments.map(f=>f.start),[0,20]);assert.deepEqual(next.fragments.map(f=>f.slots),[[0,2],[1,2]])})
 test('rectangle uses layout slots while columns include all rows',()=>{const layer=createLayer('A',0,[createFragment(1,10,20,['a','b'],{x:0,y:2,slots:[0,3]})]);assert.deepEqual(selectionRect(layer,{x1:2,x2:6,y1:4,y2:6})[0].rowIds,['b']);assert.deepEqual(selectionRect(layer,{x1:2,x2:6,y1:4,y2:6},true)[0].rowIds,['a','b']);assert.equal(selectionRect(layer,{x1:2,x2:6,y1:4,y2:6})[0].start,12)})
-test('workspace roundtrip preserves masks, positions, camera and layer names',()=>{const {state}=fixture();state.layers[0].name='Promoter';state.camera={x:20,y:8,scale:12};const restored=validateLayerWorkspace(JSON.parse(JSON.stringify(state)),['a','b','c']);assert.deepEqual(restored,state);assert.throws(()=>validateLayerWorkspace({...state,version:1},['a']));assert.throws(()=>validateLayerWorkspace(state,['a']))})
+test('workspace roundtrip preserves masks, positions, camera and layer names',()=>{const {state}=fixture();state.layers[0].name='Promoter';state.camera={x:20,y:8,scale:12,plane:.4};const restored=validateLayerWorkspace(JSON.parse(JSON.stringify(state)),['a','b','c']);assert.deepEqual(restored,state);assert.throws(()=>validateLayerWorkspace({...state,version:1},['a']));assert.throws(()=>validateLayerWorkspace(state,['a']))})
 
 test('automatic genome association requires an unambiguous assembly identifier',async()=>{
   const {exactGenomeLinks}=await import('../src/components/alignment-explorer/associations.js')
@@ -49,6 +49,46 @@ test('zoom limits retain the full horizontal extent and prevent losing a layer',
   assert.equal(bounded.y,0)
   const zoomed=constrainCamera(layer,{x:1e20,y:1e20,scale:12},size)
   assert.ok(zoomed.x<1e9)
+})
+test('plane zoom shrinks the sheet instead of refitting the columns to the window',async()=>{
+  const {constrainCamera}=await import('../src/components/alignment-explorer/layers.js')
+  const {MARGIN_X}=await import('../src/components/alignment-explorer/layout.js')
+  const layer=createLayer('Wide',0,[createFragment(1,0,10000,Array.from({length:60},(_,i)=>String(i)))])
+  const size={width:1000,height:600}
+  // Real screen position of a layout column, which is what the reader sees.
+  const screenX=(camera,column)=>camera.plane*(MARGIN_X+(column-camera.x)*camera.scale)
+  const full=constrainCamera(layer,{x:0,y:0,scale:0},size)
+  const half=constrainCamera(layer,{x:0,y:0,scale:full.scale,plane:.5},size)
+  assert.equal(half.scale,full.scale,'a column is still drawn the same width; only the sheet changed size')
+  const width=camera=>screenX(camera,10000)-screenX(camera,0)
+  assert.ok(Math.abs(width(half)-width(full)/2)<1e-6,'the sheet is half the size it was')
+  assert.ok(screenX(half,0)>screenX(full,0),'whitespace opens on the left')
+  assert.ok(screenX(half,10000)<size.width,'and on the right')
+})
+test('plane zoom leaves the point under the cursor where it is',async()=>{
+  const {zoomPlane}=await import('../src/components/alignment-explorer/layers.js')
+  const {MARGIN_X,MARGIN_Y}=await import('../src/components/alignment-explorer/layout.js')
+  const camera={x:1000,y:200,scale:2,plane:1},point={x:400,y:300}
+  const column=camera.x+(point.x-MARGIN_X)/camera.scale,row=camera.y+point.y-MARGIN_Y
+  for(const factor of [.5,.25,2]){
+    const zoomed=zoomPlane(camera,factor,point)
+    assert.ok(Math.abs(zoomed.plane*(MARGIN_X+(column-zoomed.x)*zoomed.scale)-point.x*camera.plane)<1e-9)
+    assert.ok(Math.abs(zoomed.plane*(MARGIN_Y+row-zoomed.y)-point.y*camera.plane)<1e-9)
+  }
+})
+test('zooming out ends where the whole sheet is in view',async()=>{
+  const {constrainCamera,planeFloor}=await import('../src/components/alignment-explorer/layers.js')
+  const {MARGIN_Y,HEADER_HEIGHT,ROW_HEIGHT}=await import('../src/components/alignment-explorer/layout.js')
+  const rows=Array.from({length:400},(_,i)=>String(i))
+  const layer=createLayer('Tall',0,[createFragment(1,0,100,rows)])
+  const size={width:1000,height:600}
+  const floor=planeFloor(layer,{scale:8},size)
+  assert.ok(floor<1,'400 rows cannot fit a 600 pixel window at full size')
+  assert.ok((MARGIN_Y+HEADER_HEIGHT+rows.length*ROW_HEIGHT+12)*floor<=size.height,'at the floor every row is on screen')
+  assert.equal(constrainCamera(layer,{x:0,y:0,scale:8,plane:floor/4},size).plane,floor,'and it does not shrink past it')
+  // Centred, so the whitespace is on both sides of the sheet rather than under it.
+  const top=(MARGIN_Y-constrainCamera(layer,{x:0,y:0,scale:8,plane:floor},size).y)*floor
+  assert.ok(top>0&&top<size.height/2)
 })
 test('vertical scrolling remains available for large row inventories',async()=>{
   const {constrainCamera}=await import('../src/components/alignment-explorer/layers.js')
@@ -116,7 +156,7 @@ test('saving Original rebases navigation to the visible source block',async()=>{
 
 test('Original camera limits depend on the dataset, not the loaded neighbour window',async()=>{
   const {constrainCamera}=await import('../src/components/alignment-explorer/layers.js')
-  const camera={x:82000,y:0,scale:.6},size={width:1000,height:500}
+  const camera={x:82000,y:0,scale:.6,plane:1},size={width:1000,height:500}
   const a={id:'original',extent:100000,fragments:[createFragment(80,0,100,['a'],{x:82000})]}
   const b={...a,fragments:[createFragment(79,0,100,['a'],{x:81800}),...a.fragments,createFragment(81,0,100,['a'],{x:82200})]}
   assert.deepEqual(constrainCamera(a,camera,size),camera)

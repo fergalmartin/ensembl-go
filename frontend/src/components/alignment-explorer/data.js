@@ -1,5 +1,5 @@
 import { API_BASE } from '../../backendRuntime'
-import { rowSlot, clamp } from './layers.js'
+import { rowSlot, clamp, planeOf } from './layers.js'
 
 export async function api(path, body, signal, method) {
   const response = await fetch(`${API_BASE}/api/alignment-explorer${path}`, {
@@ -31,7 +31,11 @@ export function visibleRequest(fragment,camera,size) {
     return pos>=-ROW_HEIGHT*2&&pos<size.height+ROW_HEIGHT*2
   })
   if(!ids.length)return null
-  const step=Math.max(1,2**Math.ceil(Math.log2(4/Math.max(0.000001,camera.scale))))
+  // Geometry is in plane units; resolution is not. What a bin has to be worth
+  // asking for is set by the pixels it actually lands on, which under plane zoom
+  // is the scale times the plane factor.
+  const onScreen=camera.scale*planeOf(camera)
+  const step=Math.max(1,2**Math.ceil(Math.log2(4/Math.max(0.000001,onScreen))))
   const quantum=Math.max(256,step*128)
   const visibleStart=fragment.start+Math.max(0,(0-x)/camera.scale)
   const visibleEnd=fragment.start+Math.max(0,(size.width-x)/camera.scale)
@@ -41,7 +45,7 @@ export function visibleRequest(fragment,camera,size) {
   const start=Math.max(fragment.start,Math.floor(visibleStart/quantum)*quantum-quantum)
   const end=Math.min(fragment.end,Math.ceil(visibleEnd/quantum)*quantum+quantum)
   if(end<=start)return null
-  return { block:fragment.sourceBlock,start,end,ids:[...new Set([fragment.rowIds[0],...ids])],bins:clamp(Math.ceil((end-start)/step),16,2048),focus:fragment.rowIds[0],summary:camera.scale<0.65 }
+  return { block:fragment.sourceBlock,start,end,ids:[...new Set([fragment.rowIds[0],...ids])],bins:clamp(Math.ceil((end-start)/step),16,2048),focus:fragment.rowIds[0],summary:onScreen<0.65 }
 }
 export const requestKey = request => JSON.stringify(request)
 export function demoAlignment() {

@@ -1,4 +1,4 @@
-import { MARGIN_X, MARGIN_Y, ROW_HEIGHT } from './layout.js'
+import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './layout.js'
 import { BUILTIN_GENOME_COLOR_PALETTE } from '../../genomeColorSchemes.js'
 /** Alignment fragments reference immutable source columns. Layout never changes biology. */
 /** Layers take the genome palette, so a colour means the same thing wherever it
@@ -8,8 +8,8 @@ import { BUILTIN_GENOME_COLOR_PALETTE } from '../../genomeColorSchemes.js'
 export const PALETTE = BUILTIN_GENOME_COLOR_PALETTE
 export const clamp = (v, min, max) => Math.max(min, Math.min(max, v))
 export const newId = () => crypto.randomUUID()
-export const defaultCamera = () => ({ x: 0, y: 0, scale: 2 })
-export const emptyWorkspace = () => ({ version: 2, filter: null, rowOrder: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', tilted: false, annotations: false, connectionUnit: 'columns', highlighted: '', selection: [], camera: defaultCamera() })
+export const defaultCamera = () => ({ x: 0, y: 0, scale: 2, plane: 1 })
+export const emptyWorkspace = () => ({ version: 2, filter: null, rowOrder: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', tilted: false, annotations: false, connectionUnit: 'columns', highlighted: '', selection: [], planeZoom: false, camera: defaultCamera() })
 export function createFragment(sourceBlock, start, end, rowIds, options = {}) {
   return { id: newId(), sourceBlock, start, end, rowIds: [...new Set(rowIds)], x: 0, y: 0, slots: null, ...options }
 }
@@ -477,19 +477,91 @@ export function layerBounds(layer) {
 export function fitCamera(layer,width,_height) {
   const bounds=layerBounds(layer)
   if(!bounds)return defaultCamera()
-  return {x:bounds.left,y:bounds.top,scale:clamp(Math.max(40,width-MARGIN_X-24)/Math.max(1,bounds.right-bounds.left),Number.EPSILON,18)}
+  return {x:bounds.left,y:bounds.top,scale:clamp(Math.max(40,width-MARGIN_X-24)/Math.max(1,bounds.right-bounds.left),Number.EPSILON,18),plane:1}
+}
+/** Where the camera may travel: the whole file for Original, whatever has been
+ * arranged for a layer. */
+export function viewBounds(layer) {
+  if(layer?.id==='original'&&layer.extent)return {left:0,right:layer.extent,top:0,
+    bottom:Math.max((layer.rowExtent||1)*ROW_HEIGHT,...layer.fragments.map(f=>f.y*ROW_HEIGHT+rowCount(f)*ROW_HEIGHT))}
+  return layerBounds(layer)
+}
+/** Zooming the whole arrangement as one flat sheet.
+ *
+ * The ordinary zoom is horizontal: it changes how many columns a pixel covers
+ * and leaves rows 26 pixels tall, because that is what reading an alignment
+ * wants. It can never answer "what does all of this look like", since the rows
+ * always outrun the window however far out it goes.
+ *
+ * Plane zoom shrinks the drawing instead of the biology. Nothing in the layout
+ * changes: the painter keeps working in exactly the units it always did and the
+ * canvas is scaled once at the end, so blocks, names, labels, strings and every
+ * hit region shrink together and stay in register. Dragging, picking and
+ * reordering therefore need no special case; a pointer position is divided by
+ * the plane factor and everything downstream is unchanged. The viewport the
+ * painter is told about grows by the same factor, and that is where the
+ * whitespace around the edges comes from. */
+export const PLANE_MIN=0.004
+export const planeOf=camera=>clamp(Number(camera?.plane)||1,PLANE_MIN,1)
+/** The viewport the painter is given: real pixels over the plane factor, so
+ * shrinking the sheet shows more of the world rather than less of it. */
+export const planeViewport=(size,camera)=>{const plane=planeOf(camera);return {width:size.width/plane,height:size.height/plane}}
+/** How far out the sheet may be pushed: far enough to hold all of it with a
+ * margin of whitespace and no further, so zooming out ends somewhere meaningful.
+ * A layer already smaller than the window keeps a quarter turn in hand, so the
+ * control still does something rather than appearing broken. */
+export function planeFloor(layer,camera,size) {
+  const b=viewBounds(layer)
+  if(!b)return PLANE_MIN
+  const scale=Math.max(Number.EPSILON,Number(camera?.scale)||1)
+  const width=MARGIN_X+(b.right-b.left)*scale+24,height=MARGIN_Y+HEADER_HEIGHT+(b.bottom-b.top)+12
+  const fit=Math.min(size.width/Math.max(1,width),size.height/Math.max(1,height))
+  return clamp(Math.min(fit*.8,.75),PLANE_MIN,1)
+}
+/** The whole arrangement at once: the columns fitted across the window and the
+ * sheet shrunk until every row is on it too. Ordinary fit can only do the first
+ * half, which on a file of a thousand sequences is the less interesting half.
+ *
+ * The two have to be solved together. The plane comes first, from the rows,
+ * since that is the half nothing else can do; the columns are then fitted to the
+ * viewport the plane opens up rather than to the window, or fitting the window
+ * first and shrinking afterwards would leave the file a stamp in an empty
+ * field. */
+export function fitPlane(layer,size) {
+  const b=viewBounds(layer)
+  if(!b)return defaultCamera()
+  const plane=clamp(Math.min(1,size.height/Math.max(1,MARGIN_Y+HEADER_HEIGHT+(b.bottom-b.top)+12)*.9),PLANE_MIN,1)
+  const scale=clamp(Math.max(40,size.width/plane-MARGIN_X-24)/Math.max(1,b.right-b.left),Number.EPSILON,18)
+  return {x:b.left,y:b.top,scale,plane}
+}
+/** Plane zoom about a point, which stays where it is on screen. The point is in
+ * plane units, the same ones the painter and every hit region use. */
+export function zoomPlane(camera,factor,point,floor=PLANE_MIN) {
+  const from=planeOf(camera),to=clamp(from*factor,clamp(floor,PLANE_MIN,1),1)
+  if(to===from)return camera
+  const shift=1-from/to
+  return {...camera,plane:to,x:camera.x+point.x*shift/camera.scale,y:camera.y+point.y*shift}
 }
 /** Keep a useful whole-layer overview as the zoom-out limit, with small pan
- * margins. Horizontal magnification never changes row spacing or source layout. */
+ * margins. Horizontal magnification never changes row spacing or source layout.
+ *
+ * The floor under scale is the one the window gives at full size, whatever the
+ * plane is doing. Carrying on past it is plane zoom's job, and taking the floor
+ * from the shrunken window instead would drive the columns straight back out to
+ * the edges, so there would never be any whitespace to see. */
 export function constrainCamera(layer,camera,size) {
-  const b=layer.id==='original'&&layer.extent?{left:0,right:layer.extent,top:0,bottom:Math.max((layer.rowExtent||1)*ROW_HEIGHT,...layer.fragments.map(f=>f.y*ROW_HEIGHT+rowCount(f)*ROW_HEIGHT))}:layerBounds(layer)
+  const b=viewBounds(layer)
   if(!b)return defaultCamera()
-  const width=Math.max(40,size.width-MARGIN_X-24),height=Math.max(26,size.height-MARGIN_Y-12)
-  const minScale=Math.min(18,width/Math.max(1,b.right-b.left))
-  const scale=clamp(Number(camera.scale)||minScale,minScale,24),span=width/scale
+  const minScale=Math.min(18,Math.max(40,size.width-MARGIN_X-24)/Math.max(1,b.right-b.left))
+  const scale=clamp(Number(camera.scale)||minScale,minScale,24)
+  const plane=clamp(Number(camera.plane)||1,planeFloor(layer,{scale},size),1)
+  const view=planeViewport(size,{plane})
+  const width=Math.max(40,view.width-MARGIN_X-24),height=Math.max(26,view.height-MARGIN_Y-12),span=width/scale
   const x=span>=b.right-b.left?b.left-(span-(b.right-b.left))/2:clamp(Number(camera.x)||0,b.left-span*.1,b.right-span*.9)
-  const y=b.bottom-b.top<=height?b.top:clamp(Number(camera.y)||0,b.top-height*.1,b.bottom-height*.9)
-  return {x,y,scale}
+  // Shrunken, the sheet sits in the middle of the window: that is what puts the
+  // whitespace on both sides of it instead of all of it underneath.
+  const y=b.bottom-b.top<=height?b.top-(plane<1?(height-(b.bottom-b.top))/2:0):clamp(Number(camera.y)||0,b.top-height*.1,b.bottom-height*.9)
+  return {x,y,scale,plane}
 }
 export function validateLayerWorkspace(value,ids) {
   if(!value||value.version!==2||!Array.isArray(value.layers)||value.layers.length>100)throw new Error('This is not a layer workspace. Open an alignment to start a new one.')
@@ -505,9 +577,9 @@ export function validateLayerWorkspace(value,ids) {
       if(f.coverage)for(const id of f.rowIds){if(!Array.isArray(f.coverage[id])||f.coverage[id].some(([a,b])=>!Number.isInteger(a)||!Number.isInteger(b)||a<f.start||b>f.end||b<=a))throw new Error('Invalid fragment coverage')}
       return {...f,rowIds:[...new Set(f.rowIds)]}
     })
-    return {...l,camera:{x:Number(l.camera?.x)||0,y:Number(l.camera?.y)||0,scale:clamp(Number(l.camera?.scale)||2,Number.EPSILON,24)},name:String(l.name||`Layer ${i+1}`).slice(0,120),color:/^#[\da-f]{6}$/i.test(l.color)?l.color:PALETTE[i%PALETTE.length],fragments}
+    return {...l,camera:{x:Number(l.camera?.x)||0,y:Number(l.camera?.y)||0,scale:clamp(Number(l.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(l.camera)},name:String(l.name||`Layer ${i+1}`).slice(0,120),color:/^#[\da-f]{6}$/i.test(l.color)?l.color:PALETTE[i%PALETTE.length],fragments}
   })
-  return {...emptyWorkspace(),...value,layers,rowOrder:Array.isArray(value.rowOrder)&&value.rowOrder.every(id=>typeof id==='string')?value.rowOrder:null,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24)}}
+  return {...emptyWorkspace(),...value,layers,rowOrder:Array.isArray(value.rowOrder)&&value.rowOrder.every(id=>typeof id==='string')?value.rowOrder:null,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(value.camera)}}
 }
 
 /** Hit-test highlighted cells in layout coordinates, including sparse merged rows. */
