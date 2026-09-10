@@ -257,3 +257,28 @@ test('a string skipping blocks is routed clear of the panels that would bury it'
   assert.equal(back[1].x,389)
   assert.equal(back[3].x,111)
 })
+
+test('paths continuing outside the loaded window become stubs on the outermost block holding the row',async()=>{
+  const {offWindowLinks}=await import('../src/components/alignment-explorer/layers.js')
+  const block=(n,ids)=>createFragment(n,0,100,ids,{id:`original:${n}`,x:n*132})
+  const layer={fragments:[block(4,['a','b']),block(5,['a']),block(6,['a','b'])]}
+  const links=offWindowLinks(layer,{before:{a:2},after:{a:40,b:51}})
+  const find=(rowId,direction)=>links.find(l=>l.rowId===rowId&&l.direction===direction)
+  // 'a' continues both ways; the stubs hang off the first and last loaded block
+  // holding it, not off whichever fragment happened to be listed first.
+  assert.equal(find('a',-1).fragment.sourceBlock,4)
+  assert.equal(find('a',-1).block,2)
+  assert.equal(find('a',1).fragment.sourceBlock,6)
+  assert.equal(find('a',1).block,40)
+  // 'b' is absent from block 5, so its last loaded block is still 6.
+  assert.equal(find('b',1).fragment.sourceBlock,6)
+  assert.equal(find('b',1).block,51)
+  // Nothing off the left for 'b': the window edge is where its path starts.
+  assert.equal(find('b',-1),undefined)
+  assert.equal(links.length,3)
+  // Aggregates describe runs of blocks and can never anchor a stub.
+  const grouped={fragments:[{...block(4,['a']),aggregate:{first:4,last:20,count:17,presence:{}}}]}
+  assert.deepEqual(offWindowLinks(grouped,{before:{a:2},after:{a:40}}),[])
+  assert.deepEqual(offWindowLinks(layer,null),[])
+  assert.deepEqual(offWindowLinks(layer,{before:{},after:{}}),[])
+})

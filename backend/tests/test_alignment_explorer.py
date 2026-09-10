@@ -244,3 +244,33 @@ class LayoutPerformanceTests(unittest.TestCase):
         self.assertEqual(self.store.layout_info()['layout_end'],before)
         with self.store.connect() as db:
             self.assertEqual(json.loads(db.execute("SELECT value FROM meta WHERE key='layout_version'").fetchone()['value']),LAYOUT_VERSION)
+
+    def test_neighbours_find_the_nearest_occurrence_outside_the_loaded_window(self):
+        # a spans everything; b skips a long way; c only sits inside the window.
+        layout={1:['a','b'],2:['a'],3:['a','c'],4:['a','c'],5:['a'],9:['a','b']}
+        for block in range(1,10):
+            self.store.add_block([{'source':s,'sequence':'ACGT'} for s in layout.get(block,['a'])])
+        ids=[stable_id(x) for x in ('a','b','c')]
+        a,b,c=ids
+        # Window covers blocks 3-4: b continues in both directions, c in neither.
+        result=self.store.outside_neighbours(ids,3,4)
+        self.assertEqual(result['before'],{a:2,b:1})
+        self.assertEqual(result['after'],{a:5,b:9})
+        # Nearest, not first or last: a is in 2 and 5, never 1 or 9.
+        self.assertNotIn(c,result['before'])
+        self.assertNotIn(c,result['after'])
+        # A window covering the whole file has nothing outside it.
+        self.assertEqual(self.store.outside_neighbours(ids,1,9),{'before':{},'after':{}})
+        self.assertEqual(self.store.outside_neighbours([],1,2),{'before':{},'after':{}})
+
+    def test_neighbours_ignore_empty_components(self):
+        # An 'e' record states the sequence is absent, so the path cannot resume
+        # there; the next real occurrence is what the view must point at.
+        self.store.add_block([{'source':'a','sequence':'ACGT'}])
+        self.store.add_block([{'source':'a','sequence':'ACGT'},{'source':'b','sequence':'ACGT'}])
+        # A block needs a real row; 'a' is present only as an empty component.
+        self.store.add_block([{'source':'z','sequence':'ACGT'},{'source':'a','sequence':None,'empty_status':'C','start':0,'end':0}])
+        self.store.add_block([{'source':'a','sequence':'ACGT'}])
+        a=stable_id('a')
+        self.assertEqual(self.store.outside_neighbours([a],2,2)['after'],{a:4})
+        self.assertEqual(self.store.outside_neighbours([a],3,3)['before'],{a:2})

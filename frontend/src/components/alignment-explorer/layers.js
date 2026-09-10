@@ -119,6 +119,38 @@ export function layerConnections(layer) {
   })
   return result
 }
+/** Ends of the path that continue outside the blocks the view has loaded.
+ *
+ * layerConnections can only join fragments it has, so a sequence carrying on
+ * beyond the loaded window looks like it stops at the window edge. `neighbours`
+ * names the nearest block holding each sequence off each end; this turns those
+ * into stubs anchored to the outermost loaded fragment holding the row, which
+ * the painter runs off the side of the viewport.
+ *
+ * A stub is deliberately not a connection: the distance across it is unknown, so
+ * it carries the block to jump to rather than a column count. */
+export function offWindowLinks(layer,neighbours) {
+  if(!neighbours)return []
+  const {before={},after={}}=neighbours
+  const outermost=new Map()
+  for(const f of layer.fragments){
+    if(f.aggregate)continue
+    for(const id of f.rowIds){
+      const seen=outermost.get(id)
+      if(!seen)outermost.set(id,{first:f,last:f})
+      else{
+        if(sourceOrder(f,seen.first)<0)seen.first=f
+        if(sourceOrder(f,seen.last)>0)seen.last=f
+      }
+    }
+  }
+  const result=[]
+  outermost.forEach(({first,last},rowId)=>{
+    if(before[rowId]!=null)result.push({id:`before:${first.id}:${rowId}`,rowId,fragment:first,block:before[rowId],direction:-1})
+    if(after[rowId]!=null)result.push({id:`after:${last.id}:${rowId}`,rowId,fragment:last,block:after[rowId],direction:1})
+  })
+  return result
+}
 export function firstBlocks(layer) {
   const result=new Map()
   for(const f of [...layer.fragments].sort((a,b)=>a.x-b.x||a.y-b.y))for(const id of f.rowIds)if(!result.has(id))result.set(id,f.id)

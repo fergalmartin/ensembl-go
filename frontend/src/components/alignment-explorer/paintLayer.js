@@ -20,7 +20,7 @@ function niceStep(scale){const raw=80/scale,mag=10**Math.floor(Math.log10(raw));
 function rowChunks(fragment,rowId){return cellRanges(fragment,rowId)}
 
 /** Paint an alignment layer to a viewport-sized texture: no chromosome-sized canvases. */
-export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,connections,counts,state,drag,selectionRect,ghost=false,light=false}) {
+export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,connections,offWindow=[],counts,state,drag,selectionRect,ghost=false,light=false}) {
   const colors=light?{background:'#f6f8fb',panel:'#fff',text:'#27394c',muted:'#738196',border:'#cbd5e1',head:'#edf2f8',void:'#eef2f7'}:{background:'#152032',panel:'#1c293d',text:'#e3eaf4',muted:'#8f9fb3',border:'#3a4d65',head:'#24354c',void:'#152032'}
   const baseColors=NUCLEOTIDE_COLORS[light?'light':'dark']
   ctx.clearRect(0,0,size.width,size.height)
@@ -259,6 +259,38 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     }
   }
   if(dense){ctx.fillStyle=colors.muted;ctx.font='11px Lato, sans-serif';ctx.fillText(drawLayer.fragments.some(f=>f.aggregate)?'Block presence · filled width = fraction of blocks containing each sequence · click a header to zoom':'Source-block overview · zoom in for coordinates and chunk actions',MARGIN_X+8,13)}
+  // Paths continuing outside the loaded window. The block they resume in is
+  // usually far off screen and the block they leave from is often just off it
+  // too, so a line drawn between them would cross the whole viewport from
+  // nowhere to nowhere. Instead each is a short dashed mark on the row's own
+  // line at the edge it leaves by, naming the block to jump to. The distance is
+  // genuinely unknown, so it never carries a column count.
+  for(const link of offWindow){
+    const f=fragmentById.get(link.fragment.id)
+    if(!f)continue
+    const index=f.rowIds.indexOf(link.rowId)
+    if(index<0)continue
+    const selected=state.highlighted===link.rowId
+    if(dense&&!selected)continue
+    const r=panelRect(f,camera)
+    const y=r.y+(rowSlot(f,index)+0.5)*ROW_HEIGHT
+    if(y<MARGIN_Y||y>size.height-4)continue
+    ctx.font=`${selected?'bold ':''}10px "IBM Plex Mono", monospace`
+    const label=link.direction>0?`block ${link.block} \u25b8`:`\u25c2 block ${link.block}`
+    const width=ctx.measureText(label).width+10
+    const run=56
+    const edge=link.direction>0?size.width-2:MARGIN_X+2
+    const inner=edge-link.direction*run
+    ctx.strokeStyle=selected?'#f2c766':light?'#7d90a8':'#6f88a8'
+    ctx.lineWidth=selected?2.4:1.4
+    ctx.globalAlpha=state.highlighted&&!selected?0.35:0.85
+    ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(inner,y);ctx.lineTo(edge,y);ctx.stroke()
+    ctx.setLineDash([]);ctx.globalAlpha=1
+    const lx=link.direction>0?Math.max(MARGIN_X+2,edge-width):edge
+    ctx.fillStyle=colors.background;rounded(ctx,lx,y-15,width,14,4);ctx.fill()
+    ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.fillText(label,lx+5,y-5)
+    hits.push({kind:'offwindow',rowId:link.rowId,block:link.block,x:Math.min(lx,inner),y:y-16,width:Math.max(width,run),height:22})
+  }
   for(const route of routedQueue){
     ctx.strokeStyle=route.selected?'#f2c766':light?'#526f91':'#9eb9d9'
     ctx.lineWidth=route.selected?3:1.8

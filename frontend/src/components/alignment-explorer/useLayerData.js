@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, visibleRequest, requestKey } from './data'
-import { layerConnections } from './layers'
+import { layerConnections, offWindowLinks } from './layers'
 import { TileScheduler } from './tileScheduler'
 
 /** Independent, persistent tile requests. A slow block never prevents another
@@ -53,6 +53,21 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   useEffect(()=>{extraCache.clear();return()=>extraCache.clear()},[extraCache,dataset?.id,revision])
   const connections=useMemo(()=>layer?layerConnections({...layer,fragments:layer.fragments.filter(f=>!f.aggregate)}):[],[layer])
   const extraTasks=[]
+  // Where the loaded window ends, the path does not. Ask only for the nearest
+  // occurrence off each end, so this stays two indexed lookups whatever the
+  // dataset's size, and re-ask only when the window itself moves.
+  const solid=layer?.fragments.filter(f=>!f.aggregate)||[]
+  const window=solid.length?{lo:Math.min(...solid.map(f=>f.sourceBlock)),hi:Math.max(...solid.map(f=>f.sourceBlock)),
+    ids:[...new Set(solid.flatMap(f=>f.rowIds))].sort()}:null
+  let neighbours=null
+  if(dataset&&window&&window.ids.length&&window.ids.length<=500){
+    const key=`neighbours:${dataset.id}:${window.lo}:${window.hi}:${window.ids.length}:${revision}`
+    neighbours=extraCache.get(key)||null
+    extraTasks.push({key,run:signal=>api(`/datasets/${dataset.id}/neighbours`,{ids:window.ids,lo:window.lo,hi:window.hi},signal)})
+  }
+  const offWindow=useMemo(()=>layer&&neighbours?offWindowLinks({...layer,fragments:solid},neighbours):[],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layer,neighbours])
   for(const {id,request} of requests){
     if(!showAnnotations||request.summary||!tiles[id]?.data.detail)continue
     const key=`annotations:${dataset?.id}:${requestKey(request)}:${revision}`,value=extraCache.get(key)
@@ -71,5 +86,5 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   useEffect(()=>{extraCache.setWanted(dataset?extraTasks:[])},[extraCache,dataset?.id,extraSignature]) // eslint-disable-line react-hooks/exhaustive-deps
   // Hover-only parent updates do not invalidate the canvas texture.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(()=>({tiles,annotations,connections,counts,pending,warnings,displayCamera:camera}),[tick,signature,extraSignature,camera,layer,showAnnotations,dataset?.id,revision])
+  return useMemo(()=>({tiles,annotations,connections,offWindow,counts,pending,warnings,displayCamera:camera}),[tick,signature,extraSignature,camera,layer,showAnnotations,dataset?.id,revision])
 }

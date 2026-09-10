@@ -290,6 +290,30 @@ class AlignmentStore:
             item=db.execute('SELECT x FROM source_layout WHERE block=?',(block,)).fetchone() if block else None
         return {'max_source_rows':max_rows,'layout_end':last['end_x'] if last else 0,'layout_start':item['x'] if item else 0}
 
+    def outside_neighbours(self, ids, lo, hi):
+        """Nearest block holding each sequence outside the block range [lo, hi].
+
+        A string is only drawn between blocks the view has loaded, so a sequence
+        continuing beyond the loaded window looks like it simply stops. The whole
+        membership of a sequence is unbounded, but what the view needs is not:
+        just the closest occurrence off each end. Two indexed lookups answer that
+        whatever the dataset's size.
+
+        Empty MAF components are excluded: an 'e' record states the sequence is
+        absent there, so it cannot be the next place the path continues.
+        """
+        if not ids: return {'before': {}, 'after': {}}
+        marks = ','.join('?' * len(ids))
+        with self.connect() as db:
+            before = db.execute(
+                f'SELECT id, max(block) AS block FROM rows WHERE id IN ({marks}) AND block<? AND empty_status IS NULL GROUP BY id',
+                (*ids, lo)).fetchall()
+            after = db.execute(
+                f'SELECT id, min(block) AS block FROM rows WHERE id IN ({marks}) AND block>? AND empty_status IS NULL GROUP BY id',
+                (*ids, hi)).fetchall()
+        return {'before': {r['id']: r['block'] for r in before},
+                'after': {r['id']: r['block'] for r in after}}
+
     def layout_region(self, start, end, limit=256):
         self.ensure_layout()
         with self.connect() as db:

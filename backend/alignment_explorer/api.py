@@ -208,6 +208,18 @@ def create_router(cache_root=None, annotation_provider=None):
             return {'connections':result}
         except (KeyError, ValueError, TypeError) as exc: raise HTTPException(400, 'Invalid connection coordinates') from exc
 
+    @router.post('/datasets/{dataset_id}/neighbours')
+    def neighbours(dataset_id: str, payload: dict):
+        ids = payload.get('ids', [])
+        if not isinstance(ids, list) or len(ids) > 500: raise HTTPException(400, 'Request at most 500 sequences')
+        if not all(isinstance(i, str) for i in ids): raise HTTPException(400, 'Invalid sequence identifier')
+        try:
+            lo, hi = int(payload['lo']), int(payload['hi'])
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(400, 'Invalid block range') from exc
+        if lo > hi: raise HTTPException(400, 'Invalid block range')
+        return store_for(dataset_id).outside_neighbours(ids, lo, hi)
+
     @router.post('/datasets/{dataset_id}/annotations')
     def annotations(dataset_id: str, payload: RegionRequest):
         from .store import source_span
