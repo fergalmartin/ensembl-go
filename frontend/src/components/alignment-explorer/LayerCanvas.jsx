@@ -8,9 +8,9 @@ import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWhee
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
  * coordinates and renderer drive the complete non-WebGL fallback. */
-const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navigationCamera, inventory, tiles, annotations, connections, offWindow, counts, gaps, light, config, onCamera, onCopyChunk, onBlockToLayer, onAggregate, onToggleRows, onSelection, onSelectionDrag, onSelectionDrop, onMove, onHighlight, onInspect, onSize, onFallback, onSourceBlock }, ref) {
+const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navigationCamera, inventory, tiles, annotations, connections, offWindow, counts, gaps, light, config, onCamera, onCopyChunk, onBlockToLayer, onAggregate, onToggleRows, onSelection, onSelectionDrag, onSelectionDrop, onMove, onHighlight, onInspect, onSize, onFallback, onSourceBlock, onReorderRow }, ref) {
   const host = useRef(null), engine = useRef(null), latest = useRef(null), interaction = useRef(null), hits = useRef([]), space = useRef(false)
-  const [size, setSize] = useState({width:800,height:500}), [drag,setDrag] = useState(null), [rectangle,setRectangle] = useState(null), [overSelection,setOverSelection] = useState(false), [hover,setHover] = useState(null)
+  const [size, setSize] = useState({width:800,height:500}), [drag,setDrag] = useState(null), [rectangle,setRectangle] = useState(null), [reorder,setReorder] = useState(null), [overSelection,setOverSelection] = useState(false), [hover,setHover] = useState(null)
   useLayoutEffect(()=>{ latest.current = {layer,layers,state,navigationCamera,inventory,tiles,annotations,connections,counts,light,config,onCamera,onSelection,onSelectionDrag,onSelectionDrop,onMove,onHighlight,onInspect,onSize,onFallback,size,drag,rectangle} })
   function canvasPoint(event){
     const r=host.current.getBoundingClientRect(),x=event.clientX-r.left,y=event.clientY-r.top,e=engine.current
@@ -69,7 +69,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       if(e.texture){e.texture.dispose();e.texture=new THREE.CanvasTexture(canvas);e.texture.colorSpace=THREE.SRGBColorSpace;e.texture.minFilter=THREE.LinearFilter;e.texture.magFilter=THREE.NearestFilter;e.mesh.material.map=e.texture;e.mesh.material.needsUpdate=true}
     }
     const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0)
-    hits.current=paintLayer(ctx,{layer,camera:state.camera,size,inventory,tiles,annotations,connections,offWindow,counts,state,drag,hover,gaps,selectionRect:rectangle,light})
+    hits.current=paintLayer(ctx,{layer,camera:state.camera,size,inventory,tiles,annotations,connections,offWindow,counts,state,drag,hover,gaps,reorder,selectionRect:rectangle,light})
     if(e.failed){e.fallback.width=canvas.width;e.fallback.height=canvas.height;e.fallback.getContext('2d').drawImage(canvas,0,0);return}
     e.renderer.setSize(size.width,size.height,false)
     e.camera.left=-size.width/2;e.camera.right=size.width/2;e.camera.top=size.height/2;e.camera.bottom=-size.height/2;e.camera.updateProjectionMatrix()
@@ -82,7 +82,8 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       m.position.set((i+1)*9,-(i+1)*14,-(i+1)*65);e.group.add(m)
     })
     e.camera.updateMatrixWorld(true);e.scene.updateMatrixWorld(true);e.renderer.render(e.scene,e.camera)
-  },[layer,layers,state,inventory,tiles,annotations,connections,offWindow,counts,gaps,light,size,drag,hover,rectangle])
+  },[layer,layers,state,inventory,tiles,annotations,connections,offWindow,counts,gaps,light,size,drag,hover,reorder,rectangle])
+  const rowIndexAt=y=>Math.round((y-MARGIN_Y+state.camera.y)/ROW_HEIGHT)
   function pointerHover(point){
     // A block or merged block under the cursor, with the layout position inside
     // it so a merged block can point at the individual block being pointed at.
@@ -103,7 +104,10 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(hit?.kind==='rows'){onToggleRows?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='copy'){onCopyChunk?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='layer'){onBlockToLayer?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
-    if(hit?.kind==='label'){onSelection(togglePicks(state.selection,rowPicks(layer,hit.rowId)));return}
+    if(hit?.kind==='label'){
+      interaction.current={kind:'reorder',point,rowId:hit.rowId,fromLabel:true,camera:{...p.state.camera}}
+      event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
+    }
     if(hit?.kind==='blockjump'){onHighlight(hit.rowId);onSourceBlock?.(hit.block);return}
     if(hit?.kind==='connection')onInspect(hit)
     const selected=state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera),state.camera)
@@ -134,6 +138,11 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     const dx=point.x-current.point.x,dy=point.y-current.point.y
     if(current.kind==='pan')onCamera({...current.camera,x:current.camera.x-dx/current.camera.scale,y:current.camera.y-dy})
     if(current.kind==='move')setDrag({fragmentId:current.fragment.id,x:current.fragment.x+dx/current.camera.scale,y:current.fragment.y+dy/ROW_HEIGHT})
+    if(current.kind==='reorder'){
+      if(Math.abs(dy)>ROW_HEIGHT/2||current.dragging){current.dragging=true
+        setReorder({rowId:current.rowId,index:clamp(rowIndexAt(point.y),0,Math.max(0,inventory.length-1)),y:point.y})}
+      return
+    }
     if(current.kind==='select')setRectangle({x:Math.min(current.point.x,point.x),y:state.mode==='columns'?0:Math.min(current.point.y,point.y),width:Math.abs(dx),height:state.mode==='columns'?size.height:Math.abs(dy)})
   }
   function pointerUp(event){
@@ -143,6 +152,13 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(current.kind==='transfer'){
       if(current.started)onSelectionDrop({x:event.clientX,y:event.clientY})
       onSelectionDrag(null)
+    }
+    if(current.kind==='reorder'){
+      // A press that never travelled is still a click on the name; one that did
+      // drops the row where it was let go.
+      if(current.dragging)onReorderRow?.(current.rowId,clamp(rowIndexAt(point.y),0,Math.max(0,inventory.length-1)))
+      else if(current.fromLabel)onSelection(togglePicks(state.selection,rowPicks(layer,current.rowId)))
+      setReorder(null)
     }
     if(current.kind==='move'){
       const dx=point.x-current.point.x,dy=point.y-current.point.y
@@ -159,9 +175,9 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       // Regions accumulate, so several can be picked out before moving them.
       onSelection(togglePicks(state.selection,drawn.map(r=>({...r,kind:'region'}))))
     }
-    interaction.current=null;setDrag(null);setRectangle(null);setOverSelection(false)
+    interaction.current=null;setDrag(null);setRectangle(null);setReorder(null);setOverSelection(false)
   }
-  function cancelGesture(){interaction.current=null;setDrag(null);setRectangle(null);onSelectionDrag(null)}
+  function cancelGesture(){interaction.current=null;setDrag(null);setRectangle(null);setReorder(null);onSelectionDrag(null)}
   useEffect(()=>{const cancel=()=>{interaction.current=null;setDrag(null);setRectangle(null);latest.current.onSelectionDrag(null)};window.addEventListener('blur',cancel);return()=>window.removeEventListener('blur',cancel)},[])
   return <div className={`al-canvas ${state.mode==='pan'?'is-pan':'is-select'} ${state.selection.length?'has-selection':''} ${overSelection?'over-selection':''}`} ref={host} tabIndex={0} role="application" aria-label="Alignment panel. Use arrow keys to pan, plus and minus to zoom. Choose rectangle or columns to select. Drag highlighted cells to a sidebar layer or New layer. Drag chunk headers to arrange. Each header has a clipboard to copy FASTA; original source blocks also have a plus to create a layer."
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerLeave={()=>setHover(null)} onPointerCancel={cancelGesture} onLostPointerCapture={()=>{if(interaction.current)cancelGesture()}}

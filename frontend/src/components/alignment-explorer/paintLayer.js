@@ -28,7 +28,7 @@ function niceStep(scale){const raw=80/scale,mag=10**Math.floor(Math.log10(raw));
 function rowChunks(fragment,rowId){return cellRanges(fragment,rowId)}
 
 /** Paint an alignment layer to a viewport-sized texture: no chromosome-sized canvases. */
-export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,connections,offWindow=[],counts,state,drag,hover,gaps,selectionRect,ghost=false,light=false}) {
+export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,connections,offWindow=[],counts,state,drag,hover,gaps,reorder,selectionRect,ghost=false,light=false}) {
   const colors=light?{background:'#f6f8fb',panel:'#fff',text:'#27394c',muted:'#738196',border:'#cbd5e1',head:'#edf2f8',void:'#eef2f7'}:{background:'#152032',panel:'#1c293d',text:'#e3eaf4',muted:'#8f9fb3',border:'#3a4d65',head:'#24354c',void:'#152032'}
   const baseColors=NUCLEOTIDE_COLORS[light?'light':'dark']
   ctx.clearRect(0,0,size.width,size.height)
@@ -336,6 +336,21 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.fillText(label,labelX+4,y+3)
     hits.push({kind:'blockjump',rowId:marker.rowId,block:marker.block,
       x:Math.min(anchor,labelX),y:y-9,width:Math.abs(labelX+width/2-anchor)+width/2+4,height:18})
+  }
+  // Where a dragged row would land, drawn over everything so the answer is
+  // visible whichever block the cursor happens to be over.
+  if(reorder){
+    const y=MARGIN_Y+reorder.index*ROW_HEIGHT-camera.y
+    ctx.fillStyle=PICKED;ctx.globalAlpha=.9;ctx.fillRect(0,y-1,size.width,2);ctx.globalAlpha=1
+    ctx.beginPath();ctx.arc(MARGIN_X-6,y,4,0,Math.PI*2);ctx.fill()
+    const row=byId.get(reorder.rowId)
+    const label=row?.label||row?.source||reorder.rowId
+    ctx.font='bold 11px Lato, sans-serif'
+    const width=ctx.measureText(label).width+14
+    const boxX=Math.min(Math.max(4,MARGIN_X-width-8),size.width-width-4)
+    ctx.fillStyle=colors.head;rounded(ctx,boxX,reorder.y-9,width,18,5);ctx.fill()
+    ctx.strokeStyle=PICKED;ctx.lineWidth=1;rounded(ctx,boxX+.5,reorder.y-8.5,width-1,17,5);ctx.stroke()
+    ctx.fillStyle=PICKED;ctx.fillText(label,boxX+7,reorder.y+4)
   }
   if(selectionRect){ctx.fillStyle='#78cfbb27';ctx.fillRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.strokeStyle='#8ee1ce';ctx.setLineDash([5,3]);ctx.strokeRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.setLineDash([])}
   if(!layer.fragments.length){ctx.fillStyle=colors.muted;ctx.font='14px Lato, sans-serif';ctx.textAlign='center';ctx.fillText('This layer is empty. Move a selection here from another layer.',size.width/2,size.height/2);ctx.textAlign='left'}

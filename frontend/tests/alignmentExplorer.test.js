@@ -674,3 +674,43 @@ test('the cycle rail reads a cursor where it drew its dots',async()=>{
   assert.equal(cyclePointerDragged({x:100,y:100},100,100+CYCLE_DRAG_THRESHOLD+1),true)
   assert.equal(cyclePointerDragged(null,100,999),false)
 })
+
+test('a row can be moved through the order without losing any row',async()=>{
+  const {moveRow,resolveRowOrder}=await import('../src/components/alignment-explorer/layers.js')
+  const order=['a','b','c','d','e']
+  // Down: the gap the row left closes behind it, so landing on index 3 puts it
+  // third rather than fourth.
+  assert.deepEqual(moveRow(order,'a',3),['b','c','d','a','e'])
+  // Up.
+  assert.deepEqual(moveRow(order,'e',1),['a','e','b','c','d'])
+  // The ends, and a move that goes nowhere.
+  assert.deepEqual(moveRow(order,'c',0),['c','a','b','d','e'])
+  assert.deepEqual(moveRow(order,'c',99),['a','b','d','e','c'])
+  assert.deepEqual(moveRow(order,'c',2),order)
+  // Every row survives every move.
+  for(const id of order)for(let i=-2;i<8;i++){
+    const moved=moveRow(order,id,i)
+    assert.deepEqual([...moved].sort(),[...order].sort(),`moving ${id} to ${i} changed the set of rows`)
+  }
+  // A row that is not there leaves the order alone.
+  assert.deepEqual(moveRow(order,'zz',2),order)
+})
+
+test('a saved row order survives rows arriving and leaving',async()=>{
+  const {resolveRowOrder}=await import('../src/components/alignment-explorer/layers.js')
+  // No saved order is the dataset's own order.
+  assert.deepEqual(resolveRowOrder(['a','b','c'],null),['a','b','c'])
+  assert.deepEqual(resolveRowOrder(['a','b','c'],[]),['a','b','c'])
+  // The saved arrangement is honoured where it still applies.
+  assert.deepEqual(resolveRowOrder(['a','b','c'],['c','a','b']),['c','a','b'])
+  // Rows the order never heard of keep their natural place at the end, rather
+  // than being dropped: a reordering must never make a sequence vanish.
+  assert.deepEqual(resolveRowOrder(['a','b','c','d'],['c','a']),['c','a','b','d'])
+  // Rows the order names but the dataset no longer has are simply skipped.
+  assert.deepEqual(resolveRowOrder(['a','b'],['zz','b','a']),['b','a'])
+  // A duplicated id in a saved order cannot duplicate a row.
+  assert.deepEqual(resolveRowOrder(['a','b'],['a','a','b']),['a','b'])
+  // Whatever the saved order, the result is always exactly the dataset's rows.
+  for(const custom of [['c'],['d','c','b','a'],['zz'],['b','b']])
+    assert.deepEqual([...resolveRowOrder(['a','b','c','d'],custom)].sort(),['a','b','c','d'])
+})

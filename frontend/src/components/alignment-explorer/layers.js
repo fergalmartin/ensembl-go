@@ -4,7 +4,7 @@ export const PALETTE = ['#76cdb6', '#85b5ec', '#d4adeb', '#e8bd7e', '#ed98ac', '
 export const clamp = (v, min, max) => Math.max(min, Math.min(max, v))
 export const newId = () => crypto.randomUUID()
 export const defaultCamera = () => ({ x: 0, y: 0, scale: 2 })
-export const emptyWorkspace = () => ({ version: 2, filter: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', tilted: false, annotations: false, connectionUnit: 'columns', highlighted: '', selection: [], camera: defaultCamera() })
+export const emptyWorkspace = () => ({ version: 2, filter: null, rowOrder: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', tilted: false, annotations: false, connectionUnit: 'columns', highlighted: '', selection: [], camera: defaultCamera() })
 export function createFragment(sourceBlock, start, end, rowIds, options = {}) {
   return { id: newId(), sourceBlock, start, end, rowIds: [...new Set(rowIds)], x: 0, y: 0, slots: null, ...options }
 }
@@ -204,6 +204,30 @@ export function mergeLayers(workspace,sourceId,targetId,combine,rowOrder=[]) {
   const merged=tidyLayer({...target,fragments},rowOrder)
   return {...workspace,layers:workspace.layers.filter(l=>l.id!==sourceId).map(l=>l.id===targetId?merged:l),active:targetId,original:false,selection:[],camera:defaultCamera()}
 }
+/** The row order the view is using: a saved arrangement laid over whatever rows
+ * the dataset actually has.
+ *
+ * A saved order can name rows that are gone and miss rows that arrived, since it
+ * outlives metadata reloads and filters. Rows it does not mention keep their
+ * natural order at the end rather than being dropped, so a reordering can never
+ * make a sequence disappear from the alignment. */
+export function resolveRowOrder(ids, custom) {
+  if(!custom?.length)return ids
+  const known=new Set(ids),seen=new Set(),ordered=[]
+  for(const id of custom)if(known.has(id)&&!seen.has(id)){ordered.push(id);seen.add(id)}
+  for(const id of ids)if(!seen.has(id))ordered.push(id)
+  return ordered
+}
+
+/** Move one row to a position in the order, closing the gap it left behind. */
+export function moveRow(order,id,toIndex) {
+  const from=order.indexOf(id)
+  if(from<0)return order
+  const rest=order.filter(other=>other!==id)
+  const at=clamp(Math.round(toIndex),0,rest.length)
+  return [...rest.slice(0,at),id,...rest.slice(at)]
+}
+
 export function layerConnections(layer) {
   const byRow=new Map(), result=[]
   for(const f of layer.fragments)for(const id of f.rowIds){if(!byRow.has(id))byRow.set(id,[]);byRow.get(id).push(f)}
@@ -427,7 +451,7 @@ export function validateLayerWorkspace(value,ids) {
     })
     return {...l,camera:{x:Number(l.camera?.x)||0,y:Number(l.camera?.y)||0,scale:clamp(Number(l.camera?.scale)||2,Number.EPSILON,24)},name:String(l.name||`Layer ${i+1}`).slice(0,120),color:/^#[\da-f]{6}$/i.test(l.color)?l.color:PALETTE[i%PALETTE.length],fragments}
   })
-  return {...emptyWorkspace(),...value,layers,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24)}}
+  return {...emptyWorkspace(),...value,layers,rowOrder:Array.isArray(value.rowOrder)&&value.rowOrder.every(id=>typeof id==='string')?value.rowOrder:null,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24)}}
 }
 
 /** Hit-test highlighted cells in layout coordinates, including sparse merged rows. */

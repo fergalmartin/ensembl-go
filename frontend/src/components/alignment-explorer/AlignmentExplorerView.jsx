@@ -10,7 +10,7 @@ import useLayerData from './useLayerData'
 import { exactGenomeLinks } from './associations'
 import FilterPanel from './FilterPanel'
 import { api, download, demoAlignment } from './data'
-import { emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, sourceViewAnchor, workspaceForSave, coordinateFragments, visibleSourceRange } from './layers'
+import { emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, sourceViewAnchor, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRow } from './layers'
 import { NUCLEOTIDE_COLORS, NUCLEOTIDE_LETTER_THRESHOLD } from '../../utils/nucleotideStyle'
 import './explorer.css'
 
@@ -28,8 +28,13 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const commit=useCallback(fn=>{const prev=stateRef.current,next=typeof fn==='function'?fn(prev):{...prev,...fn};if(next===prev)return;history.current.past.push(prev);history.current.past=history.current.past.slice(-50);history.current.future=[];stateRef.current=next;setState(next)},[])
   const undo=useCallback(redo=>{const from=redo?history.current.future:history.current.past,to=redo?history.current.past:history.current.future;if(from.length){to.push(stateRef.current);const next=from.pop();stateRef.current=next;setState(next)}},[])
   
+  const orderedInventory=useMemo(()=>{
+    const order=resolveRowOrder(inventory.map(r=>r.id),state.rowOrder)
+    const byId=new Map(inventory.map(r=>[r.id,r]))
+    return order.map(id=>byId.get(id)).filter(Boolean)
+  },[inventory,state.rowOrder])
   const sourceFragments=useOriginalBlocks(dataset,source,state.camera,size,blocks.total,state.original,setError,revision)
-  const originalFragments=useMemo(()=>layoutOriginal(sourceFragments,inventory.map(r=>r.id),state.originalRows||'aligned',state.blockRows||{},dataset?.max_source_rows,state.filter),[sourceFragments,inventory,state.originalRows,state.blockRows,dataset?.max_source_rows,state.filter])
+  const originalFragments=useMemo(()=>layoutOriginal(sourceFragments,orderedInventory.map(r=>r.id),state.originalRows||'aligned',state.blockRows||{},dataset?.max_source_rows,state.filter),[sourceFragments,orderedInventory,state.originalRows,state.blockRows,dataset?.max_source_rows,state.filter])
   const original=useMemo(()=>({id:'original',name:'Original alignment',color:'#b9c5d9',fragments:originalFragments,rowExtent:Math.max(inventory.length,2*(dataset?.max_source_rows||0)+3),extent:dataset?.layout_end||source?.layout_end||source?.length||1}),[originalFragments,dataset?.layout_end,source?.layout_end,source?.length,inventory.length,dataset?.max_source_rows])
   const allLayers=useMemo(()=>[original,...state.layers],[original,state.layers])
   const active=state.original?original:state.layers.find(l=>l.id===state.active)||original
@@ -38,11 +43,11 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const renderState=useMemo(()=>({...state,original:layer.id==='original',camera:constrainCamera(layer,state.camera,size),placedOverlay:state.original&&state.overlay?state.layers.flatMap(l=>l.fragments.map(f=>({...f,color:l.color,name:l.name}))):[]}),[state,layer,size])
   const {tiles,annotations,connections,offWindow,counts,pending,warnings,gaps,displayCamera}=useLayerData(dataset,layer,renderState.camera,size,state.annotations,revision,setError)
   const canvasState=useMemo(()=>({...renderState,camera:displayCamera}),[renderState,displayCamera])
-  const ids=useMemo(()=>inventory.map(r=>r.id),[inventory])
+  const ids=useMemo(()=>orderedInventory.map(r=>r.id),[orderedInventory])
   const filteredInventory=useMemo(()=>{
     const allowed=state.filter?.sequences?.length?new Set(state.filter.sequences):null
-    return allowed?inventory.filter(row=>allowed.has(row.id)):inventory
-  },[inventory,state.filter])
+    return allowed?orderedInventory.filter(row=>allowed.has(row.id)):orderedInventory
+  },[orderedInventory,state.filter])
   const displayInventory=useMemo(()=>filteredInventory.map(row=>{
     const key=row.metadata?.genome_key
     if(!key)return row
@@ -132,6 +137,9 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     tidied.camera=fitCamera(tidied,size.width,size.height)
     commit(s=>({...s,layers:[...s.layers,tidied],active:tidied.id,original:false,selection:[],camera:tidied.camera}))
     setFilterOpen(false)
+  }
+  function reorderRow(rowId,toIndex){
+    commit(s=>({...s,rowOrder:moveRow(resolveRowOrder(inventory.map(r=>r.id),s.rowOrder),rowId,toIndex)}))
   }
   function transfer(copy=false,destinationId=target){
     const newLayer=destinationId==='new'?createLayer(layerName.trim()||`Layer ${state.layers.length+1}`,state.layers.length):null
@@ -237,7 +245,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
       <main className="al-main"><div className="al-toolbar" data-alignment-control-bar><div className="al-tools">{[['pan','Pan'],['rectangle','Select'],['columns','Columns']].map(([mode,label])=><button key={mode} className={state.mode===mode?'selected':''} aria-pressed={state.mode===mode} onClick={()=>patch({mode})}>{label}</button>)}</div><button disabled={state.original||!active.fragments.length} onClick={()=>commit(s=>{const tidied=tidyLayer(active,ids,chunkGap(active.fragments,size.width)),view=fitCamera(tidied,size.width,size.height);return {...s,layers:s.layers.map(l=>l.id===active.id?{...tidied,camera:view}:l),camera:view}})}>Auto arrange</button>{state.original&&<div className="al-source-nav" title={sourceRange?.grouped?'This overview groups source blocks. Enter a block number to open one.':undefined}><button aria-label="Previous source block" disabled={!!sourceRange?.grouped||visibleSourceBlock<=1} onClick={()=>sourceBlock(visibleSourceBlock-1)}>‹</button><label>{sourceRange?.grouped?`Blocks ${sourceRange.first}–${sourceRange.last}`:'Block'} <input aria-label="Jump to source block" type="number" min="1" max={blocks.total} placeholder={sourceRange?.grouped?'Block…':undefined} key={sourceRange?.grouped?'grouped':visibleSourceBlock} defaultValue={sourceRange?.grouped?'':visibleSourceBlock} onKeyDown={e=>{if(e.key==='Enter'){const id=Number(e.currentTarget.value);if(Number.isInteger(id)&&id>=1&&id<=blocks.total)sourceBlock(id)}}}/></label><button aria-label="Next source block" disabled={!!sourceRange?.grouped||visibleSourceBlock>=blocks.total} onClick={()=>sourceBlock(visibleSourceBlock+1)}>›</button></div>}<button className={`al-filter-flag ${state.filter?'selected':''}`} disabled={!state.filter}
   title={state.filter?`Original is filtered to ${(state.filter.sequences||[]).length.toLocaleString()} sequences and ${(state.filter.blocks||[]).length.toLocaleString()} blocks. Click to clear it; the source is unchanged.`:'Original is not filtered'}
   onClick={()=>patch({filter:null})}>{state.filter?'Filtered ✕':'Filter'}</button><strong className="al-active-name" style={{borderColor:layer.color}}>{layer.name}</strong><button title="Reset view to whole layer" aria-label="Reset view" onClick={fit}>↺</button><LayerCycle layers={allLayers} active={layer.id} onChoose={switchLayer} dataset={dataset} inventory={displayInventory} light={theme==='light'} revision={revision}/></div>
-        <LayerCanvas ref={canvas} layer={layer} layers={allLayers} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onAggregate={f=>camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={value=>patch({selection:value,mode:'pan'})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:id})} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock}/>
+        <LayerCanvas ref={canvas} layer={layer} layers={allLayers} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onAggregate={f=>camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={value=>patch({selection:value,mode:'pan'})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:id})} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock} onReorderRow={reorderRow}/>
         <div className="al-status"><span>{pending?'Loading regional detail…':layer.fragments.some(f=>f.aggregate)?'Block presence overview':renderState.camera.scale>=NUCLEOTIDE_LETTER_THRESHOLD?'Sequence detail':renderState.camera.scale>=.65?'Base patterns':'Binned agreement to first row'}{fallback?' · Canvas fallback':''}</span><span>{inspect?.kind==='aggregate'?`${namedRow?.label||''} · present in ${inspect.aggregate.presence?.[inspect.rowId]||0} of ${inspect.aggregate.count} source blocks (${inspect.aggregate.first}–${inspect.aggregate.last})`:inspect?.kind==='connection'?`${inventory.find(r=>r.id===inspect.connection.rowId)?.label||'Sequence'} · ${inspect.connection.columns==null?'Different source blocks: alignment distance unavailable':inspect.connection.columns<0?`${-inspect.connection.columns} overlapping alignment columns`:`${inspect.connection.columns} omitted alignment columns`} · ${counts[inspect.connection.id]?.bases??'?'} ungapped bases`:inspect?.kind==='cell'?`${namedRow?.label||''} · block ${inspect.fragment.sourceBlock}, column ${(inspect.column+1).toLocaleString()}${inspect.base?` · ${inspect.base}`:''}${inspect.placed?.length?` · In layers: ${inspect.placed.join(', ')}`:''}${inspect.features?.length?` · ${inspect.features.map(f=>f.type).join(', ')}`:''}`:'Click a name or a block header to pick it \u00b7 click a cell or a string to follow its path.'}</span></div>
 
         {!!warnings.length&&<div className="al-annotation-warning">Annotations unavailable for {warnings.length} visible rows: {warnings[0].message}</div>}
