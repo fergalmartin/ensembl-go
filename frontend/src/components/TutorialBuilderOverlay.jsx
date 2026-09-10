@@ -1,3 +1,5 @@
+import TutorialBrowserSceneEditor from './TutorialBrowserSceneEditor.jsx'
+import TutorialBrowserDemoEditor from './TutorialBrowserDemoEditor.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useTutorial from '../hooks/useTutorial.jsx'
 import FileBrowserModal from './FileBrowserModal.jsx'
@@ -26,11 +28,14 @@ import {
   cutoutPathD,
   expandRect,
   nonOverlappingRects,
+  TUTORIAL_CARD_MARGIN,
+  TUTORIAL_CARD_WIDTH,
   tutorialDimColor,
   visibleElementRect,
   viewportRect,
 } from '../utils/overlayGeometry.js'
 import { registerRuntimeTutorial } from '../tutorials/index.js'
+import { resolveGenomeColor } from '../genomeColorSchemes.js'
 import {
   exportTutorialPackage,
   generateTutorialDataset,
@@ -239,13 +244,13 @@ function sameTargetReference(left, right) {
   return Boolean(left && right && targetReferenceKey(left) === targetReferenceKey(right))
 }
 
-function targetInstanceLabel(ref) {
+function targetInstanceLabel(ref, datasets = []) {
   const contract = tutorialTarget(ref?.id)
   if (ref?.id === 'app.viewButton') {
     const appButton = APP_BUTTON_META[ref?.params?.buttonId]
     return `${appButton?.label || ref?.params?.buttonId || contract?.label || 'App'} button`
   }
-  const values = Object.values(ref?.params || {}).filter((value) => String(value || '').trim())
+  const values = Object.values(ref?.params || {}).filter((value) => String(value || '').trim()).map((value) => datasets.find((dataset) => dataset.recipeId === value)?.label || value)
   return values.length
     ? `${contract?.label || ref?.id} — ${values.join(', ')}`
     : (contract?.label || ref?.id || 'Highlighted target')
@@ -395,6 +400,12 @@ export default function TutorialBuilderOverlay() {
   const [builderCollapseDragOffset, setBuilderCollapseDragOffset] = useState(0)
   const [builderResizeActive, setBuilderResizeActive] = useState(false)
   const [cardDragActive, setCardDragActive] = useState(false)
+  // The preview card's real height when the step authors no `cardSize`. The reader's card
+  // grows to fit its words; assuming a fixed height here made the preview a different box
+  // from the one being authored, and clamped it away from the bottom of the window by the
+  // difference. Measured from the preview itself, as the overlay measures the real card.
+  const infoCardRef = useRef(null)
+  const [measuredCardHeight, setMeasuredCardHeight] = useState(null)
   const [sceneState, setSceneState] = useState({ status: 'idle', genomeCount: 0, activeCount: 0, targetFound: true, message: '' })
   const dragRef = useRef(null)
   const builderResizeRef = useRef(null)
@@ -484,6 +495,23 @@ export default function TutorialBuilderOverlay() {
     [builder.document?.steps, builder.selectedStepId],
   )
   const selectedStep = selectedIndex >= 0 ? builder.document.steps[selectedIndex] : null
+
+  // Placed after `selectedStep`, which it reads, and before the early return below,
+  // which it must not be able to skip. Both halves matter: declared earlier it crashed
+  // the view with "Cannot access 'selectedStep' before initialization", declared later
+  // with "Rendered more hooks than during the previous render".
+  useEffect(() => {
+    const node = infoCardRef.current
+    if (!node) return undefined
+    const measure = () => {
+      const height = node.getBoundingClientRect?.().height
+      if (height) setMeasuredCardHeight((current) => (Math.abs(height - current) > 1 ? height : current))
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
+    observer?.observe(node)
+    return () => observer?.disconnect()
+  }, [selectedStep?.id, selectedStep?.title, selectedStep?.body, selectedStep?.section, selectedStep?.cardSize])
   const selectedTarget = selectedStep?.spotlight?.target || selectedStep?.spotlight
   const presentationEntries = useMemo(() => {
     const entries = selectedTarget ? [{ target: selectedTarget, ring: true }] : []
@@ -513,9 +541,11 @@ export default function TutorialBuilderOverlay() {
     if (!builder.open || !builder.document || !selectedStep) return ''
     return JSON.stringify({
       tutorial: builder.document.id,
+      settings: builder.document.settings,
       outputDir: builder.outputDir,
       datasets: (builder.document.datasets || []).map((dataset) => ({
         recipeId: dataset?.recipeId || '',
+        label: dataset?.label || '',
         embedded: Boolean(dataset?.embedded),
         active: tutorialDatasetStartsActive(dataset),
       })),
@@ -1040,6 +1070,8 @@ export default function TutorialBuilderOverlay() {
           scientific_name: species.scientific_name,
           common_name: species.common_name,
           provider: species.provider,
+          assembly_name: species.assembly_name,
+          metadata_path: species.files.metadata,
         },
       })
       commitDocument((document) => {
@@ -1150,7 +1182,7 @@ export default function TutorialBuilderOverlay() {
 
   const startDrag = (event, mode) => {
     const position = selectedStep?.cardPosition || { x: 0.55, y: 0.12 }
-    const size = selectedStep?.cardSize || { width: 420, height: 260 }
+    const size = selectedStep?.cardSize || { width: TUTORIAL_CARD_WIDTH, height: measuredCardHeight }
     dragRef.current = {
       mode,
       pointerId: event.pointerId,
@@ -1172,10 +1204,16 @@ export default function TutorialBuilderOverlay() {
     if (!drag || (drag.pointerId !== undefined && event.pointerId !== drag.pointerId)) return
     const dx = event.clientX - drag.startX
     const dy = event.clientY - drag.startY
+    const width = drag.size.width || TUTORIAL_CARD_WIDTH
+    const height = drag.size.height || measuredCardHeight || 0
+    const maxX = window.innerWidth ? (window.innerWidth - width - TUTORIAL_CARD_MARGIN) / window.innerWidth : 1
+    const maxY = window.innerHeight ? (window.innerHeight - height - TUTORIAL_CARD_MARGIN) / window.innerHeight : 1
+    const minX = window.innerWidth ? TUTORIAL_CARD_MARGIN / window.innerWidth : 0
+    const minY = window.innerHeight ? TUTORIAL_CARD_MARGIN / window.innerHeight : 0
     const value = drag.mode === 'move'
       ? {
-          x: Math.max(0, Math.min(1, drag.position.x + (dx / window.innerWidth))),
-          y: Math.max(0, Math.min(1, drag.position.y + (dy / window.innerHeight))),
+          x: Math.max(minX, Math.min(Math.max(minX, maxX), drag.position.x + (dx / window.innerWidth))),
+          y: Math.max(minY, Math.min(Math.max(minY, maxY), drag.position.y + (dy / window.innerHeight))),
         }
       : {
           width: Math.max(320, Math.min(620, Math.round((drag.size.width || 420) + dx))),
@@ -1279,7 +1317,12 @@ export default function TutorialBuilderOverlay() {
     return Math.round(node.getBoundingClientRect().top - scrollerTop)
   }
   const cardPosition = selectedStep?.cardPosition || { x: 0.55, y: 0.12 }
-  const cardSize = selectedStep?.cardSize || { width: 420, height: 260 }
+  // An authored size is the true size. Without one the card is the reader's default width
+  // and whatever height its words need, which is what `measuredCardHeight` reports.
+  const cardSize = selectedStep?.cardSize || {
+    width: TUTORIAL_CARD_WIDTH,
+    height: measuredCardHeight,
+  }
   const captureMode = Boolean(builder.picking || builder.recording)
   const narrowBuilder = builderWidth < BUILDER_DEFAULT_WIDTH
   const wideBuilder = builderWidth >= 720
@@ -1301,7 +1344,7 @@ export default function TutorialBuilderOverlay() {
   const presentationRects = presentationGeometry.rects.map((rect, index) => (
     rect ? expandRect(
       rect,
-      presentationEntries[index]?.ring && presentationRingCount > 1 ? MULTI_HIGHLIGHT_INSET : 6,
+      presentationEntries[index]?.target?.id === 'browser.viewport' ? 6 : (presentationEntries[index]?.ring && presentationRingCount > 1 ? MULTI_HIGHLIGHT_INSET : 6),
       presentationGeometry.size,
     ) : null
   ))
@@ -1332,7 +1375,7 @@ export default function TutorialBuilderOverlay() {
       }
     }
     return document
-  }, allowed ? `Allowed ${targetInstanceLabel(selectedTarget)}.` : `Made ${targetInstanceLabel(selectedTarget)} look-only.`)
+  }, allowed ? `Allowed ${targetInstanceLabel(selectedTarget, builder.document?.datasets)}.` : `Made ${targetInstanceLabel(selectedTarget, builder.document?.datasets)} look-only.`)
 
   const setManualCompletion = (type) => commitDocument((document) => {
     const step = document.steps.find((entry) => entry.id === builder.selectedStepId)
@@ -1411,7 +1454,7 @@ export default function TutorialBuilderOverlay() {
       },
     }
     return document
-  }, capability ? `Next and autoplay will use ${targetInstanceLabel(selectedTarget)}.` : 'Removed the Next/autoplay action.')
+  }, capability ? `Next and autoplay will use ${targetInstanceLabel(selectedTarget, builder.document?.datasets)}.` : 'Removed the Next/autoplay action.')
 
   return (
     <>
@@ -1858,7 +1901,7 @@ export default function TutorialBuilderOverlay() {
                     />
                     <span className="min-w-0">
                       <span className="block font-semibold">Allow interaction with highlighted target</span>
-                      <span className="block truncate text-[11px] text-sky-300">{targetInstanceLabel(selectedTarget)} · {highlightedCapability}</span>
+                      <span className="block truncate text-[11px] text-sky-300">{targetInstanceLabel(selectedTarget, builder.document?.datasets)} · {highlightedCapability}</span>
                     </span>
                   </label>
                 )}
@@ -1919,6 +1962,11 @@ export default function TutorialBuilderOverlay() {
                       {targetForCapability(selectedTarget, interactionTargets, 'input') && <option value="input">Enter a value</option>}
                     </select>
                   </div>
+                  {authoredAction?.capability === 'activate' && <label className={label}>Button state after Next
+                    <select className={textInput} value={selectedStep.autoplay?.options?.desiredEngaged === undefined ? '' : String(selectedStep.autoplay.options.desiredEngaged)} onChange={(e) => updateStep('autoplay', { ...selectedStep.autoplay, options: { ...selectedStep.autoplay?.options, desiredEngaged: e.target.value === '' ? undefined : e.target.value === 'true' } })}>
+                      <option value="">Press once</option><option value="true">On (skip buttons already on)</option><option value="false">Off (skip buttons already off)</option>
+                    </select>
+                  </label>}
                   {authoredAction?.capability === 'input' && (
                     <div className="space-y-1.5">
                       <div><label className={label}>Value to enter</label><input className={textInput} value={authoredAction.value || ''} onChange={(event) => updateStep('autoplay', { action: { ...authoredAction, value: event.target.value } })} /></div>
@@ -1946,6 +1994,37 @@ export default function TutorialBuilderOverlay() {
                   </div>
                 </div>
               </details>
+              {selectedStep?.view === 'genome_browser' && <>
+                <TutorialBrowserDemoEditor value={selectedStep.autoplayDemo} datasets={embeddedTutorialDatasets} onChange={(value) => updateStep('autoplayDemo', value)} />
+                <TutorialBrowserSceneEditor title="Multi-genome arrival state" datasets={embeddedTutorialDatasets}
+                  value={arrivalOf(selectedStep, 'browserScene')}
+                  onChange={(scene) => commitDocument((document) => {
+                    const step = document.steps.find((entry) => entry.id === builder.selectedStepId)
+                    const arrivals = [step.arrive].flat().filter((a) => a && a.type !== 'browserScene')
+                    step.arrive = scene ? [...arrivals, { ...scene, type: 'browserScene' }] : arrivals
+                    return document
+                  })} />
+                <TutorialBrowserSceneEditor title="Browser state applied by Next" datasets={embeddedTutorialDatasets}
+                  value={selectedStep.action?.type === 'browserScene' ? selectedStep.action : null}
+                  onChange={(scene) => commitDocument((document) => {
+                    const step = document.steps.find((entry) => entry.id === builder.selectedStepId)
+                    delete step.autoplay
+                    step.action = scene ? { ...scene, type: 'browserScene' } : { type: 'none' }
+                    return document
+                  })} />
+                <TutorialBrowserSceneEditor title="Complete when the browser matches" datasets={embeddedTutorialDatasets} checkOnly
+                  value={selectedStep.completeWhen}
+                  onChange={(scene) => commitDocument((document) => {
+                    const step = document.steps.find((entry) => entry.id === builder.selectedStepId)
+                    if (scene) { step.completeWhen = scene; step.advanceOn = { type: 'signal', name: 'browser.state' } }
+                    else { delete step.completeWhen; step.advanceOn = { type: 'manual' } }
+                    return document
+                  })} />
+                <label className="text-xs text-gray-300">Message for a locked genome control bar
+                  <input className={textInput} value={selectedStep.blockedControlMessage || ''} placeholder="This control bar isn't active for this step."
+                    onChange={(e) => updateStep('blockedControlMessage', e.target.value)} />
+                </label>
+              </>}
               {selectedStep?.view === 'genome_browser' && (
                 <details className="rounded-md border border-gray-700 p-2.5">
                   <summary className="cursor-pointer text-xs font-semibold text-gray-200">Browser arrival state</summary>
@@ -2194,6 +2273,18 @@ export default function TutorialBuilderOverlay() {
               </div>
               <details className={`${wideField} rounded-md border border-gray-700 p-2.5`}>
                 <summary className="cursor-pointer text-xs font-semibold text-gray-200">Tutorial datasets</summary>
+                {embeddedTutorialDatasets.length > 0 && <div className="mt-2 space-y-2">
+                  {embeddedTutorialDatasets.map((dataset) => <label key={dataset.recipeId} className="block text-xs text-gray-300">
+                    Pill label · {dataset.recipeId}
+                    <input className={textInput} aria-label={`Pill label for ${dataset.recipeId}`} value={dataset.label || ''} onChange={(event) => {
+                      const value = event.target.value
+                      commitDocument((document) => {
+                        document.datasets.find((entry) => entry.recipeId === dataset.recipeId).label = value
+                        return document
+                      })
+                    }} />
+                  </label>)}
+                </div>}
                 <div className="mt-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2.5">
                   <div className="text-xs font-semibold text-emerald-100">Turtles &amp; friends · 8 fake genomes</div>
                   <p className="mt-1 text-[11px] leading-relaxed text-emerald-200/80">Four turtle species plus Splinter, April, Rocksteady and Bebop. Their short FASTA and annotation files are entirely synthetic and travel with the tutorial package.</p>
@@ -2267,6 +2358,15 @@ export default function TutorialBuilderOverlay() {
                     <option value="cancel">Stop if a gene is partial</option>
                   </select>
                   <BuilderButton disabled={generatingDataset} onClick={generateDataset}>{generatingDataset ? 'Generating…' : 'Generate from region'}</BuilderButton>
+                  <label className="flex gap-2 text-xs text-gray-200"><input type="checkbox" checked={Boolean(builder.document.settings?.showInactivePills)}
+                    onChange={(e) => updateMetadata('settings', { ...builder.document.settings, showInactivePills: e.target.checked })} /> Show inactive dataset pills in the browser</label>
+                  <div className="space-y-2 text-xs text-gray-200">
+                    <button type="button" className={textInput} onClick={() => updateMetadata('settings', { ...builder.document.settings, genomeColors: (builder.config?.active_species || []).map((species) => resolveGenomeColor(builder.config, species)) })}>Copy current genome colours into tutorial</button>
+                    {(builder.document.settings?.genomeColors || []).map((colour, index) => <label key={index} className="flex items-center gap-2">Genome {index + 1}<input type="color" value={colour} onChange={(e) => {
+                      const genomeColors = [...builder.document.settings.genomeColors]; genomeColors[index] = e.target.value
+                      updateMetadata('settings', { ...builder.document.settings, genomeColors })
+                    }} /></label>)}
+                  </div>
                   {(builder.document.datasets || []).filter((dataset) => dataset.fixtureId !== TURTLES_AND_FRIENDS_FIXTURE_ID).map((dataset) => (
                     <div key={dataset.id} className="flex items-center justify-between gap-2 rounded border border-emerald-500/20 px-2 py-1.5 text-[11px] text-emerald-300">
                       <span className="min-w-0 truncate">✓ {dataset.label || dataset.id}</span>
@@ -2299,12 +2399,26 @@ export default function TutorialBuilderOverlay() {
         <div
           data-tutorial-builder-panel="true"
           data-tutorial-builder-info-card="true"
+          ref={infoCardRef}
           className="fixed z-[305] overflow-hidden rounded-xl border border-sky-400/70 bg-gray-900/95 text-gray-100 shadow-2xl"
           style={{
-            left: Math.max(10, Math.min(window.innerWidth - cardSize.width - 10, Math.max(10, cardPosition.x * window.innerWidth))),
-            top: Math.max(10, Math.min(window.innerHeight - cardSize.height - 10, cardPosition.y * window.innerHeight)),
+            left: Math.max(
+              TUTORIAL_CARD_MARGIN,
+              Math.min(window.innerWidth - cardSize.width - TUTORIAL_CARD_MARGIN,
+                Math.max(TUTORIAL_CARD_MARGIN, cardPosition.x * window.innerWidth)),
+            ),
+            // Bounded by the card's own height, so the bottom of the window is a real edge
+            // for it rather than an edge for an assumed 260px box. Until the first
+            // measurement lands there is nothing to bound it with, so it is left alone.
+            top: Math.max(
+              TUTORIAL_CARD_MARGIN,
+              cardSize.height
+                ? Math.min(window.innerHeight - cardSize.height - TUTORIAL_CARD_MARGIN,
+                  cardPosition.y * window.innerHeight)
+                : cardPosition.y * window.innerHeight,
+            ),
             width: cardSize.width,
-            height: cardSize.height,
+            height: selectedStep?.cardSize?.height || undefined,
           }}
         >
           <div className="cursor-grab border-b border-gray-700 px-4 py-3" onPointerDown={(event) => startDrag(event, 'move')} onPointerMove={moveDrag} onPointerUp={finishDrag} onPointerCancel={finishDrag}>

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useHorizontalPillScroll from './useHorizontalPillScroll'
 import { getGenomeKey } from '../utils/genomeIdentity'
+import { genomeColorResolver } from '../genomeColorSchemes'
+import { genomePillColors } from '../utils/genomePillColors'
 import GenomePill, { genomePillLabels } from './GenomePill'
 
 function formatScientificName(species) {
@@ -28,13 +30,20 @@ function itemKey(species) {
     return getGenomeKey(species)
 }
 
-/** The height of one row of pills, for a caller that needs the strip to hold its place
- *  while it is still empty.
+/** The height of the pills themselves: 12px text on a 16px line with `py-1.5` and a 1px
+ *  border, plus the 8px their wrapper leaves beneath for the assembly badge.
  *
- *  A pill is 12px text on a 16px line with `py-1.5` and a 1px border, and its wrapper
- *  leaves 8px beneath for the assembly badge; the row itself adds `py-1`. Declared here,
- *  beside the markup it describes, so the two cannot drift apart unnoticed. */
-export const PILLS_ROW_HEIGHT = 46
+ *  Anything standing in for the pills — the message shown when there are none — is given
+ *  this height too, so the strip is exactly as tall empty as it is full and nothing below
+ *  it moves when the first genome arrives. */
+export const PILL_CONTENT_HEIGHT = 38
+
+/** The height of one row of pills, for a caller that needs the strip to hold its place
+ *  while it is still empty. The row adds `pt-1 pb-0.5` around the pills.
+ *
+ *  Declared here, beside the markup it describes, so the two cannot drift apart
+ *  unnoticed. */
+export const PILLS_ROW_HEIGHT = PILL_CONTENT_HEIGHT + 4 + 2
 
 export default function SelectedSpeciesPillsBar({
     theme = 'dark',
@@ -49,8 +58,10 @@ export default function SelectedSpeciesPillsBar({
     primarySpeciesKey = '',
     nonPrimarySelectedColor = '',
     reserveRowHeight = false,
+    emptyState = null,
 }) {
     const isLight = theme === 'light'
+    const resolveGenomeColor = useMemo(() => genomeColorResolver(config), [config])
     const [pillToast, setPillToast] = useState(null)
 
     const pillToastTimerRef = useRef(null)
@@ -146,7 +157,7 @@ export default function SelectedSpeciesPillsBar({
 
                 <div
                     ref={pillsScrollRef}
-                    className="hide-scrollbar flex items-center gap-1.5 flex-1 px-1 py-1 overflow-x-auto overflow-y-visible cursor-grab select-none"
+                    className="hide-scrollbar flex items-center gap-1.5 flex-1 px-1 pt-1 pb-0.5 overflow-x-auto overflow-y-visible cursor-grab select-none"
                     style={reserveRowHeight ? { minHeight: PILLS_ROW_HEIGHT } : undefined}
                     onMouseDown={onPillMouseDown}
                     onMouseMove={onPillMouseMove}
@@ -154,8 +165,13 @@ export default function SelectedSpeciesPillsBar({
                     onMouseLeave={onPillMouseUp}
                 >
                     {(speciesToRender.length === 0) ? (
-                        <div className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                            {showInactiveOnly ? 'Deactivate a genome to return it to the list' : 'No genomes in list.'}
+                        // Held to the pills' own height so the strip does not change size
+                        // when the first genome lands in it.
+                        <div
+                            className={`flex items-center text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}
+                            style={{ minHeight: PILL_CONTENT_HEIGHT }}
+                        >
+                            {emptyState || (showInactiveOnly ? 'Deactivate a genome to return it to the list' : 'No genomes in list.')}
                         </div>
                     ) : (
                         speciesToRender.map((species) => {
@@ -170,25 +186,25 @@ export default function SelectedSpeciesPillsBar({
                                 dragOverPillKey === speciesKey
                             )
 
-                            let bgClass
-                            let textClass
-                            let borderClass
-                            if (isSelected) {
-                                const useNonPrimaryAccent = Boolean(nonPrimarySelectedColor) && speciesKey !== primarySpeciesKey
-                                bgClass = useNonPrimaryAccent
-                                    ? nonPrimarySelectedColor
-                                    : (isLight ? '#0099ff' : '#0077cc')
-                                textClass = '#ffffff'
-                                borderClass = 'transparent'
-                            } else if (isSemiSelected) {
-                                bgClass = isLight ? '#ffffff' : 'transparent'
-                                textClass = isLight ? '#1d4ed8' : '#93c5fd'
-                                borderClass = isLight ? '#60a5fa' : '#3b82f6'
-                            } else {
-                                bgClass = isLight ? '#ffffff' : '#1E2938'
-                                textClass = isLight ? '#4b5563' : '#9ca3af'
-                                borderClass = isLight ? '#d1d5db' : '#4b5563'
-                            }
+                            // Every pill is drawn in its own genome's colour, in one of
+                            // three strengths: solid where the genome is on screen in this
+                            // view, hollow where it is in the session but not shown here,
+                            // and grey-with-a-tinted-edge where it is neither. So a pill
+                            // says both which genome it is and how far in it is, and the
+                            // pill matches that genome's browser panel either way.
+                            //
+                            // A caller that overrides the non-primary colour (the dual-view
+                            // strips) still wins for the pills it names.
+                            const useNonPrimaryAccent = Boolean(nonPrimarySelectedColor) && speciesKey !== primarySpeciesKey
+                            const pillAccent = useNonPrimaryAccent && isSelected
+                                ? nonPrimarySelectedColor
+                                : resolveGenomeColor(species)
+                            const pillState = isSelected ? 'active' : (isSemiSelected ? 'inactive' : 'available')
+                            const {
+                                backgroundColor: bgClass,
+                                textColor: textClass,
+                                borderColor: borderClass,
+                            } = genomePillColors(pillAccent, { isLight, state: pillState })
 
                             const assemblyName = species.assembly_name || species.assembly
                             const displayName = (isSelected || isSemiSelected)
@@ -197,11 +213,10 @@ export default function SelectedSpeciesPillsBar({
                             const displayAssembly = (isSelected || isSemiSelected)
                                 ? assemblyName
                                 : formatAssembly(assemblyName)
-                            // A transparent pill has no colour to knock the cross out
-                            // of, so fall back to the surface behind it.
-                            const removeGlyphColor = bgClass === 'transparent'
-                                ? (isLight ? '#ffffff' : '#1E2938')
-                                : bgClass
+                            // The cross is knocked out of the pill's own fill. Every
+                            // state now has an opaque one — the hollow pill is a wash of
+                            // its colour rather than nothing — so there is no transparent
+                            // case left to fall back from.
                             // For a non-Ensembl genome the badge names the provider
                             // rather than its release, so the release only survives
                             // in the tooltip — where both are always spelled out.
@@ -256,6 +271,8 @@ export default function SelectedSpeciesPillsBar({
                                         }}
                                     >
                                     <GenomePill
+                                        tutorialDatasetId={species?.tutorial_dataset_id}
+                                        tutorialEngaged={isSelected}
                                         displayName={displayName}
                                         displayAssembly={displayAssembly}
                                         badge={datasetBadge}
@@ -296,7 +313,7 @@ export default function SelectedSpeciesPillsBar({
                                                 marginTop: 'auto',
                                                 marginBottom: 'auto',
                                                 backgroundColor: textClass,
-                                                color: removeGlyphColor,
+                                                color: bgClass,
                                             }}
                                             title="Remove genome from list"
                                             aria-label="Remove genome from list"

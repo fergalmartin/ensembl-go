@@ -25,6 +25,18 @@ export default {
       id: 'selector.addSelectedToPlaylist', anchor: 'selector-playlist-selected', label: 'Add selected genomes to playlists', kind: 'button',
       capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
     },
+    // The colour controls sit in the same action column as the playlist and bin
+    // ones. The header control is declared before the per-row one so its exact
+    // anchor is matched before the row template, which would otherwise read
+    // "selected" as a genome key.
+    {
+      id: 'selector.colorSelected', anchor: 'selector-color-selected', label: 'Colour the selected genomes', kind: 'button',
+      capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
+    },
+    {
+      id: 'selector.genomeColor', anchorTemplate: 'selector-color-{genomeKey}', label: 'Genome colour', kind: 'button',
+      parameters: { genomeKey: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
+    },
     // The Genome Playlists panel below the list. Its rows are keyed on the playlist's
     // slugged name for the same reason the popover's are.
     {
@@ -50,6 +62,38 @@ export default {
     {
       id: 'selector.playlistDelete', anchorTemplate: 'selector-playlist-delete-{playlist}', label: 'Delete playlist', kind: 'button',
       parameters: { playlist: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
+    },
+    // The colour picker, opened by either of the two controls above. Its swatches
+    // are keyed on the colour itself rather than a position, so a step that
+    // points at the amber one keeps pointing at it when the user's own palette
+    // grows.
+    {
+      id: 'selector.colorDialog', anchor: 'genome-color-dialog', label: 'Colour picker', kind: 'dialog',
+      capabilities: ['spotlight'], safety: 'read',
+    },
+    {
+      id: 'selector.colorPreview', anchor: 'genome-color-preview', label: 'Colour preview', kind: 'region',
+      capabilities: ['spotlight'], safety: 'read',
+    },
+    {
+      id: 'selector.colorPalette', anchor: 'genome-color-palette', label: 'Colour palette', kind: 'region',
+      capabilities: ['spotlight'], safety: 'read',
+    },
+    {
+      id: 'selector.colorSwatch', anchorTemplate: 'genome-color-swatch-{hex}', label: 'Palette colour', kind: 'button',
+      parameters: { hex: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate'], safety: 'read',
+    },
+    {
+      id: 'selector.colorCustom', anchor: 'genome-color-custom', label: 'Mix a custom colour', kind: 'button',
+      capabilities: ['spotlight', 'activate'], safety: 'read',
+    },
+    {
+      id: 'selector.colorApply', anchor: 'genome-color-apply', label: 'Apply the colour', kind: 'button',
+      capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
+    },
+    {
+      id: 'selector.colorCancel', anchor: 'genome-color-cancel', label: 'Cancel the colour picker', kind: 'button',
+      capabilities: ['spotlight', 'activate'], safety: 'read',
     },
     // The playlist dialog. A step can only reach these once something has opened it, which
     // is what the `selectorDialog` arrival is for; see docs/TUTORIALS.md.

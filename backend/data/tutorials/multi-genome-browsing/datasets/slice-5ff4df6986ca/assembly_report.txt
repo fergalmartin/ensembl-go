@@ -1,0 +1,4 @@
+# Assembly name:  EGT_5FF4DF6986.1
+# Organism name:  Mouse GENCODE (Ensembl) (tutorial slice)
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+4	assembled-molecule	4	Chromosome	CM000997.3	=	NC_000070.7	C57BL/6J	156430000	chr4

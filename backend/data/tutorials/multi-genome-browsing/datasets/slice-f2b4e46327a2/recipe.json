@@ -1,0 +1,70 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "slice-f2b4e46327a2",
+  "datasetRef": "embedded:slice-f2b4e46327a2@1",
+  "speciesKey": "tutorial_slice_f2b4e46327a2",
+  "assembly": "EGT_F2B4E46327.1",
+  "assemblyName": "GRCh38.p14",
+  "displayName": "Human GENCODE (Ensembl) (tutorial slice)",
+  "scientificName": "Homo sapiens",
+  "commonName": "Human GENCODE (Ensembl)",
+  "browsableRange": {
+    "1": [
+      880000,
+      1075000
+    ]
+  },
+  "source": {
+    "display_name": "Human GENCODE (Ensembl)",
+    "scientific_name": "Homo sapiens",
+    "common_name": "Human GENCODE (Ensembl)",
+    "assembly_name": "GRCh38.p14",
+    "provider": "ensembl",
+    "release": "2025_12",
+    "chrom": "1",
+    "start": 880000,
+    "end": 1075000
+  },
+  "genes": [
+    "gene:ENSG00000187583",
+    "gene:ENSG00000187608",
+    "gene:ENSG00000187634",
+    "gene:ENSG00000187642",
+    "gene:ENSG00000187961",
+    "gene:ENSG00000188157",
+    "gene:ENSG00000188290",
+    "gene:ENSG00000188976",
+    "gene:ENSG00000217801",
+    "gene:ENSG00000223764",
+    "gene:ENSG00000224969",
+    "gene:ENSG00000231702",
+    "gene:ENSG00000237330",
+    "gene:ENSG00000242590",
+    "gene:ENSG00000272438",
+    "gene:ENSG00000272512",
+    "gene:ENSG00000273443",
+    "gene:ENSG00000291156",
+    "gene:ENSG00000296088",
+    "gene:ENSG00000298603",
+    "gene:ENSG00000303599",
+    "gene:ENSG00000303614",
+    "gene:ENSG00000303623",
+    "gene:ENSG00000304119",
+    "gene:ENSG00000304169"
+  ],
+  "files": {
+    "fasta": "slice.fa.bgz",
+    "fasta_index": "slice.fa.bgz.fai",
+    "fasta_gzi": "slice.fa.bgz.gzi",
+    "gff3": "slice.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "84e55590b528eacd608cb7282f5b38d57223f6af02eab7ea2bb667b20ca2f4b5",
+    "fasta_index": "febaddd419415e0efe475785f3e62d45a77aa72d958776eb8e879e0252f169f8",
+    "fasta_gzi": "28d2078f70a9f68da496b9f27df81ec868fc47bc5812df2763c64eb79fa4cf17",
+    "gff3": "c313edba870af24cf4c1f1600adf57912f5bb93180a5e7e1eb31873b1c7d8a11",
+    "metadata": "cb3fbc663f21e36f4fcc37e66692d43ed2c963549cec84af27a310690beff869"
+  }
+}

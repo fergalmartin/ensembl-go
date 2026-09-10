@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE, API_TOKEN_HEADER, getApiToken } from '../../backendRuntime'
-import { getGenomeBrowserColor, normalizeGenomeBrowserColors } from '../../genomeColorSchemes'
+import { resolveGenomeColor } from '../../genomeColorSchemes'
 import { SvPerformanceRecorder } from '../../utils/svPerformanceBenchmark'
 import { SV_RUST_PROTOCOL_VERSION } from '../../utils/svRustRendererProtocol'
 
@@ -171,12 +171,11 @@ export default function RustStructuralVariationView({
   const refAssembly = runtimeAssembly(refSpecies)
   const topAssembly = runtimeAssembly(tgtSpecies)
   const bottomAssembly = runtimeAssembly(thirdSpecies)
-  const colorScheme = useMemo(() => normalizeGenomeBrowserColors(appConfig?.genome_browser_colors), [appConfig?.genome_browser_colors])
   const colors = useMemo(() => ({
-    reference: getGenomeBrowserColor(colorScheme, 0),
-    top: getGenomeBrowserColor(colorScheme, 1),
-    bottom: getGenomeBrowserColor(colorScheme, 2),
-  }), [colorScheme])
+    reference: resolveGenomeColor(appConfig, refSpecies),
+    top: resolveGenomeColor(appConfig, tgtSpecies),
+    bottom: resolveGenomeColor(appConfig, thirdSpecies),
+  }), [appConfig, refSpecies, tgtSpecies, thirdSpecies])
   const labels = useMemo(() => ({
     reference: refPillLabel || 'Primary genome',
     top: tgtPillLabel || 'Secondary genome',

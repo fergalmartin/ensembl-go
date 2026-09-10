@@ -73,6 +73,7 @@ import {
 import { visibleElementRect, viewportRect } from '../utils/overlayGeometry'
 import { targetRefSelector } from '../tutorialTargets/index.js'
 import { materializeTutorialDocument, tutorialDatasetStartsActive } from '../utils/tutorialDocument.js'
+import { applyTutorialBrowserScene, browserSceneMatches, cancelTutorialBrowserScene, tutorialSettings } from '../utils/tutorialBrowserScene.js'
 import { getGenomeKey } from '../utils/genomeIdentity'
 import { snapshotGenomeForPlaylist } from '../utils/playlistGenomes'
 
@@ -300,6 +301,8 @@ export function TutorialProvider({ children }) {
   const [pulseAnchor, setPulseAnchor] = useState(null)
   const [cursor, setCursor] = useState(null)
   const [autoplay, setAutoplay] = useState(false)
+  const autoplayRef = useRef(false)
+  autoplayRef.current = autoplay
   const [autoplayRun, setAutoplayRun] = useState(null)
   const [speedIndex, setSpeedIndex] = useState(DEFAULT_SPEED_INDEX)
   const [busy, setBusy] = useState('')
@@ -388,7 +391,7 @@ export function TutorialProvider({ children }) {
     return (datasets || []).map((_dataset, index) => {
       const record = installed?.[index]
       if (!record) return null
-      return bySpecies.get(String(record.species_key || '')) || record
+      return { ...(bySpecies.get(String(record.species_key || '')) || record), ...(_dataset.label ? { display_name: _dataset.label } : {}), tutorial_dataset_id: _dataset.recipeId, tutorial_color_index: index }
     })
   }, [])
 
@@ -404,7 +407,7 @@ export function TutorialProvider({ children }) {
     let cancelled = false
     fetchAuthoringEnabled().then((enabled) => { if (!cancelled) setAuthoringEnabled(enabled) })
     fetchBuilderEnabled().then((enabled) => { if (!cancelled) setBuilderAuthoringEnabled(enabled) })
-    return () => { cancelled = true }
+    return () => { cancelled = true; cancelTutorialBrowserScene() }
   }, [])
 
   /** Persist an edit made while running a portable builder draft.
@@ -566,16 +569,31 @@ export function TutorialProvider({ children }) {
   // says what the *reader* may do; the tutorial performing the step is not the reader, and
   // a look-only step must still be able to open the section its own target lives in.
   const selfActingRef = useRef(false)
-  const clickAsTutorial = useCallback((node) => {
-    if (typeof node?.click !== 'function') return false
+
+  /** Run a synchronous block with the guard lifted.
+   *
+   *  Everything an arrival, an `ensure` or an `undo` does to the page is the tutorial
+   *  acting, and the current step's interaction policy has no say in it — but the policy
+   *  is already live by the time any of them run, so without this the tutorial's own
+   *  preparation is refused by the tutorial's own guard. It is not enough to cover
+   *  clicks: a precondition that searches for a gene sends a keydown, and that was being
+   *  cancelled on every step whose policy did not happen to name the search box. Keep the
+   *  block synchronous, so the flag cannot stay raised across an await and let a reader's
+   *  input through with it. */
+  const actAsTutorial = useCallback((fn) => {
     selfActingRef.current = true
     try {
-      node.click()
+      return fn()
     } finally {
       selfActingRef.current = false
     }
-    return true
   }, [])
+
+  const clickAsTutorial = useCallback((node) => {
+    if (typeof node?.click !== 'function') return false
+    actAsTutorial(() => node.click())
+    return true
+  }, [actAsTutorial])
 
   // A broad spotlight, or several separate spotlights, may reveal more than the author
   // wants to make live. Constrain the whole app to the declared target capabilities;
@@ -634,6 +652,13 @@ export function TutorialProvider({ children }) {
         }
       }
       if (allowed.some((entry) => permits(entry, event))) return
+      if (event.type === 'click' && step.blockedControlMessage) {
+        // A locked bar can sit beneath a dimming blocker. Hit-test through that
+        // blocker for feedback only; never forward the click to the control.
+        const overBar = event.target?.closest?.('[data-browser-toolbar]')
+          || (event.target?.closest?.('[data-tutorial-blocker]') && document.elementsFromPoint(event.clientX, event.clientY).some((node) => node.closest?.('[data-browser-toolbar]')))
+        if (overBar) window.dispatchEvent(new CustomEvent('tutorial-control-blocked', { detail: step.blockedControlMessage }))
+      }
       event.preventDefault()
       event.stopPropagation()
       event.stopImmediatePropagation?.()
@@ -695,7 +720,7 @@ export function TutorialProvider({ children }) {
       )
       // Before the override exists, so nothing can persist it.
       setTutorialSandboxActive(true)
-      setConfigOverride({ output_dir: workspace, ...SANDBOX_BLANK_FIELDS, active_species: generatedGenomes })
+      setConfigOverride({ output_dir: workspace, ...SANDBOX_BLANK_FIELDS, ...tutorialSettings(next, datasetGenomes), active_species: generatedGenomes })
       setState(initTutorialState(next, { startedAt: Date.now(), stepIndex }))
       setTutorialId(next.id)
       setAutoplay(false)
@@ -753,7 +778,7 @@ export function TutorialProvider({ children }) {
 
     const datasets = (document?.datasets || []).filter((dataset) => dataset?.embedded && dataset?.recipeId)
     const signature = JSON.stringify([root, tutorialDocumentId, datasets.map((dataset) => String(dataset.recipeId))])
-    const activationSignature = JSON.stringify(datasets.map((dataset) => tutorialDatasetStartsActive(dataset)))
+    const activationSignature = JSON.stringify([datasets.map((dataset) => [tutorialDatasetStartsActive(dataset), dataset.label]), document.settings])
     const previous = builderPreviewRef.current
     const canReuse = !reset && previous.signature === signature && previous.workspace
 
@@ -766,19 +791,21 @@ export function TutorialProvider({ children }) {
       // Rebuilt rather than assumed to have survived: the records are what a step's
       // `genomeSelection` arrival resolves against, and a scene that is reused without
       // them silently selects nothing.
-      rememberDatasetGenomes(datasets, previous.genomes)
+      const genomes = previous.genomes.map((genome, index) => genome && ({ ...genome, display_name: datasets[index]?.label || genome.common_name || genome.scientific_name }))
+      rememberDatasetGenomes(datasets, genomes)
       const active = previous.activationSignature === activationSignature
         ? (overrideRef.current?.active_species || [])
-        : previous.genomes.filter((_genome, index) => tutorialDatasetStartsActive(datasets[index]))
+        : genomes.filter((_genome, index) => tutorialDatasetStartsActive(datasets[index]))
       if (!overrideRef.current || previous.activationSignature !== activationSignature) {
         setConfigOverride((current) => ({
           output_dir: previous.workspace,
           ...SANDBOX_BLANK_FIELDS,
           ...(current && previous.activationSignature === activationSignature ? current : {}),
+          ...tutorialSettings(document, genomes),
           active_species: active,
         }))
       }
-      builderPreviewRef.current = { ...previous, activationSignature }
+      builderPreviewRef.current = { ...previous, genomes, activationSignature }
       return { workspace: previous.workspace, genomeCount: previous.genomes.length, activeCount: active.length }
     }
 
@@ -827,7 +854,7 @@ export function TutorialProvider({ children }) {
         root,
         genomes: resolved,
       }
-      setConfigOverride({ output_dir: workspace, ...SANDBOX_BLANK_FIELDS, active_species: active })
+      setConfigOverride({ output_dir: workspace, ...SANDBOX_BLANK_FIELDS, ...tutorialSettings(document, resolved), active_species: active })
       return { workspace, genomeCount: genomes.filter(Boolean).length, activeCount: active.length }
     } catch (error) {
       if (builderPreviewRef.current.token === token) {
@@ -954,9 +981,11 @@ export function TutorialProvider({ children }) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const search = findAnchor('browser-location-search')
       if (search) {
-        if (typeof search.focus === 'function') search.focus()
-        setNativeInputValue(search, REG4.symbol)
-        search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        actAsTutorial(() => {
+          if (typeof search.focus === 'function') search.focus()
+          setNativeInputValue(search, REG4.symbol)
+          search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        })
       }
       const until = Date.now() + 1400
       while (Date.now() < until) {
@@ -965,7 +994,7 @@ export function TutorialProvider({ children }) {
       }
     }
     return isFocused()
-  }, [])
+  }, [actAsTutorial])
 
   /** Put the demo genome back to not-chosen, so the step that chooses it can be watched
    *  again rather than replayed against an already-ticked checkbox. */
@@ -977,10 +1006,10 @@ export function TutorialProvider({ children }) {
   /** Clear the browser's focused gene, so the step that focuses one can be watched again
    *  rather than replayed against a gene that is already in focus. */
   const unfocusGene = useCallback(() => {
-    findAnchor('browser-unfocus')?.click()
+    clickAsTutorial(findAnchor('browser-unfocus'))
     const search = findAnchor('browser-location-search')
-    if (search) setNativeInputValue(search, '')
-  }, [])
+    if (search) actAsTutorial(() => setNativeInputValue(search, ''))
+  }, [actAsTutorial, clickAsTutorial])
 
   /** Delete the note the tutorial took, so the step that takes it adds one note however
    *  many times it is watched. */
@@ -1043,12 +1072,49 @@ export function TutorialProvider({ children }) {
     // is false exactly when the transcript is hidden, so the arrival can set it rather than
     // toggle whatever it finds. Before the per-gene pill below, since restoring a hidden
     // transcript changes how many rows the gene is showing.
+    // The drawer's fold first, because it decides what the two branches under it can
+    // even find, and both of those must land before the per-gene pill below: restoring a
+    // transcript changes how many rows the gene shows.
+    if (wanted.drawerTranscripts !== undefined) {
+      // The drawer's own fold, which is not the same control as the window-wide expand
+      // above: this one is the focused gene's list. It reports its state through
+      // aria-expanded, so this can set rather than toggle.
+      //
+      // Waited for, not merely looked up. On a direct jump the drawer mounts only once the
+      // gene has taken focus, so a plain lookup here finds nothing perhaps half the time,
+      // skips the fold silently, and leaves everything below it with no rows to work on.
+      const chevron = await waitForAnchor('focus-transcripts-expand')
+      const expanded = chevron?.getAttribute('aria-expanded') === 'true'
+      if (chevron && expanded !== (wanted.drawerTranscripts === 'expanded')) {
+        clickAsTutorial(chevron)
+        await sleep(paced(SETTLE_MS))
+      }
+    }
+    // After the fold above, not before it: the drawer lists one row while collapsed, so a
+    // non-canonical transcript's show/hide button does not exist yet and `waitForAnchor`
+    // spends its whole budget failing to find it. Jumping straight to the step about the
+    // hidden transcript therefore hid nothing and left the step with no label to point at
+    // — while walking forward was fine, because the reader had already hidden it.
     if (wanted.hiddenTranscript?.transcript) {
       const wantHidden = wanted.hiddenTranscript.hidden !== false
       const eye = await waitForAnchor(`focus-transcript-hide-${wanted.hiddenTranscript.transcript}`)
       if (eye && (eye.getAttribute('aria-pressed') === 'false') !== wantHidden) {
         clickAsTutorial(eye)
         await sleep(paced(SETTLE_MS))
+      }
+      // Whoever pressed it, and whether or not this arrival had to: hiding a transcript
+      // deliberately marks its row hovered and ghosts it on the track, because a reader
+      // presses that button with the pointer sitting over the row and wants to see what
+      // they just removed. Neither the tutorial performing the previous step nor this
+      // arrival has a pointer, so that state is asserted and never released — the row
+      // stays lit and the transcript stays ghosted for the whole of the step that follows,
+      // reading as a second highlight competing with the one the step actually made.
+      // React derives onMouseLeave from `mouseout`, so `mouseleave` alone will not do it.
+      const row = eye?.closest('[data-drawer-transcript-row]')
+      if (row) {
+        actAsTutorial(() => {
+          row.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+        })
       }
     }
     if (wanted.geneTranscripts?.gene) {
@@ -1073,14 +1139,14 @@ export function TutorialProvider({ children }) {
       }
       const open = info?.getAttribute('aria-expanded') === 'true'
       if (info && open !== (wanted.transcriptDetail === 'open')) {
-        info.click()
+        clickAsTutorial(info)
         await sleep(paced(SETTLE_MS))
       }
     }
     if (wanted.transcriptSequence) {
       const sequenceButton = await waitForAnchor(`focus-sequence-${String(wanted.transcriptSequence)}`)
       if (sequenceButton && sequenceButton.getAttribute('aria-pressed') !== 'true') {
-        sequenceButton.click()
+        clickAsTutorial(sequenceButton)
         await sleep(paced(SETTLE_MS))
       }
     }
@@ -1099,21 +1165,10 @@ export function TutorialProvider({ children }) {
         // direct jump, so retry only while there is still neither a row nor an editor.
         for (let attempt = 0; attempt < 3 && !findAnchor('focus-note-body'); attempt += 1) {
           const row = document.querySelector('[data-tour-id^="focus-note-row-"]')
-          if (row) row.click()
-          else findAnchor('focus-notes-add')?.click()
+          if (row) clickAsTutorial(row)
+          else clickAsTutorial(findAnchor('focus-notes-add'))
           await waitForAnchor('focus-note-body', 4)
         }
-      }
-    }
-    if (wanted.drawerTranscripts !== undefined) {
-      // The drawer's own fold, which is not the same control as the window-wide expand
-      // above: this one is the focused gene's list. It reports its state through
-      // aria-expanded, so this can set rather than toggle.
-      const chevron = findAnchor('focus-transcripts-expand')
-      const expanded = chevron?.getAttribute('aria-expanded') === 'true'
-      if (chevron && expanded !== (wanted.drawerTranscripts === 'expanded')) {
-        chevron.click()
-        await sleep(paced(SETTLE_MS))
       }
     }
     if (wanted.pinnedTranscript === 'none') {
@@ -1121,7 +1176,7 @@ export function TutorialProvider({ children }) {
         '[data-drawer-transcript-row][data-tutorial-engaged="true"]'
       )
       if (pinned) {
-        pinned.click()
+        clickAsTutorial(pinned)
         await sleep(paced(SETTLE_MS))
       }
     }
@@ -1134,10 +1189,9 @@ export function TutorialProvider({ children }) {
         : (wanted.biotypes === 'all' ? BIOTYPE_CLASSES : ['proteinCoding'])
       for (const key of BIOTYPE_CLASSES) {
         const box = findAnchor(`browser-biotype-${key}`)
-        // As the tutorial, not as the reader: an arrival puts the filter where the step
-        // asked for it, and the step's own interaction policy has no say in that. A plain
-        // `.click()` goes through the guard and is refused for any box the step did not
-        // happen to allow.
+        // As the tutorial, not as the reader — as every branch above does, for the same
+        // reason: a plain `.click()` goes through the guard and is refused for anything
+        // the current step did not happen to allow.
         if (box && box.checked !== on.includes(key)) {
           clickAsTutorial(box)
           await sleep(paced(SETTLE_MS))
@@ -1147,12 +1201,20 @@ export function TutorialProvider({ children }) {
   }, [clickAsTutorial, deleteTutorialNote, paced])
 
   /** Perform a browserView move, or a sequence of them, and hold the result. */
-  const runBrowserView = useCallback(async (move) => {
+  const runBrowserView = useCallback(async (move, current = () => true) => {
     const moves = Array.isArray(move?.moves) ? move.moves : [move]
     for (const one of moves) {
+      if (!current()) return false
+      const panelKey = one.panelKey || move.panelKey
+      if (move.revealPanel && panelKey) {
+        const selector = targetRefSelector({ id: 'browser.viewport', params: { recipeId: panelKey } })
+        document.querySelector(selector)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        await sleep(paced(500))
+        if (!current()) return false
+      }
       const requestedDuration = Number(one?.durationMs ?? move?.durationMs)
       const durationMs = requestedDuration > 0 ? requestedDuration : BROWSER_MOVE_MS
-      if (!moveBrowserViewport({ ...one, durationMs: paced(durationMs) })) continue
+      if (!moveBrowserViewport({ ...one, panelKey, durationMs: paced(durationMs) })) continue
       // Long enough for the browser's own animation to finish, so the next move in the
       // sequence starts from where the last one ended rather than fighting it.
       await sleep(paced(durationMs) + paced(SETTLE_MS))
@@ -1160,6 +1222,7 @@ export function TutorialProvider({ children }) {
     // A move that arrives and immediately transitions is over before it registers as
     // having gone anywhere. Steps that travel some distance ask for a beat at the end.
     if (Number(move?.pauseMs) > 0) await sleep(paced(Number(move.pauseMs)))
+    return current()
   }, [paced])
 
 
@@ -1573,8 +1636,21 @@ export function TutorialProvider({ children }) {
     if (action.skipIfSequenceVisible && browserIsShowingSequence(action.panelKey)) return false
     if (action.skipIfFeatureFramed && browserIsFeatureFramed(action.skipIfFeatureFramed)) return false
     if (action.skipIfEngaged) {
-      const target = findAnchor(action.anchor)
-      if (target?.getAttribute('data-tutorial-engaged') === 'true') return false
+      // Every control the action would press, not only the first of them, and either way
+      // a control has of saying it is engaged.
+      //
+      // The sequence step presses two buttons, and a reader who has pressed *either* has
+      // done the step — being made to watch the cursor do it again is the tutorial
+      // ignoring what they just did. Its legacy definition named a wrapper around the two
+      // that reports `data-tutorial-engaged` for the pair, but the portable document keeps
+      // only the controls actually pressed, and those report `aria-pressed` like the
+      // buttons they are. Reading one attribute on one anchor saw neither.
+      const engagedAlready = actionAnchors(action).some((anchor) => {
+        const node = findAnchor(anchor)
+        return node?.getAttribute('data-tutorial-engaged') === 'true'
+          || node?.getAttribute('aria-pressed') === 'true'
+      })
+      if (engagedAlready) return false
     }
     if (action.type === 'type') {
       const target = findAnchor(action.anchor)
@@ -1586,9 +1662,15 @@ export function TutorialProvider({ children }) {
       const satisfied = action.overwrite
         ? existing === String(action.value ?? '').trim()
         : Boolean(existing)
-      if (satisfied) return false
+      if (satisfied && !forStep.completeWhen) return false
     }
 
+    if (forStep.completeWhen && browserSceneMatches(forStep.completeWhen)) return false
+    if (action.type === 'browserScene') {
+      if (action.active) await applyGenomeSelectionArrival({ genomes: action.active })
+      await applyTutorialBrowserScene(action)
+      return true
+    }
     if (action.type === 'navigate') {
       navigateToView(action.view)
       return true
@@ -1636,6 +1718,7 @@ export function TutorialProvider({ children }) {
         const target = findAnchor(anchor)
         if (!target) continue
         if (ticksBoxes && 'checked' in target && target.checked) continue
+        if (typeof action.desiredEngaged === 'boolean' && ((target.getAttribute('data-tutorial-engaged') || target.closest('[data-tutorial-engaged]')?.getAttribute('data-tutorial-engaged')) === 'true') === action.desiredEngaged) continue
         if (acted) {
           const pauseMs = Number(action.pauseMs) > 0 ? Number(action.pauseMs) : ACTION_PAUSE_MS
           await sleep(paced(pauseMs))
@@ -1689,7 +1772,7 @@ export function TutorialProvider({ children }) {
     return true
   }, [
     clickAsTutorial, hideCursor, moveCursorTo, navigateToView, paced, pressCursor, runBrowserView,
-    setBrowserControls, typeInto,
+    setBrowserControls, typeInto, applyGenomeSelectionArrival,
   ])
 
   /** Put the card's offered value into the field the step named, for the reader who
@@ -1713,11 +1796,15 @@ export function TutorialProvider({ children }) {
 
   const advancing = useRef(false)
 
-  const next = useCallback(async () => {
+  const next = useCallback(async (options = {}) => {
     if (advancing.current) return
     const forStep = stepRef.current
     advancing.current = true
     try {
+      if (options.automatic && forStep?.autoplayDemo) {
+        const current = () => autoplayRef.current && stepRef.current?.id === forStep.id
+        if (!await runBrowserView(forStep.autoplayDemo, current)) return
+      }
       const acted = forStep ? await performAction(forStep) : false
 
       // A step can ask for its result to be left up before the tutorial moves on. Only
@@ -1745,13 +1832,19 @@ export function TutorialProvider({ children }) {
         }
       }
 
+      if (forStep?.completeWhen && !browserSceneMatches(forStep.completeWhen)) {
+        setRuntimeProblem('The requested browser state has not finished. Try Next again.')
+        return
+      }
       // Tagged with the step it came from: if the action already advanced things (a click
       // satisfying a "view" step), this is ignored rather than skipping one.
       dispatch({ type: 'next', fromStepId: forStep?.id })
+    } catch (error) {
+      setRuntimeProblem(error.message || 'The browser action could not finish.')
     } finally {
       advancing.current = false
     }
-  }, [dispatch, paced, performAction])
+  }, [dispatch, paced, performAction, runBrowserView])
 
   const back = useCallback(async () => {
     // Undone before the step pointer moves, so the step being returned to finds the world
@@ -1816,6 +1909,10 @@ export function TutorialProvider({ children }) {
     arrivingRef.current = true
     try {
       for (const arrival of arrivals) {
+        if (arrival.type === 'browserScene') {
+          if (arrival.active) await applyGenomeSelectionArrival({ genomes: arrival.active })
+          await applyTutorialBrowserScene(arrival)
+        }
         if (arrival.type === 'browserView') await runBrowserView(arrival)
         if (arrival.type === 'browserControls') await setBrowserControls(arrival)
         if (arrival.type === 'playlists') await applyPlaylistsArrival(arrival)
@@ -1910,6 +2007,10 @@ export function TutorialProvider({ children }) {
         try {
           for (const arrival of arrivals) {
             if (cancelled) break
+            if (arrival.type === 'browserScene') {
+              if (arrival.active) await applyGenomeSelectionArrival({ genomes: arrival.active })
+              await applyTutorialBrowserScene(arrival)
+            }
             if (arrival.type === 'browserView') await runBrowserView(arrival)
             if (arrival.type === 'browserControls') await setBrowserControls(arrival)
             // Before the selection: applying a playlist is what fills the selected set,
@@ -1982,8 +2083,10 @@ export function TutorialProvider({ children }) {
       const active = overrideRef.current?.active_species || []
       if (!cancelled && active.length > 0) registerTutorialGenome(active[0])
     }
-    prepare()
-    return () => { cancelled = true }
+    prepare().catch((error) => {
+      if (!cancelled) { setRuntimeProblem(error.message || 'Could not prepare the browser scene.'); setBusy(''); setReadyStepId(step.id) }
+    })
+    return () => { cancelled = true; cancelTutorialBrowserScene() }
     // currentView is deliberately absent: this should run when the step changes, not
     // every time the user wanders between apps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2040,7 +2143,7 @@ export function TutorialProvider({ children }) {
       // Negative, so the ring starts already this far round rather than from zero.
       delayMs: -Math.round(totalMs * done),
     })
-    const timer = setTimeout(() => { next() }, remaining)
+    const timer = setTimeout(() => { next({ automatic: true }) }, remaining)
     return () => {
       clearTimeout(timer)
       const segment = autoplaySegmentRef.current
@@ -2062,6 +2165,16 @@ export function TutorialProvider({ children }) {
     setSelectorListPresentation(null)
     setDialogRequest({ dialog: 'none', requestedAt: Date.now() })
   }, [state])
+
+  useEffect(() => {
+    if (!isRunning || readyStepId !== step?.id) return undefined
+    const targets = step?.interactionPolicy?.targets || []
+    for (const entry of targets) {
+      if (entry.target?.id === 'browser.viewport') setBrowserInteraction(
+        entry.capabilities.includes('pan') ? 'pan-zoom' : 'zoom-only', entry.target.params?.recipeId)
+    }
+    return () => { for (const entry of targets) if (entry.target?.id === 'browser.viewport') setBrowserInteraction('all', entry.target.params?.recipeId) }
+  }, [isRunning, readyStepId, step])
 
   // ── Events coming in from the app ───────────────────────────────────────────
 
@@ -2126,6 +2239,18 @@ export function TutorialProvider({ children }) {
    *  set as it is at that moment. The Genome Selector applies a selection a second after
    *  the click, and a step's `arrive` may have selected the same genome in between; a
    *  blind toggle would then take back the genome the user had just chosen. */
+  useEffect(() => {
+    if (!isRunning || !step?.completeWhen || readyStepId !== step.id) return undefined
+    let sent = false
+    const timer = setInterval(() => {
+      if (!sent && !arrivingRef.current && browserSceneMatches(step.completeWhen)) {
+        sent = true
+        emitSignal('browser.state')
+      }
+    }, 120)
+    return () => clearInterval(timer)
+  }, [emitSignal, isRunning, readyStepId, step])
+
   const toggleTutorialGenome = useCallback((species, desired = '') => {
     const key = String(species?.species_key || '')
     // Same record the browser will be asked to resolve; see registerTutorialGenome.
@@ -2142,7 +2267,7 @@ export function TutorialProvider({ children }) {
         ...(previous || {}),
         active_species: present
           ? active.filter((entry) => String(entry?.species_key || '') !== key)
-          : [...active, species],
+          : [...active, species].sort((a, b) => (a.tutorial_color_index ?? 0) - (b.tutorial_color_index ?? 0)),
       }
     })
     emitSignal('genome.activated', { speciesKey: key })

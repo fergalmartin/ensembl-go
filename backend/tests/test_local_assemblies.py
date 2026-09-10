@@ -82,7 +82,7 @@ class LocalAssembliesTests(unittest.TestCase):
             build_started = threading.Event()
             allow_build_to_finish = threading.Event()
 
-            def fake_create(gff, target):
+            def fake_create(gff, target, progress_cb=None):
                 self.assertEqual(gff, str(gff_path.resolve()))
                 build_paths.append(target)
                 build_started.set()

@@ -1,3 +1,4 @@
+import { NUCLEOTIDE_COLORS, getBaseColor } from '../utils/nucleotideStyle'
 import { Fragment, useRef, useEffect, useId, useLayoutEffect, useState, useCallback, useMemo } from 'react'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import iconAnchorRaw from '../assets/icons/icon_anchor.svg?raw'
@@ -81,7 +82,18 @@ import NoteGlyph from './NoteGlyph'
 
 // ============ Constants ============
 import { API_BASE } from '../backendRuntime'
+import GeneIndexProgressOverlay from './GeneIndexProgressOverlay'
+import {
+    GENE_INDEX_TRACK_HEIGHT,
+    geneIndexOverlayBand,
+    shouldHoldGeneTrackHeight,
+} from '../utils/geneIndexOverlay'
+import { INDEX_BUILDING_STATUS } from '../utils/browserReadiness'
 const TRACK_HEIGHT = 40
+// How often the panel asks how the gene index behind it is getting on.
+// Fast enough that the meter reads as live, slow enough that a build
+// running for minutes is not polled thousands of times.
+const GENE_INDEX_POLL_INTERVAL_MS = 1200
 const TRACK_GAP = 8
 const EXON_HEIGHT = 12
 const INTRON_HEIGHT = 2
@@ -418,11 +430,7 @@ const COLORS = {
         infoBg: '#f1f3f5',
         infoText: '#343a40',
         sequenceBg: '#f8f9fa',
-        baseA: '#e74c3c',
-        baseT: '#2ecc71',
-        baseC: '#3498db',
-        baseG: '#f39c12',
-        baseN: '#95a5a6',
+        ...NUCLEOTIDE_COLORS.light,
     },
     dark: {
         bg: '#1a1b1e',
@@ -450,11 +458,7 @@ const COLORS = {
         infoBg: '#1E2938',
         infoText: '#c1c2c5',
         sequenceBg: '#212226',
-        baseA: '#ff6b6b',
-        baseT: '#51cf66',
-        baseC: '#74c0fc',
-        baseG: '#ffd43b',
-        baseN: '#5c5f66',
+        ...NUCLEOTIDE_COLORS.dark,
     }
 }
 
@@ -907,15 +911,6 @@ function formatRegionCoord(chrom, start, end) {
     return `${chrom}:${formattedStart}-${formattedEnd}`
 }
 
-function getBaseColor(base, colors) {
-    switch (base.toUpperCase()) {
-        case 'A': return colors.baseA
-        case 'T': return colors.baseT
-        case 'C': return colors.baseC
-        case 'G': return colors.baseG
-        default: return colors.baseN
-    }
-}
 
 function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value))
@@ -1575,6 +1570,7 @@ function scrollScrollerTo(scroller, metrics, top, behavior = 'smooth') {
 export default function GenomeBrowser({
     isActive = true,
     genome = 'reference',
+    tutorialRecipeId = '',
     alignmentRole = '',
     reloadEpoch = 0,
     theme = 'dark',
@@ -2140,6 +2136,114 @@ export default function GenomeBrowser({
         setStickyLayoutResetEpoch((epoch) => epoch + 1)
     }, [isViewportTranscriptExpandMode, flattenTracks])
 
+    // ============ Gene index readiness ============
+
+    // The assembly is browsable long before the genes are. Regions, the ruler
+    // and the sequence track all come from the FASTA, which is ready at once,
+    // while indexing a large annotation takes minutes — and indexing is serial,
+    // so a second genome waits for the first. Rather than hold the panel behind
+    // a spinner for all of that, the browser opens on the assembly and watches
+    // this endpoint to fill the gene track in when the index lands.
+    const [geneIndexStatus, setGeneIndexStatus] = useState(null)
+    const [geneIndexEpoch, setGeneIndexEpoch] = useState(0)
+    const geneIndexReadyRef = useRef(false)
+    const sawPendingRef = useRef(false)
+
+    useEffect(() => {
+        geneIndexReadyRef.current = false
+        sawPendingRef.current = false
+        setGeneIndexStatus(null)
+    }, [genome, reloadEpoch])
+
+    useEffect(() => {
+        if (!isActive) return undefined
+        let cancelled = false
+        let timer = null
+        const controller = new AbortController()
+
+        const poll = async () => {
+            try {
+                const res = await fetch(
+                    `${API_BASE}/api/browse/index-status?genome=${encodeURIComponent(genome)}`,
+                    { signal: controller.signal },
+                )
+                if (!res.ok) {
+                    // A genome this backend does not recognise will never start
+                    // recognising it. Only a server-side fault is worth waiting
+                    // out — that is a restart, and it comes back.
+                    if (res.status >= 400 && res.status < 500) return
+                    throw new Error(`index status ${res.status}`)
+                }
+                const data = await res.json()
+                if (cancelled) return
+                setGeneIndexStatus(data)
+
+                if (data?.state === 'ready') {
+                    // Genes that were not there when the panel opened are there
+                    // now. Bumping the epoch drops the empty tiles the browser
+                    // cached while it waited and asks for them again. Only worth
+                    // doing if we actually waited: an index that was ready all
+                    // along would otherwise throw away a good cache on mount.
+                    if (sawPendingRef.current && !geneIndexReadyRef.current) {
+                        geneIndexReadyRef.current = true
+                        setGeneIndexEpoch((epoch) => epoch + 1)
+                    }
+                    return
+                }
+                sawPendingRef.current = true
+                // 'none' means the genome has no annotation at all. There is
+                // nothing to wait for, so stop asking.
+                if (data?.state === 'none' || data?.state === 'failed') return
+            } catch (error) {
+                if (error?.name === 'AbortError' || cancelled) return
+                // Backend restarting, most likely. Keep watching.
+            }
+            if (!cancelled) {
+                timer = window.setTimeout(poll, GENE_INDEX_POLL_INTERVAL_MS)
+            }
+        }
+
+        poll()
+        return () => {
+            cancelled = true
+            controller.abort()
+            if (timer) window.clearTimeout(timer)
+        }
+    }, [genome, isActive, reloadEpoch, geneIndexEpoch])
+
+    const retryGeneIndex = useCallback(async () => {
+        try {
+            await fetch(`${API_BASE}/api/browse/index-retry`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ genome }),
+            })
+        } catch (error) {
+            console.error(`[GenomeBrowser:${genome}] Failed to restart the index build:`, error)
+        }
+        setGeneIndexStatus((prev) => ({ ...(prev || {}), state: 'queued' }))
+        setGeneIndexEpoch((epoch) => epoch + 1)
+    }, [genome])
+
+    const holdGeneTrackHeight = shouldHoldGeneTrackHeight(geneIndexStatus)
+    // No gene tiles are coming: the index is being built, or the build failed.
+    // A genome that simply has no annotation is not this — its gene endpoints
+    // answer normally with nothing in them, which the browser already handles.
+    const geneTilesBlocked = holdGeneTrackHeight
+
+    // Read from the fetch paths, which must not be rebuilt every time the meter
+    // moves. Asking for genes while the index is being built only produces a
+    // stream of "not yet" replies — one per tile, per pan, for the whole build.
+    const geneTilesBlockedRef = useRef(false)
+    useEffect(() => {
+        geneTilesBlockedRef.current = geneTilesBlocked
+    }, [geneTilesBlocked])
+
+    // Everything that was keyed on the reload epoch is keyed on this instead, so
+    // an index that lands after the panel opened clears the same caches a manual
+    // reload would.
+    const dataEpoch = reloadEpoch + geneIndexEpoch
+
     useEffect(() => {
         setHasInitialViewportData(false)
         setGenes([])
@@ -2148,7 +2252,7 @@ export default function GenomeBrowser({
         chromGeneGenerationRef.current += 1
         chromGeneCacheRef.current.clear()
         fetchingChromGenesRef.current.clear()
-    }, [genome, reloadEpoch])
+    }, [genome, dataEpoch])
 
     useEffect(() => {
         activeGeneRequestGenerationRef.current += 1
@@ -2159,7 +2263,7 @@ export default function GenomeBrowser({
             fetchingChromGenesRef.current.clear()
             fetchingTranscriptIdsRef.current.clear()
         }
-    }, [genome, reloadEpoch, selectedChrom])
+    }, [genome, dataEpoch, selectedChrom])
 
     const customTracksById = useMemo(() => {
         const map = new Map()
@@ -3755,7 +3859,7 @@ export default function GenomeBrowser({
         transcriptCacheUsageRef.current.clear()
         fetchingTranscriptIdsRef.current.clear()
         setTranscriptCache({})
-    }, [genome, reloadEpoch, selectedChrom])
+    }, [genome, dataEpoch, selectedChrom])
 
     useEffect(() => {
         return () => {
@@ -3771,6 +3875,7 @@ export default function GenomeBrowser({
     const preloadChromGenes = useCallback((chrom) => {
         const chromName = String(chrom || '').trim()
         if (!isActive || !chromName) return null
+        if (geneTilesBlockedRef.current) return null
 
         const cacheKey = getChromGeneCacheKey(genome, chromName)
         const cached = chromGeneCacheRef.current.get(cacheKey)
@@ -3901,6 +4006,7 @@ export default function GenomeBrowser({
     // Fetch a single tile and store in cache
     const fetchTile = useCallback(async (chrom, tileStart, currentChrom, currentStart, currentEnd) => {
         if (!isActive) return
+        if (geneTilesBlockedRef.current) return
         const key = getTileKey(chrom, tileStart)
         if (tileCacheRef.current.has(key) || fetchingTilesRef.current.has(key)) return
         const requestToken = Symbol(key)
@@ -3942,6 +4048,8 @@ export default function GenomeBrowser({
     }, [evictOldGeneTilesIfNeeded, genome, isActive, updateVisibleGenes])
 
     // ============ Data Fetching ============
+
+    const regionsRetryTimerRef = useRef(null)
 
     // Fetch available regions on mount
     useEffect(() => {
@@ -3995,6 +4103,13 @@ export default function GenomeBrowser({
                             setViewEnd(Math.max(start + 1, end))
                         }
                     }
+                } else if (res.status === INDEX_BUILDING_STATUS) {
+                    // Only reachable for a genome with no FASTA to draw regions
+                    // from — everything else is served off the assembly while its
+                    // index builds. Retry rather than settling on an empty view.
+                    if (!controller.signal.aborted) {
+                        regionsRetryTimerRef.current = window.setTimeout(fetchRegions, 2000)
+                    }
                 } else {
                     console.error(`[GenomeBrowser:${genome}] Regions fetch failed: ${res.status}`)
                 }
@@ -4006,8 +4121,14 @@ export default function GenomeBrowser({
             if (shouldShowLoading && !controller.signal.aborted) setLoadingRegions(false)
         }
         fetchRegions()
-        return () => controller.abort()
-    }, [genome, isActive, reloadEpoch])
+        return () => {
+            controller.abort()
+            if (regionsRetryTimerRef.current) {
+                window.clearTimeout(regionsRetryTimerRef.current)
+                regionsRetryTimerRef.current = null
+            }
+        }
+    }, [genome, isActive, dataEpoch])
 
     // Tile management: fetch tiles for current view + prefetch neighbours
     useEffect(() => {
@@ -4051,7 +4172,7 @@ export default function GenomeBrowser({
             fetchTile(chrom, t, chrom, gStart, gEnd)
         }
 
-    }, [isActive, genome, selectedChrom, genomicViewRange, reloadEpoch, fetchTile, updateVisibleGenes, preloadChromGenes])
+    }, [isActive, genome, selectedChrom, genomicViewRange, dataEpoch, fetchTile, updateVisibleGenes, preloadChromGenes])
 
     // Sequence buffer: fetch a wider region and serve pans from cache
     const seqBufferRef = useRef({ chrom: '', start: 0, end: 0, sequence: '' })
@@ -6477,10 +6598,19 @@ export default function GenomeBrowser({
             ? 0
             : geneFooterTrackOverflow(transcriptLayoutMetrics, flattenTracks)
 
+        // With no genes to lay out the tracks collapse to their minimum, which is
+        // a sliver — too little to put a message in, and every track below would
+        // jump down the moment the first genes arrived. While the index is being
+        // built they hold a fixed height instead, so the panel the user pans and
+        // zooms around is the same shape it will be when the genes land.
+        const geneTrackFloor = holdGeneTrackHeight
+            ? GENE_INDEX_TRACK_HEIGHT
+            : transcriptLayoutMetrics.minTrackHeight
+
         const forwardBgHeight = effectiveHiddenStrands.forward
             ? (hideInactiveTracks ? 0 : 36)
             : Math.max(
-                transcriptLayoutMetrics.minTrackHeight,
+                geneTrackFloor,
                 fwdPadding
                     + (flattenTracks ? forwardGeneHeight : maxRowForward * transcriptLayoutMetrics.rowPitch)
                     + geneFooterOverflow
@@ -6488,7 +6618,7 @@ export default function GenomeBrowser({
         const reverseBgHeight = effectiveHiddenStrands.reverse
             ? (hideInactiveTracks ? 0 : 36)
             : Math.max(
-                transcriptLayoutMetrics.minTrackHeight,
+                geneTrackFloor,
                 revPadding
                     + (flattenTracks ? reverseGeneHeight : maxRowReverse * transcriptLayoutMetrics.rowPitch)
                     + geneFooterOverflow
@@ -6627,7 +6757,20 @@ export default function GenomeBrowser({
             customTrackLayouts,
             orderedTracks,
         }
-    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, hiddenStrands, selectedGeneHiddenByBiotype, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, isGeneHiddenByBiotype, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight, stickyLayoutResetEpoch])
+    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, hiddenStrands, selectedGeneHiddenByBiotype, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, isGeneHiddenByBiotype, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight, stickyLayoutResetEpoch, holdGeneTrackHeight])
+
+    // Where the note about the gene index goes: the forward and reverse tracks
+    // taken together, minus whichever of them the user has hidden. Null when
+    // both are off — there is nothing on screen for the message to be about.
+    const geneIndexOverlayGeometry = useMemo(() => {
+        if (!holdGeneTrackHeight) return null
+        return geneIndexOverlayBand({
+            forwardY: layout.FORWARD_Y,
+            forwardHeight: layout.forwardBgHeight,
+            reverseY: layout.REVERSE_Y,
+            reverseHeight: layout.reverseBgHeight,
+        })
+    }, [holdGeneTrackHeight, layout.FORWARD_Y, layout.forwardBgHeight, layout.REVERSE_Y, layout.reverseBgHeight])
 
     const getSelectedGeneTranscriptHit = useCallback((mouseX, mouseY) => {
         if (!selectedGeneLayoutEntry || shouldForceGeneBlockView) return null
@@ -8994,7 +9137,7 @@ export default function GenomeBrowser({
                 // a track off and its handle reorders the stack, and neither is zooming.
                 // The user who was told they could only zoom should not be able to blank
                 // the track by clicking a little to the left of it.
-                if (interactionModeRef.current === 'zoom-only') return
+                if (interactionModeRef.current !== 'all') return
                 const trackId = getTrackAtY(clickY)
 
                 // Circular hit test around the toggle glyph. The radius is
@@ -13173,6 +13316,9 @@ export default function GenomeBrowser({
         const bare = (name) => String(name || '').trim().toLowerCase().replace(/^chr/, '')
 
         return registerBrowserViewport(panelKey, {
+            recipeId: tutorialRecipeId,
+            frameFocusedRange: (start, end) => frameFocusRange(start, end, { gainingFocus: true }),
+            setTracks: (tracks) => setHiddenStrands((prev) => ({ ...prev, ...Object.fromEntries(Object.entries(tracks).map(([key, visible]) => [key, !visible])) })),
             setInteraction: (mode) => { interactionModeRef.current = mode },
             resetScroll: () => {
                 // The panel lives inside the view's scroller, not its own, so this walks
@@ -13188,6 +13334,10 @@ export default function GenomeBrowser({
                 start: viewStartRef.current,
                 end: viewEndRef.current,
                 sequenceVisible: tutorialSequenceVisibleRef.current,
+                bounds: browsableRange,
+                tracks: Object.fromEntries(Object.entries(hiddenStrands).map(([key, hidden]) => [key, !hidden])),
+                focus: selectedGene?.name || selectedGene?.id || '',
+                ready: Boolean(selectedChrom && regions.length),
             }),
             panByWindows: (fraction, ms) => {
                 const shift = span() * (Number(fraction) || 0)
@@ -13224,7 +13374,7 @@ export default function GenomeBrowser({
                 return true
             },
         })
-    }, [animateToView, chromDisplayMap, frameFocusRange, genome, screenshotTargetId, selectedChrom])
+    }, [animateToView, browsableRange, chromDisplayMap, frameFocusRange, genome, screenshotTargetId, selectedChrom, tutorialRecipeId, hiddenStrands, selectedGene, regions.length])
 
     // ============ Render ============
 
@@ -13671,7 +13821,13 @@ export default function GenomeBrowser({
         })
     }, [availableTracks, isTrackPickerOpen])
 
-    const showInitialLoadingOverlay = loadingRegions || (Boolean(selectedChrom) && !hasInitialViewportData)
+    // The panel is as loaded as it is going to get once the regions are in. What
+    // it would otherwise still be waiting on is the first gene tile, and while
+    // the index is being built there is no gene tile coming — leaving this up
+    // would put a full-panel spinner over the very browser the build was made
+    // non-blocking so the user could use.
+    const showInitialLoadingOverlay = loadingRegions
+        || (Boolean(selectedChrom) && !hasInitialViewportData && !geneTilesBlocked)
 
     // Screen-reader description of the active controls, generated from the same
     // source as the settings cheat sheet so the two cannot drift apart.
@@ -14047,6 +14203,35 @@ export default function GenomeBrowser({
                     />
                 )}
 
+                {/* The gene index note. Positioned against the panel rather than
+                    against the genome, so it stays put through a pan or a zoom
+                    instead of sliding away with the coordinates it would
+                    otherwise be pinned to. The canvas underneath stays live. */}
+                {geneIndexOverlayGeometry && (
+                    <GeneIndexProgressOverlay
+                        status={geneIndexStatus}
+                        isLight={isLight}
+                        left={LHS_WIDTH}
+                        width={Math.max(1, viewWidth - LHS_WIDTH)}
+                        top={geneIndexOverlayGeometry.top}
+                        height={geneIndexOverlayGeometry.height}
+                        onRetry={retryGeneIndex}
+                    />
+                )}
+
+                {tutorialRecipeId && [
+                    ['forward', layout.FORWARD_Y + layout.forwardBgHeight / 2, layout.forwardBgHeight > 0],
+                    ['reverse', layout.REVERSE_Y + layout.reverseBgHeight / 2, layout.reverseBgHeight > 0],
+                    ['sequence', layout.SEQUENCE_Y + layout.seqBgHeight / 2, showSequenceTrack && layout.SEQUENCE_Y >= 0],
+                ].filter(([, , visible]) => visible).map(([strand, y]) => (
+                    <button key={strand} data-tour-id={{ forward: 'browser-toggle-forward', reverse: 'browser-toggle-reverse', sequence: 'browser-toggle-sequence' }[strand]}
+                        aria-label={`Toggle ${strand} track`} aria-pressed={!hiddenStrands[strand]}
+                        data-tutorial-engaged={!hiddenStrands[strand] ? 'true' : 'false'}
+                        onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}
+                        onClick={(event) => { event.stopPropagation(); setHiddenStrands((prev) => ({ ...prev, [strand]: !prev[strand] })) }}
+                        className="absolute rounded-full"
+                        style={{ left: LHS_WIDTH - 25, top: y - 12, width: 24, height: 24, background: 'transparent' }} />
+                ))}
                 {sidebarTooltip && (
                     <div
                         className="pointer-events-none fixed z-30 px-2 py-1 text-[11px] rounded shadow-md"
@@ -14297,8 +14482,7 @@ export default function GenomeBrowser({
                 {clickedSeqBase && (() => {
                     const { bp, base, popupX, popupY } = clickedSeqBase
                     const pos1 = bp.toLocaleString()
-                    const baseColorMap = { A: '#ef4444', T: '#22c55e', C: '#60a5fa', G: '#f59e0b' }
-                    const baseColor = baseColorMap[base.toUpperCase()] || '#94a3b8'
+                    const baseColor = getBaseColor(base, colors)
                     const popupW = 'max-content'
                     return (
                         <div

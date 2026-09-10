@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import re
+import copy
 import csv
 import shutil
 import subprocess
@@ -30,7 +31,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, IO, Set
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, IO, Set
 from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException, Request
@@ -478,6 +479,9 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Ensembl Go API", lifespan=_lifespan)
+
+from alignment_explorer import create_router as create_alignment_explorer_router
+app.include_router(create_alignment_explorer_router(annotation_provider=lambda *args: alignment_explorer_annotation_features(*args)))
 API_TOKEN = os.environ.get("ENSEMBL_LOCAL_API_TOKEN", "").strip()
 API_TOKEN_HEADER = "x-ensembl-local-token"
 # Routes serving the sandboxed 3D structure viewer. Kept off /api because these
@@ -1432,7 +1436,12 @@ def _is_existing_index_usable(db_path: str, gff_path: str) -> bool:
             conn.close()
 
 
-def ensure_gff_index(gff_path: str, db_path: str, force_rebuild: bool = False) -> str:
+def ensure_gff_index(
+    gff_path: str,
+    db_path: str,
+    force_rebuild: bool = False,
+    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> str:
     """Build a GFF index once per path, reusing existing compatible DB when possible.
 
     Rebuilds are written to a private temporary database and atomically swapped
@@ -1471,7 +1480,7 @@ def ensure_gff_index(gff_path: str, db_path: str, force_rebuild: bool = False) -
                         f"{uuid.uuid4().hex}.tmp"
                     )
                     try:
-                        create_gff_index(abs_gff, build_path)
+                        create_gff_index(abs_gff, build_path, progress_cb=progress_cb)
                         os.replace(build_path, normalized_db)
                     finally:
                         for suffix in ("", "-journal", "-wal", "-shm"):
@@ -1543,9 +1552,56 @@ def init_index_db(db_path: str):
     conn.commit()
     conn.close()
 
-def create_gff_index(gff_path: str, db_path: str):
-    """Parse GFF3 and populate the SQLite index."""
+def _read_position_source(handle):
+    """The object whose ``tell()`` tracks how far through the file we have read.
+
+    For a plain text handle that is its own buffer; for a gzip handle it is the
+    compressed file underneath, so progress is measured in bytes of the file on
+    disk in both cases and can be compared against its size. Returns ``None``
+    when nothing in the chain reports a position, which is the signal to report
+    an indeterminate build rather than a wrong percentage.
+    """
+    buffer = getattr(handle, "buffer", handle)
+    for candidate in (getattr(buffer, "fileobj", None), getattr(buffer, "myfileobj", None), buffer):
+        if candidate is None:
+            continue
+        try:
+            candidate.tell()
+        except Exception:
+            continue
+        return candidate
+    return None
+
+
+#: Lines between progress reports while parsing. Large enough that the check is
+#: lost in the noise of parsing a line, small enough that the meter still moves
+#: several times a second on a big annotation.
+INDEX_PROGRESS_LINE_INTERVAL = 20000
+
+
+def create_gff_index(gff_path: str, db_path: str, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None):
+    """Parse GFF3 and populate the SQLite index.
+
+    ``progress_cb`` is called every :data:`INDEX_PROGRESS_LINE_INTERVAL` lines
+    with the stage, the bytes read so far, and the running feature counts. The
+    browser draws a meter from it: a multi-gigabyte annotation takes minutes,
+    and an indeterminate spinner for that long is indistinguishable from a hang.
+    """
     log_progress(f"Indexing {Path(gff_path).name} to {Path(db_path).name}...")
+
+    def report(stage: str, position: int = 0, total: int = 0) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb({
+                "stage": stage,
+                "processed_bytes": int(position),
+                "total_bytes": int(total),
+                "genes": int(count_genes),
+                "transcripts": len(transcripts_data),
+            })
+        except Exception:
+            pass  # Progress is decoration; never let it fail a build.
     
     if os.path.exists(db_path):
         os.remove(db_path)
@@ -1676,9 +1732,27 @@ def create_gff_index(gff_path: str, db_path: str):
     # the build off the request path was meant to avoid.
     yielder = CooperativeYielder()
 
+    try:
+        total_bytes = os.path.getsize(gff_path)
+    except OSError:
+        total_bytes = 0
+
     with open_maybe_gz(gff_path, 'r') as f:
+        position_source = _read_position_source(f)
+        lines_until_report = INDEX_PROGRESS_LINE_INTERVAL
+        report("parsing", 0, total_bytes)
         for line in f:
             yielder.tick()
+            lines_until_report -= 1
+            if lines_until_report <= 0:
+                lines_until_report = INDEX_PROGRESS_LINE_INTERVAL
+                position = 0
+                if position_source is not None:
+                    try:
+                        position = position_source.tell()
+                    except Exception:
+                        position_source = None
+                report("parsing", position, total_bytes)
             if line.startswith('#'): continue
             parts = line.strip().split('\t')
             if len(parts) < 9: continue
@@ -1832,6 +1906,7 @@ def create_gff_index(gff_path: str, db_path: str):
         )
     
     # Process and insert transcripts
+    report("writing", total_bytes, total_bytes)
     tx_batch = []
     
     for t_id, data in transcripts_data.items():
@@ -4813,12 +4888,22 @@ def _index_worker_loop() -> None:
         task_id, gff_path_str, target_index_str = _index_task_queue.get()
         try:
             _update_index_task(task_id, status="running", started_at=now_iso(), error=None)
-            db_path = ensure_gff_index(gff_path_str, target_index_str, force_rebuild=False)
+
+            def on_progress(progress: Dict[str, Any], _task_id: str = task_id) -> None:
+                _update_index_task(_task_id, progress=progress)
+
+            db_path = ensure_gff_index(
+                gff_path_str,
+                target_index_str,
+                force_rebuild=False,
+                progress_cb=on_progress,
+            )
             _update_index_task(task_id, status="success", index_path=db_path, completed_at=now_iso(), error=None)
         except Exception as exc:
             logger.error(f"Index generation failed for {gff_path_str}: {exc}")
             _update_index_task(task_id, status="failed", error=str(exc), completed_at=now_iso())
         finally:
+            _prune_finished_index_tasks()
             _index_task_queue.task_done()
 
 
@@ -4830,6 +4915,89 @@ def _ensure_index_worker_started() -> None:
         worker = threading.Thread(target=_index_worker_loop, name="gff-index-worker", daemon=True)
         worker.start()
         _index_worker_started = True
+
+
+#: Finished index tasks kept in the registry. They are the only record of why a
+#: build failed, so a handful are retained, but the registry is process-lifetime
+#: state and used to grow without limit.
+MAX_FINISHED_INDEX_TASKS = 40
+
+
+def _prune_finished_index_tasks() -> None:
+    """Drop the oldest finished tasks once the registry has more than it needs."""
+    with _index_tasks_guard:
+        finished = [
+            (str(task.get("completed_at") or ""), task_id)
+            for task_id, task in _index_tasks.items()
+            if task.get("status") in {"success", "failed"}
+        ]
+        if len(finished) <= MAX_FINISHED_INDEX_TASKS:
+            return
+        finished.sort()
+        for _, task_id in finished[:len(finished) - MAX_FINISHED_INDEX_TASKS]:
+            _index_tasks.pop(task_id, None)
+
+
+def _annotation_signature(gff_path: str) -> str:
+    """``mtime:size`` for an annotation, or ``""`` when it cannot be read.
+
+    Recorded against a build so a failure can be tied to the exact file that
+    produced it. Replace or repair the annotation and the signature moves on,
+    which is what lets a genome recover from a bad download without a restart.
+    """
+    try:
+        stat = os.stat(_normalize_fs_path(gff_path))
+    except OSError:
+        return ""
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def forget_index_failures(gff_path: str, db_path: str = "") -> int:
+    """Discard remembered failures for an annotation. Returns how many went.
+
+    Without this a single failed build wedges the genome for the lifetime of the
+    process: :func:`_index_build_error_for` keeps finding the failed task, so
+    browsing keeps reporting the old error and never queues another attempt.
+    """
+    normalized_gff = _normalize_fs_path(gff_path)
+    normalized_db = _normalize_fs_path(db_path) if db_path else ""
+    with _index_tasks_guard:
+        doomed = [
+            task_id
+            for task_id, task in _index_tasks.items()
+            if task.get("status") == "failed"
+            and (
+                task.get("gff_path") == normalized_gff
+                or (normalized_db and task.get("db_path") == normalized_db)
+            )
+        ]
+        for task_id in doomed:
+            _index_tasks.pop(task_id, None)
+    return len(doomed)
+
+
+def _queued_index_positions() -> Dict[str, int]:
+    """Task id -> its place in the queue, 1 for the build that is running.
+
+    Indexing is deliberately serial — two multi-gigabyte parses at once starve
+    everything else in the process — so a genome can sit untouched for minutes
+    behind another one. Telling the browser where it is in the line is the
+    difference between "queued behind Mus musculus" and an unexplained wait.
+    """
+    with _index_tasks_guard:
+        running = [tid for tid, task in _index_tasks.items() if task.get("status") == "running"]
+        queued = sorted(
+            (
+                (str(task.get("queued_at") or ""), tid)
+                for tid, task in _index_tasks.items()
+                if task.get("status") == "queued"
+            )
+        )
+    positions = {tid: 1 for tid in running}
+    offset = len(running) + 1
+    for index, (_, tid) in enumerate(queued):
+        positions[tid] = offset + index
+    return positions
 
 
 def queue_index_build(gff_path: str, db_path: str) -> Tuple[str, str]:
@@ -4859,8 +5027,10 @@ def queue_index_build(gff_path: str, db_path: str) -> Tuple[str, str]:
             "status": "queued",
             "db_path": normalized_target,
             "gff_path": normalized_gff,
+            "gff_signature": _annotation_signature(normalized_gff),
             "index_path": None,
             "error": None,
+            "progress": None,
             "queued_at": now_iso(),
         }
 
@@ -5323,7 +5493,17 @@ def custom_sniff_annotation(path: str):
 
 @app.post("/api/index/generate")
 async def generate_indexes(request: IndexRequest):
-    """Generate GFF3 indices."""
+    """Generate GFF3 indices.
+
+    Runs on a worker thread. Building an index takes minutes on a large
+    annotation, and doing that on the event loop stopped the process answering
+    anything at all for the duration — including the readiness polls that were
+    the only sign the build was progressing.
+    """
+    return await run_in_threadpool(_generate_indexes_blocking, request)
+
+
+def _generate_indexes_blocking(request: IndexRequest):
     config = load_config()
     
     # Use request params if provided (for unsaved UI state), else config
@@ -5421,13 +5601,17 @@ DEFAULT_CONFIG = {
     "deregistered_genome_keys": [],
     "genome_playlists": [],
     "selected_genome_playlist_id": "__all__",
-    "genome_browser_colors": [
-        "#3366cc",
-        "#00b692",
-        "#00b692",
-        "#00b692",
-        "#00b692",
-    ],
+    # Superseded by the three keys below: colour used to be a property of a
+    # genome's position among the active set. Kept so that a configuration
+    # written before the change can still be read, and migrated on the frontend
+    # the first time it is loaded (see genomeColorSchemes.js).
+    "genome_browser_colors": [],
+    # The colour a genome is drawn in until it is given one of its own.
+    "genome_default_color": "#3366cc",
+    # assembly key -> hex colour, for the genomes that have been given one.
+    "genome_colors": {},
+    # Colours the user mixed themselves, offered beside the built-in palette.
+    "genome_color_palette": [],
     "active_app_buttons": [
         "home",
         "genome_selector",
@@ -5909,8 +6093,33 @@ def _ensure_output_dir_playlist_state(config: Dict[str, Any]) -> None:
     _save_output_dir_playlist_state(config)
 
 
-def load_config() -> dict:
-    """Load config from disk, falling back to defaults."""
+#: How long a loaded configuration may be reused. Long enough to collapse the
+#: burst of reads a single round of browser polling causes, short enough that a
+#: change made anywhere — including in the sidecar files this merges in, which
+#: have no mtime of their own to watch — is picked up before anyone notices.
+CONFIG_CACHE_TTL_SECONDS = 0.5
+
+_config_cache_guard = threading.Lock()
+#: ``(config file signature, loaded at, config)``
+_config_cache: Optional[Tuple[Tuple[int, int], float, dict]] = None
+
+
+def _config_file_signature() -> Tuple[int, int]:
+    try:
+        stat = CONFIG_FILE.stat()
+    except OSError:
+        return (0, 0)
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def invalidate_config_cache() -> None:
+    """Drop the cached configuration. Called whenever the file is written."""
+    global _config_cache
+    with _config_cache_guard:
+        _config_cache = None
+
+
+def _load_config_uncached() -> dict:
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE) as f:
@@ -5925,6 +6134,37 @@ def load_config() -> dict:
         except Exception:
             pass
     return _enrich_config_genome_labels(dict(DEFAULT_CONFIG))
+
+
+def load_config() -> dict:
+    """Load config from disk, falling back to defaults.
+
+    Reads are cached for :data:`CONFIG_CACHE_TTL_SECONDS`, keyed on the config
+    file's mtime and size. Nearly every endpoint starts by loading the
+    configuration, and while a genome indexes the browser polls several of them
+    a second per panel; each of those was re-reading the file, re-merging two
+    sidecars and re-deriving every genome's labels.
+
+    Callers get a deep copy. Several of them mutate what they are handed, and a
+    cache that returned the same object would let one endpoint's edits show up
+    in another's.
+    """
+    global _config_cache
+    signature = _config_file_signature()
+    now = time.monotonic()
+    with _config_cache_guard:
+        cached = _config_cache
+        if (
+            cached is not None
+            and cached[0] == signature
+            and now - cached[1] < CONFIG_CACHE_TTL_SECONDS
+        ):
+            return copy.deepcopy(cached[2])
+
+    loaded = _load_config_uncached()
+    with _config_cache_guard:
+        _config_cache = (signature, time.monotonic(), loaded)
+    return copy.deepcopy(loaded)
 
 
 def save_config(config: dict, path: Optional[Path] = None):
@@ -5944,6 +6184,7 @@ def save_config(config: dict, path: Optional[Path] = None):
         except OSError:
             pass
         raise
+    invalidate_config_cache()
     if path == CONFIG_FILE:
         _save_output_dir_config_state(config)
         _save_output_dir_playlist_state(config)
@@ -6023,6 +6264,9 @@ class ConfigUpdate(BaseModel):
     genome_playlists: Optional[List[Dict[str, Any]]] = None
     selected_genome_playlist_id: Optional[str] = None
     genome_browser_colors: Optional[List[str]] = None
+    genome_default_color: Optional[str] = None
+    genome_colors: Optional[Dict[str, str]] = None
+    genome_color_palette: Optional[List[str]] = None
     active_app_buttons: Optional[List[str]] = None
     clear_genome_playlists: Optional[bool] = None
     save_path: Optional[str] = None  # Optional path to save to
@@ -9774,12 +10018,14 @@ def _browse_index_for(gff_path: str, db_path: str, cfg: Dict[str, Any], species:
 def _browsable_active_species(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     """The genomes the browser may be asked to resolve.
 
-    Normally just the configuration's own. A running tutorial adds its demo genome here
-    and nowhere else: it is deliberately absent from the saved configuration, so without
-    this the browser would reject the only genome the tutorial has to show. See
-    ``demo_genome.set_tutorial_session_genome`` for what that registration will accept.
+    Include the selected session pool so Cycle can preview an inactive genome without
+    changing the active selection. Active records win over saved session snapshots.
+    Tutorial genomes remain registered separately from the user's configuration.
     """
-    return _dedupe_active_species(list(cfg.get("active_species") or []) + tutorial_session_species())
+    return _dedupe_active_species(
+        list(cfg.get("active_species") or []) + tutorial_session_species()
+        + list(cfg.get("next_previous_session_genomes") or [])
+    )
 
 
 def _resolve_browse_genome_context(genome: str) -> Dict[str, Any]:
@@ -10690,6 +10936,12 @@ def _index_build_error_for(gff_path: str, db_path: str) -> str:
     polls until it lands. An annotation the indexer cannot read would turn that
     into an endless rebuild loop, so a failure has to be reported rather than
     retried on every poll.
+
+    A failure is tied to the exact bytes that caused it. Replace the annotation —
+    re-download a truncated file, repair a malformed one — and the recorded
+    signature no longer matches, so the genome starts building again by itself
+    instead of holding on to an error about a file that is no longer there.
+    :func:`forget_index_failures` is the manual way out for everything else.
     """
     normalized_gff = _normalize_fs_path(gff_path)
     normalized_db = _normalize_fs_path(db_path)
@@ -10704,6 +10956,11 @@ def _index_build_error_for(gff_path: str, db_path: str) -> str:
             if latest is None or completed >= str(latest.get("completed_at") or ""):
                 latest = task
     if latest is None or latest.get("status") != "failed":
+        return ""
+
+    recorded_signature = str(latest.get("gff_signature") or "")
+    if recorded_signature and recorded_signature != _annotation_signature(normalized_gff):
+        forget_index_failures(normalized_gff, normalized_db)
         return ""
     return str(latest.get("error") or "The annotation index could not be built.")
 
@@ -10825,6 +11082,145 @@ def _get_browse_db_optional(genome: str) -> str:
         raise
 
 
+#: What a genome's gene track can expect of its annotation index. The browser
+#: renders from the assembly the moment it has one, so these describe what is
+#: still missing rather than whether the genome can be shown at all.
+INDEX_STATE_READY = "ready"       # built and current; genes are queryable
+INDEX_STATE_BUILDING = "building"  # this annotation is being parsed right now
+INDEX_STATE_QUEUED = "queued"      # waiting behind another build
+INDEX_STATE_FAILED = "failed"      # the last build failed and was not superseded
+INDEX_STATE_NONE = "none"          # no annotation configured; there are no genes
+INDEX_STATE_ABSENT = "absent"      # an annotation with no index and no build
+
+
+def _live_index_task_for(gff_path: str, db_path: str) -> Tuple[str, Dict[str, Any]]:
+    """The queued or running build for this annotation, with its task id."""
+    normalized_gff = _normalize_fs_path(gff_path)
+    normalized_db = _normalize_fs_path(db_path) if db_path else ""
+    with _index_tasks_guard:
+        for task_id, task in _index_tasks.items():
+            if task.get("status") not in {"queued", "running"}:
+                continue
+            if task.get("gff_path") == normalized_gff or (
+                normalized_db and task.get("db_path") == normalized_db
+            ):
+                return task_id, dict(task)
+    return "", {}
+
+
+def _index_status_for_genome(genome: str) -> Dict[str, Any]:
+    """How far along this genome's gene index is, for the browser's meter.
+
+    Deliberately does no work beyond looking: it is polled every second or two
+    per panel while a build runs, and it must never be the thing that queues a
+    build, or a view that merely watches progress would start one.
+    """
+    context = _resolve_browse_genome_context(genome)
+    gff_path = str(context.get("gff_path") or "")
+    db_path = str(context.get("db_path") or "")
+
+    status: Dict[str, Any] = {
+        "genome": genome,
+        "state": INDEX_STATE_NONE,
+        "percent": None,
+        "genes": 0,
+        "transcripts": 0,
+        "stage": "",
+        "queue_position": 0,
+        "queue_length": 0,
+        "detail": "",
+        "error": "",
+    }
+
+    if not gff_path or not os.path.exists(gff_path):
+        status["detail"] = "This genome has no annotation, so it has no gene track."
+        return status
+
+    if db_path and _is_existing_index_usable(db_path, gff_path):
+        status["state"] = INDEX_STATE_READY
+        status["percent"] = 100.0
+        return status
+
+    task_id, task = _live_index_task_for(gff_path, db_path)
+    if task_id:
+        positions = _queued_index_positions()
+        status["queue_position"] = int(positions.get(task_id, 0))
+        status["queue_length"] = len(positions)
+        if task.get("status") == "running":
+            status["state"] = INDEX_STATE_BUILDING
+            progress = task.get("progress") or {}
+            total = int(progress.get("total_bytes") or 0)
+            processed = int(progress.get("processed_bytes") or 0)
+            status["stage"] = str(progress.get("stage") or "parsing")
+            status["genes"] = int(progress.get("genes") or 0)
+            status["transcripts"] = int(progress.get("transcripts") or 0)
+            if total > 0:
+                # Parsing is the long pole but not the whole job: the write-out
+                # phase that follows is real time the user waits through. Hold
+                # the meter at 96% for it rather than sitting on a finished-
+                # looking 100% while transcripts are still being inserted.
+                fraction = min(1.0, max(0.0, processed / total))
+                status["percent"] = round(
+                    96.0 if str(progress.get("stage")) == "writing" else fraction * 96.0,
+                    1,
+                )
+            status["detail"] = f"Reading {os.path.basename(gff_path)}."
+        else:
+            status["state"] = INDEX_STATE_QUEUED
+            status["detail"] = "Waiting for the current index build to finish."
+        return status
+
+    build_error = _index_build_error_for(gff_path, db_path)
+    if build_error:
+        status["state"] = INDEX_STATE_FAILED
+        status["error"] = build_error
+        status["detail"] = build_error
+        return status
+
+    status["state"] = INDEX_STATE_ABSENT
+    status["detail"] = "This annotation has not been indexed yet."
+    return status
+
+
+@app.get("/api/browse/index-status")
+async def browse_index_status(genome: str = "reference"):
+    """Progress of the gene index behind a genome's browser panel."""
+    return await run_in_threadpool(_index_status_for_genome, genome)
+
+
+class IndexRetryRequest(BaseModel):
+    genome: str
+
+
+@app.post("/api/browse/index-retry")
+async def browse_index_retry(request: IndexRetryRequest):
+    """Forget a failed build for this genome and start another one.
+
+    A failure is remembered so that polling does not turn an unparseable file
+    into an endless rebuild loop; this is the door out of that, so the user is
+    not left restarting the backend to retry a build that failed once.
+    """
+    def _retry() -> Dict[str, Any]:
+        context = _resolve_browse_genome_context(request.genome)
+        gff_path = str(context.get("gff_path") or "")
+        db_path = str(context.get("db_path") or "")
+        if not gff_path or not os.path.exists(gff_path):
+            raise HTTPException(
+                status_code=404,
+                detail=f"No annotation is configured for the {request.genome} genome.",
+            )
+        forgotten = forget_index_failures(gff_path, db_path)
+        if not db_path:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not work out where to write the index for {request.genome}.",
+            )
+        task_id, task_status = queue_index_build(gff_path, db_path)
+        return {"task_id": task_id, "status": task_status, "cleared_failures": forgotten}
+
+    return await run_in_threadpool(_retry)
+
+
 _fasta_cache = {}  # genome -> (config_path, pysam.FastaFile)
 
 
@@ -10876,15 +11272,38 @@ def _force_refresh_browse_fasta_index(genome: str, current_fasta: Optional["Thre
     return refreshed
 
 
+def _get_browse_db_for_regions(genome: str) -> Tuple[str, bool]:
+    """``(index path, is the index still coming)`` for the region list.
+
+    Regions are the assembly, not the annotation: the FASTA has them the moment
+    the genome is loaded, and an index build that takes minutes should not hold
+    them back. So unlike :func:`_get_browse_db_optional`, a build in flight
+    yields no index and a flag saying genes are on their way, and the caller
+    serves the assembly now. What kept this honest before was the 425 — the
+    caller had no other way to tell "genes are coming" from "there are none".
+    ``/api/browse/index-status`` is that way now, and the browser polls it to
+    fill the gene track in when the build lands.
+    """
+    try:
+        return _get_browse_db(genome), False
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            return "", False
+        if exc.status_code == INDEX_BUILDING_STATUS:
+            return "", True
+        raise
+
+
 @app.get("/api/browse/regions")
 async def browse_regions(genome: str = "reference", min_length: int = 0):
     """List all regions (chromosomes/scaffolds) with gene counts.
     Includes featureless regions (gene_count=0) so the frontend can show them
     behind a disclosure control. min_length kept for API compatibility only.
     """
-    # A genome loaded without an annotation still has regions: they come from
-    # the FASTA below. Only the gene counts are unavailable.
-    db_path = await run_in_threadpool(_get_browse_db_optional, genome)
+    # A genome loaded without an annotation — or with one that is still being
+    # indexed — still has regions: they come from the FASTA below. Only the gene
+    # counts are unavailable.
+    db_path, index_pending = await run_in_threadpool(_get_browse_db_for_regions, genome)
 
     def _query():
         rows = []
@@ -10952,6 +11371,14 @@ async def browse_regions(genome: str = "reference", min_length: int = 0):
 
         results = list(results_by_chrom.values())
         if not results and not db_path:
+            if index_pending:
+                # No FASTA to fall back on, so there is nothing to draw until the
+                # index lands. Keep the caller polling rather than reporting a
+                # genome with nothing in it.
+                raise HTTPException(
+                    status_code=INDEX_BUILDING_STATUS,
+                    detail=f"The annotation index for the {genome} genome is still being built.",
+                )
             # Neither an annotation nor a readable FASTA: there is genuinely
             # nothing configured for this genome.
             raise HTTPException(
@@ -11650,6 +12077,36 @@ async def browse_canonical_transcripts(
         return results
 
     return await run_in_threadpool(_query)
+
+
+def alignment_explorer_annotation_features(genome, chrom, start, end, sequence, strand, transcript_id=None):
+    """Project indexed GFF3 transcript features using the existing MSA annotation mapper."""
+    db_path = _get_browse_db(genome)
+    resolved = _resolve_db_chrom_name_for_genome(db_path, chrom, genome) or chrom
+    conn = sqlite3.connect(db_path)
+    try:
+        if transcript_id:
+            records = conn.execute('SELECT id FROM transcripts WHERE id=? AND chrom=? AND end>=? AND start<=?', (transcript_id,resolved,start,end)).fetchall()
+        else:
+            records = conn.execute("""SELECT t.id FROM genes g JOIN transcripts t ON t.id=(
+                SELECT id FROM transcripts WHERE parent_gene_id=g.id ORDER BY is_canonical DESC,start ASC LIMIT 1)
+                WHERE g.chrom=? AND g.end>=? AND g.start<=? ORDER BY g.start LIMIT 2000""", (resolved,start,end)).fetchall()
+    finally:
+        conn.close()
+    features = []
+    for (tx_id,) in records:
+        tx = find_transcript_in_index(db_path, tx_id)
+        if not tx: continue
+        reverse = tx.strand != strand
+        aligned = str(Seq(sequence).reverse_complement()) if reverse else sequence
+        mapped = map_features_to_alignment(tx,start,end,aligned,tx.strand,aligned.replace('-', ''))
+        for feature in mapped:
+            item = feature.model_dump() if hasattr(feature,'model_dump') else feature.dict()
+            if reverse:
+                item['start'],item['end'] = len(sequence)-1-item['end'],len(sequence)-1-item['start']
+            item['transcript_id'] = tx_id
+            features.append(item)
+    return features
 
 
 @app.get("/api/browse/sequence")

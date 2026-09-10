@@ -3,6 +3,9 @@ export default {
   label: 'Genome Browser',
   version: 1,
   targets: [
+    { id: 'browser.hideInactive', anchor: 'browser-hide-inactive', label: 'Hide inactive tracks', kind: 'toggle', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
+    ...[['pan', 'Pan'], ['zoom', 'Zoom'], ['linkRegion', 'Link region'], ['linkGene', 'Link gene']].map(([id, label]) => ({ id: `browser.${id}`, anchor: `browser-${id}`, label, kind: 'button', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' })),
+    ...[['GF', 'forward'], ['GR', 'reverse'], ['SL', 'sequence']].map(([label, strand]) => ({ id: `browser.toggle${label}`, anchor: `browser-toggle-${strand}`, label: `${label} track switch`, kind: 'button', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' })),
     { id: 'browser.globalControls', anchor: 'browser-global-controls', label: 'General browser controls', kind: 'group', capabilities: ['spotlight'], safety: 'read' },
     { id: 'browser.tracks', anchor: 'browser-tracks-toggle', label: 'Tracks', kind: 'button', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
     { id: 'browser.detail', anchor: 'browser-detail', label: 'Detail', kind: 'toggle', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
@@ -43,6 +46,7 @@ export default {
     { id: 'browser.trackSL', anchor: 'browser-track-sl', label: 'Sequence track', kind: 'canvas-control', capabilities: ['spotlight'], safety: 'read' },
     { id: 'focus.dismiss', anchor: 'focus-gene-dismiss', label: 'Close gene drawer', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
     { id: 'focus.transcriptsExpand', anchor: 'focus-transcripts-expand', label: 'Show all transcripts', kind: 'button', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
+    { id: 'focus.notes', selector: '[data-focus-drawer-notes]', label: 'Notes section', kind: 'region', capabilities: ['spotlight'], safety: 'read' },
     { id: 'focus.notesAdd', anchor: 'focus-notes-add', label: 'Add note', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
     { id: 'focus.noteTitle', anchor: 'focus-note-title', label: 'Note title', kind: 'input', capabilities: ['spotlight', 'input'], safety: 'sandbox-write', recordValue: true },
     { id: 'focus.noteBody', anchor: 'focus-note-body', label: 'Note text', kind: 'textarea', capabilities: ['spotlight', 'input'], safety: 'sandbox-write', recordValue: true, sensitiveReview: true },

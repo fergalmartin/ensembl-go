@@ -29,6 +29,8 @@ export function genomePillLabels(species) {
 
 export default function GenomePill({
     displayName,
+    tutorialDatasetId,
+    tutorialEngaged,
     displayAssembly = '',
     badge = '',
     badgeTooltip = '',
@@ -60,6 +62,8 @@ export default function GenomePill({
                 </span>
             ) : null}
             <Tag
+                data-tutorial-pill={tutorialDatasetId || undefined}
+                data-tutorial-engaged={tutorialDatasetId ? String(Boolean(tutorialEngaged)) : undefined}
                 {...(onClick ? { onClick, onMouseDown: (event) => event.stopPropagation() } : {})}
                 className="text-xs px-3 py-1.5 rounded-full transition-all duration-200 border font-medium flex items-center gap-1.5"
                 style={{ backgroundColor, color: textColor, borderColor, borderStyle, width, minWidth, maxWidth, paddingLeft }}

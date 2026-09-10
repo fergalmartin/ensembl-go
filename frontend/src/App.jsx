@@ -56,13 +56,16 @@ import TrackManagerView from './components/TrackManagerView'
 import NotesView from './components/NotesView'
 import MultiAlignmentSidebar from './components/MultiAlignmentSidebar'
 import MultiAlignmentPanel from './components/MultiAlignmentPanel'
+const AlignmentExplorerView = React.lazy(() => import('./components/alignment-explorer/AlignmentExplorerView'))
 import SaveAlignmentModal from './components/SaveAlignmentModal'
 import LoadAlignmentModal from './components/LoadAlignmentModal'
 import AppButtonIcon from './components/AppButtonIcon'
+import NoGenomesPillsMessage from './components/NoGenomesPillsMessage'
 import { useTutorialHost } from './hooks/useTutorial'
 import { resetTutorialWorkspace } from './tutorials/demoGenomeApi'
 import { isTutorialSandboxActive } from './tutorials/sandbox'
 import SelectedSpeciesPillsBar from './components/SelectedSpeciesPillsBar'
+import { cycleSelection } from './utils/genomeWheel'
 import WindowsBackendSetupView from './components/WindowsBackendSetupView'
 import ScreenshotSelectionOverlay from './components/ScreenshotSelectionOverlay'
 import ScreenshotExportModal from './components/ScreenshotExportModal'
@@ -80,8 +83,11 @@ import {
   subscribeToBackendRuntime,
 } from './backendRuntime'
 import {
-  buildDefaultGenomeBrowserColors,
-  normalizeGenomeBrowserColors,
+  DEFAULT_GENOME_COLOR,
+  migrateLegacyGenomeColors,
+  normalizeCustomGenomeColors,
+  normalizeGenomeColorAssignments,
+  normalizeGenomeDefaultColor,
 } from './genomeColorSchemes'
 import {
   DEFAULT_BROWSING_CONTROL_SCHEME_ID,
@@ -844,8 +850,8 @@ function App() {
   const savedConfigRef = useRef(null)
   const persistedActiveButtonsRef = useRef('')
   const persistActiveButtonsTimerRef = useRef(null)
-  const persistedGenomeBrowserColorsRef = useRef('')
-  const persistGenomeBrowserColorsTimerRef = useRef(null)
+  const persistedGenomeColorsRef = useRef('')
+  const persistGenomeColorsTimerRef = useRef(null)
   const persistConfigurationTimerRef = useRef(null)
   const selectorRefreshCompletedTaskIdsRef = useRef(new Set())
 
@@ -875,6 +881,8 @@ function App() {
 
   // Navigation: which view is active
   const [currentView, setCurrentView] = useState('home')
+  const [explorerIncoming, setExplorerIncoming] = useState(null)
+  const [explorerLocus, setExplorerLocus] = useState(null)
   const [gettingStartedOutputDirDismissed, setGettingStartedOutputDirDismissed] = useState(false)
   const [outputDirNotification, setOutputDirNotification] = useState('')
   const previousViewRef = useRef('home')
@@ -938,7 +946,9 @@ function App() {
     show_fps_counter: false,
     browsing_control_scheme: DEFAULT_BROWSING_CONTROL_SCHEME_ID,
     sv_hide_inactive_tracks: false,
-    genome_browser_colors: buildDefaultGenomeBrowserColors(),
+    genome_default_color: DEFAULT_GENOME_COLOR,
+    genome_colors: {},
+    genome_color_palette: [],
     active_app_buttons: DEFAULT_ACTIVE_APP_BUTTONS,
   })
 
@@ -1339,9 +1349,9 @@ function App() {
 
   useEffect(() => {
     return () => {
-      if (persistGenomeBrowserColorsTimerRef.current) {
-        clearTimeout(persistGenomeBrowserColorsTimerRef.current)
-        persistGenomeBrowserColorsTimerRef.current = null
+      if (persistGenomeColorsTimerRef.current) {
+        clearTimeout(persistGenomeColorsTimerRef.current)
+        persistGenomeColorsTimerRef.current = null
       }
     }
   }, [])
@@ -1384,23 +1394,32 @@ function App() {
     }
   }, [configLoaded, config.active_app_buttons])
 
+  // Colours are changed from three different places — the configuration view's
+  // default, the selector's per-genome swatch, its bulk control — and none of
+  // them is a moment worth a full configuration save. Debounced together, as the
+  // positional colour list was before them.
+  const genomeColorState = useMemo(() => ({
+    genome_default_color: normalizeGenomeDefaultColor(config.genome_default_color),
+    genome_colors: normalizeGenomeColorAssignments(config.genome_colors),
+    genome_color_palette: normalizeCustomGenomeColors(config.genome_color_palette),
+  }), [config.genome_default_color, config.genome_colors, config.genome_color_palette])
+
   useEffect(() => {
     if (!configLoaded) return
 
-    const normalizedColors = normalizeGenomeBrowserColors(config.genome_browser_colors)
-    const serialized = JSON.stringify(normalizedColors)
-    if (serialized === persistedGenomeBrowserColorsRef.current) return
+    const serialized = JSON.stringify(genomeColorState)
+    if (serialized === persistedGenomeColorsRef.current) return
 
-    if (persistGenomeBrowserColorsTimerRef.current) {
-      clearTimeout(persistGenomeBrowserColorsTimerRef.current)
-      persistGenomeBrowserColorsTimerRef.current = null
+    if (persistGenomeColorsTimerRef.current) {
+      clearTimeout(persistGenomeColorsTimerRef.current)
+      persistGenomeColorsTimerRef.current = null
     }
 
-    persistGenomeBrowserColorsTimerRef.current = setTimeout(async () => {
-      persistGenomeBrowserColorsTimerRef.current = null
+    persistGenomeColorsTimerRef.current = setTimeout(async () => {
+      persistGenomeColorsTimerRef.current = null
       const payload = {
         ...(configRef.current || config),
-        genome_browser_colors: normalizedColors,
+        ...genomeColorState,
       }
       try {
         await fetch(`${API_BASE}/api/config`, {
@@ -1408,24 +1427,23 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         })
-        persistedGenomeBrowserColorsRef.current = serialized
+        persistedGenomeColorsRef.current = serialized
         savedConfigRef.current = {
           ...(savedConfigRef.current || {}),
           ...payload,
-          genome_browser_colors: normalizedColors,
         }
       } catch (e) {
-        console.error('Failed to persist genome browser colours:', e)
+        console.error('Failed to persist genome colours:', e)
       }
     }, 180)
 
     return () => {
-      if (persistGenomeBrowserColorsTimerRef.current) {
-        clearTimeout(persistGenomeBrowserColorsTimerRef.current)
-        persistGenomeBrowserColorsTimerRef.current = null
+      if (persistGenomeColorsTimerRef.current) {
+        clearTimeout(persistGenomeColorsTimerRef.current)
+        persistGenomeColorsTimerRef.current = null
       }
     }
-  }, [configLoaded, config.genome_browser_colors])
+  }, [configLoaded, genomeColorState])
 
   // Sync body background with theme to prevent white borders
   useEffect(() => {
@@ -1614,7 +1632,10 @@ function App() {
           active_species: startupActiveSpecies,
           next_previous_session_genomes: buildPreviousSessionGenomes(startupActiveSpecies),
           active_app_buttons: normalizeActiveAppButtons(recovered.active_app_buttons),
-          genome_browser_colors: normalizeGenomeBrowserColors(recovered.genome_browser_colors),
+          // First launch under per-genome colours carries the old positional list
+          // over: its first entry was the primary genome's colour, which is what
+          // the default now is, and the rest join the palette.
+          ...migrateLegacyGenomeColors(recovered),
           // `recovered` includes the hand-editable Electron store, so a stale or
           // invalid scheme id has to be coerced before it reaches the browser.
           browsing_control_scheme: normalizeBrowsingControlSchemeId(recovered.browsing_control_scheme),
@@ -1635,7 +1656,18 @@ function App() {
         savedConfigRef.current = { ...startupConfig }
         nextPreviousSessionSignatureRef.current = JSON.stringify(startupConfig.next_previous_session_genomes || [])
         persistedActiveButtonsRef.current = JSON.stringify(normalizeActiveAppButtons(startupConfig.active_app_buttons))
-        persistedGenomeBrowserColorsRef.current = JSON.stringify(normalizeGenomeBrowserColors(startupConfig.genome_browser_colors))
+        // A configuration that already knows its colours is in sync with the
+        // disk and needs no write. One that has just been migrated off the old
+        // positional list is not: leaving the marker empty makes the persist
+        // effect save the migration, so it happens once rather than being
+        // recomputed — and undone — on every launch.
+        persistedGenomeColorsRef.current = recovered.genome_default_color
+          ? JSON.stringify({
+            genome_default_color: normalizeGenomeDefaultColor(startupConfig.genome_default_color),
+            genome_colors: normalizeGenomeColorAssignments(startupConfig.genome_colors),
+            genome_color_palette: normalizeCustomGenomeColors(startupConfig.genome_color_palette),
+          })
+          : ''
         setConfigLoaded(true)
         if (shouldPromotePreviousSessionPlaylist) {
           window.electronAPI?.saveElectronConfig?.(startupConfig)
@@ -3285,6 +3317,7 @@ function App() {
     'home',
     'feature_explorer',
     'alignment',
+    'alignment_explorer',
     'neighbourhood',
     'structural_variation',
     'homology',
@@ -3329,6 +3362,7 @@ function App() {
     genome_browser: 'Genome Browser',
     feature_explorer: 'Feature Explorer',
     alignment: 'Alignment',
+    alignment_explorer: 'Alignment Explorer',
     neighbourhood: 'Neighbourhood',
     structural_variation: 'Structural Variation',
     homology: 'Homology',
@@ -3347,6 +3381,7 @@ function App() {
     genome_browser: 'Navigate gene annotations across chromosomes',
     feature_explorer: 'Inspect transcript-level features for a selected gene in an active genome',
     alignment: 'Comparative genomic annotation visualisation',
+    alignment_explorer: 'Explore alignment blocks and connected sequence paths in named layers',
     neighbourhood: 'Explore gene neighbourhood context',
     structural_variation: 'Inspect structural variation and chain-based syntenic mappings between two genomes',
     homology: 'Query homology TSV files for cross-species gene matches',
@@ -4113,6 +4148,22 @@ function App() {
     }
   }, [])
 
+  // Whether the backend considers a genome's index built and current. Falls back
+  // to "is the file there" for a genome it does not know about yet, which is the
+  // only case it cannot answer for.
+  const backendWillUseIndex = useCallback(async (genomeKey, indexPath) => {
+    const key = String(genomeKey || '').trim()
+    if (key) {
+      try {
+        const res = await fetch(`${API_BASE}/api/browse/index-status?genome=${encodeURIComponent(key)}`)
+        if (res.ok) return (await res.json())?.state === 'ready'
+      } catch {
+        // Fall through to the filesystem check below.
+      }
+    }
+    return fileExistsAtPath(indexPath)
+  }, [fileExistsAtPath])
+
   const ensureSelectedGenomeIndex = useCallback((species) => {
     const gffPath = String(species?.files?.gff3 || '').trim()
     if (!gffPath) return Promise.resolve(null)
@@ -4132,8 +4183,14 @@ function App() {
       const currentConfig = configRef.current || {}
 
       if (currentIndex) {
-        const indexExists = await fileExistsAtPath(currentIndex)
-        if (indexExists) {
+        // Ask the backend whether it would actually browse with this index, not
+        // merely whether the file is there. An index built from an older copy of
+        // the annotation is on disk and unusable: accepting it here marked the
+        // genome as sorted, so nothing queued a rebuild or followed its
+        // progress, and the browser was left polling a build it had started for
+        // itself with nothing watching it.
+        const usable = await backendWillUseIndex(genomeKey, currentIndex)
+        if (usable) {
           await persistBuiltIndexForGenome(species, currentIndex)
           ensuredGenomeIndexKeysRef.current.add(ensureKey)
           return currentIndex
@@ -4216,7 +4273,7 @@ function App() {
     })
 
     return promise
-  }, [fileExistsAtPath, persistBuiltIndexForGenome])
+  }, [backendWillUseIndex, persistBuiltIndexForGenome])
 
   useEffect(() => {
     if (!shouldAutoEnsurePrimaryIndex(currentView)) return
@@ -4610,6 +4667,36 @@ function App() {
       suppressViewSyncRef.current = false
     }
   }, [buildFocusFromActive, config, currentView, getAlignedGenomeConfigForView, hasGenomeAssignmentChanges, handleBrowserConfigChange])
+
+  const handleGenomeWheelPromote = useCallback(async (sourceKey, action, source) => {
+    const currentConfig = tutorialConfig || configRef.current || config
+    const active = dedupeSpeciesList(currentConfig.active_species)
+    const listed = dedupeSpeciesList([
+      ...active,
+      ...(tutorialConfig ? (tutorialConfig.tutorial_selected_genomes || []) : inactiveSelectedSpeciesRef.current || []),
+      ...(source ? [source] : []),
+    ])
+    const selection = cycleSelection(active, listed, sourceKey, action)
+    if (!selection) throw new Error('This genome cannot be opened')
+    if (speciesListsEqualByKey(active, selection.active)) return
+    const nextFocus = buildFocusFromActive(selection.active, {
+      primaryKey: speciesItemKey(selection.active[0]),
+      secondaryKey: selection.active[1] ? speciesItemKey(selection.active[1]) : '',
+    })
+    suppressViewSyncRef.current = true
+    try {
+      if (!tutorialConfig) setInactiveSelectedSpecies(selection.inactive)
+      dualViewFocusRef.current = nextFocus
+      setDualViewFocus(nextFocus)
+      const nextConfig = getAlignedGenomeConfigForView(
+        withNextPreviousSessionGenomes({ ...currentConfig, active_species: selection.active }, listed),
+        'genome_browser', nextFocus,
+      )
+      await handleBrowserConfigChange(nextConfig)
+    } finally {
+      suppressViewSyncRef.current = false
+    }
+  }, [buildFocusFromActive, config, tutorialConfig, getAlignedGenomeConfigForView, handleBrowserConfigChange])
 
   const handleStructuralVariationGenomeOrderChange = useCallback(async (orderedSpecies, options = {}) => {
     const currentConfig = configRef.current || config
@@ -5385,8 +5472,9 @@ function App() {
     // the sandbox is up: a tutorial starts with no pills unless it explicitly activates
     // one of its own datasets, and dropping the override reveals the user's list again.
     const extras = tutorialConfig
-      ? []
+      ? (tutorialConfig.tutorial_selected_genomes || []).filter((species) => !activeKeys.has(speciesItemKey(species)))
       : inactiveSelectedSpecies.filter((species) => !activeKeys.has(speciesItemKey(species)) && !orderedActiveKeys.has(speciesItemKey(species)))
+    if (tutorialConfig?.tutorial_selected_genomes) return tutorialConfig.tutorial_selected_genomes
     return [...orderedActive, ...extras]
   }, [config?.active_species, contextFullyActiveSpecies, inactiveSelectedSpecies, tutorialConfig])
   const selectorSelectedSpecies = useMemo(() => (
@@ -5404,6 +5492,16 @@ function App() {
     tutorialConfig
     && tutorialRuntime.selectorListPresentation?.fitAllRows
     && currentView === 'genome_selector'
+  )
+  // With nothing in it the strip used to vanish, which left the emptiest possible app
+  // saying nothing about how to fill it, and made the header jump the moment a first
+  // genome arrived. Not during a tutorial: its sandbox has its own way in, and telling a
+  // reader to go and download something is the opposite of what the tutorial is doing.
+  const showNoGenomesMessage = topBarSpecies.length === 0 && !tutorialConfig
+  const showsPillsStrip = Boolean(
+    !headerCollapsed
+    && !shouldShowWindowsBackendSetup
+    && (topBarSpecies.length > 0 || reserveTutorialSelectorPills || showNoGenomesMessage)
   )
 
   useEffect(() => {
@@ -5913,7 +6011,10 @@ function App() {
       {config.show_fps_counter && <FpsCounter />}
       {/* Header */}
       <header
-        className={`${themeStyles.header} border-b px-6 ${headerCollapsed ? 'py-3 cursor-pointer' : 'py-4'} flex-none rounded-xl relative`}
+        /* The pills strip ends in the assembly badges, which already sit at the foot of
+           the pills; a full `pb-4` under that read as a gap rather than as breathing
+           room. With no strip below them the button rows still want the full padding. */
+        className={`${themeStyles.header} border-b px-6 ${headerCollapsed ? 'py-3 cursor-pointer' : `pt-4 ${showsPillsStrip ? 'pb-2' : 'pb-4'}`} flex-none rounded-xl relative`}
         onClick={headerCollapsed ? () => setHeaderCollapsed(false) : undefined}
       >
         <div className={`flex flex-col ${headerCollapsed ? 'gap-0' : 'gap-3'} w-full h-full`}>
@@ -6158,12 +6259,16 @@ function App() {
             )}
           </div>
 
-          {!headerCollapsed && !shouldShowWindowsBackendSetup && (topBarSpecies.length > 0 || reserveTutorialSelectorPills) && (
+          {showsPillsStrip && (
             <div
               data-tour-id="app-genome-pills"
               className={`border-t ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
               style={{
-                visibility: topBarSpecies.length === 0 ? 'hidden' : undefined,
+                // A tutorial reserves this strip's place without showing anything in it,
+                // so that ticking the first genome does not change the header height
+                // under the rows being selected. That reservation stays blank; only the
+                // ordinary empty app gets the message.
+                visibility: (topBarSpecies.length === 0 && !showNoGenomesMessage) ? 'hidden' : undefined,
                 backgroundColor: isLight ? '#f1f3f5' : '#1E2938',
                 borderRadius: '0.5rem',
                 paddingLeft: '0.5rem',
@@ -6184,6 +6289,9 @@ function App() {
                 speciesList={topBarSpecies}
                 primarySpeciesKey={speciesItemKey(refSpecies)}
                 reserveRowHeight={reserveTutorialSelectorPills}
+                emptyState={showNoGenomesMessage ? (
+                  <NoGenomesPillsMessage isLight={isLight} onOpenView={handleTopBarButtonClick} />
+                ) : null}
               />
             </div>
           )}
@@ -6194,7 +6302,7 @@ function App() {
       {/* Main content container with flex-grow to fill remaining height */}
       <div
         ref={setMainContentNode}
-        data-tutorial-page-scroll={currentView === 'genome_selector' ? 'true' : undefined}
+        data-tutorial-page-scroll={['genome_selector', 'genome_browser'].includes(currentView) ? 'true' : undefined}
         className={`relative min-h-0 flex-grow w-full ${currentView === 'notes' ? 'py-6 pl-6 pr-0' : 'p-6'} ${(currentView === 'genome_browser' || currentView === 'alignment' || currentView === 'structural_variation' || currentView === 'genome_selector') ? `overflow-y-auto overflow-x-hidden themed-scrollbar ${isLight ? 'themed-scrollbar-light' : 'themed-scrollbar-dark'}` : 'overflow-hidden'}`}
       >
         {shouldRenderFallbackContentWrapper ? (
@@ -6294,6 +6402,7 @@ function App() {
 
                 {multiAlignmentResult && !alignmentViewLoading && (
                   <>
+                    <button type="button" className="self-end mb-2 px-3 py-2 rounded border border-teal-600 text-teal-400" onClick={() => { setExplorerIncoming(multiAlignmentResult); setCurrentView('alignment_explorer') }}>Open in Alignment Explorer</button>
                     <MultiAlignmentPanel
                       key={alignmentViewerDisplayKey}
                       result={multiAlignmentResult ? { ...multiAlignmentResult, rows: alignmentDisplayRows } : multiAlignmentResult}
@@ -6312,6 +6421,8 @@ function App() {
               </div>
               </div>
             </ErrorBoundary>
+          ) : currentView === 'alignment_explorer' ? (
+            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Alignment Explorer…</div>}><AlignmentExplorerView theme={theme} config={config} genomes={config?.active_species || []} incoming={explorerIncoming} onIncomingConsumed={() => setExplorerIncoming(null)} onOpenGenome={(locus) => { setExplorerLocus({ ...locus, token: Date.now() }); setCurrentView('genome_browser') }} /></React.Suspense></ErrorBoundary>
           ) : currentView === 'neighbourhood' ? (
             /* ========== NEIGHBOURHOOD VIEW ========== */
             <div className="h-full">
@@ -6521,6 +6632,9 @@ function App() {
           <div className="w-full h-full" style={{ display: currentView === 'genome_browser' ? 'block' : 'none' }}>
             <ErrorBoundary>
               <GenomeBrowserView
+                externalAlignmentLocus={explorerLocus}
+                listedGenomes={topBarSpecies}
+                onPromoteGenome={handleGenomeWheelPromote}
                 theme={theme}
                 config={config}
                 isActive={currentView === 'genome_browser'}

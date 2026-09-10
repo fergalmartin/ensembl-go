@@ -484,6 +484,42 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
 
             self.assertEqual(state["genome_playlists"][0]["id"], playlist["id"])
 
+    def test_per_genome_colours_round_trip_through_the_config_endpoint(self):
+        """A genome's colour is part of the saved configuration, not a view's state.
+
+        The frontend keys these on the assembly, so they are opaque strings here;
+        what matters is that a map survives the save/load round trip intact
+        rather than being flattened or dropped as an unrecognised key.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cache_file = root / "cache.json"
+            assignments = {
+                "ensembl::homo_sapiens::GCA_000001405.29": "#f59e0b",
+                "ensembl::mus_musculus::GCA_000001635.9": "#8b5cf6",
+            }
+            palette = ["#123456", "#abcdef"]
+
+            with patch.object(main, "CONFIG_FILE", cache_file):
+                asyncio.run(main.update_config(main.ConfigUpdate(
+                    genome_default_color="#00b692",
+                    genome_colors=assignments,
+                    genome_color_palette=palette,
+                )))
+
+                loaded = main.load_config()
+                self.assertEqual(loaded["genome_default_color"], "#00b692")
+                self.assertEqual(loaded["genome_colors"], assignments)
+                self.assertEqual(loaded["genome_color_palette"], palette)
+
+    def test_colour_keys_are_recognised_configuration(self):
+        for key in ("genome_default_color", "genome_colors", "genome_color_palette"):
+            self.assertIn(key, main.RECOGNIZED_CONFIG_KEYS)
+        # The positional list it replaced is kept only so a configuration written
+        # before the change can still be read and migrated.
+        self.assertEqual(main.DEFAULT_CONFIG["genome_browser_colors"], [])
+        self.assertEqual(main.DEFAULT_CONFIG["genome_default_color"], "#3366cc")
+
 
 if __name__ == "__main__":
     unittest.main()

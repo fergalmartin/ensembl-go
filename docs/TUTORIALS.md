@@ -105,6 +105,48 @@ plain `.click()`, which went through the guard and was refused for any box the s
 not happened to allow — so a step could not establish the filter state its own card
 describes. Anything an arrival presses goes through `clickAsTutorial`.
 
+**And so are `ensure` and `undo`, and this one is not only about clicks.** Fixing the
+gene-class branch left six branches beside it, and the precondition that focuses REG4,
+still pressing and typing as the reader. That precondition types into the search box and
+sends Return — and the guard cancels a keydown unless the *current* step happens to allow
+`input` on that box, which no step after the search does. So every step needing the focused
+gene, fifteen of them, arrived with no gene focused, no drawer, no focus bar and nothing
+for the spotlight to land on: a third of the browser tutorial, unreachable by jumping in or
+by walking back, while walking forward was perfect. `actAsTutorial(fn)` now lifts the guard
+around any synchronous block, `clickAsTutorial` is written in terms of it, and a test fails
+on any bare `.click()` left in the runtime.
+
+**A synthetic press has no pointer, and the app may assume it does.** Hiding a transcript
+from the drawer deliberately marks that row hovered and ghosts the transcript on the track
+— a reader presses that button with the pointer sitting there and wants to see what they
+just removed. Nothing releases it but a real `mouseleave`, so when the tutorial pressed it
+the row stayed lit and the transcript stayed ghosted through the whole step that followed,
+reading as a second highlight competing with the step's own. The arrival now dispatches
+`mouseout` on the row; note that React derives `onMouseLeave` from `mouseout`, so
+dispatching `mouseleave` alone does nothing. **When an arrival presses something, ask what
+the app infers from the pointer that was not there.**
+
+**Arrival branches have an order, and it is a dependency order.** `browserControls` reads
+as a set of independent settings, but the drawer's fold decides whether the rows beneath it
+exist at all: collapsed, the drawer lists one transcript, so a non-canonical transcript's
+show/hide button is not in the DOM and the wait for it burns its whole budget. The fold has
+to run first, and both have to run before the per-gene pill, since restoring a transcript
+changes how many rows the gene shows. A test pins both orderings with the reasons.
+
+**And a branch that presses a control has to wait for it.** The fold looked its control up
+with `findAnchor` rather than `waitForAnchor`, and on a direct jump the drawer mounts only
+once the gene has taken focus — so perhaps half the time the fold was skipped in silence
+and everything under it worked on a one-row list. Silence is the tell: none of these three
+threw, logged, or failed a test.
+
+The lesson is worth stating plainly, because this is the third time it has been found in
+the same place: **whenever the runtime touches the page on the tutorial's behalf, ask which
+step's policy is live at that moment.** For an arrival, an `ensure` or an `undo`, the live
+policy belongs to the step being prepared — which is exactly the step that has not happened
+yet, and whose allowances describe what the reader will be permitted to do, not what the
+tutorial must do to get there. Keep the block synchronous: a flag held across an `await`
+would let a reader's input through with it.
+
 **This is the failure mode to know about, because it is silent and it looks like nothing.**
 A step spotlighting a group, a row or a wrapper converts to an *explicit look-only* policy,
 since none of those carry a capability of their own. The tutorial can then still perform
@@ -676,6 +718,16 @@ the result is somewhere else entirely — pasting a region into the search box r
 whole track, and advancing the moment it lands means never seeing the thing you asked for.
 Both region and gene searches carry one for that reason.
 
+**`skipIfEngaged` reads every control the action would press, both ways round.** It used to
+read one attribute on one anchor, and the step it was written for has neither: the sequence
+step presses two buttons, its legacy definition named a wrapper around the pair that reports
+`data-tutorial-engaged`, and the portable document keeps only the controls actually pressed
+— which are buttons, reporting `aria-pressed`. A reader who had pressed CDS or protein
+themselves still watched the cursor press both again, eleven seconds of the tutorial
+ignoring what they had just done. This is the general shape of every `skipIf…`: the check
+has to be true of the state the *reader* can reach, not of the shape the definition happened
+to be written in.
+
 ### `settleMs` — waiting for a signal
 
 Next performs the step's action and then, for a step advancing on a `signal`, waits up to
@@ -810,6 +862,13 @@ to work". Not "Step 4: Downloading" and not a sentence.
 **Voice:** second person, present tense, British spelling, no exclamation marks. Match the
 surrounding app, which is written the same way.
 
+Where the app and British spelling disagree, **the app wins** — the card is read next to
+the control it describes, and a card saying "re-centre" beside a button whose own tooltip
+says "Re-center view on selected gene" reads as a mistake rather than as a house style. In
+practice this is one word: every user-visible *centre* in the app is spelled the American
+way, so the cards are too. Only the authoring-facing target labels in
+`tutorialTargets/genomeBrowser.js` use *Centre*, and nobody reading a tutorial sees those.
+
 ### The shape of a section
 
 Each app the first tutorial visits follows the same arc, and it is worth copying because
@@ -840,6 +899,46 @@ it answers the questions in the order people ask them:
 
 The mistake to avoid is `manual` on a step whose task is really an action. The user does
 the thing, nothing happens, and they are left looking for what else is wanted.
+
+### Dragging a card places the card, not the editor around it
+
+Edit mode adds inputs, a Save/Reset row and a note line — about ninety pixels on a typical
+step, measured. The card being dragged was that taller shell, and the drag was clamped to
+it, so the bottom of the window was a boundary for the editing chrome rather than for the
+card. The last ninety pixels were unreachable: no card could be placed there, and the
+position that came back described the shell.
+
+Two boxes, and everything follows from keeping them apart:
+
+- **The true box** is the card as it will be once saved. It is what the author is placing,
+  what the stored fraction means, and what the window's edges bound.
+- **The shell** is what is on screen now. In edit mode it is taller; everywhere else the
+  two are the same and none of this applies.
+
+While a card is being dragged it drops its editing chrome and renders the step as it will
+read once saved, from the draft's own words — so the author moves the thing they are
+authoring, at its real size, rather than a taller stand-in they have to imagine away. On
+release the chrome comes back and the shell settles at the nearest fully visible position,
+which may not be where the true box is; a dashed outline then shows where the card will
+actually sit. The stored position is always the true box's.
+
+The saved height is measured only from a card that is not wearing the chrome —
+`data-tutorial-card-editing` marks the difference, and the measurement skips it.
+
+**The builder previews the same card and had the same fault from the other end.** It
+assumed 420×260 for any step that authored no size, where the reader gets 380 wide and as
+tall as its words need. So the box being dragged there was not the box being authored, and
+the bottom edge was computed from an assumed height. It now uses the shared
+`TUTORIAL_CARD_WIDTH`/`TUTORIAL_CARD_MARGIN` and measures its own height, and its drag is
+bounded by the card's own edges rather than by the viewport corner. Verified by driving it:
+the card reaches (12, 12) and (1588, 945) in a 1600×957 window — the margin exactly, in
+both corners.
+
+**A hook added to the builder must go above its early return and below `selectedStep`.**
+Both halves bite, and both crash the whole view: further down gives "Rendered more hooks
+than during the previous render" the moment the builder opens, further up gives "Cannot
+access 'selectedStep' before initialization" on mount. This is the same trap already
+recorded further down this document, and it caught the same person twice in one session.
 
 ## Editing the wording in place — a developer tool
 
@@ -1112,7 +1211,7 @@ Two other forms:
 | `browser-gene-hidden-transcripts-${gene.id}` | GenomeBrowser.jsx — the “Show N hidden” label under a gene |
 | `browser-global-controls`, `browser-unfocus`, `browser-tracks-toggle`, `browser-detail`, `browser-flatten` | [GenomeBrowserView.jsx](../frontend/src/components/GenomeBrowserView.jsx) — the bar that applies to every active genome |
 | `browser-biotype-filter`, `browser-biotype-${key}` | GenomeBrowserView.jsx — the gene-class grid and its four checkboxes |
-| `focus-transcripts-expand`, `focus-transcript-info-${id}`, `focus-transcript-hide-${id}`, `focus-notes-add` | [FocusGeneDrawer.jsx](../frontend/src/components/FocusGeneDrawer.jsx) |
+| `focus-transcripts-expand`, `focus-transcript-info-${id}`, `focus-transcript-hide-${id}`, `focus-notes-add`, `[data-focus-drawer-notes]` | [FocusGeneDrawer.jsx](../frontend/src/components/FocusGeneDrawer.jsx) |
 | `focus-sequence-types`, `focus-sequence-${feature.key}` | [FocusTranscriptDetail.jsx](../frontend/src/components/FocusTranscriptDetail.jsx) |
 | `focus-note-title`, `focus-note-body`, `focus-note-save` | [FocusNotesPanel.jsx](../frontend/src/components/FocusNotesPanel.jsx) |
 | `app-genome-pills` | [App.jsx](../frontend/src/App.jsx) — the complete selected-genomes strip |
@@ -1640,3 +1739,78 @@ of view, the drawer opening collapsed to one transcript so the row a step pointe
 not exist, expand-all left on making everything below the track unreachable, and a
 precondition on the last step undoing the step before it. That ratio is normal. Confirm
 the mechanism in the running app before changing code.
+
+## Multi-genome scenes and builder controls (September 2026)
+
+**Multi-genome browsing** is the fourth shipped tutorial. Its portable document lives in
+`frontend/src/tutorials/generated/multi-genome-browsing.tutorial.json`; four small real
+annotation/sequence slices are bundled under `backend/data/tutorials/multi-genome-browsing`.
+The human annotations share the final 1:880,000–1,075,000 window. Mouse covers
+4:156,249,740–156,430,000; rat covers 5:172,030,000–172,180,000. Annotation extraction
+retains ncRNA_gene roots as well as gene/pseudogene roots, complete parent graphs, and
+chromosome aliases from the source assembly report.
+
+The builder exposes the following capabilities for any tutorial, without requiring
+manual JSON editing:
+
+- **Tutorial datasets:** edit the pill labels, keep inactive dataset pills visible and copy the current genome
+  palette into the tutorial. Each colour is editable. Dataset order determines colour slots.
+- **Pick live targets:** browser controls, canvases, search fields, focus bars and track
+  switches record the dataset they belong to, using an optional `recipeId` parameter.
+  Existing unscoped targets retain their single-panel behaviour.
+- **Multi-genome arrival state:** choose the active datasets; specify each panel's locus,
+  gene focus and GF/GR/SL visibility; choose region/gene/no linking and independent Pan/Zoom
+  settings. “Use current browser state” captures the scene as editable fields.
+- **Browser state applied by Next:** the same editor can author an idempotent browser action.
+- **Complete when the browser matches:** wait for actual panel state instead of a click.
+  This is particularly useful for asynchronous gene linking and multi-button exercises.
+- **Button state after Next:** activation actions can request on/off, skipping controls
+  already in that state when a reader has partly completed an exercise.
+- **Locked-bar message:** choose the brief message shown when a reader tries a genome
+  toolbar held inactive by that step's interaction policy.
+
+The portable scene vocabulary is `browserScene` in `arrive` or `action`. It contains
+`active` (ordered recipe IDs), `pan`, `zoom`, `link` (`none`, `region`, `gene`), and a
+`panels` map keyed by recipe ID. Each panel can name `locus`, `focus` (empty clears it),
+and `tracks: { forward, reverse, sequence }` as visibility booleans. `reset` clears
+previous focus/link state before restoration; `preserveView` preserves an already
+established matching scene so result cards do not undo the reader's movement.
+
+`completeWhen` uses the same state vocabulary. A step waits on the `browser.state`
+signal, and Next reports an unfinished operation rather than silently advancing after
+an unsuccessful search or link. Completion checks are scoped to the named datasets;
+mouse's `Samd11` matches `SAMD11` without changing the source annotation.
+
+The runtime bridge in `utils/tutorialBrowserScene.js` calls the browser's existing focus
+and linking handlers. Panel movement and track state use the viewport registry. A new
+arrival cancels older scene preparation and invalidates pending gene/region searches.
+Broad highlights do not grant broad permissions: canvas pan/zoom steps block gene
+selection and gutter controls, and actionable track-switch targets call the same track
+state setter as the canvas switches.
+
+Promotion now copies dataset assets into the backend bundle. Cloning a shipped tutorial
+can resolve those content-addressed recipe IDs and copy them into the new draft; package
+export then includes those assets. Tutorial-owned `settings.genomeColors` and
+`settings.showInactivePills` survive materialisation, cloning, preview and playback.
+
+Browser-canvas outlines use outside padding in both playback and builder previews, so
+the ruler is not covered by the inset used for neighbouring list-row highlights.
+For narrow slices, gene-link framing can centre the shared five-prime anchor when the
+usual quarter-width placement would push a panel against its bounds.
+
+### Autoplay demonstrations and inactive tracks
+
+The builder's **Autoplay browser demonstration** editor stores `autoplayDemo` as a
+`browserView` sequence. Each move chooses a dataset (`panelKey`), pan fraction or zoom
+factor. The timer runs these movements before advancing; manual Next skips the demo.
+Stopping autoplay or changing steps stops the remaining movements. Demonstrations scroll
+the panel being moved into view and pause on the result.
+
+Browser scenes and completion checks can set `hideInactive`. The general Hide button is
+registered as `browser.hideInactive`. The multi-genome tutorial switches all four unused
+strands off in one exercise, shows that result, then teaches Hide in a separate exercise.
+Backward navigation restores both power settings and inactive-track visibility.
+
+Focused arrivals omit a fixed locus when they want the browser's normal gene-centred
+view. Gene-link synchronisation now uses the same drawer-aware window as gene navigation,
+so enabling linked Pan/Zoom does not replace that window with unadjusted coordinates.

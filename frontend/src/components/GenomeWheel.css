@@ -1,0 +1,58 @@
+.genome-wheel-button { display:flex; align-items:center; gap:6px; flex-shrink:0; margin-left:16px; margin-right:8px; padding:7px 10px; border:1px solid #77859966; border-radius:6px; font-size:12px; color:inherit; cursor:ns-resize; touch-action:none; user-select:none; }
+.genome-wheel-button:hover:not(:disabled) { background:#698fba25; }
+.genome-wheel-button:disabled { opacity:.35; cursor:default; }
+.genome-wheel-button:focus-visible { outline:2px solid #60a5fa; outline-offset:3px; }
+.genome-wheel-overlay { position:fixed; inset:0; z-index:1000; overflow:hidden; background:rgba(12,19,31,.96); color:#e5edf7; user-select:none; touch-action:none; animation:genome-cycle-enter .18s ease-out; }
+.genome-wheel-overlay.light { background:rgba(231,237,244,.97); color:#243248; }
+.genome-wheel-overlay.leaving { opacity:0; transition:opacity .18s; pointer-events:none; }
+/* Released without dragging: the wheel now follows the bare cursor and the next click confirms. */
+.genome-wheel-overlay.hovering { cursor:pointer; }
+.genome-wheel-scene { position:absolute; left:5%; right:155px; top:0; bottom:140px; perspective:1500px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+.genome-wheel-drum { position:relative; width:100%; height:var(--face-height); transform-style:preserve-3d; transform:scale(.85) translateZ(calc(-1 * var(--radius))) rotateX(calc(var(--wheel-position) * var(--face-step))); }
+.genome-wheel-face { position:absolute; inset:0; overflow:hidden; backface-visibility:hidden; border:1px solid var(--accent); border-top:3px solid var(--accent); border-radius:10px; background:#182333; box-shadow:0 18px 45px #0005; transform:rotateX(calc(-1 * var(--face-index) * var(--face-step))) translateZ(var(--radius)); }
+.light .genome-wheel-face { background:#fff; }
+.genome-wheel-face::after { content:''; position:absolute; inset:0; pointer-events:none; background:linear-gradient(180deg,#16223515,#070e2255); transition:opacity .15s; }
+.genome-wheel-face.selected::after { opacity:0; }
+.genome-wheel-caption { height:42px; display:flex; align-items:center; gap:10px; padding:0 16px; font-size:14px; font-weight:600; }
+.genome-wheel-caption i { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+.genome-wheel-caption small { opacity:.6; font-weight:400; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.genome-wheel-preview { height:calc(100% - 42px); overflow:hidden; display:flex; align-items:center; justify-content:center; color:#8b97a8; }
+.genome-wheel-preview canvas { width:100%; height:auto; align-self:flex-start; }
+.genome-wheel-rail { position:fixed; width:52px; border:1px solid #8da2c744; border-radius:28px; background:#7285a21a; box-shadow:0 8px 30px #0002; }
+.genome-wheel-line { position:absolute; top:16px; bottom:16px; width:2px; left:25px; background:#8da2c744; }
+.genome-wheel-dot { position:absolute; left:21px; width:10px; height:10px; border-radius:50%; transform:translateY(-50%); }
+.genome-wheel-indicator { position:absolute; left:16px; width:20px; height:20px; border:2px solid currentColor; border-radius:50%; transform:translateY(-50%); box-shadow:0 0 15px #7fa9f355; }
+.genome-wheel-status { position:absolute; bottom:12px; left:16px; right:150px; font-size:12px; display:flex; flex-direction:column; align-items:center; gap:4px; text-align:center; }
+.genome-wheel-status strong { font-size:16px; }
+.genome-wheel-status span { font-size:12px; opacity:.65; }
+@media (prefers-reduced-motion:reduce) {
+  .genome-wheel-overlay { animation:none; }
+  .genome-wheel-overlay.leaving { transform:none; transition:none; }
+  .genome-wheel-drum { transform:scale(.95); }
+  .genome-wheel-face { transform:none; visibility:hidden; }
+  .genome-wheel-face.selected { visibility:visible; }
+}
+
+/* Keep the rail in viewport coordinates, directly beneath the button. */
+.genome-wheel-indicator.outside { opacity:.15; box-shadow:none; }
+.genome-cycle-actions { position:absolute; left:0; right:0; pointer-events:none; }
+.genome-cycle-action { position:absolute; width:32px; height:32px; transform:translate(-50%,-50%); border-radius:50%; display:flex; align-items:center; justify-content:center; background:#253449; color:#cad6e5; border:1px solid #8da2c777; }
+.genome-cycle-action small { position:absolute; top:32px; font-size:10px; font-weight:600; }
+.genome-cycle-action.chosen { background:#2875c8; color:white; border-color:#a1d1ff; box-shadow:0 0 0 3px #5aaaff35; }
+.light .genome-cycle-action { background:#e4ebf4; color:#35485f; }
+.light .genome-cycle-action.chosen { background:#2875c8; color:white; }
+.genome-cycle-identity, .genome-cycle-label { max-width:100%; overflow-wrap:anywhere; color:inherit; opacity:.85; }
+.genome-cycle-label { font-style:italic; }
+.genome-wheel-overview { height:calc(100% - 42px); color:#72b8d5; position:relative; padding:8px 14px; }
+.genome-wheel-overview.inactive { color:#929aa5; }
+.genome-wheel-overview svg { width:100%; height:calc(100% - 45px); }
+.genome-wheel-locus { font-size:11px; font-variant-numeric:tabular-nums; }
+.genome-wheel-overview small { position:absolute; bottom:6px; right:14px; font-size:10px; }
+.genome-wheel-preview-placeholder { height:100%; display:flex; align-items:center; justify-content:center; font-size:12px; background:repeating-linear-gradient(0deg,transparent,transparent 32px,#929aa511 33px); }
+@keyframes genome-cycle-enter { from { opacity:0; } to { opacity:1; } }
+@media (max-height:500px) { .genome-wheel-status { font-size:10px; gap:2px; } .genome-wheel-status strong { font-size:12px; } .genome-wheel-status span { font-size:10px; } .genome-wheel-scene { bottom:112px; } }
+
+.genome-cycle-cancel { position:fixed; transform:translateX(-50%); width:70px; box-sizing:border-box; border:1px solid #8da2c777; border-radius:16px; background:#253449; color:#cad6e5; font-size:12px; font-weight:600; cursor:pointer; }
+.genome-cycle-cancel.chosen { background:#a63c4b; border-color:#ffacb8; color:white; box-shadow:0 0 0 3px #ef718335; }
+.genome-cycle-cancel:focus-visible { outline:2px solid #ffacb8; outline-offset:3px; }
+.light .genome-cycle-cancel:not(.chosen) { background:#e4ebf4; color:#35485f; }

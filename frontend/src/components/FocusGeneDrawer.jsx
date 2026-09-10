@@ -1,3 +1,4 @@
+import ChevronGlyph from './DrawerChevron'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { markWheelHandled } from '../utils/browsingControls'
@@ -53,14 +54,6 @@ function GripGlyph({ size = 14 }) {
     return (
         <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
             <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" />
-        </svg>
-    )
-}
-
-function ChevronGlyph({ pointsRight, size = 16 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points={pointsRight ? '9 6 15 12 9 18' : '15 6 9 12 15 18'} />
         </svg>
     )
 }

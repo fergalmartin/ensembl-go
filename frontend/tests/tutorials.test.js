@@ -190,7 +190,7 @@ test('every step the user must act on has something Next can do', () => {
   // this runs over every tutorial rather than the first one.
   for (const tutorial of TUTORIALS) {
     for (const step of tutorial.steps) {
-      if (!step.anchor || step.interactive === false) continue
+      if (!step.anchor || step.interactive === false || step.advanceOn?.type === 'manual') continue
       assert.notEqual(stepAction(step).type, 'none', `${tutorial.id}/${step.id} has nothing for Next to do`)
     }
   }
@@ -224,7 +224,7 @@ test('every browser step names the genome it needs', () => {
     for (const step of tutorial.steps) {
       if (step.view !== 'genome_browser') continue
       assert.ok(
-        stepPreconditions(step).length > 0,
+        stepPreconditions(step).length > 0 || arrivalsFor(tutorial, step).some((a) => a.type === 'browserScene' && a.active?.length),
         `${tutorial.id}/${step.id} browses without saying which genome it needs`
       )
     }
@@ -304,7 +304,7 @@ test('the browser tutorial is divided into coherent narrative sections', () => {
   ])
   assert.deepEqual(runs.map((run) => run.ids[0]), [
     'welcome', 'global-controls', 'moving-about', 'deep-genes', 'gene-classes',
-    'find-reg4', 'drawer', 'add-note', 'finish',
+    'find-reg4', 'drawer', 'notes-section', 'finish',
   ])
 })
 
@@ -361,7 +361,7 @@ test('late browser steps reveal the track whenever their result is drawn there',
   const byId = Object.fromEntries(browserInDepth.steps.map((step) => [step.id, step]))
   for (const id of ['gene-classes', 'only-protein-coding', 'protein-coding-result', 'find-reg4',
     'focus-bar', 'recentre', 'show-transcripts', 'hide-transcript', 'highlight-transcript',
-    'note-icon', 'note-bubble']) {
+    'note-icon']) {
     assert.equal(
       byId[id]?.reveal?.anchor?.selector,
       '[data-browser-canvas-surface]',
@@ -440,17 +440,25 @@ test('the sequence step offers CDS and protein without advancing on either click
 test('the transcript detail is closed explicitly before the notes section', () => {
   const byId = Object.fromEntries(browserInDepth.steps.map((step) => [step.id, step]))
   const closeIndex = browserInDepth.steps.findIndex((step) => step.id === 'close-transcript-detail')
-  const notesIndex = browserInDepth.steps.findIndex((step) => step.id === 'add-note')
+  // The first step of the notes section, whichever it is: the panel has to be shut before
+  // the drawer is talked about, and the step that does the shutting has to be the one
+  // immediately before it.
+  const notesIndex = browserInDepth.steps.findIndex((step) => step.section === 'Adding notes')
   const close = byId['close-transcript-detail']
 
   assert.equal(closeIndex + 1, notesIndex)
   assert.equal(close.anchor, 'focus-transcript-detail-close')
   assert.equal(close.action.anchor, 'focus-transcript-detail-close')
   assert.equal(close.advanceOn.type, 'click')
-  assert.equal(
-    stepArrivals(byId['add-note']).find((entry) => entry.type === 'browserControls')?.transcriptDetail,
-    'closed'
-  )
+  // Every notes step that can be arrived at directly says so for itself, rather than
+  // relying on the step before it having run.
+  for (const id of ['notes-section', 'add-note']) {
+    assert.equal(
+      stepArrivals(byId[id]).find((entry) => entry.type === 'browserControls')?.transcriptDetail,
+      'closed',
+      `${id} should arrive with the transcript panel closed`,
+    )
+  }
 })
 
 test('the sequence-level zoom respects a manual result and animates in one move', () => {
@@ -478,12 +486,16 @@ test('the browser tutorial puts back everything it changes', () => {
   // an undo on the step after — one mechanism, and it works from either direction.
   const classes = stepArrivals(byId['only-protein-coding']).find((e) => e.type === 'browserControls')
   assert.equal(classes?.biotypes, 'all')
-  // The step after the unfocus must not ask for the focus back. A precondition that
-  // undoes the previous step is the oldest trap in this system: the gene would re-focus
-  // and the drawer would reopen over the very mark the step is pointing at.
+  // Whatever follows the unfocus must not ask for the focus back. A precondition that
+  // undoes the step before it is the oldest trap in this system: the gene would re-focus
+  // and the drawer would reopen on top of what had just been closed. Written against
+  // position rather than a step id, so it still holds when the step there changes.
+  const unfocusIndex = browserInDepth.steps.findIndex((step) => step.id === 'unfocus')
+  const afterUnfocus = browserInDepth.steps[unfocusIndex + 1]
+  assert.ok(afterUnfocus, 'the unfocus step should not be last')
   assert.ok(
-    !stepPreconditions(byId['note-bubble']).includes('reg4-gene-focused'),
-    'note-bubble would re-focus the gene the step before it released'
+    !stepPreconditions(afterUnfocus).includes('reg4-gene-focused'),
+    `${afterUnfocus.id} would re-focus the gene the step before it released`
   )
 })
 
@@ -497,6 +509,11 @@ test('a step that clicks several things waits for the last of them', () => {
       const anchors = actionAnchors(stepAction(step))
       if (anchors.length < 2) continue
       if (step.advanceOn?.type === 'manual') continue
+      if (step.completeWhen && step.advanceOn?.type === 'signal') {
+        assert.equal(step.advanceOn.name, 'browser.state')
+        assert.ok(Object.keys(step.completeWhen.panels || {}).length >= anchors.length || step.completeWhen.active?.length >= anchors.length)
+        continue
+      }
       if (step.advanceOn?.type === 'all-clicks') {
         // The stronger form of the same rule, and the right one when the order the user
         // presses them in is their own: it waits for every press rather than for the last

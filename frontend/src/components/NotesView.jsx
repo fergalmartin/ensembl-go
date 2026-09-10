@@ -6,7 +6,7 @@ import NoteGlyph from './NoteGlyph'
 import NotesTransferModal from './NotesTransferModal'
 import useNoteStore from '../hooks/useNoteStore'
 import useSaveOnLeaveNote from '../hooks/useSaveOnLeaveNote'
-import { getGenomeBrowserColor, normalizeGenomeBrowserColors } from '../genomeColorSchemes'
+import { genomeColorResolver } from '../genomeColorSchemes'
 import { API_BASE } from '../backendRuntime'
 import { getAssemblyGenomeKey, getGenomeKey, genomeKeyDisplayLabels, genomeKeysMatch, normalizeGenomeRecord } from '../utils/genomeIdentity'
 import {
@@ -978,8 +978,10 @@ export default function NotesView({
             : (Array.isArray(config?.active_species) ? config.active_species : [])
         const species = Array.isArray(topBarSpecies) ? topBarSpecies : active
         const activeKeys = new Set(active.map((item) => getGenomeKey(item)))
-        const colors = normalizeGenomeBrowserColors(config?.genome_browser_colors)
-        // Panel order — and so panel colour — skips genomes with no annotation.
+        const resolveColor = genomeColorResolver(config)
+        // A genome with no annotation gets no panel, so it is not browsable and
+        // wears no colour here either — but the colour it would wear is its own,
+        // not the position it happens to hold.
         const panelOrder = active.filter((item) => Boolean(item?.files?.gff3)).map((item) => getGenomeKey(item))
         return species.map((item) => {
             const selectionKey = getGenomeKey(item)
@@ -987,11 +989,11 @@ export default function NotesView({
             const isActive = activeKeys.has(selectionKey)
             return notesGenomeRecord(item, {
                 active: isActive,
-                color: panelIndex >= 0 ? getGenomeBrowserColor(colors, panelIndex) : null,
+                color: panelIndex >= 0 ? resolveColor(item) : null,
                 browsable: isActive && panelIndex >= 0,
             })
         })
-    }, [activeSpecies, config?.active_species, config?.genome_browser_colors, topBarSpecies])
+    }, [activeSpecies, config, topBarSpecies])
 
     const availableLocalGenomes = useMemo(
         () => localGenomeRecords.map((item) => notesGenomeRecord(item)),

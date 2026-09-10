@@ -3,6 +3,7 @@ export default {
   label: 'Application shell',
   version: 1,
   targets: [
+    { id: 'app.datasetPill', selectorTemplate: '[data-tutorial-pill="{dataset}"]', label: 'Tutorial genome pill', kind: 'button', parameters: { dataset: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
     {
       id: 'app.viewButton', anchorTemplate: 'app-button-{buttonId}', label: 'App view button', kind: 'button',
       parameters: { buttonId: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate'], safety: 'read',

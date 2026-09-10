@@ -2840,7 +2840,7 @@ export default function StatsView({
               genomes={listedGenomes || config?.active_species || []}
               theme={theme}
               activeGenomeKeys={activeGenomeKeys}
-              genomeColors={config?.genome_browser_colors}
+              config={config}
               analysisReports={config?.genome_analysis_reports || {}}
               fileOverrides={config?.genome_file_overrides || {}}
               onAnalysisStored={handleAnalysisStored}

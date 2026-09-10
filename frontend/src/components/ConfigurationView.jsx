@@ -12,11 +12,15 @@ import {
 } from '../appButtonConfig'
 import { API_BASE } from '../backendRuntime'
 import {
-    buildDefaultGenomeBrowserColors,
-    normalizeGenomeBrowserColors,
+    DEFAULT_GENOME_COLOR,
+    genomeColorPalette,
+    normalizeCustomGenomeColors,
+    normalizeGenomeColorAssignments,
+    normalizeGenomeDefaultColor,
     sanitizeHexColor,
-    SECONDARY_GENOME_DEFAULT_COLOR,
+    withoutCustomGenomeColor,
 } from '../genomeColorSchemes'
+import GenomeColorPicker from './GenomeColorPicker'
 import {
     BROWSING_CONTROL_DEVICES,
     BROWSING_CONTROL_SCHEMES,
@@ -187,17 +191,6 @@ export const IconRefresh = ({ size = 14 }) => (
     </svg>
 )
 
-const GENOME_COLOR_PRESETS = [
-    '#3366cc',
-    '#00b692',
-    '#ef4444',
-    '#f59e0b',
-    '#8b5cf6',
-    '#ec4899',
-    '#14b8a6',
-    '#64748b',
-]
-
 function InlineTooltip({ text, theme }) {
     const isLight = theme === 'light'
     return (
@@ -206,46 +199,6 @@ function InlineTooltip({ text, theme }) {
         </span>
     )
 }
-
-function GenomeColorEditor({ color, onChange, onApplyAll, theme }) {
-    const isLight = theme === 'light'
-    return (
-        <div className={`mt-3 rounded-xl border p-4 ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-900/30'}`}>
-            <div className="flex flex-wrap gap-2">
-                {GENOME_COLOR_PRESETS.map((preset) => (
-                    <button
-                        key={preset}
-                        type="button"
-                        onClick={() => onChange(preset)}
-                        className={`h-8 w-8 rounded-full border-2 transition-transform hover:scale-105 ${color === preset ? 'border-black/70 dark:border-white/80' : (isLight ? 'border-white' : 'border-gray-800')}`}
-                        style={{ backgroundColor: preset }}
-                        title={preset}
-                    />
-                ))}
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-                <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${isLight ? 'border-gray-200 bg-white text-gray-700' : 'border-gray-600 bg-gray-800 text-gray-200'}`}>
-                    <span>Colour wheel</span>
-                    <input
-                        type="color"
-                        value={color}
-                        onChange={(e) => onChange(sanitizeHexColor(e.target.value, color))}
-                        className="h-8 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
-                    />
-                </label>
-                <button
-                    type="button"
-                    onClick={onApplyAll}
-                    className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isLight ? 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100' : 'bg-gray-700 text-gray-200 border border-gray-600 hover:bg-gray-600'}`}
-                >
-                    Apply to all
-                </button>
-            </div>
-        </div>
-    )
-}
-
-
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -274,7 +227,7 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
     const [dragOverButtonId, setDragOverButtonId] = useState(null)
     const [inactiveDataPriority, setInactiveDataPriority] = useState(DATA_VIEW_BUTTON_IDS)
     const [inactiveActionPriority, setInactiveActionPriority] = useState(ACTION_BUTTON_IDS)
-    const [expandedGenomeColorIndex, setExpandedGenomeColorIndex] = useState(null)
+    const [defaultColorPickerOpen, setDefaultColorPickerOpen] = useState(false)
     const dragMovedRef = useRef(false)
 
     const showStatus = (msg, isError = false) => {
@@ -339,16 +292,22 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
         [config.active_app_buttons]
     )
 
-    const genomeBrowserColors = useMemo(
-        () => normalizeGenomeBrowserColors(config.genome_browser_colors),
-        [config.genome_browser_colors]
+    // Colours belong to genomes now, and are picked in the Genome Selector. What
+    // is left here is the colour a genome wears until it is given one of its
+    // own, and the palette every picker offers.
+    const defaultGenomeColor = useMemo(
+        () => normalizeGenomeDefaultColor(config.genome_default_color),
+        [config.genome_default_color]
     )
-
-    useEffect(() => {
-        if (expandedGenomeColorIndex == null) return
-        if (expandedGenomeColorIndex < genomeBrowserColors.length) return
-        setExpandedGenomeColorIndex(null)
-    }, [expandedGenomeColorIndex, genomeBrowserColors.length])
+    const customGenomeColors = useMemo(
+        () => normalizeCustomGenomeColors(config.genome_color_palette),
+        [config.genome_color_palette]
+    )
+    const assignedGenomeColorCount = useMemo(
+        () => Object.keys(normalizeGenomeColorAssignments(config.genome_colors)).length,
+        [config.genome_colors]
+    )
+    const fullGenomeColorPalette = useMemo(() => genomeColorPalette(config), [config])
 
     const orderByPriority = useCallback((ids, priority) => {
         const prioritized = priority.filter((id) => ids.includes(id))
@@ -384,41 +343,33 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
         })
     }
 
-    const updateGenomeBrowserColors = useCallback((nextColorsOrUpdater) => {
+    const handleDefaultGenomeColorChange = useCallback((nextColor) => {
+        const color = sanitizeHexColor(nextColor, defaultGenomeColor)
         onConfigChange((prevConfig) => {
             const base = prevConfig || config
-            const previous = normalizeGenomeBrowserColors(base.genome_browser_colors)
-            const rawNext = typeof nextColorsOrUpdater === 'function'
-                ? nextColorsOrUpdater(previous)
-                : nextColorsOrUpdater
-            return { ...base, genome_browser_colors: normalizeGenomeBrowserColors(rawNext) }
+            // A genome explicitly set to the *old* default has no stored
+            // assignment (see `assignGenomeColors`), so it follows the new one —
+            // which is what "default" has to mean for the setting to be useful.
+            return { ...base, genome_default_color: color }
         })
+        showStatus(`Default genome colour set to ${color}`)
+    }, [config, defaultGenomeColor, onConfigChange])
+
+    const handleRemoveCustomGenomeColor = useCallback((color) => {
+        onConfigChange((prevConfig) => {
+            const base = prevConfig || config
+            return { ...base, genome_color_palette: withoutCustomGenomeColor(base.genome_color_palette, color) }
+        })
+        showStatus(`Removed ${color} from the palette`)
     }, [config, onConfigChange])
 
-    const handleGenomeBrowserColorChange = useCallback((index, nextColor) => {
-        updateGenomeBrowserColors((prevColors) => {
-            const next = [...prevColors]
-            next[index] = sanitizeHexColor(nextColor, prevColors[index] || SECONDARY_GENOME_DEFAULT_COLOR)
-            return next
+    const handleResetGenomeColors = useCallback(() => {
+        onConfigChange((prevConfig) => {
+            const base = prevConfig || config
+            return { ...base, genome_colors: {} }
         })
-    }, [updateGenomeBrowserColors])
-
-    const handleApplyGenomeBrowserColorToAll = useCallback((sourceColor) => {
-        updateGenomeBrowserColors((prevColors) => prevColors.map(() => sanitizeHexColor(sourceColor, SECONDARY_GENOME_DEFAULT_COLOR)))
-        showStatus('Applied colour to all genome slots')
-    }, [updateGenomeBrowserColors])
-
-    const handleAddGenomeBrowserColor = useCallback(() => {
-        updateGenomeBrowserColors((prevColors) => [...prevColors, SECONDARY_GENOME_DEFAULT_COLOR])
-        setExpandedGenomeColorIndex(genomeBrowserColors.length)
-        showStatus(`Added Genome ${genomeBrowserColors.length + 1}`)
-    }, [genomeBrowserColors.length, updateGenomeBrowserColors])
-
-    const handleResetGenomeBrowserColors = useCallback(() => {
-        updateGenomeBrowserColors(buildDefaultGenomeBrowserColors())
-        setExpandedGenomeColorIndex(null)
-        showStatus('Genome browser colours reset to default')
-    }, [updateGenomeBrowserColors])
+        showStatus('Every genome is back on the default colour')
+    }, [config, onConfigChange])
 
     const activateAppButton = (buttonId) => {
         setActiveButtons((prevButtons) => {
@@ -616,7 +567,8 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
             working_dir: '', ref_fasta: '', ref_gff: '', target_fasta: '', target_gff: '',
             homologies_file: '', output_dir: '', ref_index: '', target_index: '', default_light_mode: false, dim_non_selected_genes: true,
             browsing_control_scheme: DEFAULT_BROWSING_CONTROL_SCHEME_ID,
-            genome_browser_colors: buildDefaultGenomeBrowserColors(),
+            genome_default_color: DEFAULT_GENOME_COLOR,
+            genome_colors: {},
             active_app_buttons: DEFAULT_ACTIVE_APP_BUTTONS,
         })
         showStatus('Configuration reset to defaults')
@@ -1008,80 +960,102 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
                 {/* ── 6. Colour schemes ────────────────────────────────────── */}
                 <CollapsibleSection title="Colour schemes" icon={<PaletteIcon />} theme={theme} defaultOpen={false}>
                     <div className="flex items-start justify-between gap-4">
-                        <div>
-                            <p className={subLabel}>Genome browser</p>
+                        <div className="min-w-0">
+                            <p className={subLabel}>Default genome colour</p>
                             <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                Set the accent colour used for each genome panel in the browser
+                                The colour a genome is drawn in — pills, browser panels, alignment
+                                tracks — until it is given one of its own. A genome's own colour is
+                                set from the swatch beside its playlist and bin controls in the
+                                Genome Selector.
                             </p>
                         </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                type="button"
-                                onClick={handleAddGenomeBrowserColor}
-                                className={btnSecondary}
-                            >
-                                Add genome
-                            </button>
-                            <div className="relative group">
-                                <button
-                                    type="button"
-                                    onClick={handleResetGenomeBrowserColors}
-                                    className={btnSecondary}
-                                >
-                                    Reset
-                                </button>
-                                <InlineTooltip
-                                    theme={theme}
-                                    text="Reset to Genome 1 blue plus Genome 2-5 green defaults."
-                                />
-                            </div>
-                        </div>
+                        <button
+                            data-tour-id="config-default-genome-color"
+                            type="button"
+                            onClick={() => setDefaultColorPickerOpen(true)}
+                            className={`shrink-0 inline-flex items-center gap-2 rounded-full border px-3 py-2 transition-colors ${isLight ? 'border-gray-300 bg-gray-50 hover:bg-gray-100' : 'border-gray-600 bg-gray-700 hover:bg-gray-600'}`}
+                        >
+                            <span
+                                className="h-6 w-6 rounded-full border border-white/70 shadow-sm"
+                                style={{ backgroundColor: defaultGenomeColor }}
+                            />
+                            <span className={`text-sm font-mono ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>
+                                {defaultGenomeColor}
+                            </span>
+                        </button>
                     </div>
 
                     <div className={`my-4 ${divider}`} />
 
-                    <div className="space-y-3">
-                        {genomeBrowserColors.map((color, index) => {
-                            const rowLabel = `Genome ${index + 1}`
-                            const isExpanded = expandedGenomeColorIndex === index
-                            return (
-                                <div key={`genome-colour-${index}`} className={`rounded-xl border p-4 ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-800/60'}`}>
-                                    <div className="flex items-center justify-between gap-4">
-                                        <div>
-                                            <p className={`text-sm font-semibold ${isLight ? 'text-gray-800' : 'text-gray-100'}`}>
-                                                {rowLabel}
-                                            </p>
-                                            <p className={`mt-1 text-xs font-mono ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                                {color}
-                                            </p>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => setExpandedGenomeColorIndex((prev) => prev === index ? null : index)}
-                                            className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 transition-colors ${isLight ? 'border-gray-300 bg-gray-50 hover:bg-gray-100' : 'border-gray-600 bg-gray-700 hover:bg-gray-600'}`}
-                                        >
-                                            <span
-                                                className="h-6 w-6 rounded-full border border-white/70 shadow-sm"
-                                                style={{ backgroundColor: color }}
-                                            />
-                                            <span className={`text-sm font-medium ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>
-                                                {isExpanded ? 'Close' : 'Edit'}
-                                            </span>
-                                        </button>
-                                    </div>
-
-                                    {isExpanded && (
-                                        <GenomeColorEditor
-                                            color={color}
-                                            onChange={(nextColor) => handleGenomeBrowserColorChange(index, nextColor)}
-                                            onApplyAll={() => handleApplyGenomeBrowserColorToAll(color)}
-                                            theme={theme}
-                                        />
-                                    )}
-                                </div>
-                            )
-                        })}
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                            <p className={subLabel}>Custom palette</p>
+                            <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                {customGenomeColors.length === 0
+                                    ? 'Colours you mix in a genome\u2019s colour picker are kept here, ready for the next genome.'
+                                    : `${customGenomeColors.length} colour${customGenomeColors.length === 1 ? '' : 's'} of your own, offered alongside the ten built-in ones.`}
+                            </p>
+                        </div>
                     </div>
+                    {customGenomeColors.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            {customGenomeColors.map((color) => (
+                                <button
+                                    key={color}
+                                    type="button"
+                                    onClick={() => handleRemoveCustomGenomeColor(color)}
+                                    title={`${color} — click to remove from the palette`}
+                                    className={`group relative h-8 w-8 rounded-full border-2 transition-transform hover:scale-105 ${isLight ? 'border-white' : 'border-gray-800'}`}
+                                    style={{ backgroundColor: color }}
+                                >
+                                    <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100">
+                                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                                            <path d="M4 4l8 8M12 4l-8 8" />
+                                        </svg>
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    <div className={`my-4 ${divider}`} />
+
+                    <div className="flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                            <p className={subLabel}>Per-genome colours</p>
+                            <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                {assignedGenomeColorCount === 0
+                                    ? 'No genome has been given a colour of its own yet.'
+                                    : `${assignedGenomeColorCount} genome${assignedGenomeColorCount === 1 ? ' has' : 's have'} a colour of their own.`}
+                            </p>
+                        </div>
+                        <div className="relative group shrink-0">
+                            <button
+                                type="button"
+                                onClick={handleResetGenomeColors}
+                                disabled={assignedGenomeColorCount === 0}
+                                className={`${btnSecondary} ${assignedGenomeColorCount === 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
+                            >
+                                Clear
+                            </button>
+                            <InlineTooltip
+                                theme={theme}
+                                text="Put every genome back on the default colour."
+                            />
+                        </div>
+                    </div>
+
+                    <GenomeColorPicker
+                        isOpen={defaultColorPickerOpen}
+                        theme={theme}
+                        title="Default genome colour"
+                        subtitle="Every genome without a colour of its own"
+                        palette={fullGenomeColorPalette}
+                        currentColor={defaultGenomeColor}
+                        defaultColor={DEFAULT_GENOME_COLOR}
+                        onApply={handleDefaultGenomeColorChange}
+                        onClose={() => setDefaultColorPickerOpen(false)}
+                    />
                 </CollapsibleSection>
 
                 {/* ── 7. General ────────────────────────────────────────────── */}

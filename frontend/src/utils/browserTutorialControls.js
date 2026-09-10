@@ -38,7 +38,7 @@ export function registerBrowserViewport(panelKey, controls) {
  *  matters only if a tutorial ever activates two. */
 export function browserViewportControls(panelKey) {
   const key = String(panelKey || '').trim()
-  if (key) return panels.get(key) || null
+  if (key) return panels.get(key) || [...panels.values()].find((panel) => panel.recipeId === key) || null
   const first = panels.values().next()
   return first.done ? null : first.value
 }
@@ -80,7 +80,7 @@ export function resetBrowserScroll(panelKey) {
 export function setBrowserInteraction(mode, panelKey) {
   const controls = browserViewportControls(panelKey)
   if (!controls?.setInteraction) return false
-  controls.setInteraction(mode === 'zoom-only' ? 'zoom-only' : 'all')
+  controls.setInteraction(['zoom-only', 'pan-zoom'].includes(mode) ? mode : 'all')
   return true
 }
 

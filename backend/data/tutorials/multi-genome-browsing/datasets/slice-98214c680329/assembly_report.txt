@@ -1,0 +1,4 @@
+# Assembly name:  EGT_98214C6803.1
+# Organism name:  Rat Ensembl (tutorial slice)
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+5	assembled-molecule	5	Chromosome	na	=	5	Primary Assembly	172180000	chr5

@@ -1,0 +1,60 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "slice-210e10f41dd0",
+  "datasetRef": "embedded:slice-210e10f41dd0@1",
+  "speciesKey": "tutorial_slice_210e10f41dd0",
+  "assembly": "EGT_210E10F41D.1",
+  "assemblyName": "GRCh38.p14",
+  "displayName": "Human RefSeq (tutorial slice)",
+  "scientificName": "Homo sapiens",
+  "commonName": "Human RefSeq",
+  "browsableRange": {
+    "NC_000001.11": [
+      880000,
+      1075000
+    ]
+  },
+  "source": {
+    "display_name": "Human RefSeq",
+    "scientific_name": "Homo sapiens",
+    "common_name": "Human RefSeq",
+    "assembly_name": "GRCh38.p14",
+    "provider": "ncbi",
+    "release": "current",
+    "chrom": "NC_000001.11",
+    "start": 880000,
+    "end": 1075000
+  },
+  "genes": [
+    "gene-AGRN",
+    "gene-HES4",
+    "gene-ISG15",
+    "gene-KLHL17",
+    "gene-LINC02593",
+    "gene-LOC100288175",
+    "gene-LOC105378948",
+    "gene-LOC107985728",
+    "gene-LOC284600",
+    "gene-NOC2L",
+    "gene-PERM1",
+    "gene-PLEKHN1",
+    "gene-RNF223",
+    "gene-RPL39P12",
+    "gene-SAMD11"
+  ],
+  "files": {
+    "fasta": "slice.fa.bgz",
+    "fasta_index": "slice.fa.bgz.fai",
+    "fasta_gzi": "slice.fa.bgz.gzi",
+    "gff3": "slice.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "a22d07cfae555afc3b05e2cbd01ec3e7d5dcd8171e8153b8d55e89c5b4dd5954",
+    "fasta_index": "869a6f0f50e810464fd95b694d1636d1fa94e61a26dff150da0ee7eb3b7efd43",
+    "fasta_gzi": "4316039a615109b35b0155e9ec3681c2db2c92e00c8e31b498f544b4bec6d04c",
+    "gff3": "ffa60298ad79d531dde5467fc14e42df599925c30056bec60b97ba504fbf30a8",
+    "metadata": "229f1e5c563769ccaf8c5ec5b9718336c19ad838dcdba546df5f4c04eaecda9f"
+  }
+}

@@ -16,6 +16,12 @@
  * behind it is still the reader's own app and they should be able to see where they are
  * in it. Read by playback, by the preparing dim, and by the builder's preview, so the
  * three can never disagree about what a step will look like. */
+// The tutorial card's own defaults. Shared because the builder previews the same card:
+// if it assumes a different width or a fixed height, the box an author drags there is not
+// the box a reader gets, and the positions it can reach are not the positions available.
+export const TUTORIAL_CARD_WIDTH = 380
+export const TUTORIAL_CARD_MARGIN = 12
+
 export function tutorialDimColor(theme) {
   return theme === 'light' ? 'rgba(15, 23, 42, 0.24)' : 'rgba(2, 6, 23, 0.44)'
 }

@@ -6,7 +6,8 @@ import {
   tutorialTarget,
   validateTargetRef,
 } from '../tutorialTargets/index.js'
-import { arrivalGenomeRecipeIds, arrivalPlaylists } from './tutorialModel.js'
+import { browserSceneProblems } from './tutorialBrowserScene.js'
+import { arrivalGenomeRecipeIds, arrivalPlaylists, browserViewProblems } from './tutorialModel.js'
 
 export const TUTORIAL_DOCUMENT_FORMAT = 'ensembl-go-tutorial'
 export const TUTORIAL_DOCUMENT_VERSION = 1
@@ -58,6 +59,7 @@ export function createTutorialDocument(seed = {}) {
     author: String(seed.author || ''),
     createdAt: String(seed.createdAt || now),
     updatedAt: String(seed.updatedAt || now),
+    ...(seed.settings ? { settings: plainCopy(seed.settings) } : {}),
     datasets: Array.isArray(seed.datasets) ? plainCopy(seed.datasets) : [],
     ...(seed.defaultArrive ? { defaultArrive: plainCopy(seed.defaultArrive) } : {}),
     steps: Array.isArray(seed.steps) ? plainCopy(seed.steps) : [],
@@ -179,6 +181,7 @@ export function validateTutorialDocument(document, options = {}) {
   else if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(documentId)) problems.push('Tutorial ids must contain lowercase letters, numbers and hyphens only.')
   if (!String(document?.title || '').trim()) problems.push('Tutorial has no title.')
   if (!Array.isArray(document?.steps) || document.steps.length === 0) problems.push('Tutorial has no steps.')
+  if (document.settings?.genomeColors && (!Array.isArray(document.settings.genomeColors) || document.settings.genomeColors.some((c) => !/^#[0-9a-f]{6}$/i.test(c)))) problems.push('Tutorial genome colours must be six-digit hex colours.')
   const seen = new Set()
   for (const [index, step] of (document?.steps || []).entries()) {
     const where = `Step ${index + 1}`
@@ -187,6 +190,15 @@ export function validateTutorialDocument(document, options = {}) {
     else seen.add(step.id)
     if (!String(step?.title || '').trim()) problems.push(`${where} has no title.`)
     if (!String(step?.body || '').trim()) problems.push(`${where} has no body.`)
+    if (step.autoplayDemo) {
+      problems.push(...browserViewProblems(step.autoplayDemo, `${where} autoplay demonstration`))
+      for (const move of step.autoplayDemo.moves || []) {
+        if (move.panelKey && !document.datasets?.some((d) => d.recipeId === move.panelKey)) problems.push(`${where}: demonstration names an unattached genome.`)
+      }
+    }
+    for (const scene of [step.action?.type === 'browserScene' ? step.action : null, step.completeWhen, ...[step.arrive].flat().filter((a) => a?.type === 'browserScene')].filter(Boolean)) {
+      problems.push(...browserSceneProblems(scene, document.datasets).map((p) => `${where}: ${p}`))
+    }
     for (const requirement of refsFromStep(step)) {
       if (requirement.missingAnchor) continue
       for (const issue of validateTargetRef(requirement.ref)) problems.push(`${where}: ${issue}`)
@@ -223,7 +235,7 @@ export function analyseTutorialCompatibility(tutorial, options = {}) {
   })
 
   for (const [index, step] of (tutorial?.steps || []).entries()) {
-    const reasons = [...missingDocumentDatasets]
+    const reasons = [...missingDocumentDatasets, ...documentProblems.filter((p) => p.startsWith(`Step ${index + 1}:`))]
     for (const requirement of refsFromStep(step)) {
       if (requirement.missingAnchor) {
         const shown = typeof requirement.missingAnchor === 'string'
@@ -366,6 +378,7 @@ export function materializeTutorialDocument(document) {
       } else if (first.capability === 'set-locus') {
         step.action = {
           type: 'browserView',
+          ...(first.target?.params?.recipeId ? { panelKey: first.target.params.recipeId } : {}),
           ...(first.browserView || {}),
           ...(first.value ? { locus: String(first.value) } : {}),
         }
@@ -475,6 +488,11 @@ export function legacyTutorialToDocument(tutorial, options = {}) {
     const openSectionTarget = targetRefFromAnchor(step.openSection)
     const placementTarget = targetRefFromAnchor(step.placeAgainst)
     const copyTarget = targetRefFromAnchor(step.copyInto)
+    const portableReveals = (step.reveals?.length ? step.reveals : (step.reveal ? [step.reveal] : [])).map((entry) => ({
+      target: entry.target || targetRefFromAnchor(entry.anchor),
+      ...(entry.whenTyped ? { whenTypedTarget: targetRefFromAnchor(entry.whenTyped) } : {}),
+      ...(entry.ring ? { ring: true } : {}),
+    })).filter((entry) => entry.target)
     const revealTarget = targetRefFromAnchor(step.reveal?.anchor)
     const whenTypedTarget = targetRefFromAnchor(step.reveal?.whenTyped)
     const advanceTarget = targetRefFromAnchor(step.advanceOn?.anchor)
@@ -489,6 +507,7 @@ export function legacyTutorialToDocument(tutorial, options = {}) {
     delete step.copyInto
     delete step.allow
     delete step.reveal
+    delete step.reveals
     delete step.prefill
     delete step.action
     if (step.advanceOn?.anchor) {
@@ -505,7 +524,9 @@ export function legacyTutorialToDocument(tutorial, options = {}) {
         target: revealTarget,
         ...(whenTypedTarget ? { whenTypedTarget } : {}),
       }] } : {}),
-      interactionPolicy: { targets: legacyAllowedTargets(legacy, spotlight) },
+      ...(portableReveals.length ? { reveals: portableReveals } : {}),
+      interactionPolicy: plainCopy(legacy.interactionPolicy) || { targets: legacyAllowedTargets(legacy, spotlight) },
+      ...(inferredAction?.type === 'browserScene' ? { action: plainCopy(inferredAction) } : {}),
       ...(advanceTarget ? { advanceOn: { ...step.advanceOn, target: advanceTarget } } : {}),
       ...(actions.length ? {
         autoplay: {

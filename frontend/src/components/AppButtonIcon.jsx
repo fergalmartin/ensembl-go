@@ -4,6 +4,8 @@ export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
   const size = compact ? 18 : 24
   const strokeWidth = compact ? 1.8 : 2
 
+  if (buttonId === 'alignment_explorer') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4ZM3 12l9 4 9-4M3 17l9 4 9-4"/></svg>
+
   if (buttonId === 'home') {
     const iconSize = compact ? size + 2 : size + 7
     return (

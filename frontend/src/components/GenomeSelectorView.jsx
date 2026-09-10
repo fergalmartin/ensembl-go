@@ -29,6 +29,14 @@ import {
     playlistTourSlug,
     snapshotGenomeForPlaylist,
 } from '../utils/playlistGenomes'
+import GenomeColorPicker, { MixedColorSwatch } from './GenomeColorPicker'
+import {
+    genomeColorConfigPatch,
+    genomeColorPalette,
+    genomeColorResolver,
+    normalizeGenomeDefaultColor,
+    sharedGenomeColor,
+} from '../genomeColorSchemes'
 import { datasetReleaseDownloadMetadata } from '../utils/downloadMetadata'
 import {
     getCurrentGenomeAnalysis,
@@ -1485,6 +1493,10 @@ export default function GenomeSelectorView({
     const [removalPreview, setRemovalPreview] = useState({ status: 'idle' })
     const [removalRun, setRemovalRun] = useState(null)
     const [playlistMembershipDialog, setPlaylistMembershipDialog] = useState(null)
+    // { genomes, scope: 'row' | 'selected' } — the genomes the colour picker is
+    // about, held rather than derived so the dialog survives the selection
+    // changing underneath it.
+    const [colorPickerTarget, setColorPickerTarget] = useState(null)
     const [editingPlaylistId, setEditingPlaylistId] = useState('')
     const [playlistsCollapsed, setPlaylistsCollapsed] = useState(true)
     const [selectorPlaylistId, setSelectorPlaylistId] = useState(PLAYLIST_ALL_ID)
@@ -3186,6 +3198,36 @@ export default function GenomeSelectorView({
         [allAssemblies, selectedGenomeKeys],
     )
 
+    // ── Genome colours ────────────────────────────────────────────────────────
+    //
+    // A genome's colour belongs to the genome, so the control for it sits beside
+    // the other per-genome controls rather than in the configuration view, and
+    // the header copy of it paints the whole selection at once.
+    const resolveGenomeColorFor = useMemo(() => genomeColorResolver(config), [config])
+    const colorPalette = useMemo(() => genomeColorPalette(config), [config])
+    const defaultGenomeColor = useMemo(
+        () => normalizeGenomeDefaultColor(config?.genome_default_color),
+        [config?.genome_default_color],
+    )
+    const selectedGenomesColor = useMemo(
+        () => sharedGenomeColor(config, selectedAssemblies),
+        [config, selectedAssemblies],
+    )
+
+    const applyGenomeColor = useCallback((genomes, color) => {
+        const targets = (Array.isArray(genomes) ? genomes : [genomes]).filter(Boolean)
+        if (targets.length === 0) return
+        onConfigChange((prev) => {
+            const base = prev || config
+            const patch = genomeColorConfigPatch(base, targets, color)
+            if (!patch) return base
+            return { ...base, ...patch }
+        })
+        showStatus(targets.length === 1
+            ? `Colour set for ${formatPlaylistGenomeLabel(targets[0])}`
+            : `Colour set for ${targets.length} genomes`)
+    }, [config, onConfigChange])
+
     /** Open or close the playlist dialog because a tutorial step says so.
      *
      * A dialog is the one thing a step cannot arrive at by describing it: until something
@@ -4197,6 +4239,21 @@ export default function GenomeSelectorView({
                 onClose={() => setPlaylistMembershipDialog(null)}
                 onSave={handleSaveGenomePlaylistMembership}
             />
+            <GenomeColorPicker
+                isOpen={!!colorPickerTarget}
+                theme={theme}
+                title={colorPickerTarget?.scope === 'selected' ? 'Colour for the selected genomes' : 'Genome colour'}
+                subtitle={colorPickerTarget?.scope === 'selected'
+                    ? `${(colorPickerTarget?.genomes || []).length} selected genome${(colorPickerTarget?.genomes || []).length === 1 ? '' : 's'}`
+                    : formatPlaylistGenomeLabel(colorPickerTarget?.genomes?.[0])}
+                palette={colorPalette}
+                currentColor={colorPickerTarget?.scope === 'selected'
+                    ? sharedGenomeColor(config, colorPickerTarget?.genomes || [])
+                    : (colorPickerTarget?.genomes?.[0] ? resolveGenomeColorFor(colorPickerTarget.genomes[0]) : '')}
+                defaultColor={defaultGenomeColor}
+                onApply={(color) => applyGenomeColor(colorPickerTarget?.genomes || [], color)}
+                onClose={() => setColorPickerTarget(null)}
+            />
             <PlaylistEditorModal
                 isOpen={!!editingPlaylist}
                 theme={theme}
@@ -5030,10 +5087,47 @@ export default function GenomeSelectorView({
                                         <th className={thClass}>Assembly</th>
                                         <th className={thClass}>Files</th>
                                         <th className={thClass}>Index</th>
-                                        <th className={`${thCenteredClass} w-32 min-w-[8rem]`}>
-                                            {/* Same 72px two-slot box as every row's action cell. Both
-                                                controls operate on the active/selected genome set. */}
-                                            <div className="mx-auto inline-flex w-[72px] items-center justify-center gap-1 align-middle">
+                                        <th className={`${thCenteredClass} w-40 min-w-[10rem]`}>
+                                            {/* Same 108px three-slot box as every row's action cell. All
+                                                three controls operate on the active/selected genome set. */}
+                                            <div className="mx-auto inline-flex w-[108px] items-center justify-center gap-1 align-middle">
+                                                <button
+                                                    data-tour-id="selector-color-selected"
+                                                    type="button"
+                                                    aria-disabled={selectedAssemblies.length === 0}
+                                                    onClick={() => {
+                                                        if (selectedAssemblies.length === 0) {
+                                                            showStatus('Select genomes before choosing a colour.', true)
+                                                            return
+                                                        }
+                                                        setColorPickerTarget({ genomes: selectedAssemblies, scope: 'selected' })
+                                                    }}
+                                                    title={selectedAssemblies.length === 0
+                                                        ? 'Select genomes before choosing a colour'
+                                                        : selectedGenomesColor
+                                                            ? `All ${selectedAssemblies.length} selected genome${selectedAssemblies.length === 1 ? ' is' : 's are'} ${selectedGenomesColor} — click to change`
+                                                            : `The ${selectedAssemblies.length} selected genomes have different colours — click to set one`}
+                                                    aria-label="Set the colour of the selected genomes"
+                                                    className={`w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors ${selectedAssemblies.length === 0
+                                                        ? (isLight ? 'cursor-not-allowed' : 'cursor-not-allowed')
+                                                        : (isLight ? 'hover:bg-blue-50' : 'hover:bg-blue-900/20')
+                                                        }`}
+                                                >
+                                                    {/* Nothing selected leaves the box empty rather than
+                                                        showing a colour that applies to nothing. */}
+                                                    {selectedAssemblies.length === 0 ? (
+                                                        <span
+                                                            className={`h-[18px] w-[18px] rounded-md border-2 border-dashed ${isLight ? 'border-gray-300' : 'border-gray-600'}`}
+                                                        />
+                                                    ) : selectedGenomesColor ? (
+                                                        <span
+                                                            className="h-[18px] w-[18px] rounded-md border border-white/60 shadow-sm"
+                                                            style={{ backgroundColor: selectedGenomesColor }}
+                                                        />
+                                                    ) : (
+                                                        <MixedColorSwatch size={18} />
+                                                    )}
+                                                </button>
                                                 <button
                                                     data-tour-id="selector-playlist-selected"
                                                     type="button"
@@ -5311,10 +5405,14 @@ export default function GenomeSelectorView({
                                                         )
                                                     ) : removalMode ? (
                                                         <label
-                                                            className="mx-auto inline-flex w-[72px] items-center justify-center gap-1 cursor-pointer"
+                                                            className="mx-auto inline-flex w-[108px] items-center justify-center gap-1 cursor-pointer"
                                                             onMouseDown={(event) => event.preventDefault()}
                                                             title={isFlaggedForRemoval ? 'Flagged for deletion' : 'Keep this genome'}
                                                         >
+                                                            {/* The colour slot stands empty while the column is
+                                                                asking a destructive question, so the flag and the
+                                                                bin still line up with the header's. */}
+                                                            <span className="inline-flex h-8 w-8 flex-none" aria-hidden="true" />
                                                             <span className="inline-flex h-8 w-8 flex-none items-center justify-center">
                                                                 <input
                                                                     type="checkbox"
@@ -5334,7 +5432,27 @@ export default function GenomeSelectorView({
                                                             </span>
                                                         </label>
                                                     ) : (
-	                                                        <div className="mx-auto inline-flex w-[72px] items-center justify-center gap-1">
+	                                                        <div className="mx-auto inline-flex w-[108px] items-center justify-center gap-1">
+	                                                            <button
+	                                                                data-tour-id={`selector-color-${itemKey(item)}`}
+	                                                                type="button"
+	                                                                onMouseDown={(event) => {
+	                                                                    event.preventDefault()
+	                                                                    event.stopPropagation()
+	                                                                }}
+	                                                                onClick={() => setColorPickerTarget({ genomes: [item], scope: 'row' })}
+	                                                                className={`w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors ${isLight
+	                                                                    ? 'hover:bg-blue-50'
+	                                                                    : 'hover:bg-blue-900/20'
+	                                                                    }`}
+	                                                                title={`Genome colour: ${resolveGenomeColorFor(item)}`}
+	                                                                aria-label="Choose this genome's colour"
+	                                                            >
+	                                                                <span
+	                                                                    className="h-[18px] w-[18px] rounded-md border border-white/60 shadow-sm"
+	                                                                    style={{ backgroundColor: resolveGenomeColorFor(item) }}
+	                                                                />
+	                                                            </button>
 	                                                            <button
 	                                                                data-tour-id={`selector-playlist-${itemKey(item)}`}
 	                                                                type="button"

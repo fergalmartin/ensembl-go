@@ -25,6 +25,8 @@ import {
   expandRect,
   nonOverlappingRects,
   placeCard,
+  TUTORIAL_CARD_MARGIN,
+  TUTORIAL_CARD_WIDTH,
   tutorialDimColor,
   visibleElementRect,
   viewportRect,
@@ -43,11 +45,11 @@ import { targetRefSelector } from '../tutorialTargets/index.js'
 // control is pointed at but not usable, so a step that is explaining the file-type chips
 // cannot be derailed by someone toggling one.
 
-const CARD_WIDTH = 380
+const CARD_WIDTH = TUTORIAL_CARD_WIDTH
 const MIN_CARD_WIDTH = 300
 const MAX_CARD_WIDTH = 620
 const MIN_CARD_HEIGHT = 180
-const CARD_MARGIN = 12
+const CARD_MARGIN = TUTORIAL_CARD_MARGIN
 const HOLE_PADDING = 6
 const MULTI_HIGHLIGHT_INSET = -2
 // An SVG `pathLength`, so the countdown's dash maths does not depend on the card's
@@ -205,10 +207,27 @@ export default function TutorialOverlay() {
   const sectionTitle = stepSection(step)
   const [size, setSize] = useState(() => ({ width: 0, height: 0 }))
   const [cardHeight, setCardHeight] = useState(200)
+  // The height the card has in its saved, read-only state. Edit mode adds inputs, a
+  // Save/Reset row and a note line, so the shell an author drags is taller than the thing
+  // they are authoring — and clamping the drag to the taller shell put the bottom of the
+  // window out of reach for the real card. Measured whenever the card is rendered in its
+  // saved form, which includes the whole of a drag.
+  const trueCardHeightRef = useRef(200)
   const [nudging, setNudging] = useState(false)
   // Whether Next has started asking to be pressed; see the timer below.
   const [nudgeNext, setNudgeNext] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [blockedMessage, setBlockedMessage] = useState('')
+  useEffect(() => {
+    let timer
+    const show = (event) => {
+      setBlockedMessage(String(event.detail || ''))
+      clearTimeout(timer)
+      timer = setTimeout(() => setBlockedMessage(''), 2200)
+    }
+    window.addEventListener('tutorial-control-blocked', show)
+    return () => { clearTimeout(timer); window.removeEventListener('tutorial-control-blocked', show) }
+  }, [])
   const cardRef = useRef(null)
 
   // ── Editing the wording in place (developer tool; see tutorials/authoring.js) ──
@@ -465,7 +484,9 @@ export default function TutorialOverlay() {
     if (!node) return undefined
     const measure = () => {
       const measured = node.getBoundingClientRect?.().height
-      if (measured) setCardHeight((current) => (Math.abs(measured - current) > 1 ? measured : current))
+      if (!measured) return
+      if (!node.hasAttribute('data-tutorial-card-editing')) trueCardHeightRef.current = measured
+      setCardHeight((current) => (Math.abs(measured - current) > 1 ? measured : current))
     }
     measure()
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
@@ -562,7 +583,9 @@ export default function TutorialOverlay() {
   // clean strip between rows. Ordinary target + context reveals retain their breathing
   // room because context reveals are not rings.
   const highlightPadding = highlightedRectCount > 1 ? MULTI_HIGHLIGHT_INSET : HOLE_PADDING
-  const padded = expandRect(hole, highlightPadding, size)
+  // A canvas starts at its ruler. Insetting its ring would paint over that ruler;
+  // unlike adjacent list rows, browser panels have space for an outside outline.
+  const padded = expandRect(hole, selector.includes('[data-browser-canvas-surface]') ? HOLE_PADDING : highlightPadding, size)
   const interactive = stepIsInteractive(step)
   // A settled step has been done and is only waiting out its pause, so its ring comes off
   // at once — it would otherwise spend that pause insisting on a control there is nothing
@@ -574,7 +597,7 @@ export default function TutorialOverlay() {
   // When the step is only pointing something out, the hole is covered as well, so the
   // spotlight reads as "look at this" rather than "use this".
   const revealed = revealRects.map((rect, index) => (
-    rect ? expandRect(rect, reveals[index]?.ring ? highlightPadding : HOLE_PADDING, size) : null
+    rect ? expandRect(rect, anchorSelector(reveals[index]?.anchor).includes('[data-browser-canvas-surface]') ? HOLE_PADDING : (reveals[index]?.ring ? highlightPadding : HOLE_PADDING), size) : null
   ))
   // Scrollable regions are pointer pass-throughs, but not visual cutouts: the four rows
   // stay highlighted while wheel, trackpad, touch and scrollbar input reaches the list.
@@ -640,15 +663,43 @@ export default function TutorialOverlay() {
   // when edit mode makes the card taller than its normal reading state.
   const authoredPosition = dragPosition || stepCardPosition(step)
   const maxCardLeft = Math.max(CARD_MARGIN, size.width - cardWidth - CARD_MARGIN)
-  const maxCardTop = Math.max(CARD_MARGIN, size.height - layoutCardHeight - CARD_MARGIN)
+
+  // Two boxes, and the distinction is the whole of this. The *true* box is the card as it
+  // will be once saved: it is what the author is placing, what the stored position means,
+  // and what the bottom of the window has to be a boundary for. The *shell* is what is on
+  // screen right now, which in edit mode is taller by the height of the inputs and the
+  // Save row. Clamping the drag to the shell is what stopped a card being pushed as far
+  // down as it will actually sit, and left a gap at the bottom of the window that nothing
+  // could be placed in.
+  const trueCardHeight = authoredCardHeight
+    || (editing && !dragging ? trueCardHeightRef.current : cardHeight)
+  const maxTrueTop = Math.max(CARD_MARGIN, size.height - trueCardHeight - CARD_MARGIN)
+  const maxShellTop = Math.max(CARD_MARGIN, size.height - layoutCardHeight - CARD_MARGIN)
+  const maxCardTop = maxTrueTop
+  let trueCard = null
   if (authoredPosition) {
+    const trueLeft = Math.max(CARD_MARGIN, Math.min(maxCardLeft, authoredPosition.x * size.width))
+    const trueTop = Math.max(CARD_MARGIN, Math.min(maxTrueTop, authoredPosition.y * size.height))
+    trueCard = { left: trueLeft, top: trueTop, width: cardWidth, height: trueCardHeight }
     card = {
-      left: Math.max(CARD_MARGIN, Math.min(maxCardLeft, authoredPosition.x * size.width)),
-      top: Math.max(CARD_MARGIN, Math.min(maxCardTop, authoredPosition.y * size.height)),
+      left: trueLeft,
+      // The nearest fully visible place for the taller shell. Outside edit mode the two
+      // heights are the same and this is a no-op.
+      top: Math.min(trueTop, maxShellTop),
       placement: 'authored',
       overlaps: false,
     }
   }
+  // Only worth drawing when the shell has had to move off the true box to stay on screen.
+  const showTrueCardOutline = Boolean(editing && !dragging && trueCard && trueCard.top !== card.top)
+  // While the card is being dragged it drops its editing chrome and shows the step as it
+  // will read once saved — the author places the box they are authoring, at its real size,
+  // rather than a taller shell they then have to imagine away. The draft's own words, not
+  // the saved ones, since the point is to see the result of the edits in hand.
+  const editingChrome = editing && !dragging
+  const previewSection = editing ? (draft?.section ?? sectionTitle) : sectionTitle
+  const previewTitle = editing ? (draft?.title ?? step.title) : step.title
+  const previewBody = editing ? (draft?.body ?? step.body) : step.body
 
   const beginCardDrag = (event) => {
     if (!editing || event.button !== 0 || event.target.closest('button,input,textarea,select')) return
@@ -659,7 +710,9 @@ export default function TutorialOverlay() {
       clientX: event.clientX,
       clientY: event.clientY,
       left: card.left,
-      top: card.top,
+      // The drag moves the true box. Starting from the shell's top instead would make the
+      // card jump by the height of the editing chrome the moment the pointer moved.
+      top: trueCard ? trueCard.top : card.top,
       moved: false,
     }
     setDragging(true)
@@ -765,6 +818,7 @@ export default function TutorialOverlay() {
 
   return (
     <div className="fixed inset-0 z-[300]" style={{ pointerEvents: 'none' }} data-tutorial-overlay="true">
+      {blockedMessage && <div role="status" className="fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg bg-gray-900 px-4 py-3 text-sm text-white shadow-lg" style={{ zIndex: 400 }}>{blockedMessage}</div>}
       <svg
         className="absolute inset-0"
         width={Math.max(1, size.width)}
@@ -906,6 +960,24 @@ export default function TutorialOverlay() {
         </div>
       )}
 
+      {/* Where the card will actually be once it is saved. Drawn only when the editing
+          shell has had to sit somewhere else to stay on screen, so that the author can see
+          the box they are placing rather than infer it from the one they are holding. */}
+      {showTrueCardOutline && (
+        <div
+          data-tutorial-card-true-outline="true"
+          aria-hidden="true"
+          className="absolute rounded-xl border-2 border-dashed border-blue-400/70"
+          style={{
+            left: trueCard.left,
+            top: trueCard.top,
+            width: trueCard.width,
+            height: trueCard.height,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+
       <div
         ref={cardRef}
         // Named so a CDP probe can find the card, its spotlight and the dimming without
@@ -913,6 +985,9 @@ export default function TutorialOverlay() {
         // a real browser is not optional: the unit tests cannot see a card that covers
         // what it describes, or a Next that advances twice.
         data-tutorial-card={step.id}
+        // Read by the height measurement above: a card wearing its editing chrome must not
+        // be mistaken for the saved box whose height the drag is clamped to.
+        data-tutorial-card-editing={editingChrome ? 'true' : undefined}
         // The step is still getting ready: Next is disabled below until it is not. Marked
         // on the card rather than shown as a line of text — the text appeared and
         // disappeared often enough to resize the card and shift it while it was being
@@ -988,7 +1063,7 @@ export default function TutorialOverlay() {
             style={editing ? { touchAction: 'none' } : undefined}
             title={editing ? 'Drag to move this tutorial card' : undefined}
           >
-            {editing && (
+            {editingChrome && (
               <span aria-hidden="true" className={`flex-none select-none text-sm leading-none ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
                 ⠿
               </span>
@@ -1000,7 +1075,7 @@ export default function TutorialOverlay() {
                 definition file. Absent unless the backend says editing is available, which
                 it only is from a source checkout. See tutorials/authoring.js. */}
             {authoringEnabled && (
-              editing ? (
+              editingChrome ? (
                 <div className="flex flex-none items-center gap-1">
                   <button
                     type="button"
@@ -1048,15 +1123,15 @@ export default function TutorialOverlay() {
               )
             )}
           </div>
-          {sectionTitle && !editing && (
+          {previewSection && !editingChrome && (
             <h2
               data-tutorial-section-title="true"
               className={`mt-1 text-base font-semibold leading-snug ${isLight ? 'text-gray-900' : 'text-gray-100'}`}
             >
-              {sectionTitle}
+              {previewSection}
             </h2>
           )}
-          {editing ? (
+          {editingChrome ? (
             <>
               {sectionTitle && (
                 <input
@@ -1105,16 +1180,16 @@ export default function TutorialOverlay() {
             <>
               <h3
                 data-tutorial-step-title="true"
-                className={`${sectionTitle ? 'mt-0.5 text-[13px] font-medium' : 'mt-1 text-sm font-semibold'} ${isLight ? 'text-gray-900' : 'text-gray-100'}`}
+                className={`${previewSection ? 'mt-0.5 text-[13px] font-medium' : 'mt-1 text-sm font-semibold'} ${isLight ? 'text-gray-900' : 'text-gray-100'}`}
               >
-                {step.title}
+                {previewTitle}
               </h3>
               <p className={`mt-1.5 text-sm leading-relaxed ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
-                {step.body}
+                {previewBody}
               </p>
             </>
           )}
-          {editNote && (
+          {editNote && !dragging && (
             <p data-tutorial-edit-note="true" className={`mt-2 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
               {editNote}
             </p>
@@ -1257,7 +1332,7 @@ export default function TutorialOverlay() {
           </div>
         </div>
         </div>
-        {editing && (
+        {editingChrome && (
           <>
             <div
               data-tutorial-card-resize="right"

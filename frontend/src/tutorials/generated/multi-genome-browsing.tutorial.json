@@ -1,0 +1,3656 @@
+{
+  "format": "ensembl-go-tutorial",
+  "schemaVersion": 1,
+  "id": "multi-genome-browsing",
+  "revision": 2,
+  "title": "Multi-genome browsing",
+  "blurb": "Compare annotations and species, link regions and genes, and make room for several genome panels.",
+  "estimatedMinutes": 12,
+  "usesDemoGenome": false,
+  "completionBody": "You have compared annotations on the same assembly and browsed a shared gene across human, mouse and rat.",
+  "settings": {
+    "showInactivePills": true,
+    "genomeColors": [
+      "#3366cc",
+      "#00b692",
+      "#f59e0b",
+      "#ec4899"
+    ]
+  },
+  "datasets": [
+    {
+      "id": "embedded:slice-f2b4e46327a2@1",
+      "recipeId": "slice-f2b4e46327a2",
+      "embedded": true,
+      "autoActivate": true,
+      "label": "Human Ensembl/GENCODE"
+    },
+    {
+      "id": "embedded:slice-210e10f41dd0@1",
+      "recipeId": "slice-210e10f41dd0",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Human RefSeq"
+    },
+    {
+      "id": "embedded:slice-5ff4df6986ca@1",
+      "recipeId": "slice-5ff4df6986ca",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Mouse"
+    },
+    {
+      "id": "embedded:slice-98214c680329@1",
+      "recipeId": "slice-98214c680329",
+      "embedded": true,
+      "autoActivate": false,
+      "label": "Rat"
+    }
+  ],
+  "steps": [
+    {
+      "id": "welcome",
+      "section": "Starting with four annotations",
+      "title": "Browsing several genomes",
+      "body": "This tutorial looks at browsing more than one genome at a time. We've loaded small regions around SAMD11 from four annotations: the Ensembl/GENCODE and RefSeq on human annotations for GRCh38, the Ensembl/GENCODE mouse annotation for GRCm39, and Ensembl rat annotation for GRCr8. To begin with only the human Ensembl/GENCODE pill button is active, represented by the fact that the pill button is coloured as opposed to grey.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "app.genomePills",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "human-track",
+      "section": "Starting with four annotations",
+      "title": "One active genome",
+      "body": "Only the active genome is drawn in the browser. The panel highlighted below shows the human Ensembl/GENCODE annotation. For each genome the  tutorial region contains SAMD11 and some neighbouring genes, with room to pan and zoom. This will allow us to compare syntenic regions between genomes, which is one of the main use cases for multi-genome browsing.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "cardPosition": {
+        "x": 0.6733,
+        "y": 0.0155
+      }
+    },
+    {
+      "id": "activate-refseq",
+      "section": "Examining two human annotations",
+      "title": "An alternative annotation",
+      "body": "The Ensembl/GENCODE and RefSeq annotations for the human GRCh38 assembly are highly concordant, particularly in terms of the representative transcript for each protein-coding gene, however there are still significant differences between the two annotations, and simultaneously browsing the two annotations can help highlight these commonalities and differences. Activate the RefSeq annotation browser track by clicking the highlighted pill button.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.datasetPill",
+              "version": 1,
+              "params": {
+                "dataset": "slice-210e10f41dd0"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "app.datasetPill",
+          "version": 1,
+          "params": {
+            "dataset": "slice-210e10f41dd0"
+          }
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "app.datasetPill",
+              "version": 1,
+              "params": {
+                "dataset": "slice-210e10f41dd0"
+              }
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "pauseMs": 900,
+          "desiredEngaged": true
+        }
+      },
+      "completeWhen": {
+        "active": [
+          "slice-f2b4e46327a2",
+          "slice-210e10f41dd0"
+        ]
+      },
+      "settleMs": 12000
+    },
+    {
+      "id": "refseq-result",
+      "section": "Examining two human annotations",
+      "title": "The second browser panel",
+      "body": "The RefSeq annotation now has its own panel. The blue panel is human Ensembl and the green one is human RefSeq. These colours also help keep the genomes distinct as we add more panels.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-210e10f41dd0"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "cardPosition": {
+        "x": 0.6733,
+        "y": 0.0155
+      }
+    },
+    {
+      "id": "genome-bars",
+      "section": "Examining two human annotations",
+      "title": "Controls for each genome",
+      "body": "Each active genome has its own control bar. These bars change location, search for features and change what is displayed for their own genome. Searching in one bar doesn't search the other genome.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.toolbar",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.toolbar",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "cardPosition": {
+        "x": 0.6733,
+        "y": 0.0155
+      }
+    },
+    {
+      "id": "general-bar",
+      "section": "Examining two human annotations",
+      "title": "The general controls",
+      "body": "The general control bar applies across the active genomes. With two panels, Pan, Zoom and Link region are available. Link gene becomes useful once a gene has focus. We'll examine these controls next.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.globalControls",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "independent",
+      "section": "Examining two human annotations",
+      "title": "Moving independently",
+      "body": "Try panning and zooming each panel. By default, click-and-drag or a sideways swipe pans, and the mouse wheel or a vertical two-finger swipe zooms. The panels move independently. The control bars aren't active for this step; press Next when you're ready.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-f2b4e46327a2"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-210e10f41dd0"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "cardPosition": {
+        "x": 0.6733,
+        "y": 0.0155
+      },
+      "autoplayDemo": {
+        "type": "browserView",
+        "moves": [
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "pan": 0.18
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "zoom": 0.6
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "zoom": 1.6666666666666667
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "pan": -0.18
+          },
+          {
+            "panelKey": "slice-210e10f41dd0",
+            "pan": -0.18
+          },
+          {
+            "panelKey": "slice-210e10f41dd0",
+            "zoom": 0.6
+          },
+          {
+            "panelKey": "slice-210e10f41dd0",
+            "zoom": 1.6666666666666667
+          },
+          {
+            "panelKey": "slice-210e10f41dd0",
+            "pan": 0.18
+          }
+        ],
+        "durationMs": 1100,
+        "pauseMs": 1000,
+        "revealPanel": true
+      }
+    },
+    {
+      "id": "different-positions",
+      "section": "Linking a region",
+      "title": "Two different locations",
+      "body": "We've centred the human Ensembl view around SAMD11 and moved RefSeq to a nearby region. SAMD11 has 18 transcripts in this Ensembl annotation and 3 in RefSeq. The panels are looking at different coordinates for now.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:918000-951000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:990000-1020000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": false,
+          "hideInactive": false
+        }
+      ],
+      "cardPosition": {
+        "x": 0.6733,
+        "y": 0.0155
+      }
+    },
+    {
+      "id": "link-region",
+      "section": "Linking a region",
+      "title": "Linking by coordinates",
+      "body": "Both annotations use GRCh38, so the same chromosome coordinates refer to the same place. The  Link Region button takes the first panel's region and coordinates and matches them as closely as possible in the other panels. Click Link Region to bring the RefSeq to this location.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.linkRegion",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.linkRegion",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:918000-951000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:990000-1020000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.linkRegion",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "pauseMs": 900
+        }
+      },
+      "completeWhen": {
+        "active": [
+          "slice-f2b4e46327a2",
+          "slice-210e10f41dd0"
+        ],
+        "link": "region",
+        "pan": true,
+        "zoom": true
+      },
+      "settleMs": 12000,
+      "cardPosition": {
+        "x": 0.2637,
+        "y": 0.3548
+      }
+    },
+    {
+      "id": "region-result",
+      "section": "Linking a region",
+      "title": "The annotations are aligned",
+      "body": "Both panels now show the same coordinate window around SAMD11. Their annotations differ in terms of the number of transcripts. Note that RefSeq calls chromosome 1 NC_000001.11, so the chromosome names are matched through their aliases.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "region",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:918000-951000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:990000-1020000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "cardPosition": {
+        "x": 0.6671,
+        "y": 0.0155
+      }
+    },
+    {
+      "id": "coordinate-systems",
+      "section": "Linking a region",
+      "title": "A shared coordinate system matters",
+      "body": "Link region matches region names and coordinates, it doesn't translate between assemblies. Position 1,000,000 on chromosome 1 in GRCh38 and CHM13v2.0 needn't refer to the same sequence. It lines up positions exactly here because the two human annotations use the same coordinate system.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.linkRegion",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "region",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:918000-951000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:990000-1020000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "linked-pan",
+      "section": "Linked movement",
+      "title": "Panning is now linked",
+      "body": "Link region has also switched on Pan. Moving either panel sideways moves the other with it, keeping their coordinate windows together.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.pan",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "region",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:918000-951000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:990000-1020000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "linked-zoom",
+      "section": "Linked movement",
+      "title": "Zooming is now linked",
+      "body": "Zoom has been switched on too. Zooming either panel changes the scale in both, so the aligned regions stay easy to compare.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.zoom",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "region",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:918000-951000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:990000-1020000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "try-linked",
+      "section": "Linked movement",
+      "title": "Try the linked tracks",
+      "body": "Try panning and zooming either panel. The other follows. The control bars are held in their current state for this step, so you can concentrate on how the two browser tracks move together.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-f2b4e46327a2"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-210e10f41dd0"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "region",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:918000-951000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:990000-1020000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplayDemo": {
+        "type": "browserView",
+        "moves": [
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "pan": 0.18
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "zoom": 0.6
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "zoom": 1.6666666666666667
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "pan": -0.18
+          }
+        ],
+        "durationMs": 1100,
+        "pauseMs": 1000,
+        "revealPanel": true
+      }
+    },
+    {
+      "id": "separate-controls",
+      "section": "Linked movement",
+      "title": "Pan and Zoom are separate controls",
+      "body": "You can link one kind of movement without linking the other. Try switching Pan off and moving a track, then switch it back on. Try the same with Zoom. Both buttons and the browser tracks are available for this step; press Next when you're ready.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.pan",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.zoom",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-f2b4e46327a2"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-210e10f41dd0"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.pan",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.zoom",
+            "version": 1
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "region",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:918000-951000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:990000-1020000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "activate-rodents",
+      "section": "Adding mouse and rat",
+      "title": "Add mouse and rat",
+      "body": "Click the mouse and rat pills to activate both genomes. We'll compare the neighbourhood of the same gene in different species, where chromosome numbers and coordinates are different.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.datasetPill",
+              "version": 1,
+              "params": {
+                "dataset": "slice-5ff4df6986ca"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "app.datasetPill",
+              "version": 1,
+              "params": {
+                "dataset": "slice-98214c680329"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "app.datasetPill",
+          "version": 1,
+          "params": {
+            "dataset": "slice-5ff4df6986ca"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "app.datasetPill",
+            "version": 1,
+            "params": {
+              "dataset": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "app.datasetPill",
+              "version": 1,
+              "params": {
+                "dataset": "slice-5ff4df6986ca"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "app.datasetPill",
+              "version": 1,
+              "params": {
+                "dataset": "slice-98214c680329"
+              }
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "pauseMs": 900,
+          "desiredEngaged": true
+        }
+      },
+      "completeWhen": {
+        "active": [
+          "slice-f2b4e46327a2",
+          "slice-210e10f41dd0",
+          "slice-5ff4df6986ca",
+          "slice-98214c680329"
+        ]
+      },
+      "settleMs": 12000
+    },
+    {
+      "id": "rodent-result",
+      "section": "Adding mouse and rat",
+      "title": "Two more browser panels",
+      "body": "Mouse is amber and rat is pink. Their SAMD11 regions are on chromosomes 4 and 5, rather than human chromosome 1. Scroll down to inspect the new panels; each has its own controls and tracks.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-5ff4df6986ca"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "browse-four",
+      "section": "Adding mouse and rat",
+      "title": "Browse all four genomes",
+      "body": "Try moving the four panels and switching Pan and Zoom on or off. These buttons link movement; they don't find a corresponding gene for you. You can scroll the page using the scrollbar or the space outside the tracks. Other controls aren't active for this step.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.pan",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.zoom",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-f2b4e46327a2"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-210e10f41dd0"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-5ff4df6986ca"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-98214c680329"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.pan",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.zoom",
+            "version": 1
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-5ff4df6986ca"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplayDemo": {
+        "type": "browserView",
+        "moves": [
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "pan": 0.18
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "zoom": 0.6
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "zoom": 1.6666666666666667
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "pan": -0.18
+          },
+          {
+            "panelKey": "slice-5ff4df6986ca",
+            "pan": -0.18
+          },
+          {
+            "panelKey": "slice-5ff4df6986ca",
+            "zoom": 0.6
+          },
+          {
+            "panelKey": "slice-5ff4df6986ca",
+            "zoom": 1.6666666666666667
+          },
+          {
+            "panelKey": "slice-5ff4df6986ca",
+            "pan": 0.18
+          }
+        ],
+        "durationMs": 1100,
+        "pauseMs": 1000,
+        "revealPanel": true
+      }
+    },
+    {
+      "id": "search-samd11",
+      "section": "Linking a gene",
+      "title": "Search in the human Ensembl panel",
+      "body": "Let's give one gene focus. Enter SAMD11 in the highlighted human Ensembl search box, then press Return or the search icon beside it. This search applies to that genome alone.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.locationSearch",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-f2b4e46327a2"
+              }
+            },
+            "capabilities": [
+              "input"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.locationSearchGo",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-f2b4e46327a2"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.locationSearchField",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.locationSearch",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "capability": "input",
+          "value": "SAMD11",
+          "overwrite": true,
+          "submit": true
+        }
+      },
+      "completeWhen": {
+        "panels": {
+          "slice-f2b4e46327a2": {
+            "focus": "SAMD11"
+          }
+        }
+      },
+      "settleMs": 12000,
+      "copy": "SAMD11",
+      "copyTarget": {
+        "id": "browser.locationSearch",
+        "version": 1,
+        "params": {
+          "recipeId": "slice-f2b4e46327a2"
+        }
+      }
+    },
+    {
+      "id": "search-result",
+      "section": "Linking a gene",
+      "title": "SAMD11 has focus here",
+      "body": "The human Ensembl panel is now centred on SAMD11 and has a gene of focus bar. The other panels haven't gained focus: only the genome whose search box we used has changed.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.focusBar",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "link-gene",
+      "section": "Linking a gene",
+      "title": "Finding the same gene in other genomes",
+      "body": "Link gene currently uses gene symbols or IDs to find matches. It can link automatically where those names or IDs match; it isn't a sequence alignment or an orthology search. Mouse spells this symbol Samd11, which still matches. Click Link gene.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.linkGene",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.linkGene",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.linkGene",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "pauseMs": 900
+        }
+      },
+      "completeWhen": {
+        "active": [
+          "slice-f2b4e46327a2",
+          "slice-210e10f41dd0",
+          "slice-5ff4df6986ca",
+          "slice-98214c680329"
+        ],
+        "link": "gene",
+        "pan": true,
+        "zoom": true,
+        "panels": {
+          "slice-f2b4e46327a2": {
+            "focus": "SAMD11"
+          },
+          "slice-210e10f41dd0": {
+            "focus": "SAMD11"
+          },
+          "slice-5ff4df6986ca": {
+            "focus": "SAMD11"
+          },
+          "slice-98214c680329": {
+            "focus": "SAMD11"
+          }
+        }
+      },
+      "settleMs": 12000
+    },
+    {
+      "id": "gene-result",
+      "section": "Linking a gene",
+      "title": "A gene of focus in every panel",
+      "body": "SAMD11 now has focus in all four genomes. The gene is on the forward strand in human and the reverse strand in mouse and rat. The panels have been positioned around their focused genes, and Pan and Zoom have been linked automatically.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.focusBar",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.focusBar",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.focusBar",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-5ff4df6986ca"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.focusBar",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-5ff4df6986ca"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "gene",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "try-gene-link",
+      "section": "Linking a gene",
+      "title": "Explore the linked genes",
+      "body": "Try panning and zooming any of the four panels. They now move together around the linked genes, even though their chromosome coordinates differ. Scroll down to reach the lower panels. The controls are held in their current state for this step.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-f2b4e46327a2"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-210e10f41dd0"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-5ff4df6986ca"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-98214c680329"
+              }
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-5ff4df6986ca"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "gene",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplayDemo": {
+        "type": "browserView",
+        "moves": [
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "pan": 0.18
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "zoom": 0.6
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "zoom": 1.6666666666666667
+          },
+          {
+            "panelKey": "slice-f2b4e46327a2",
+            "pan": -0.18
+          },
+          {
+            "panelKey": "slice-5ff4df6986ca",
+            "pan": -0.18
+          },
+          {
+            "panelKey": "slice-5ff4df6986ca",
+            "zoom": 0.6
+          },
+          {
+            "panelKey": "slice-5ff4df6986ca",
+            "zoom": 1.6666666666666667
+          },
+          {
+            "panelKey": "slice-5ff4df6986ca",
+            "pan": 0.18
+          }
+        ],
+        "durationMs": 1100,
+        "pauseMs": 1000,
+        "revealPanel": true
+      }
+    },
+    {
+      "id": "making-space",
+      "section": "Making space",
+      "title": "Fitting more into the window",
+      "body": "Several browser panels can take up a lot of vertical space. The transcript and layout controls from the Genome Browser tutorial still work here, including collapsing alternative transcripts and reducing empty space. You can also choose which tracks to keep for each genome.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.globalControls",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "gene",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "track-switches",
+      "section": "Making space",
+      "title": "Choose the tracks you need",
+      "body": "The left hand switches control GF (genes on the forward strand), GR (genes on the reverse strand), and SL (sequence level). For this comparison we'll keep the strand containing SAMD11 and leave SL on in every genome.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.trackGutter",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.trackGutter",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "gene",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "switch-strands",
+      "section": "Making space",
+      "title": "Keep the strands you want to compare",
+      "body": "SAMD11 is on the forward strand in both human annotations and the reverse strand in mouse and rat. Switch off GR in both human panels and GF in mouse and rat, leaving SL on in all four. Scroll down to reach the lower panels. We'll then look at how to remove the space left by these inactive tracks.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.toggleGR",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-f2b4e46327a2"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.toggleGR",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-210e10f41dd0"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.toggleGF",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-5ff4df6986ca"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.toggleGF",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-98214c680329"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.toggleGR",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.toggleGR",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.toggleGF",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-5ff4df6986ca"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.toggleGF",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "gene",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.toggleGR",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-f2b4e46327a2"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "browser.toggleGR",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-210e10f41dd0"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "browser.toggleGF",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-5ff4df6986ca"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "browser.toggleGF",
+              "version": 1,
+              "params": {
+                "recipeId": "slice-98214c680329"
+              }
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "pauseMs": 900,
+          "desiredEngaged": false
+        }
+      },
+      "completeWhen": {
+        "panels": {
+          "slice-f2b4e46327a2": {
+            "tracks": {
+              "forward": true,
+              "reverse": false,
+              "sequence": true
+            }
+          },
+          "slice-210e10f41dd0": {
+            "tracks": {
+              "forward": true,
+              "reverse": false,
+              "sequence": true
+            }
+          },
+          "slice-5ff4df6986ca": {
+            "tracks": {
+              "forward": false,
+              "reverse": true,
+              "sequence": true
+            }
+          },
+          "slice-98214c680329": {
+            "tracks": {
+              "forward": false,
+              "reverse": true,
+              "sequence": true
+            }
+          }
+        }
+      },
+      "settleMs": 12000
+    },
+    {
+      "id": "strands-off-result",
+      "section": "Making space",
+      "title": "The unused strands are switched off",
+      "body": "Each genome now has only the strand containing SAMD11 switched on, along with SL. The inactive tracks still occupy space. This lets you see what has been switched off before deciding whether to hide it.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-5ff4df6986ca"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "gene",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ]
+    },
+    {
+      "id": "hide-inactive",
+      "section": "Making space",
+      "title": "Hide the inactive tracks",
+      "body": "The general Hide button removes inactive tracks from the layout. Click Hide to close the gaps left by the strands you switched off. Their power settings stay the same, so switching Hide off will show those inactive tracks again.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.hideInactive",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.hideInactive",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "gene",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false
+        }
+      ],
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.hideInactive",
+            "version": 1
+          },
+          "capability": "activate"
+        },
+        "options": {
+          "desiredEngaged": true
+        }
+      },
+      "completeWhen": {
+        "panels": {
+          "slice-f2b4e46327a2": {
+            "tracks": {
+              "forward": true,
+              "reverse": false,
+              "sequence": true
+            }
+          },
+          "slice-210e10f41dd0": {
+            "tracks": {
+              "forward": true,
+              "reverse": false,
+              "sequence": true
+            }
+          },
+          "slice-5ff4df6986ca": {
+            "tracks": {
+              "forward": false,
+              "reverse": true,
+              "sequence": true
+            }
+          },
+          "slice-98214c680329": {
+            "tracks": {
+              "forward": false,
+              "reverse": true,
+              "sequence": true
+            }
+          }
+        },
+        "hideInactive": true
+      },
+      "settleMs": 12000
+    },
+    {
+      "id": "all-tracks-result",
+      "section": "Making space",
+      "title": "More room for the comparison",
+      "body": "The inactive tracks have gone from the layout. All four genomes now show the strand containing SAMD11 and SL, with less space between the parts we're comparing. This can make it easier to keep several genome panels in view.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-5ff4df6986ca"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "gene",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": true
+        }
+      ]
+    },
+    {
+      "id": "unfocus",
+      "section": "Unfocus and review",
+      "title": "Clear focus across the genomes",
+      "body": "The general Unfocus button clears every focused gene at once. This is handy when comparing several genomes: you don't have to clear each gene separately in its own focus bar. Click Unfocus to clear SAMD11 from all four panels.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.unfocus",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.unfocus",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": true,
+          "zoom": true,
+          "link": "gene",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "focus": "SAMD11",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": true
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.unfocus",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "pauseMs": 900
+        }
+      },
+      "completeWhen": {
+        "link": "none",
+        "pan": false,
+        "zoom": false,
+        "panels": {
+          "slice-f2b4e46327a2": {
+            "focus": ""
+          },
+          "slice-210e10f41dd0": {
+            "focus": ""
+          },
+          "slice-5ff4df6986ca": {
+            "focus": ""
+          },
+          "slice-98214c680329": {
+            "focus": ""
+          }
+        }
+      },
+      "settleMs": 12000
+    },
+    {
+      "id": "unfocus-result",
+      "section": "Unfocus and review",
+      "title": "All genes are unfocused",
+      "body": "The four gene of focus bars have gone. Unfocus has also cleared the gene link and switched off linked Pan and Zoom. The track visibility choices remain, so you can keep the more compact layout as you browse.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-f2b4e46327a2"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-210e10f41dd0"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-5ff4df6986ca"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-98214c680329"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": true
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "section": "Unfocus and review",
+      "title": "What we've covered",
+      "body": "We've compared two annotations on GRCh38, linked their regions by coordinates, and used Pan and Zoom together and separately. We've also linked SAMD11 across human, mouse and rat by its symbol, made space by switching off unused strands, and cleared every focused gene with Unfocus. These controls can be combined as you build your own comparisons. Hide removes the space occupied by inactive tracks.",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "deferUntilReady": true,
+      "autoplayMs": 10000,
+      "holdMs": 1100,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "spotlight": {
+        "target": {
+          "id": "browser.globalControls",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": false,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": false,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": true
+        }
+      ]
+    }
+  ]
+}

@@ -43,7 +43,21 @@ test('the builder panel can be dragged wider or narrower from its left edge', ()
   assert.match(builder, /resize\.startWidth \+ resize\.startX - event\.clientX/)
   assert.match(builder, /style=\{\{ width: builderWidth, transform: builderPanelTransform \}\}/)
   assert.match(builder, /window\.localStorage\.setItem\(BUILDER_WIDTH_KEY/)
-  assert.match(builder, /window\.innerWidth - cardSize\.width - 10/)
+  assert.match(builder, /window\.innerWidth - cardSize\.width - TUTORIAL_CARD_MARGIN/)
+})
+
+test('the builder previews the card a reader will get, at the size they will get', () => {
+  // It used to assume 420x260 for any step that authored no size of its own. The reader's
+  // card is 380 wide and as tall as its words need, so the box being dragged in the
+  // builder was not the box being authored — and because the bottom edge was computed
+  // from that assumed 260, there was a band at the foot of the window the card could not
+  // be placed in, exactly as in the overlay.
+  assert.match(builder, /TUTORIAL_CARD_WIDTH,\n {4}height: measuredCardHeight,/)
+  assert.match(builder, /const observer = typeof ResizeObserver === 'function' \? new ResizeObserver\(measure\) : null/)
+  assert.doesNotMatch(builder, /\{ width: 420, height: 260 \}/, 'the preview must not assume a fixed card size')
+  // The drag is bounded by the card's own edges rather than by the viewport's corner, so
+  // it stops where the card stops instead of being silently pulled back by the render.
+  assert.match(builder, /const maxY = window\.innerHeight \? \(window\.innerHeight - height - TUTORIAL_CARD_MARGIN\) \/ window\.innerHeight : 1/)
 })
 
 test('wider builder panels use horizontal space to reduce vertical scrolling', () => {
@@ -57,7 +71,7 @@ test('wider builder panels use horizontal space to reduce vertical scrolling', (
 
 test('a highlighted control has an explicit interaction permission', () => {
   assert.match(builder, /Allow interaction with highlighted target/)
-  assert.match(builder, /targetInstanceLabel\(selectedTarget\)/)
+  assert.match(builder, /targetInstanceLabel\(selectedTarget, builder.document\?\.datasets\)/)
   assert.match(builder, /checked=\{highlightedTargetAllowed\}/)
   assert.match(builder, /sameTargetReference\(entry\.target, selectedTarget\)/)
 })
@@ -175,7 +189,7 @@ test('the Genome Selector shows ten rows and delegates vertical scrolling to the
   assert.match(selectorView, /overflowAnchor: 'none'/)
   assert.match(selectorView, /className="overflow-x-auto overflow-y-hidden flex-1 min-h-0"/)
   assert.doesNotMatch(selectorView, /calc\(100vh - 440px\)/)
-  assert.match(app, /data-tutorial-page-scroll=\{currentView === 'genome_selector'/)
+  assert.match(app, /data-tutorial-page-scroll=\{\['genome_selector', 'genome_browser'\]\.includes\(currentView\)/)
   assert.match(app, /currentView === 'structural_variation' \|\| currentView === 'genome_selector'/)
   assert.match(app, /scrollContainerNode=\{mainContentNode\}/)
 })
@@ -231,7 +245,7 @@ test('a step can be authored to arrive with the tutorial genomes already selecte
 
   // The records the arrival resolves against are rebuilt whenever the scene is reused,
   // not only when it is installed, or a reused scene selects nothing at all.
-  assert.match(provider, /rememberDatasetGenomes\(datasets, previous\.genomes\)/)
+  assert.match(provider, /rememberDatasetGenomes\(datasets, genomes\)/)
   assert.match(provider, /This step arrives with genomes selected, but none of them are installed/)
 })
 
@@ -252,12 +266,21 @@ test('a fixed selector scene keeps the pills strip in the layout instead of hidi
   // Selecting a genome must show its pill arriving, which is the point of the step.
   assert.doesNotMatch(app, /hideTutorialSelectorPills/)
   assert.match(app, /const reserveTutorialSelectorPills = Boolean/)
-  assert.match(app, /\(topBarSpecies\.length > 0 \|\| reserveTutorialSelectorPills\)/)
+  assert.match(app, /topBarSpecies\.length > 0 \|\| reserveTutorialSelectorPills \|\| showNoGenomesMessage/)
   // Held open but invisible while empty, so the first pill does not push the rows down.
-  assert.match(app, /visibility: topBarSpecies\.length === 0 \? 'hidden' : undefined/)
+  assert.match(app, /visibility: \(topBarSpecies\.length === 0 && !showNoGenomesMessage\) \? 'hidden' : undefined/)
   assert.match(app, /reserveRowHeight=\{reserveTutorialSelectorPills\}/)
-  assert.match(pills, /export const PILLS_ROW_HEIGHT = 46/)
+  assert.match(pills, /export const PILLS_ROW_HEIGHT = PILL_CONTENT_HEIGHT/)
   assert.match(pills, /reserveRowHeight \? \{ minHeight: PILLS_ROW_HEIGHT \} : undefined/)
+})
+
+test('the empty-strip message never appears over a tutorial', () => {
+  // The strip now says what to do when it is empty, which is the opposite of what a
+  // tutorial wants: its sandbox starts with no pills on purpose and has its own way to
+  // add one. The reservation above must stay blank, so the message is gated on there
+  // being no tutorial at all rather than merely on the strip being empty.
+  assert.match(app, /const showNoGenomesMessage = topBarSpecies\.length === 0 && !tutorialConfig/)
+  assert.match(app, /emptyState=\{showNoGenomesMessage \? \(/)
 })
 
 test('a step can be re-done after Back, and Next never unticks what the user has ticked', () => {

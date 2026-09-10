@@ -17,6 +17,7 @@ const contracts = TUTORIAL_TARGET_VIEWS.flatMap((view) => (
     contractVersion: 1,
     authoringVisible: true,
     ...target,
+    ...(view.viewId === 'genome_browser' && !['browser.globalControls', 'browser.hideInactive', 'browser.tracks', 'browser.detail', 'browser.flatten', 'browser.unfocus', 'browser.biotypes', 'browser.pan', 'browser.zoom', 'browser.linkRegion', 'browser.linkGene'].includes(target.id) && !target.id.startsWith('browser.biotype.') ? { parameters: { ...target.parameters, recipeId: { type: 'string', required: false } } } : {}),
     viewId: view.viewId,
   }))
 ))
@@ -71,7 +72,7 @@ export function validateTargetRef(ref) {
   return problems
 }
 
-export function targetRefSelector(ref) {
+function unscopedSelector(ref) {
   const contract = tutorialTarget(ref?.id)
   if (!contract || validateTargetRef(ref).length) return ''
   if (contract.anchor) return `[data-tour-id="${escapeAttribute(contract.anchor)}"]`
@@ -84,9 +85,15 @@ export function targetRefSelector(ref) {
   return ''
 }
 
+export function targetRefSelector(ref) {
+  const selector = unscopedSelector(ref)
+  return selector && ref?.params?.recipeId ? `[data-tutorial-genome="${escapeAttribute(ref.params.recipeId)}"] ${selector}` : selector
+}
+
 export function targetRefAnchor(ref) {
   const contract = tutorialTarget(ref?.id)
   if (!contract || validateTargetRef(ref).length) return null
+  if (ref.params?.recipeId) return { selector: targetRefSelector(ref) }
   if (contract.anchor) return contract.anchor
   if (contract.anchorTemplate) return interpolate(contract.anchorTemplate, ref.params)
   const selector = targetRefSelector(ref)
@@ -95,28 +102,38 @@ export function targetRefAnchor(ref) {
 
 export function targetRefFromElement(element) {
   if (!element) return null
+  const pill = element.closest?.('[data-tutorial-pill]')
+  if (pill && element.matches?.('button')) return targetRef('app.datasetPill', { dataset: pill.getAttribute('data-tutorial-pill') })
   const tourId = element.getAttribute?.('data-tour-id') || ''
+  const recipeId = element.closest?.('[data-tutorial-genome]')?.getAttribute('data-tutorial-genome')
+  const picked = (id, params = {}) => targetRef(id, { ...params, ...(recipeId && tutorialTarget(id)?.parameters?.recipeId ? { recipeId } : {}) })
   for (const contract of contracts) {
-    if (contract.anchor === tourId) return targetRef(contract.id)
+    if (contract.anchor === tourId) return picked(contract.id)
     if (contract.anchorTemplate && tourId) {
       const keys = [...contract.anchorTemplate.matchAll(/\{([A-Za-z][A-Za-z0-9]*)\}/g)].map((match) => match[1])
       const pattern = '^' + contract.anchorTemplate
         .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         .replace(/\\\{[A-Za-z][A-Za-z0-9]*\\\}/g, '(.+)') + '$'
       const match = tourId.match(new RegExp(pattern))
-      if (match) return targetRef(contract.id, Object.fromEntries(keys.map((key, index) => [key, match[index + 1]])))
+      if (match) return picked(contract.id, Object.fromEntries(keys.map((key, index) => [key, match[index + 1]])))
     }
     const selector = contract.selector
-    if (selector && element.matches?.(selector)) return targetRef(contract.id)
+    if (selector && element.matches?.(selector)) return picked(contract.id)
     if (contract.selectorTemplate) {
       const attr = contract.selectorTemplate.match(/^\[([^=]+)=\\?"\{([^}]+)\}\\?"\]$/)
-      if (attr && element.hasAttribute?.(attr[1])) return targetRef(contract.id, { [attr[2]]: element.getAttribute(attr[1]) })
+      if (attr && element.hasAttribute?.(attr[1])) return picked(contract.id, { [attr[2]]: element.getAttribute(attr[1]) })
     }
   }
   return null
 }
 
 export function targetRefFromAnchor(anchor) {
+  const scoped = typeof anchor === 'object' && anchor?.selector?.match(/^\[data-tutorial-genome="([^"]+)"\] (.+)$/)
+  if (scoped) {
+    const ref = targetRefFromAnchor({ selector: scoped[2] }) || targetRefFromAnchor(scoped[2].match(/^\[data-tour-id="([^"]+)"\]$/)?.[1])
+    if (ref) return targetRef(ref.id, { ...ref.params, recipeId: scoped[1] })
+  }
+
   const selector = typeof anchor === 'object' ? String(anchor?.selector || '') : ''
   const tourId = typeof anchor === 'string' ? anchor : ''
   for (const contract of contracts) {

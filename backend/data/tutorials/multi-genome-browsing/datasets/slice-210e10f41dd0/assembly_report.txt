@@ -1,0 +1,4 @@
+# Assembly name:  EGT_210E10F41D.1
+# Organism name:  Human RefSeq (tutorial slice)
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+1	assembled-molecule	1	Chromosome	CM000663.2	=	NC_000001.11	Primary Assembly	1075000	chr1

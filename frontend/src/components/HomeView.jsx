@@ -103,6 +103,12 @@ function HomeView({ theme, onNavigate }) {
       ),
     },
     {
+      id: 'alignment_explorer',
+      title: 'Alignment Explorer',
+      description: 'Explore alignment blocks and connected sequence paths in named layers',
+      icon: <AppButtonIcon buttonId="alignment_explorer" isLight={isLight} />,
+    },
+    {
       id: 'alignment',
       title: 'Alignment',
       description: 'Align genic regions across haplotypes or species in the context of annotation',

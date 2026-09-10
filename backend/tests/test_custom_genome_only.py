@@ -107,7 +107,7 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
             def get_reference_length(self, name):
                 return {"chr1": 244, "chr2": 120}[name]
 
-        with patch.object(main, "_get_browse_db_optional", lambda _g: ""), \
+        with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", False)), \
                 patch.object(main, "_get_browse_fasta", lambda _g: _FakeFasta()), \
                 patch.object(main, "_build_genome_synonym_index", lambda _g, _r: {}), \
                 patch.object(main, "_get_genome_metadata_path", lambda _g: ""):
@@ -123,11 +123,44 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
         def _no_fasta(_genome):
             raise HTTPException(status_code=404, detail="FASTA not configured")
 
-        with patch.object(main, "_get_browse_db_optional", lambda _g: ""), \
+        with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", False)), \
                 patch.object(main, "_get_browse_fasta", _no_fasta):
             with self.assertRaises(HTTPException) as ctx:
                 asyncio.run(main.browse_regions(genome="reference"))
         self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_regions_keep_the_caller_polling_when_an_index_is_the_only_hope(self):
+        # A genome with no FASTA has nothing to draw until its index lands, so
+        # here — and only here — the region list still says "not yet" rather
+        # than reporting a genome with nothing in it.
+        def _no_fasta(_genome):
+            raise HTTPException(status_code=404, detail="FASTA not configured")
+
+        with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", True)), \
+                patch.object(main, "_get_browse_fasta", _no_fasta):
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(main.browse_regions(genome="reference"))
+        self.assertEqual(ctx.exception.status_code, main.INDEX_BUILDING_STATUS)
+
+    def test_an_assembly_is_browsable_while_its_genes_are_still_indexing(self):
+        # The whole point of the change: regions come from the FASTA, which is
+        # ready immediately, so the panel opens instead of waiting out a build
+        # that takes minutes. Only the gene counts are outstanding.
+        class _FakeFasta:
+            references = ("chr1",)
+
+            def get_reference_length(self, name):
+                return 1000
+
+        with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", True)), \
+                patch.object(main, "_get_browse_fasta", lambda _g: _FakeFasta()), \
+                patch.object(main, "_build_genome_synonym_index", lambda _g, _r: {}), \
+                patch.object(main, "_get_genome_metadata_path", lambda _g: ""):
+            regions = asyncio.run(main.browse_regions(genome="reference"))
+
+        self.assertEqual([r.chrom for r in regions], ["chr1"])
+        self.assertEqual(regions[0].end, 1000)
+        self.assertEqual(regions[0].gene_count, 0)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,53 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "slice-98214c680329",
+  "datasetRef": "embedded:slice-98214c680329@1",
+  "speciesKey": "tutorial_slice_98214c680329",
+  "assembly": "EGT_98214C6803.1",
+  "assemblyName": "GRCr8",
+  "displayName": "Rat Ensembl (tutorial slice)",
+  "scientificName": "Rattus norvegicus",
+  "commonName": "Rat Ensembl",
+  "browsableRange": {
+    "5": [
+      172030000,
+      172180000
+    ]
+  },
+  "source": {
+    "display_name": "Rat Ensembl",
+    "scientific_name": "Rattus norvegicus",
+    "common_name": "Rat Ensembl",
+    "assembly_name": "GRCr8",
+    "provider": "ensembl",
+    "release": "2024_03",
+    "chrom": "5",
+    "start": 172030000,
+    "end": 172180000
+  },
+  "genes": [
+    "gene:ENSRNOG00000020205",
+    "gene:ENSRNOG00000020244",
+    "gene:ENSRNOG00000020295",
+    "gene:ENSRNOG00000020302",
+    "gene:ENSRNOG00000020342",
+    "gene:ENSRNOG00000021392",
+    "gene:ENSRNOG00000069527",
+    "gene:ENSRNOG00000087527"
+  ],
+  "files": {
+    "fasta": "slice.fa.bgz",
+    "fasta_index": "slice.fa.bgz.fai",
+    "fasta_gzi": "slice.fa.bgz.gzi",
+    "gff3": "slice.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "4d09f364772c23f07b3c60563433a7739609cc7ada3cd7bce66acd83e1a12c4b",
+    "fasta_index": "b31a183ad5050643b8f39d22e28298f2850bdaa83311961d133aedd301fe3583",
+    "fasta_gzi": "22bd93231ab4bb57a3019cad03f1630360adb465703ce2215dd998a04c5e443b",
+    "gff3": "9af0c136c0c16f093ddf20428167f596a4c29a255d5045b4f183a0235ba4a26e",
+    "metadata": "a4291804d16d489afc91b671ce21bf9d20b08919756feb9465dbe26d30babc41"
+  }
+}

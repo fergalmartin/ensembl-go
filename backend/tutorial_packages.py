@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import zipfile
 from datetime import datetime, timezone
@@ -155,12 +156,30 @@ def validate_document(document: Any, *, portable: bool = True) -> List[str]:
     return list(dict.fromkeys(problems))
 
 
+def bundled_datasets(tutorial_id: Any) -> Path:
+    return Path(__file__).resolve().parent / "data" / "tutorials" / _slug(tutorial_id) / "datasets"
+
+
+def find_bundled_recipe(recipe_id: str) -> Optional[Path]:
+    if not recipe_id or _slug(recipe_id) != recipe_id:
+        return None
+    root = Path(__file__).resolve().parent / "data" / "tutorials"
+    return next((p for p in root.glob(f"*/datasets/{recipe_id}") if p.is_dir() and not p.is_symlink()), None)
+
+
 def save_draft(output_dir: Any, document: Dict[str, Any]) -> Dict[str, Any]:
     problems = validate_document(document, portable=True)
     if problems:
         raise ValueError(" ".join(problems))
     if str(document.get("id") or "") in RESERVED_TUTORIAL_IDS:
         raise ValueError("Built-in tutorial ids are reserved; clone the tutorial to a draft first.")
+    destination = draft_directory(output_dir, document["id"]) / "datasets"
+    for dataset in document.get("datasets") or []:
+        if not isinstance(dataset, dict) or not dataset.get("embedded"):
+            continue
+        recipe = find_bundled_recipe(str(dataset.get("recipeId") or ""))
+        if recipe and not (destination / recipe.name).exists():
+            shutil.copytree(recipe, destination / recipe.name)
     saved = json.loads(json.dumps(document))
     saved["updatedAt"] = _now()
     saved["revision"] = max(1, int(saved.get("revision") or 1))
@@ -401,6 +420,9 @@ def promote_draft(output_dir: Any, tutorial_id: Any, repository_root: Any) -> Di
         raise ValueError("Promotion is only available in an Ensembl Go source checkout.")
     generated.mkdir(parents=True, exist_ok=True)
     identifier = _slug(document["id"])
+    assets = draft_directory(output_dir, tutorial_id) / "datasets"
+    if assets.is_dir():
+        shutil.copytree(assets, root / "backend" / "data" / "tutorials" / identifier / "datasets", dirs_exist_ok=True)
     destination = generated / f"{identifier}.tutorial.json"
     _atomic_json(destination, document)
     modules = sorted(path for path in generated.glob("*.tutorial.json") if path.is_file())

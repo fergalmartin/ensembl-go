@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { API_BASE } from '../backendRuntime'
-import { getGenomeBrowserColor } from '../genomeColorSchemes'
+import { genomeColorResolver } from '../genomeColorSchemes'
 import GenomePill, { genomePillLabels } from './GenomePill'
 import ValidationReportPanel from './ValidationReportPanel'
 import { withGenomeAnalysis } from '../utils/genomeAnalysis'
@@ -237,7 +237,7 @@ export default function GenomeAnalysisOverview({
   genomes,
   theme = 'dark',
   activeGenomeKeys = null,
-  genomeColors = null,
+  config = null,
   analysisReports = {},
   fileOverrides = {},
   onAnalysisStored = null,
@@ -249,6 +249,8 @@ export default function GenomeAnalysisOverview({
   const [fetchedAssemblyInfo, setFetchedAssemblyInfo] = useState(null)
   const [assemblyLoading, setAssemblyLoading] = useState(false)
   const runningRef = useRef(new Set())
+
+  const resolveGenomeColor = useMemo(() => genomeColorResolver(config), [config])
 
   const targets = useMemo(() => buildGenomeAnalysisTargets(genomes, {
     analysisReports,
@@ -412,7 +414,7 @@ export default function GenomeAnalysisOverview({
         // genome. A deactivated one rests in grey, as it does in the top bar.
         const pillColors = target.isActive
           ? {
-            backgroundColor: getGenomeBrowserColor(genomeColors, target.colorIndex),
+            backgroundColor: resolveGenomeColor(target.genome),
             textColor: '#ffffff',
             borderColor: 'transparent',
           }

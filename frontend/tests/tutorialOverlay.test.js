@@ -64,7 +64,29 @@ test('a section is the card heading and the individual step is its subheading', 
   assert.match(overlay, /const sectionTitle = stepSection\(step\)/)
   assert.match(overlay, /data-tutorial-section-title="true"/)
   assert.match(overlay, /data-tutorial-step-title="true"/)
-  assert.match(overlay, /<h2[\s\S]*?\{sectionTitle\}[\s\S]*?<h3[\s\S]*?\{step\.title\}/)
+  // Read from the preview values rather than the step directly, so that a card being
+  // dragged in edit mode shows the words currently in the draft — but the shape is the
+  // same: section above, step title below it.
+  assert.match(overlay, /<h2[\s\S]*?\{previewSection\}[\s\S]*?<h3[\s\S]*?\{previewTitle\}/)
+  assert.match(overlay, /const previewTitle = editing \? \(draft\?\.title \?\? step\.title\) : step\.title/)
+})
+
+test('a card being dragged shows the box that will be saved, not the editing shell', () => {
+  // Edit mode adds inputs, a Save row and a note line, so the shell is taller than the
+  // card being authored. Clamping the drag to the shell put the bottom of the window out
+  // of reach: there was a band there that no card could be placed in, and the position
+  // that came back was the shell's, not the box's.
+  assert.match(overlay, /const editingChrome = editing && !dragging/)
+  // The true box is what the stored position means and what the window's edges bound.
+  assert.match(overlay, /const maxTrueTop = Math\.max\(CARD_MARGIN, size\.height - trueCardHeight - CARD_MARGIN\)/)
+  assert.match(overlay, /const maxCardTop = maxTrueTop/)
+  assert.match(overlay, /top: trueCard \? trueCard\.top : card\.top/)
+  // The shell then sits at the nearest fully visible place, which is a no-op when the two
+  // heights agree — that is, whenever the card is not being edited.
+  assert.match(overlay, /top: Math\.min\(trueTop, maxShellTop\)/)
+  // And the saved height is only ever measured from a card that is not wearing the chrome.
+  assert.match(overlay, /if \(!node\.hasAttribute\('data-tutorial-card-editing'\)\) trueCardHeightRef\.current = measured/)
+  assert.match(overlay, /data-tutorial-card-true-outline="true"/)
 })
 
 test('editing a section heading renames every matching card in this tutorial', () => {
@@ -265,7 +287,7 @@ test('Next does not retype a field that already says what the step asked for', (
   // Two rules, one check, made before the cursor moves so a step the reader has already
   // done does not first look like the tutorial is about to type over them.
   assert.match(provider, /const satisfied = action\.overwrite\n {8}\? existing === String\(action\.value \?\? ''\)\.trim\(\)\n {8}: Boolean\(existing\)/)
-  assert.match(provider, /if \(satisfied\) return false/)
+  assert.match(provider, /if \(satisfied && !forStep.completeWhen\) return false/)
 })
 
 test("a step's interaction policy governs the reader, not the tutorial's own presses", () => {
@@ -273,7 +295,32 @@ test("a step's interaction policy governs the reader, not the tutorial's own pre
   // Next still has to be able to perform the step. Both are the tutorial acting.
   assert.match(provider, /const selfActingRef = useRef\(false\)/)
   assert.match(provider, /const guard = \(event\) => \{\n {6}if \(selfActingRef\.current\) return/)
-  assert.match(provider, /selfActingRef\.current = true\n {4}try \{\n {6}node\.click\(\)/)
+  // One helper for all of it, so a keystroke is covered as well as a click.
+  assert.match(provider, /const actAsTutorial = useCallback\(\(fn\) => \{\n {4}selfActingRef\.current = true/)
+  assert.match(provider, /const clickAsTutorial = useCallback\(\(node\) => \{[\s\S]*?actAsTutorial\(\(\) => node\.click\(\)\)/)
+})
+
+test('nothing the tutorial does to the page is judged as if the reader did it', () => {
+  // The failure this pins down: an arrival, an `ensure` or an `undo` runs while the step
+  // it is preparing is already current, so a bare `.click()` or a synthetic keydown is
+  // measured against *that* step's interaction policy and cancelled. It cost every step
+  // needing the focused gene — a third of the browser tutorial — which arrived with no
+  // gene focused, no drawer, and nothing for the spotlight to land on. Six branches of
+  // `setBrowserControls` had it at once; the biotype branch beside them did not, which is
+  // why reading one of them was never enough.
+  const offenders = provider
+    .split('\n')
+    .map((line, index) => [index + 1, line.trim()])
+    .filter(([, line]) => /\.click\(\)/.test(line))
+    .filter(([, line]) => !/^\/\/|actAsTutorial|clickAsTutorial/.test(line))
+  assert.deepEqual(offenders, [], `press these through clickAsTutorial: ${JSON.stringify(offenders)}`)
+})
+
+test('the precondition that focuses a gene acts as the tutorial', () => {
+  // Typing is not a click, so it needs saying separately: this one sends a keydown, and
+  // the guard cancels keydown unless the current step happens to allow input on that box.
+  assert.match(provider, /actAsTutorial\(\(\) => \{\n {10}if \(typeof search\.focus === 'function'\) search\.focus\(\)/)
+  assert.match(provider, /const unfocusGene = useCallback\(\(\) => \{\n {4}clickAsTutorial\(findAnchor\('browser-unfocus'\)\)/)
 })
 
 test('a direct jump waits for browser controls to mount before setting their state', () => {
@@ -351,7 +398,7 @@ test('the tutorial scratch directory lives inside the user output directory', ()
 })
 
 test('Next performs the step rather than only advancing past it', () => {
-  assert.match(provider, /const next = useCallback\(async \(\) => \{[\s\S]*?await performAction\(forStep\)/)
+  assert.match(provider, /const next = useCallback\(async \(options = \{\}\) => \{[\s\S]*?await performAction\(forStep\)/)
   assert.match(provider, /setPulseAnchor\(action\.anchor\)/)
 })
 
@@ -380,12 +427,12 @@ test('a direct jump waits for the focused gene to exist, not merely for Return t
 
 test('a direct jump into the note editor can create the tutorial note it skipped', () => {
   assert.match(provider, /for \(let attempt = 0; attempt < 3 && !findAnchor\('focus-note-body'\); attempt \+= 1\)/)
-  assert.match(provider, /else findAnchor\('focus-notes-add'\)\?\.click\(\)/)
+  assert.match(provider, /else clickAsTutorial\(findAnchor\('focus-notes-add'\)\)/)
 })
 
 test('autoplay is Next on a timer, and stops when the tutorial does', () => {
   assert.match(provider, /if \(!isRunning \|\| !autoplay \|\| busy\)/)
-  assert.match(provider, /setTimeout\(\(\) => \{ next\(\) \}, remaining\)/)
+  assert.match(provider, /setTimeout\(\(\) => \{ next\(\{ automatic: true \}\) \}, remaining\)/)
 })
 
 test('autoplay publishes how long the step has, so the card can show it', () => {
@@ -564,7 +611,7 @@ test('the sandbox hides the user\'s own genomes, not just their output directory
   ]) {
     assert.ok(provider.includes(`${field}:`), `${field} should be blanked for the sandbox`)
   }
-  assert.match(app, /const extras = tutorialConfig\s+\? \[\]/)
+  assert.match(app, /const extras = tutorialConfig\s+\? \(tutorialConfig.tutorial_selected_genomes \|\| \[\]\)/)
   assert.match(app, /if \(!configLoaded \|\| tutorialConfig\) return/)
 })
 
@@ -693,10 +740,52 @@ test("a transcript's hidden state is set from the drawer's own eye button", () =
   assert.match(provider, /eye\.getAttribute\('aria-pressed'\) === 'false'\) !== wantHidden/)
   const block = provider.slice(provider.indexOf('wanted.hiddenTranscript?.transcript'))
   assert.match(block.slice(0, 500), /clickAsTutorial\(eye\)/)
-  // Before the per-gene pill, since restoring changes how many rows the gene shows.
+  // Three branches whose order is load-bearing in both directions. The drawer's fold has
+  // to run first: collapsed, the drawer lists one row, so a non-canonical transcript's
+  // show/hide button does not exist and the wait for it spends its whole budget failing —
+  // which is exactly how jumping to the step about the hidden transcript came to hide
+  // nothing and leave the step with no label to point at. And both have to run before the
+  // per-gene pill, since restoring a transcript changes how many rows the gene shows.
   const controls = provider.slice(provider.indexOf('const setBrowserControls'))
+  const at = (key) => controls.indexOf(key)
   assert.ok(
-    controls.indexOf('wanted.hiddenTranscript?.transcript') < controls.indexOf('wanted.geneTranscripts?.gene'),
+    at('wanted.drawerTranscripts !== undefined') < at('wanted.hiddenTranscript?.transcript'),
+    'the drawer must be unfolded before a transcript in it can be hidden',
+  )
+  assert.ok(
+    at('wanted.hiddenTranscript?.transcript') < at('wanted.geneTranscripts?.gene'),
     'the hidden transcript must be settled before the row count is',
   )
+})
+
+test('Next does not redo something the reader has already done', () => {
+  // `skipIfEngaged` read one attribute on one anchor, and the step it was written for has
+  // neither. It presses two sequence buttons; the legacy definition named a wrapper around
+  // the pair that reports `data-tutorial-engaged`, but the portable document keeps only the
+  // controls actually pressed, and those are buttons reporting `aria-pressed`. So a reader
+  // who had pressed CDS or protein themselves still had to watch the cursor press both
+  // again — eleven seconds of the tutorial ignoring what they had just done.
+  const block = provider.slice(provider.indexOf('if (action.skipIfEngaged)'))
+  assert.match(block.slice(0, 1600), /actionAnchors\(action\)\.some/)
+  assert.match(block.slice(0, 1600), /data-tutorial-engaged'\) === 'true'/)
+  assert.match(block.slice(0, 1600), /aria-pressed'\) === 'true'/)
+})
+
+test("the drawer's fold is waited for, not just looked up", () => {
+  // On a direct jump the drawer mounts only once the gene has taken focus. A plain
+  // lookup here found nothing about half the time, skipped the fold without a word, and
+  // left every branch under it with a one-row list to work on — so the step about the
+  // hidden transcript hid nothing and had no label to point at, intermittently.
+  assert.match(provider, /const chevron = await waitForAnchor\('focus-transcripts-expand'\)/)
+})
+
+test('hiding a transcript for the reader does not leave a pointer behind', () => {
+  // The drawer marks the row it just hid as hovered and ghosts that transcript on the
+  // track, because a reader presses the button with the pointer sitting there. An arrival
+  // has no pointer, so it has to release what the click implied, or the row stays lit and
+  // the transcript stays ghosted for the whole step — competing with the highlight the
+  // step actually made. React derives onMouseLeave from `mouseout`, so `mouseleave` alone
+  // does not clear it.
+  const block = provider.slice(provider.indexOf('wanted.hiddenTranscript?.transcript'))
+  assert.match(block.slice(0, 1400), /new MouseEvent\('mouseout', \{ bubbles: true, relatedTarget: document\.body \}\)/)
 })

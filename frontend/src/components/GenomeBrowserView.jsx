@@ -1,8 +1,11 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { flushSync } from 'react-dom'
 import useTutorial from '../hooks/useTutorial'
-import { registerBrowserNotes } from '../utils/browserTutorialControls'
+import { registerBrowserNotes, describeBrowserViewport, browserViewportControls } from '../utils/browserTutorialControls'
+import { linkedGeneFraming } from '../utils/linkedGeneFraming'
 import GenomeBrowser from './GenomeBrowser'
+import GenomeWheel from './GenomeWheel'
+import { registerTutorialBrowserHost } from '../utils/tutorialBrowserScene.js'
 import FocusGeneDrawer, { FOCUS_DRAWER_DETAIL_WIDTH, FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from './FocusGeneDrawer'
 import AssemblyInfoDrawer from './AssemblyInfoDrawer'
 import { hasAssemblyMetadata } from '../utils/assemblyMetadataRows'
@@ -10,10 +13,13 @@ import ScreenshotExportModal from './ScreenshotExportModal'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
 
 import { API_BASE } from '../backendRuntime'
-import { getGenomeBrowserColor, normalizeGenomeBrowserColors } from '../genomeColorSchemes'
+import { classifyReadiness, readinessRetryDelay } from '../utils/browserReadiness'
+import { genomeColorResolver } from '../genomeColorSchemes'
 import useScreenshotTargets from '../hooks/useScreenshotTargets'
 import { rasterizeSvgMarkup } from '../utils/screenshotExport'
 import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch } from '../utils/genomeIdentity'
+import { cycleBottomSpacer } from '../utils/genomeWheel'
+import { LOCKED_ICON_PATH, UNLOCKED_ICON_PATH } from '../utils/lockIcons'
 import {
     DEFAULT_NOTE_SORT_MODE,
     buildGeneNoteTarget,
@@ -60,7 +66,7 @@ const DRAG_SCROLL_EXCLUDED_SELECTOR = [
     '[data-no-drag-scroll="true"]',
 ].join(',')
 
-const IndexPreparingNotice = ({ isLight, state, detail }) => {
+const IndexPreparingNotice = ({ isLight, state, detail, onRetry }) => {
     const isError = state === 'error'
     const title = isError ? 'Index Not Ready' : 'Building Index'
     const message = isError
@@ -82,6 +88,20 @@ const IndexPreparingNotice = ({ isLight, state, detail }) => {
             <p className={`text-xs text-center max-w-sm mt-1 ${isLight ? (isError ? 'text-amber-700/80' : 'text-blue-700/80') : (isError ? 'text-amber-300/90' : 'text-blue-300/80')}`}>
                 {message}
             </p>
+            {/* A build that failed is remembered, so polling alone will never
+                clear it — without a way to ask again the only way out was to
+                restart the backend. */}
+            {isError && onRetry && (
+                <button
+                    type="button"
+                    onClick={onRetry}
+                    className={`mt-3 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${isLight
+                        ? 'border-amber-300 bg-white text-amber-800 hover:bg-amber-50'
+                        : 'border-amber-400/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/20'}`}
+                >
+                    Build the index again
+                </button>
+            )}
         </div>
     )
 }
@@ -114,6 +134,37 @@ function buildGenomePillLabel(species) {
 
 function speciesItemKey(species) {
     return getGenomeKey(species)
+}
+
+// The app's scroll container. `findPanelScroller` also insists the content
+// already overflows, which is the wrong question for the alignment below: the
+// whitespace under the last panel exists precisely to create that overflow.
+function findScrollHost(from) {
+    let node = from
+    while (node && node !== document.body) {
+        const overflowY = window.getComputedStyle(node).overflowY
+        if (overflowY === 'auto' || overflowY === 'scroll') return node
+        node = node.parentElement
+    }
+    return null
+}
+
+// How much of the top of the page the general control bar is covering. Zero
+// while it is locked into the page; once unlocked it floats over the top of the
+// scroller, and a genome has to be parked under it rather than behind it.
+function stickyControlsInset(root) {
+    const bar = root?.querySelector('[data-browser-global-controls="true"]')
+    if (!bar || window.getComputedStyle(bar).position !== 'sticky') return 0
+    return Math.round(bar.getBoundingClientRect().height)
+}
+
+// The control bar a genome is aligned by — the row carrying its pill, which is
+// what the reader sees meet the app's top bar.
+function panelAlignmentAnchor(host, panelKey) {
+    const wrapper = panelKey
+        ? host?.querySelector(`[data-focus-panel-wrapper="${CSS.escape(panelKey)}"]`)
+        : [...(host?.querySelectorAll('[data-focus-panel-wrapper]') || [])].pop()
+    return wrapper?.querySelector('[data-browser-toolbar="true"]') || wrapper || null
 }
 
 function dedupeSpeciesList(speciesList) {
@@ -220,6 +271,8 @@ function clampWindowToRegion(chrom, start, end, region) {
 export default function GenomeBrowserView({
     theme = 'dark',
     config,
+    listedGenomes = [],
+    onPromoteGenome = null,
     isActive = true,
     allowBackgroundPrep = false,
     onRefGeneSelect,
@@ -230,6 +283,7 @@ export default function GenomeBrowserView({
     alignmentOverlay,
     onClearAlignmentOverlay,
     externalRefGene = null,
+    externalAlignmentLocus = null,
     externalTgtGene = null,
     externalFocusGenesByGenome = null,
     onGeneFocusByGenomeChange = null,
@@ -322,10 +376,9 @@ export default function GenomeBrowserView({
         return dedupeSpeciesList(config?.active_species || []).filter((species) => Boolean(species?.files?.gff3))
     }, [config?.active_species])
 
-    const genomeBrowserColors = useMemo(
-        () => normalizeGenomeBrowserColors(config?.genome_browser_colors),
-        [config?.genome_browser_colors]
-    )
+    // Panel colour follows the genome, not the panel's position, so promoting a
+    // genome to the top no longer repaints every panel below it.
+    const resolveGenomeColor = useMemo(() => genomeColorResolver(config), [config])
 
     const panels = useMemo(() => {
         const refGff = String(config?.ref_gff || '').trim()
@@ -530,7 +583,7 @@ export default function GenomeBrowserView({
                     // The sequence endpoint is keyed by genome, not by panel.
                     genomeParam: panel.genomeParam,
                     pillLabel: panel.genomePillLabel || panel.label,
-                    color: getGenomeBrowserColor(genomeBrowserColors, panel.index),
+                    color: resolveGenomeColor(panel.species),
                     gene: data.gene,
                     transcripts: data.transcripts,
                     loading: data.loading,
@@ -539,7 +592,7 @@ export default function GenomeBrowserView({
                 }
             })
             .filter(Boolean)
-    }, [panels, focusPanelOrder, focusTranscriptData, genomeBrowserColors])
+    }, [panels, focusPanelOrder, focusTranscriptData, resolveGenomeColor])
 
     const findPanelScroller = useCallback((from) => {
         let node = from
@@ -552,6 +605,123 @@ export default function GenomeBrowserView({
         }
         return null
     }, [])
+
+    // Unlocked — the default — has the general control bar follow the reader down
+    // the page, so Cycle and the rest stay in reach however far they scroll.
+    // Locked leaves it in the page, where it scrolls away like everything else.
+    const [controlsFollowScroll, setControlsFollowScroll] = useState(true)
+
+    // ── Cycling to a genome ──────────────────────────────────────────────────
+    //
+    // Whichever genome the Cycle wheel lands on is parked against the app's top
+    // bar, so a jump between genomes always leaves the reader looking at the
+    // same place on screen rather than wherever that genome happened to sit.
+    const cycleScrollRef = useRef(null)
+    const stopCycleScroll = useCallback(() => {
+        const running = cycleScrollRef.current
+        if (!running) return
+        cancelAnimationFrame(running.frame)
+        window.removeEventListener('wheel', running.abandon, true)
+        window.removeEventListener('pointerdown', running.abandon, true)
+        cycleScrollRef.current = null
+    }, [])
+    useEffect(() => stopCycleScroll, [stopCycleScroll])
+
+    const alignPanelToTop = useCallback((panelKey) => {
+        if (!panelKey) return
+        stopCycleScroll()
+        const abandon = () => stopCycleScroll()
+        window.addEventListener('wheel', abandon, true)
+        window.addEventListener('pointerdown', abandon, true)
+        // A genome that has just been added is not on the page yet, and once it
+        // is its tracks keep laying out for a while afterwards. So the target is
+        // remeasured every frame instead of being resolved once: the follow
+        // waits for the panel to appear and then keeps closing on its control
+        // bar while the panel grows underneath it.
+        const deadline = performance.now() + 3000
+        let previous = performance.now()
+        let arrived = null
+        const step = (now) => {
+            const host = screenshotPanelsRef.current
+            const scroller = host ? findScrollHost(host) : null
+            const anchor = panelAlignmentAnchor(host, panelKey)
+            if (scroller && anchor) {
+                const inset = stickyControlsInset(screenshotOverlayRootRef.current)
+                const gap = anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top - inset
+                const eased = gap * (1 - Math.exp(-Math.min(64, now - previous) / 70))
+                // The last few pixels go in one move. `scrollTop` is quantised, so
+                // a step under a pixel is rounded away and the easing stalls just
+                // short — leaving the genome resting under the top bar for good.
+                const travel = Math.abs(eased) < 1 ? gap : eased
+                scroller.scrollTop = Math.max(0, Math.min(
+                    scroller.scrollHeight - scroller.clientHeight,
+                    scroller.scrollTop + travel,
+                ))
+                // Held briefly after arriving, so a panel that is still laying its
+                // tracks out cannot walk the bar back off the top; then the page is
+                // the reader's again, well before the deadline.
+                arrived = Math.abs(gap) <= 1 ? (arrived ?? now) : null
+                if (arrived !== null && now - arrived > 250) return stopCycleScroll()
+            }
+            previous = now
+            if (now >= deadline) return stopCycleScroll()
+            cycleScrollRef.current = { frame: requestAnimationFrame(step), abandon }
+        }
+        cycleScrollRef.current = { frame: requestAnimationFrame(step), abandon }
+    }, [stopCycleScroll])
+
+    const handleCyclePromote = useCallback(async (panelKey, action, source) => {
+        if (onPromoteGenome) await onPromoteGenome(panelKey, action, source)
+        // Also for a genome that was already active: 'add' cannot add it twice,
+        // so the scroll is the whole of what the jump does.
+        alignPanelToTop(panelKey)
+    }, [onPromoteGenome, alignPanelToTop])
+
+    // The last genome has nothing under it to scroll into, so it alone could
+    // never reach the top bar. This is the missing distance, kept as empty page
+    // beneath the final panel.
+    const [panelsBottomSpacer, setPanelsBottomSpacer] = useState(0)
+    useEffect(() => {
+        const host = screenshotPanelsRef.current
+        if (!host || !hasPanels || screenshotMode) {
+            setPanelsBottomSpacer(0)
+            return undefined
+        }
+        const measure = () => {
+            const scroller = findScrollHost(host)
+            const anchor = panelAlignmentAnchor(host, '')
+            if (!scroller || !anchor) return
+            const anchorOffset = anchor.getBoundingClientRect().top
+                - scroller.getBoundingClientRect().top + scroller.scrollTop
+            // An unlocked control bar eats the top of the viewport, so that much
+            // less whitespace is needed under the last genome to reach it.
+            const inset = stickyControlsInset(screenshotOverlayRootRef.current)
+            setPanelsBottomSpacer((prev) => {
+                const next = cycleBottomSpacer({
+                    viewport: scroller.clientHeight - inset,
+                    scrollHeight: scroller.scrollHeight,
+                    anchorOffset,
+                    spacer: prev,
+                })
+                // The spacer is part of what is being measured, so shrinking it
+                // by a rounding wobble would keep the observer firing forever.
+                // Growth is always taken: too little whitespace is the one error
+                // that shows, as a genome that stops short of the top bar.
+                return next > prev || prev - next > 1 ? next : prev
+            })
+        }
+        measure()
+        // Panels grow as their tracks lay out, which moves the last control bar.
+        const observer = new ResizeObserver(measure)
+        observer.observe(host)
+        const scroller = findScrollHost(host)
+        if (scroller) observer.observe(scroller)
+        window.addEventListener('resize', measure)
+        return () => {
+            observer.disconnect()
+            window.removeEventListener('resize', measure)
+        }
+    }, [panels, hasPanels, screenshotMode, isActive, controlsFollowScroll])
 
     // Which transcript has its metadata/sequence detail open, per panel.
     const [detailTranscriptByPanel, setDetailTranscriptByPanel] = useState({})
@@ -748,11 +918,13 @@ export default function GenomeBrowserView({
     // Snapshot on the way in, restore on the way out. Same shape as the focused-gene
     // snapshot App keeps around the sandbox, and for the same reason.
     const preTutorialViewRef = useRef(null)
+    const tutorialSceneActive = tutorialRunning || panels.some((p) => p.species.tutorial_dataset_id)
     useEffect(() => {
-        if (tutorialRunning) {
+        if (tutorialSceneActive) {
             if (!preTutorialViewRef.current) {
                 preTutorialViewRef.current = {
                     forceTracksVisibility,
+                    lockPan, lockZoom, linkedPanelKeys, linkModel: linkModelRef.current, panelPositions, selectedGenes, navigateGenes,
                     hideInactiveMode,
                     compressMode,
                     flattenMode,
@@ -769,12 +941,15 @@ export default function GenomeBrowserView({
         setCompressMode(snapshot.compressMode)
         setFlattenMode(snapshot.flattenMode)
         setBiotypeFilter(snapshot.biotypeFilter)
+        setLockPan(snapshot.lockPan); setLockZoom(snapshot.lockZoom)
+        setLinkedPanelKeys(snapshot.linkedPanelKeys); linkModelRef.current = snapshot.linkModel
+        setPanelPositions(snapshot.panelPositions); setSelectedGenes(snapshot.selectedGenes); setNavigateGenes(snapshot.navigateGenes)
         // Deliberately not in the dependency list: this has to read whatever the state was
         // at the moment the tutorial started and whatever it is when the tutorial ends,
         // and re-running it on every change of them would snapshot the tutorial's own
         // edits over the user's.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tutorialRunning])
+    }, [tutorialSceneActive])
 
     // Published so a tutorial's Back can remove the note it took. It goes through the
     // store, so the drawer's note list and the gene's note bubble both update — deleting
@@ -1227,6 +1402,16 @@ export default function GenomeBrowserView({
     const fallbackBrowseRoot = config?.output_dir ? `${config.output_dir.replace(/\/+$/, '')}/local_data` : (config?.working_dir || '.')
     const activePanelKeySet = useMemo(() => new Set(panels.map((panel) => panel.key)), [panels])
 
+    const lastAlignmentLocus = useRef(null)
+    useEffect(() => {
+        if (!isActive || !externalAlignmentLocus || lastAlignmentLocus.current === externalAlignmentLocus.token) return
+        const panel = panels.find(p => p.key === externalAlignmentLocus.genomeKey)
+        if (!panel) return
+        lastAlignmentLocus.current = externalAlignmentLocus.token
+        const { chrom, start, end } = externalAlignmentLocus
+        setNavigateGenes(prev => ({ ...prev, [panel.key]: { chrom, start, end, windowStart: start, windowEnd: end, centerVertically: false } }))
+    }, [externalAlignmentLocus, isActive, panels])
+
     const firstPanel = panels[0] || null
     const secondPanel = panels[1] || null
 
@@ -1506,12 +1691,26 @@ export default function GenomeBrowserView({
         })
     }, [panels])
 
-    const checkGenomeReady = useCallback(async (panel) => {
+    // One check per panel at a time. Two poll loops used to race here with no
+    // guard between them, so a genome could have several readiness requests open
+    // at once — every one of them re-reading the configuration on the backend.
+    const readyCheckInFlightRef = useRef(new Map())
+    const readyCheckAttemptsRef = useRef(new Map())
+
+    const checkGenomeReady = useCallback((panel) => {
         const panelKey = panel.key
+        const inFlight = readyCheckInFlightRef.current.get(panelKey)
+        if (inFlight) return inFlight
+
         const updateState = (state, detail = '') => {
             setBrowserReadyState((prev) => {
                 const current = prev?.[panelKey]
                 if (current?.state === 'ready' && (state === 'checking' || state === 'pending')) {
+                    return prev
+                }
+                if (current?.state === state && (current?.detail || '') === (detail || '')) {
+                    // Nothing moved. Returning prev keeps a poll that is waiting
+                    // out a long build from re-rendering every panel each time.
                     return prev
                 }
                 return {
@@ -1521,44 +1720,75 @@ export default function GenomeBrowserView({
             })
         }
 
-        updateState('checking')
-        try {
-            const res = await fetch(`${API_BASE}/api/browse/regions?genome=${encodeURIComponent(panel.genomeParam)}`)
-            if (res.ok) {
-                const data = await res.json()
-                if (Array.isArray(data) && data.length > 0) {
-                    updateState('ready')
-                    return 'ready'
-                }
-                updateState('pending')
-                return 'pending'
-            }
+        // Counts consecutive "no such genome" answers only, not polls in
+        // general: a genome that has just been added answers 404 until its files
+        // land in the configuration, and that is the wait this budget is for.
+        // Counting every poll would spend the budget waiting out a long index
+        // build and then call the next blip fatal.
+        const attemptKey = `${panelKey}|${panel.genomeParam}`
+        const attempt = readyCheckAttemptsRef.current.get(attemptKey) || 0
 
+        const run = (async () => {
+            updateState('checking')
+            let status = 0
+            let ok = false
+            let regionCount = 0
             let detail = ''
             try {
-                const err = await res.json()
-                detail = err?.detail || ''
+                const res = await fetch(`${API_BASE}/api/browse/regions?genome=${encodeURIComponent(panel.genomeParam)}`)
+                status = res.status
+                ok = res.ok
+                if (ok) {
+                    const data = await res.json()
+                    regionCount = Array.isArray(data) ? data.length : 0
+                } else {
+                    try {
+                        detail = (await res.json())?.detail || ''
+                    } catch {
+                        detail = ''
+                    }
+                }
             } catch {
-                detail = ''
+                status = 0  // No response at all; treated as "try again".
             }
 
-            if (res.status === 409) {
-                updateState('error', detail)
-                return 'error'
+            if (status === 404) {
+                readyCheckAttemptsRef.current.set(attemptKey, attempt + 1)
+            } else {
+                readyCheckAttemptsRef.current.delete(attemptKey)
             }
 
-            if (res.status === 404) {
-                updateState('pending')
-                return 'pending'
-            }
+            const outcome = classifyReadiness({ ok, status, regionCount, attempt })
+            updateState(outcome, outcome === 'ready' ? '' : detail)
+            return outcome
+        })()
 
-            updateState('pending', detail)
-            return 'pending'
-        } catch {
-            updateState('pending')
-            return 'pending'
-        }
+        readyCheckInFlightRef.current.set(panelKey, run)
+        run.finally(() => {
+            if (readyCheckInFlightRef.current.get(panelKey) === run) {
+                readyCheckInFlightRef.current.delete(panelKey)
+            }
+        })
+        return run
     }, [])
+
+    // Discard a failed index build and start another. Without this a build that
+    // failed once holds the genome until the backend is restarted.
+    const retryGenomeIndex = useCallback(async (panel) => {
+        readyCheckAttemptsRef.current.delete(`${panel.key}|${panel.genomeParam}`)
+        try {
+            await fetch(`${API_BASE}/api/browse/index-retry`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ genome: panel.genomeParam }),
+            })
+        } catch (error) {
+            console.error('Failed to restart the index build:', error)
+        }
+        regionCacheRef.current.delete(String(panel.genomeParam || panel.key || '').trim())
+        setBrowserReadyState((prev) => ({ ...prev, [panel.key]: { state: 'checking', detail: '' } }))
+        checkGenomeReady(panel)
+    }, [checkGenomeReady])
 
     const fetchRegionsForPanel = useCallback(async (panel) => {
         const cacheKey = String(panel?.genomeParam || panel?.key || '').trim()
@@ -1593,12 +1823,15 @@ export default function GenomeBrowserView({
         const previousParams = previousPanelParamRef.current || {}
         const nextParams = {}
 
-        const pollPanel = async (panel) => {
+        // One chain per panel, and only one. What used to run alongside this was
+        // a second interval that re-checked anything still pending; between them
+        // a panel could have two requests open and a third queued behind it.
+        const pollPanel = async (panel, round = 0) => {
             const status = await checkGenomeReady(panel)
             if (cancelled || status === 'ready' || status === 'error') return
             const timer = window.setTimeout(() => {
-                pollPanel(panel)
-            }, 1500)
+                pollPanel(panel, round + 1)
+            }, readinessRetryDelay(round))
             timers.push(timer)
         }
 
@@ -1611,7 +1844,9 @@ export default function GenomeBrowserView({
             const paramChanged = !!prevParam && prevParam !== panel.genomeParam
             const forceReloadCheck = (panel.alignmentRole === 'reference' && refReloadChanged) || (panel.alignmentRole === 'target' && tgtReloadChanged)
             const needsRetry = state === 'pending' || state === 'error' || state === 'checking'
-            const shouldCheck = isNewPanel || paramChanged || forceReloadCheck || needsRetry
+            // Recreating a tutorial workspace can clear readiness while reusing the
+            // same genome key. A remembered parameter is not proof it is still ready.
+            const shouldCheck = !state || isNewPanel || paramChanged || forceReloadCheck || needsRetry
             if (shouldCheck) {
                 pollPanel(panel)
             }
@@ -1626,19 +1861,23 @@ export default function GenomeBrowserView({
         }
     }, [canPrepareBrowser, hasPanels, panels, panelSignature, refReloadKey, tgtReloadKey, checkGenomeReady])
 
-    // Fallback: when any panel is still 'pending', re-poll every 5s regardless of other triggers.
-    // Guards against the case where the main mechanism (refReloadKey change) is missed.
+    // Safety net for a panel whose chain was cancelled mid-flight — the effect
+    // above tears its timers down whenever `panels` changes identity, and a
+    // panel that was between polls at that moment would otherwise stop. Slow on
+    // purpose: the chain above is the mechanism, this only notices a stall.
+    // `checkGenomeReady` refuses to run twice for the same panel at once, so
+    // this can never double up on a poll that is already in flight.
     useEffect(() => {
         if (!canPrepareBrowser) return undefined
         if (!hasPanels) return undefined
         const id = setInterval(() => {
             for (const panel of panels) {
                 const state = browserReadyStateRef.current?.[panel.key]?.state
-                if (state === 'pending' || state === 'checking') {
+                if (state === 'pending') {
                     checkGenomeReady(panel)
                 }
             }
-        }, 5000)
+        }, 15000)
         return () => clearInterval(id)
     }, [canPrepareBrowser, hasPanels, panels, checkGenomeReady])
 
@@ -1709,21 +1948,11 @@ export default function GenomeBrowserView({
 
         const anchorFivePrime = geneFivePrime(anchorGene)
         if (!Number.isFinite(anchorFivePrime)) return false
-        const fivePrimeRatio = anchorGene?.strand === '-' ? 0.75 : 0.25
-
-        const spanForGene = (gene) => {
-            const start = Number(gene.start)
-            const end = Number(gene.end)
-            const len = Math.max(1, Math.abs(end - start))
-            const roomFraction = gene?.strand === '+' ? (1 - fivePrimeRatio) : fivePrimeRatio
-            return len / Math.max(0.1, roomFraction)
-        }
-
-        let requiredSpan = 0
-        for (const panel of validPanels) {
-            requiredSpan = Math.max(requiredSpan, spanForGene(genesByPanelKey[panel.key]))
-        }
-        const span = Math.max(2000, requiredSpan * 1.12)
+        const { ratio: fivePrimeRatio, span } = linkedGeneFraming(validPanels.map((panel) => ({
+            gene: genesByPanelKey[panel.key],
+            bounds: describeBrowserViewport(panel.key)?.bounds,
+            frameRange: browserViewportControls(panel.key)?.frameFocusedRange,
+        })), anchorGene?.strand)
 
         const deltas = {}
         const nextNavigate = {}
@@ -1746,8 +1975,10 @@ export default function GenomeBrowserView({
             }
             nextPositions[panel.key] = {
                 chrom: gene.chrom,
-                start: windowStart,
-                end: windowEnd,
+                // Navigation already accounts for the drawer. The linked position
+                // must use the same framing or enabling Pan/Zoom undoes that work.
+                ...(browserViewportControls(panel.key)?.frameFocusedRange?.(windowStart, windowEnd)
+                    || { start: windowStart, end: windowEnd }),
             }
         }
 
@@ -1818,11 +2049,10 @@ export default function GenomeBrowserView({
         if (firstPanel && panelKey === firstPanel.key && onRefViewportChange) {
             onRefViewportChange({ chrom, start, end, targetTrack: targetTrack || null })
         }
-        if (!(lockPanRef.current || lockZoomRef.current || isOverlayActive)) return
-
         // Keep the ref up-to-date with the source panel's actual position.
         panelActualPositionsRef.current[panelKey] = { chrom, start, end }
         syncSourcePanelKeyRef.current = panelKey
+        if (!(lockPanRef.current || lockZoomRef.current || isOverlayActive)) return
 
         let recipients = []
         if (linkedSet.size >= 2) {
@@ -1956,6 +2186,7 @@ export default function GenomeBrowserView({
             return
         }
 
+        const requestEpoch = tutorialEpochRef.current
         setLinkingRegion(true)
         try {
             const primaryRegions = await fetchRegionsForPanel(firstPanel)
@@ -1985,7 +2216,7 @@ export default function GenomeBrowserView({
                 panelActualPositionsRef.current[panel.key] = window
             }
 
-            if (linkedKeys.length < 2) return
+            if (requestEpoch !== tutorialEpochRef.current || linkedKeys.length < 2) return
 
             if (lockPanRef.current) setLockPan(false)
             if (lockZoomRef.current) setLockZoom(false)
@@ -2033,6 +2264,7 @@ export default function GenomeBrowserView({
             return
         }
 
+        const requestEpoch = tutorialEpochRef.current
         setLinkingGene(true)
         try {
             const matched = { ...selectedByPanel }
@@ -2050,6 +2282,7 @@ export default function GenomeBrowserView({
                 }
             }))
 
+            if (requestEpoch !== tutorialEpochRef.current) return
             const matchedKeys = panels
                 .map((panel) => panel.key)
                 .filter((key) => hasFiniteGeneCoords(matched[key]))
@@ -2084,6 +2317,61 @@ export default function GenomeBrowserView({
             onClearFocusedGenes()
         }
     }, [clearPendingLinkApply, onClearFocusedGenes])
+
+    const tutorialHostRef = useRef(null)
+    const tutorialEpochRef = useRef(0)
+    tutorialHostRef.current = {
+        cancel: () => { tutorialEpochRef.current += 1; clearPendingLinkApply() },
+        describe: () => ({
+            active: panels.map((panel) => panel.species.tutorial_dataset_id).filter(Boolean),
+            pan: lockPan, zoom: lockZoom, link: linkModelRef.current?.type || 'none', hideInactive: hideInactiveMode,
+        }),
+        apply: async (scene, current) => {
+            const epoch = ++tutorialEpochRef.current
+            const valid = () => current() && epoch === tutorialEpochRef.current
+            if (scene.reset) {
+                handleClearFocusedGenes()
+                setForceTracksVisibility(null); setHideInactiveMode(false); setCompressMode(false); setFlattenMode(false)
+                setBiotypeFilter({ proteinCoding: true, lncRNA: true, pseudogene: true, smallNonCoding: true })
+            }
+            if (scene.link === 'none' || scene.reset) {
+                clearPendingLinkApply(); linkModelRef.current = null; setLinkedPanelKeys([])
+                setLockPan(false); setLockZoom(false)
+            }
+            const genes = {}
+            for (const [id, state] of Object.entries(scene.panels || {})) {
+                const panel = panels.find((entry) => entry.species.tutorial_dataset_id === id)
+                if (!panel || state.focus === undefined) continue
+                if (!state.focus) { handlePanelGeneSelect(panel.key, null); continue }
+                const response = await fetch(`${API_BASE}/api/browse/search_gene?genome=${encodeURIComponent(panel.genomeParam)}&query=${encodeURIComponent(state.focus)}`)
+                if (!response.ok) throw new Error(`Could not find ${state.focus} in ${panel.label}.`)
+                const gene = await response.json()
+                if (!valid()) return
+                genes[panel.key] = gene
+                handlePanelGeneSelect(panel.key, gene)
+            }
+            if (valid() && Object.keys(genes).length) setNavigateGenes((previous) => ({ ...previous, ...genes }))
+        },
+        link: async (scene, current) => {
+            if (!current()) return
+            if (scene.link === 'region') await handleLinkRegion()
+            if (scene.link === 'gene') await handleLinkGene()
+            if (!current()) return
+            // Gene linking enables both after its framing animation; wait for that
+            // before applying the author's explicit independent Pan/Zoom settings.
+            if (scene.link === 'gene') await new Promise((resolve) => setTimeout(resolve, 300))
+            if (!current()) return
+            if (scene.pan !== undefined) setLockPan(scene.pan)
+            if (scene.zoom !== undefined) setLockZoom(scene.zoom)
+            if (scene.hideInactive !== undefined) setHideInactiveMode(scene.hideInactive)
+        },
+    }
+    useEffect(() => registerTutorialBrowserHost({
+        describe: () => tutorialHostRef.current.describe(),
+        apply: (...args) => tutorialHostRef.current.apply(...args),
+        link: (...args) => tutorialHostRef.current.link(...args),
+        cancel: () => tutorialHostRef.current.cancel(),
+    }), [])
 
     const [allRegisteredTracks, setAllRegisteredTracks] = useState([])
     const refreshRegisteredTracks = useCallback(() => {
@@ -2394,11 +2682,17 @@ export default function GenomeBrowserView({
 
             <div
                 data-browser-controls="true"
+                data-browser-global-controls="true"
                 data-tour-id="browser-global-controls"
                 className="flex items-center justify-between px-4 py-2 border-b flex-none"
                 style={{
                     backgroundColor: isLight ? '#f1f3f5' : '#1E2938',
                     borderColor: isLight ? '#dee2e6' : '#373a40',
+                    // Pulled up by the scroller's own padding, so the row comes to
+                    // rest against the app's top bar rather than a padding below it.
+                    ...(controlsFollowScroll
+                        ? { position: 'sticky', top: -Math.max(0, focusDrawerStickyInset), zIndex: 30 }
+                        : null),
                 }}
             >
                 <div className="flex items-center gap-2">
@@ -2444,6 +2738,8 @@ export default function GenomeBrowserView({
 
                             <button
                                 onClick={() => setHideInactiveMode((prev) => !prev)}
+                                data-tour-id="browser-hide-inactive"
+                                data-tutorial-engaged={hideInactiveMode ? 'true' : 'false'}
                                 className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
                                 style={browserActionButtonStyle(true, hideInactiveMode)}
                                 title={hideInactiveMode
@@ -2493,6 +2789,8 @@ export default function GenomeBrowserView({
                                     </button>
 
                                     <button
+                                        data-tour-id="browser-pan"
+                                        data-tutorial-engaged={lockPan ? 'true' : 'false'}
                                         onClick={() => {
                                             if (panelCount < 2) return
                                             const newPan = !lockPan
@@ -2517,6 +2815,8 @@ export default function GenomeBrowserView({
                                     </button>
 
                                     <button
+                                        data-tour-id="browser-zoom"
+                                        data-tutorial-engaged={lockZoom ? 'true' : 'false'}
                                         onClick={() => {
                                             if (panelCount < 2) return
                                             const newZoom = !lockZoom
@@ -2541,6 +2841,8 @@ export default function GenomeBrowserView({
                                     </button>
 
                                     <button
+                                        data-tour-id="browser-linkRegion"
+                                        data-tutorial-engaged={linkModelRef.current?.type === 'region' ? 'true' : 'false'}
                                         onClick={handleLinkRegion}
                                         disabled={panelCount < 2 || linkingRegion}
                                         className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
@@ -2555,6 +2857,8 @@ export default function GenomeBrowserView({
                                     </button>
 
                                     <button
+                                        data-tour-id="browser-linkGene"
+                                        data-tutorial-engaged={linkModelRef.current?.type === 'gene' ? 'true' : 'false'}
                                         onClick={handleLinkGene}
                                         disabled={panelCount < 2 || !anyFocusedGene || linkingGene}
                                         className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
@@ -2616,6 +2920,39 @@ export default function GenomeBrowserView({
                         </>
                     )}
                 </div>
+                <div className="flex items-stretch flex-shrink-0" style={{ marginRight: '34px' }}>
+                    {onPromoteGenome && <GenomeWheel
+                        species={listedGenomes}
+                        activeSpecies={panelSpecies}
+                        config={config}
+                        panelRootRef={screenshotPanelsRef}
+                        onPromote={handleCyclePromote}
+                        isActive={isActive && !screenshotMode}
+                        isLight={isLight}
+                    />}
+                    <button
+                        type="button"
+                        data-tour-id="browser-controls-lock"
+                        onClick={() => setControlsFollowScroll((prev) => !prev)}
+                        aria-pressed={controlsFollowScroll}
+                        // Square, and exactly as tall as the Cycle button beside it:
+                        // both are an 18px line boxed in the same 7px padding and
+                        // 1px border, so the two stay matched without a fixed size.
+                        className="flex-shrink-0 flex items-center justify-center transition-colors"
+                        style={{ ...browserActionButtonStyle(true, controlsFollowScroll), padding: '7px', borderRadius: '6px', lineHeight: 0 }}
+                        aria-label={controlsFollowScroll
+                            ? 'Controls unlocked and following the page: lock them back into place'
+                            : 'Controls locked in place: unlock them to follow the page down'}
+                        title={controlsFollowScroll
+                            ? 'Unlocked: these controls follow the page down. Click to lock them back into place.'
+                            : 'Locked: these controls stay put and scroll away with the page. Click to unlock them so they follow you down.'}
+                    >
+                        {/* The padlock the Feature Explorer locks splice paths with. */}
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d={controlsFollowScroll ? UNLOCKED_ICON_PATH : LOCKED_ICON_PATH} />
+                        </svg>
+                    </button>
+                </div>
             </div>
 
             <div
@@ -2643,7 +2980,13 @@ export default function GenomeBrowserView({
                         const useSecondaryPreset = panel.useSecondaryPreset
                         const panelReady = browserReadyState?.[panelKey]?.state || 'idle'
                         const panelDetail = browserReadyState?.[panelKey]?.detail || ''
-                        const isReady = panelReady === 'ready' || panelReady === 'idle'
+                        // Only once the check has actually said so. Treating the
+                        // initial 'idle' as ready mounted the browser before
+                        // anything had been asked, so it fired a regions request
+                        // of its own, took whatever error was going, and then
+                        // unmounted when the first real check flipped to
+                        // 'checking' — a wasted request and a visible flash.
+                        const isReady = panelReady === 'ready'
                         const panelReloadKey = panel.alignmentRole === 'reference'
                             ? refReloadKey
                             : (panel.alignmentRole === 'target' ? tgtReloadKey : 0)
@@ -2676,6 +3019,7 @@ export default function GenomeBrowserView({
                                 // this box, so it can never reach over the panel
                                 // above or below however tall its list grows.
                                 data-focus-panel-wrapper={panelKey}
+                                data-tutorial-genome={panel.species.tutorial_dataset_id || undefined}
                                 className="relative w-full flex flex-col"
                                 style={fillSinglePanelHeight ? growingPanelStyle : undefined}
                             >
@@ -2698,6 +3042,7 @@ export default function GenomeBrowserView({
                                             key={panelKey}
                                             isActive={isActive}
                                             genome={panel.genomeParam}
+                                            tutorialRecipeId={panel.species.tutorial_dataset_id || ''}
                                             geneNoteCounts={noteCountsByPanel[panelKey] || EMPTY_NOTE_COUNTS}
                                             onOpenGeneNotes={(geneId) => handleOpenGeneNotes(panelKey, geneId)}
                                             alignmentRole={panel.alignmentRole}
@@ -2705,7 +3050,7 @@ export default function GenomeBrowserView({
                                             theme={theme}
                                             label={panel.label}
                                             genomePillLabel={panel.genomePillLabel}
-                                            genomeColor={getGenomeBrowserColor(genomeBrowserColors, panel.index)}
+                                            genomeColor={resolveGenomeColor(panel.species)}
                                             onGenomePillClick={() => handleGenomePillClick(panelKey)}
                                             genomePillExpanded={Boolean(assemblyDrawerOpenByPanel[panelKey])}
                                             toolbarPosition="top"
@@ -2763,6 +3108,7 @@ export default function GenomeBrowserView({
                                             isLight={isLight}
                                             state={panelReady}
                                             detail={panelDetail}
+                                            onRetry={() => retryGenomeIndex(panel)}
                                         />
                                     )}
                                 </div>
@@ -2797,6 +3143,7 @@ export default function GenomeBrowserView({
                                         stickyTopInset={focusDrawerStickyInset}
                                         listShift={detailListShiftByPanel[panelKey] || 0}
                                         genome={panel.genomeParam}
+                                            tutorialRecipeId={panel.species.tutorial_dataset_id || ''}
                                         detailTranscriptId={detailTranscriptByPanel[panelKey] || ''}
                                         onDetailTranscriptChange={(id) => handleDetailTranscriptChange(panelKey, id)}
                                         notesEnabled={Boolean(notesGenomeKeyFor(panel))}
@@ -2829,7 +3176,7 @@ export default function GenomeBrowserView({
                                         genome={panel.species}
                                         assemblyInfo={assemblyState?.info || null}
                                         loading={assemblyState?.loading !== false}
-                                        accentColor={getGenomeBrowserColor(genomeBrowserColors, panel.index)}
+                                        accentColor={resolveGenomeColor(panel.species)}
                                         label={panel.genomePillLabel || panel.label}
                                         alignTop={assemblyAlign.top}
                                         alignHeight={assemblyAlign.height}
@@ -2840,6 +3187,13 @@ export default function GenomeBrowserView({
                             </div>
                         )
                     })
+                )}
+
+                {panelsBottomSpacer > 0 && (
+                    // Empty page under the last genome, so it can be scrolled up
+                    // to the top bar like any other. Not a gap between panels:
+                    // it only exists past the end of the final one.
+                    <div className="w-full flex-none" style={{ height: panelsBottomSpacer }} aria-hidden="true" />
                 )}
 
             </div>

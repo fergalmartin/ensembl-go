@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE } from '../backendRuntime'
-import { getGenomeBrowserColor, normalizeGenomeBrowserColors } from '../genomeColorSchemes'
+import { resolveGenomeColor } from '../genomeColorSchemes'
 import { getGenomeKey } from '../utils/genomeIdentity'
 import {
   beginWheelGesture,
@@ -3406,12 +3406,11 @@ function StructuralVariationPairView({
     panel: isLight ? 'bg-white border border-gray-200 text-gray-900' : 'bg-[#1E2938] border border-gray-700 text-gray-100',
     muted: isLight ? 'text-gray-600' : 'text-gray-400',
   }
-  const genomeBrowserColors = useMemo(
-    () => normalizeGenomeBrowserColors(config?.genome_browser_colors),
-    [config?.genome_browser_colors],
-  )
-  const referenceGenomeColor = useMemo(() => getGenomeBrowserColor(genomeBrowserColors, 0), [genomeBrowserColors])
-  const targetGenomeColor = useMemo(() => getGenomeBrowserColor(genomeBrowserColors, 1), [genomeBrowserColors])
+  // Each side of the comparison is drawn in its own genome's colour rather than
+  // in "the first colour" and "the second colour", so a genome looks the same
+  // here as it does in the browser whichever side it happens to be on.
+  const referenceGenomeColor = useMemo(() => resolveGenomeColor(config, refSpecies), [config, refSpecies])
+  const targetGenomeColor = useMemo(() => resolveGenomeColor(config, tgtSpecies), [config, tgtSpecies])
 
   // ── Fetch gene/chrom info from /api/sv/view (NOT used for ribbons) ──────────
   const requestBufferData = useCallback(async (refWindow, tgtWindow, reason = 'view') => {
@@ -5332,13 +5331,10 @@ function StructuralVariationThreeGenomeView({
     muted: isLight ? 'text-gray-600' : 'text-gray-400',
   }
 
-  const genomeBrowserColors = useMemo(
-    () => normalizeGenomeBrowserColors(config?.genome_browser_colors),
-    [config?.genome_browser_colors],
-  )
-  const referenceGenomeColor = useMemo(() => getGenomeBrowserColor(genomeBrowserColors, 0), [genomeBrowserColors])
-  const topGenomeColor = useMemo(() => getGenomeBrowserColor(genomeBrowserColors, 1), [genomeBrowserColors])
-  const bottomGenomeColor = useMemo(() => getGenomeBrowserColor(genomeBrowserColors, 2), [genomeBrowserColors])
+  // As in the pair view: colour follows the genome, not the row it sits in.
+  const referenceGenomeColor = useMemo(() => resolveGenomeColor(config, refSpecies), [config, refSpecies])
+  const topGenomeColor = useMemo(() => resolveGenomeColor(config, tgtSpecies), [config, tgtSpecies])
+  const bottomGenomeColor = useMemo(() => resolveGenomeColor(config, thirdSpecies), [config, thirdSpecies])
 
   const runtimeOutputDir = outputDir || config?.output_dir || ''
   const upperEndpointsRef = useRef({

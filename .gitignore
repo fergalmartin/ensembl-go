@@ -1,8 +1,11 @@
 # Ensembl Go
 #
-# These rules mirror the exclusions in scripts/archive_github_snapshot.sh, which
-# defines what belongs in a distributable source snapshot. Keep the two in step:
-# if something is added here, consider whether the snapshot should skip it too.
+# These rules broadly mirror the exclusions in scripts/archive_github_snapshot.sh,
+# which builds a recovery snapshot: unpack it and get back to development without this
+# repository. Keep the two in step — if something is added here, consider whether the
+# snapshot should skip it too — with one deliberate asymmetry, noted at the docs
+# entries below. The snapshot fails if any tracked file is missing from it, so an
+# over-broad exclusion there cannot go unnoticed; the reverse is not checked.
 
 # --- OS and editor noise ---
 .DS_Store
@@ -76,8 +79,10 @@ backend/data/*.bgz
 backend/data/*.gzi
 
 # --- Experimental Rust/WASM renderer ---
-# The Cargo project and its prebuilt pkg/ output stay tracked; only the build
-# directory is ignored, at roughly 790 MB.
+# The Cargo project stays tracked; only the build directory is ignored, at roughly
+# 790 MB. pkg/ is wasm-pack's output and is NOT tracked, because wasm-pack writes its
+# own `*` .gitignore inside it. The snapshot does carry pkg/, so recovering does not
+# depend on having a Rust toolchain to hand.
 frontend/rust/*/target/
 
 # --- Vendored 3D structure viewer ---
@@ -95,6 +100,10 @@ test-data/
 # --- Local tooling config ---
 # Personal settings. A shared .claude/settings.json, if added, should be tracked.
 .claude/
+#
+# These two are the deliberate asymmetry with the snapshot: untracked here, but
+# included there. They are working documents that exist in no other copy, so a
+# recovery archive without them loses them for good.
 docs/browsing-controls-handoff.md
 docs/tutorial-builder-genome-playlists-handoff.md
 

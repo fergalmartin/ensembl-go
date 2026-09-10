@@ -143,7 +143,7 @@ export const ADVANCE_TYPES = Object.freeze(['manual', 'view', 'click', 'all-clic
  *  nobody would otherwise use, the step stays interactive so the user can drag and scroll
  *  the real track, and Next drives the browser's own animated move on their behalf. */
 export const ACTION_TYPES = Object.freeze([
-  'none', 'click', 'type', 'navigate', 'browserView', 'browserControls',
+  'none', 'click', 'type', 'navigate', 'browserView', 'browserControls', 'browserScene',
 ])
 
 /** The subset of actions a step may perform on *arrival* rather than on Next.
@@ -157,7 +157,7 @@ export const ACTION_TYPES = Object.freeze([
  *  Only idempotent things belong here. `arrive` runs on every visit, so an action that
  *  toggles rather than sets would flip back and forth as the user walked about. */
 export const ARRIVE_TYPES = Object.freeze([
-  'browserView', 'browserControls', 'selectorList', 'genomeSelection', 'pageScroll',
+  'browserView', 'browserControls', 'browserScene', 'selectorList', 'genomeSelection', 'pageScroll',
   'dialog', 'playlists',
 ])
 
@@ -779,7 +779,7 @@ const PANEL_STATES = Object.freeze(['open', 'closed'])
 const TUTORIAL_NOTE_STATES = Object.freeze(['none'])
 const PINNED_TRANSCRIPT_STATES = Object.freeze(['none'])
 
-function browserViewProblems(move, where) {
+export function browserViewProblems(move, where) {
   const problems = []
   const moves = Array.isArray(move.moves) ? move.moves : [move]
   if (moves.length === 0) problems.push(`${where}: a browserView needs at least one move.`)
@@ -794,8 +794,8 @@ function browserViewProblems(move, where) {
         problems.push(`${where}: a browserView ${key} needs a number.`)
       }
     }
-    if (one?.zoom !== undefined && Number(one.zoom) === 0) {
-      problems.push(`${where}: a browserView zoom of 0 goes nowhere.`)
+    if (one?.zoom !== undefined && Number(one.zoom) <= 0) {
+      problems.push(`${where}: a browserView zoom must be greater than zero.`)
     }
   }
   if (move.pauseMs !== undefined && !(Number(move.pauseMs) >= 0)) {
@@ -990,6 +990,7 @@ export function validateTutorial(tutorial, options = {}) {
     }
 
     const action = stepAction(step)
+    if (step.autoplayDemo) problems.push(...browserViewProblems(step.autoplayDemo, `${where} autoplay demonstration`))
     if (!ACTION_TYPES.includes(action.type)) {
       problems.push(`${where}: action type "${action.type}" is not one of ${ACTION_TYPES.join(', ')}.`)
     } else if (action.type === 'click') {

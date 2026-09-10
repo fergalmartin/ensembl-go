@@ -119,7 +119,7 @@ def _annotation_rows(annotation: Path, chrom: str) -> List[Dict[str, Any]]:
 
 
 def _gene_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    genes = [row for row in rows if row["type"] in {"gene", "pseudogene"}]
+    genes = [row for row in rows if row["type"] in {"gene", "pseudogene"} or row["type"].endswith("_gene")]
     if genes:
         return genes
     # Some GTF-like annotations reaching this path have transcript parents but no explicit
@@ -402,7 +402,28 @@ def generate_recipe(
     report_name = "assembly_report.txt"
     _write_fasta(fasta, region, selected_start, selected_end, root / fasta_name, label)
     _write_gff(lines, region, selected_end, root / gff_name)
+    metadata_path = Path(str((source or {}).get("metadata_path") or ""))
     _write_report(root / report_name, assembly, label, region, selected_end)
+    if metadata_path.is_file():
+        metadata_text = metadata_path.read_text(encoding="utf-8")
+        metadata_lines = metadata_text.splitlines()
+        if metadata_path.suffix.lower() == ".json":
+            reports = json.loads(metadata_text).get("reports", [])
+            metadata_lines = ["\t".join(str(value) for value in [
+                entry.get("sequence_name", entry.get("chr_name", "na")), entry.get("role", "assembled-molecule"),
+                entry.get("chr_name", "na"), entry.get("assigned_molecule_location_type", "Chromosome"),
+                entry.get("genbank_accession", "na"), "=", entry.get("refseq_accession", "na"),
+                entry.get("assembly_unit", "Primary Assembly"), entry.get("length", selected_end), entry.get("ucsc_style_name", "na"),
+            ]) for entry in reports]
+        for line in metadata_lines:
+            if not line or line.startswith("#"):
+                continue
+            columns = line.split("\t")
+            if len(columns) >= 10 and region in (columns[0], columns[4], columns[6], columns[9]):
+                columns[8] = str(selected_end)
+                header = (root / report_name).read_text().splitlines()[:3]
+                (root / report_name).write_text("\n".join(header + ["\t".join(columns)]) + "\n")
+                break
     files = {
         "fasta": fasta_name,
         "fasta_index": fasta_name + ".fai",
@@ -418,12 +439,12 @@ def generate_recipe(
         "datasetRef": f"embedded:{recipe_id}@1",
         "speciesKey": species_key,
         "assembly": assembly,
-        "assemblyName": f"{region}:{selected_start:,}-{selected_end:,} tutorial slice",
+        "assemblyName": str((source or {}).get("assembly_name") or f"{region}:{selected_start:,}-{selected_end:,} tutorial slice"),
         "displayName": label,
         "scientificName": str((source or {}).get("scientific_name") or label),
         "commonName": str((source or {}).get("common_name") or "Tutorial slice"),
         "browsableRange": {region: [selected_start, selected_end]},
-        "source": {**(source or {}), "chrom": region, "start": selected_start, "end": selected_end},
+        "source": {**{k: v for k, v in (source or {}).items() if k != "metadata_path"}, "chrom": region, "start": selected_start, "end": selected_end},
         "genes": gene_ids,
         "files": files,
         "sha256": hashes,
@@ -437,6 +458,8 @@ def install_recipe(output_dir: Any, tutorial_id: Any, recipe_id: Any, workspace:
     if not recipe_name or tutorial_packages._slug(recipe_name) != recipe_name:
         raise ValueError("Tutorial dataset ids must contain lowercase letters, numbers and hyphens only.")
     source = tutorial_packages.draft_directory(output_dir, tutorial_id) / "datasets" / recipe_name
+    if not source.exists():
+        source = tutorial_packages.find_bundled_recipe(recipe_name) or source
     recipe_path = source / "recipe.json"
     if not recipe_path.is_file() or source.is_symlink():
         raise ValueError(f"Tutorial dataset {recipe_id} is unavailable.")

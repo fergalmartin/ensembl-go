@@ -168,8 +168,9 @@ export function buildGenomeAnalysisTargets(genomes, {
       assembly: String(genome?.assembly || genome?.gca || '').trim(),
       providerName: normalizeGenomeSourceDatabase(genome),
       isActive,
-      //: Position among the active genomes, which is the index the genome
-      //: colours in the configuration view are assigned by. -1 when inactive.
+      //: Position among the active genomes; -1 when inactive. Colour no longer
+      //: follows position — see genomeColorSchemes — but the order is still what
+      //: the overview lists genomes in.
       colorIndex: activeIndex,
       // Not an analysis: this is what the registry says about the assembly,
       // read from the report downloaded with it. It leads because it is the

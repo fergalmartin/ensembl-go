@@ -74,6 +74,14 @@ const REG4_TRANSCRIPT_HIDDEN = {
   drawerTranscripts: 'expanded',
   hiddenTranscript: { transcript: REG4.hideableTranscript, hidden: true },
 }
+/** REG4-204 back on the track. The step that asks the reader to hide it has to *arrive*
+ *  with it showing, or walking back into that step finds the job already done: the button
+ *  still reading "hidden", the label still on the gene, and nothing left to demonstrate. */
+const REG4_TRANSCRIPT_SHOWN = {
+  type: 'browserControls',
+  drawerTranscripts: 'expanded',
+  hiddenTranscript: { transcript: REG4.hideableTranscript, hidden: false },
+}
 const COLLAPSE_TBX15 = { type: 'browserControls', geneTranscripts: { gene: TBX15.id, expanded: false } }
 
 // Chapters are part of the tutorial's authored narrative rather than inferred from the
@@ -105,10 +113,7 @@ export default {
   // a spotlight ends up around a patch of empty track. A step that wants something else
   // says so, and its own arrival runs second.
   defaultArrive: [{ type: 'browserControls', detail: false, flatten: false, expanded: false }],
-  completionBody: 'That is the browser: two bars of controls, three tracks, and a drawer '
-    + 'that goes from a gene down to its amino acids. Your own genomes work exactly the '
-    + 'same way, with rather more in them. The tutorial’s temporary genome and its note '
-    + 'have been cleared away, and your own settings were never touched.',
+  completionBody: 'Well done on completing the Genome Browser tutorial.',
 
   steps: [
     {
@@ -128,9 +133,9 @@ export default {
       placement: 'bottom',
       ensure: SLICE,
       title: 'Open the Genome Browser',
-      body: 'Click the highlighted icon in the apps list to open the genome browser. For this '
-        + 'demo we\'ll be looking at a small region of chromosome 1 on GRCh38. You learn some '
-        + 'of the basic controls and look at different tracks and features.',
+      body: 'Click the highlighted icon in the apps list to open the genome browser. We\'ll be '
+        + 'looking at a small region of chromosome 1 on GRCh38, learning the basic controls and '
+        + 'the different tracks and features.',
       advanceOn: { type: 'view', view: 'genome_browser' },
     },
     {
@@ -143,10 +148,9 @@ export default {
       ensure: SLICE,
       arrive: [at(OPENING_REGION), PLAIN_LAYOUT],
       title: 'About the data',
-      body: 'We\'ve loaded a megabase of chromosome 1. The browser window with its various '
-        + 'tracks is highlighted below. A ruler on top shows markers for the position on the '
-        + 'genome. The current window contains several genes and is zoomed out to the point '
-        + 'where individual genes are represent by solid blocks.',
+      body: 'We\'ve loaded a megabase of chromosome 1, highlighted below with its tracks and a '
+        + 'ruler along the top marking the position on the genome. At this zoom the window '
+        + 'holds several genes, each drawn as a solid block.',
     },
     {
       id: 'global-controls',
@@ -158,11 +162,9 @@ export default {
       ensure: SLICE,
       arrive: at(OPENING_REGION),
       title: 'The general controls',
-      body: 'The general control bar is used to adjust the browsers of all active genomes. In '
-        + 'this case we only have one active genome, GRCh38, however its possible to have '
-        + 'multiple genomes active at once. This control bar applies effects to all active '
-        + 'genomes and has several controls only available when more than one genome is '
-        + 'present.',
+      body: 'The general control bar applies to every active genome at once. Here there is only '
+        + 'GRCh38, but several genomes can be active together, and some of these controls only '
+        + 'appear when more than one is.',
     },
     {
       id: 'genome-controls',
@@ -174,10 +176,9 @@ export default {
       ensure: SLICE,
       arrive: at(OPENING_REGION),
       title: 'Genome specific controls',
-      body: 'Each active genome also have it\'s own individual control bar. The one for GRCh38 '
-        + 'is highlight above. These controls mostly pertain to searching for features, '
-        + 'changing location or changing aspects of what\'s displayed for that particular '
-        + 'genome.',
+      body: 'Each active genome also has its own control bar; the one for GRCh38 is highlighted '
+        + 'above. These search for features, change location, and change what is displayed for '
+        + 'that genome alone.',
     },
     {
       id: 'region-select',
@@ -257,7 +258,7 @@ export default {
       // directly as well as when it is walked into.
       arrive: at(HAO2_REGION),
       title: 'HAO2 region',
-      body: 'The browser has moved to region copied into the search box, centered on HAO2. A '
+      body: 'The browser has moved to the region copied into the search box, centered on HAO2. A '
         + 'region search frames those coordinates exactly in the browser track.',
       cardPosition: { x: 0.0177, y: 0.0716 },
     },
@@ -271,11 +272,9 @@ export default {
       ensure: SLICE,
       arrive: at(HAO2_REGION),
       title: 'The left hand menu',
-      body: 'This section gives some control over the browser tracks. In this case we have the '
-        + 'three default tracks. GF represents genes on the forward strand, GF represents '
-        + 'genes on the reverse strand and SL is the sequence level track, which becomes '
-        + 'visible when zoomed sufficiently in. The power buttons can be user to toggle the '
-        + 'tracks on/off and tracks can be reordered via click and drag.',
+      body: 'This section controls the tracks. GF is genes on the forward strand, GR genes on the '
+        + 'reverse, and SL the sequence level, which appears once you zoom far enough in. The '
+        + 'power buttons toggle a track; drag to reorder them.',
     },
     {
       id: 'moving-about',
@@ -289,10 +288,9 @@ export default {
       // nothing to show.
       arrive: at(HAO2_REGION),
       title: 'Panning and zooming',
-      body: 'By default, a two-finger swipe up or down on a trackpad  (or the mouse wheel) '
-        + 'zooms the track, and click-and-drag or a two-finger swipe sideways pans along it. '
-        + 'Other control schemes are available in the configuration menu. Try panning and '
-        + 'zooming before moving on to the next step.',
+      body: 'By default a two-finger swipe up or down (or the mouse wheel) zooms, and '
+        + 'click-and-drag or a sideways swipe pans. Other schemes are available in the '
+        + 'configuration menu. Try panning and zooming before moving on.',
       // Out, across, and back in, so where the gene *is* is something watched rather than
       // arrived at. Left alone entirely if the user has already gone somewhere themselves.
       action: { type: 'browserView', moves: [{ type: 'browserView', locus: SLICE_WHOLE_REGION }, { type: 'browserView', locus: TBX15_WIDE_REGION }, { type: 'browserView', locus: TBX15_REGION }], pauseMs: 1500, skipIfMoved: true },
@@ -311,9 +309,9 @@ export default {
       ensure: SLICE,
       arrive: [at(TBX15_REGION), PLAIN_LAYOUT],
       title: 'Genes and transcripts',
-      body: 'Here we\'ve centered on the TBX15 gene, which has three transcripts. Only the '
-        + 'canonical transcript is displayed by default.  The canonical transcript has '
-        + 'several exons and the gene is on the reverse strand (the GR track).',
+      body: 'Here we\'ve centered on TBX15, which has three transcripts; only the canonical one is '
+        + 'drawn by default. It has several exons, and the gene is on the reverse strand — the '
+        + 'GR track.',
     },
     {
       // The pill under the gene, which is DOM over the canvas rather than painted on it —
@@ -330,8 +328,8 @@ export default {
       // shows the pill being pressed rather than one already pressed.
       arrive: [at(TBX15_REGION), PLAIN_LAYOUT, COLLAPSE_TBX15],
       title: 'Viewing alternative transcripts',
-      body: 'The tag under the gene counts the transcripts it is not currently showing, there '
-        + 'are two more for TBX15. Click the label to show the remaining transcripts.',
+      body: 'The tag under the gene counts the transcripts it is not currently showing: two more '
+        + 'for TBX15. Click the label to show them.',
       advanceOn: { type: 'click' },
     },
     {
@@ -363,10 +361,8 @@ export default {
         EXPAND_TBX15,
       ],
       title: 'Flatten to compact',
-      body: 'For genes with multiple transcripts we can use the Flatten button to reduce the '
-        + 'space between the transcript rows. This can be useful when there are several '
-        + 'transcripts for a gene to help it fit more neatly in the browser track. Try '
-        + 'clicking it now.',
+      body: 'The Flatten button reduces the space between transcript rows, which helps a gene '
+        + 'with several of them fit more neatly in the track. Try clicking it now.',
       advanceOn: { type: 'click' },
     },
     {
@@ -421,10 +417,9 @@ export default {
       ensure: SLICE,
       arrive: at(TBX15_EXON_VIEW),
       title: 'Viewing the sequence level',
-      body: 'Try zooming in on the browser window below to make the sequence level track '
-        + 'visible. At a window size of <= 1kb, the track becomes visible with coloured '
-        + 'blocks representing the bases. Further zooming with cause the single letter '
-        + 'nucleotide codes will appear on the base blocks.',
+      body: 'Try zooming in on the browser window below to bring up the sequence track. At 1kb or '
+        + 'less it appears as coloured blocks for the bases, and zooming further still prints '
+        + 'the single-letter code on each block.',
       action: { type: 'browserView', durationMs: 2400, pauseMs: 1800, skipIfMoved: true, skipIfSequenceVisible: true, locus: TBX15_SEQUENCE_REGION },
     },
     {
@@ -438,11 +433,9 @@ export default {
       ensure: SLICE,
       arrive: [at(DEEP_GENES_REGION), PLAIN_LAYOUT],
       title: 'Further compacting transcript information',
-      body: 'PHGDH on the left has thirty-eight annotated transcripts and HMGCS2 on the right '
-        + 'has twenty-two. This is a lot of information to display in the browser window and '
-        + 'even Flatten would not fit all the transcripts onto the window at once. While you '
-        + 'can always scroll up/down to view the entire set of transcripts, the next control '
-        + 'will help for genes with very large numbers of transcripts.',
+      body: 'PHGDH on the left has thirty-eight transcripts and HMGCS2 on the right has '
+        + 'twenty-two — more than the window can show at once, even flattened. You can scroll '
+        + 'to see the rest, but the next control helps more.',
     },
     {
       id: 'expand-transcripts',
@@ -455,11 +448,8 @@ export default {
       ensure: SLICE,
       arrive: [at(DEEP_GENES_REGION), PLAIN_LAYOUT],
       title: 'Show every transcript',
-      body: 'Before we look at compacting the transcript display, we\'ll use the Expand '
-        + 'Transcripts button to expand all transcripts for the genes within the current '
-        + 'browser window. This avoids having to manually click the \'+\' label for each '
-        + 'multi-transcript gene in the window to expand all the transcripts. Try clicking it '
-        + 'now.',
+      body: 'The Expand Transcripts button expands every gene in the window at once, rather than '
+        + 'clicking the ‘+’ label on each one. Try clicking it now.',
       advanceOn: { type: 'click' },
       cardPosition: { x: 0.6059, y: 0.0298 },
     },
@@ -475,10 +465,9 @@ export default {
       ensure: SLICE,
       arrive: [at(DEEP_GENES_REGION), { type: 'browserControls', detail: false, flatten: false, expanded: true }],
       title: 'All the transcript rows',
-      body: 'Now that we\'ve expanded the transcripts, each transcript gets its own row in the '
-        + 'browser. In this example there are so many transcripts that they go off the bottom '
-        + 'edge of the window, and manually scrolling up and down becomes necessary to see '
-        + 'them all. The next control will help us get around this issue.',
+      body: 'Every transcript now has its own row. There are so many here that they run off the '
+        + 'bottom of the window, and you have to scroll to see them all. The next control gets '
+        + 'around that.',
       cardPosition: { x: 0.02, y: 0.02 },
     },
     {
@@ -492,11 +481,9 @@ export default {
       ensure: SLICE,
       arrive: [at(DEEP_GENES_REGION), { type: 'browserControls', detail: false, flatten: false, expanded: true }],
       title: 'The Detail button',
-      body: 'The Detail button packs the expanded transcript rows much closer together. It also '
-        + 'changes the height of the exons themselves to pack much more information over a '
-        + 'small area. This is good for getting an overall picture of the transcripts in a '
-        + 'gene where it has a large amount of transcripts. Try clicking the Detail button '
-        + 'now.',
+      body: 'The Detail button packs the rows closer together and shortens the exons, fitting far '
+        + 'more into the same space. It is how you get an overall picture of a gene with a lot '
+        + 'of transcripts. Try clicking it now.',
       advanceOn: { type: 'click' },
     },
     {
@@ -511,9 +498,9 @@ export default {
       ensure: SLICE,
       arrive: [at(DEEP_GENES_REGION), { type: 'browserControls', detail: true, flatten: false, expanded: true }],
       title: 'Highly compacted transcripts',
-      body: 'Every transcript is still present, but the rows and their labels are packed much '
-        + 'more tightly. Fine grained per-transcript information has been reduced, but the '
-        + 'overall details of the transcripts in the gene are clearer.',
+      body: 'Every transcript is still there, but the rows and labels are packed much more '
+        + 'tightly. You lose the fine detail of any one transcript and gain the shape of the '
+        + 'whole set.',
       cardPosition: { x: 0.2723, y: 0.0216 },
     },
     {
@@ -546,12 +533,10 @@ export default {
         at(DEEP_GENES_REGION),
         { type: 'browserControls', detail: false, flatten: false, expanded: true },
       ],
-      title: 'Collapsing all transcript in the window',
-      body: 'Earlier we used the Expand Transcripts button to expand all transcripts in the '
-        + 'window, and all transcripts are still currently expanded. You may have noticed that '
-        + 'the icon for the button has slightly changed and now has a single transcript with '
-        + 'an upward arrow below. This is to denote that the button will now collapse all '
-        + 'genes in the window back to just the canonical transcripts. Try clicking it now.',
+      title: 'Collapsing all transcripts in the window',
+      body: 'Everything is still expanded from earlier. The button\'s icon has changed to a single '
+        + 'transcript with an arrow below it: it now collapses every gene in the window back to '
+        + 'its canonical transcript. Try clicking it now.',
       advanceOn: { type: 'click' },
     },
 
@@ -591,9 +576,8 @@ export default {
       // step look-only and the reader cannot do the thing the card asks for.
       allow: [{ anchor: 'browser-biotype-lncRNA', capability: 'activate' }],
       title: 'Hide a class of gene',
-      body: 'In the current window there are a mix of protein-coding and long non-coding '
-        + 'genes, try clicking the \'Long non-coding\' check box to hide the long non-coding '
-        + 'genes.',
+      body: 'In the current window there are a mix of protein-coding and long non-coding genes. '
+        + 'Try clicking the ‘Long non-coding’ checkbox to hide the long non-coding genes.',
       action: { type: 'click', anchor: 'browser-biotype-lncRNA' },
       advanceOn: { type: 'click', anchor: 'browser-biotype-lncRNA' },
     },
@@ -636,11 +620,9 @@ export default {
       ensure: SLICE,
       arrive: at(DEEP_GENES_REGION),
       title: 'Search a gene symbol',
-      body: 'Now we\'re going to try focusing on a particular gene. Putting a gene in focus '
-        + 'mode changes some aspects of the browser window. You can focus on genes by clicking '
-        + 'on the gene itself, but in this case we\'ll focus automatically by searching a '
-        + 'particular gene symbol. Type ‘REG4’ and then press Return  or hit the search '
-        + 'button.',
+      body: 'Focusing on a gene changes several things about the window. You can focus one by '
+        + 'clicking it in the track, but here we\'ll search for it: type ‘REG4’ and press '
+        + 'Return, or use the search button.',
       // The lit region holds two controls, so it names them: a region carries no
       // capability of its own to derive them from.
       allow: [
@@ -675,10 +657,9 @@ export default {
       undo: 'unfocus-gene',
       arrive: at(REG4_REGION),
       title: 'The gene in focus',
-      body: 'Focusing on a gene brings in several new elements: the gene gets it\'s boundaries '
-        + 'denoted by red vertical dashed lines, the gene is centered in the view, other genes '
-        + 'get dimmed, a gene focus bar appears with some metadata on the gene and a gene '
-        + 'drawer appears on the right hand side. The focus bar is highlighted below.',
+      body: 'Focus brings in several things at once: red dashed lines at the gene\'s boundaries, '
+        + 'the gene centered in the view, the other genes dimmed, the focus bar highlighted '
+        + 'below, and a drawer on the right.',
     },
     {
       id: 'pan-away',
@@ -709,7 +690,7 @@ export default {
       // both position and scale, rather than making a small sideways correction.
       arrive: at(SLICE_WHOLE_REGION),
       title: 'Re-centering on the gene',
-      body: 'The view is currently zoomed on and we can no longer see REG4. You can '
+      body: 'The view is zoomed right out and we can no longer see REG4. You can '
         + 'automatically re-center the view on the gene of focus by clicking the crosshair '
         + 'button highlighted below.',
       // Pressing the button is the step, so pressing it finishes the step — whoever does
@@ -736,10 +717,9 @@ export default {
       ensure: FOCUSED,
       arrive: [at(REG4_REGION), { type: 'browserControls', drawerTranscripts: 'collapsed' }],
       title: 'The focus drawer',
-      body: 'A focus drawer also appears once a gene is in focus. This drawer can be used for '
-        + 'a variety of things. You can show/hide particular transcripts, access the a variety '
-        + 'of sequences associated with each transcript and even write notes that get attached '
-        + 'to the gene.',
+      body: 'The drawer arrives with the focused gene. From here you can show and hide individual '
+        + 'transcripts, reach the sequences associated with each one, and write notes that stay '
+        + 'attached to the gene.',
     },
     {
       id: 'show-transcripts',
@@ -769,11 +749,10 @@ export default {
       placeAgainst: ABOVE_THE_BROWSER,
       reveal: SHOW_BROWSER_TRACK,
       ensure: FOCUSED,
-      arrive: [at(REG4_REGION), { type: 'browserControls', drawerTranscripts: 'expanded' }],
+      arrive: [at(REG4_REGION), REG4_TRANSCRIPT_SHOWN],
       title: 'Modifying the transcript set',
-      body: 'Expanding the list in the drawer also expands the set in browser window. We\'re '
-        + 'going to hide one of the transcripts. You can do this by clicking the highlighted '
-        + 'show/hide button beside the transcript id in the drawer.',
+      body: 'Expanding the list in the drawer expands the set in the browser window too. Click '
+        + 'the highlighted show/hide button beside a transcript id to hide that transcript.',
       advanceOn: { type: 'click' },
     },
     {
@@ -791,12 +770,18 @@ export default {
       reveal: SHOW_BROWSER_TRACK,
       ensure: FOCUSED,
       arrive: [at(REG4_REGION), REG4_TRANSCRIPT_HIDDEN],
-      title: 'One fewer transcript',
-      body: `${REG4.hideableName} has left the track, and the gene now carries a `
-        + '‘Show 1 hidden’ label. Hiding is a view of the annotation rather than a change '
-        + 'to it, and that label is both the reminder and the way back.',
+      title: 'Hidden transcripts',
+      body: 'Now that we\'ve hidden the transcript, the gene now has a ‘Show 1 hidden’ label, '
+        + 'to allow all hidden transcripts to be shown via a single click. There is also a '
+        + 'show all/hide all button in the drawer.',
     },
     {
+      // Pinning, which is the drawer's third gesture after showing and hiding: clicking a
+      // row anchors it, and the browser both returns to the gene's focus framing and slides
+      // the drawer until the row and its transcript are level. Hover does none of that on
+      // purpose — it must never move the viewport out from under the pointer. A pin is a
+      // toggle rather than a step forward, so the advance stays manual: clicking again
+      // releases it, and a reader who tries that should not be carried off mid-experiment.
       id: 'highlight-transcript',
       section: SECTION.detail,
       view: 'genome_browser',
@@ -810,7 +795,12 @@ export default {
         { ...REG4_TRANSCRIPT_HIDDEN, pinnedTranscript: 'none' },
       ],
       title: 'Pinning transcripts',
-      body: 'Now one of the transcripts is hidden in the browser window',
+      body: 'Try clicking on the highlighted transcript to pin it. Pinning it highlights it '
+        + 'both in the browser and the drawer until it\'s unpinned. It also causes the row for '
+        + 'the transcript id in the drawer to line up with the corresponding transcript row in '
+        + 'the browser. This is helpful for genes with a lot of transcript to allow you to '
+        + 'easily transition from looking at the transcript in the browser to viewing more '
+        + 'info about it in the drawer.',
       action: {
         type: 'click',
         anchor: { selector: `[data-drawer-transcript-row="${REG4.canonicalTranscript}"]` },
@@ -825,13 +815,51 @@ export default {
       view: 'genome_browser',
       anchor: `focus-transcript-info-${REG4.canonicalTranscript}`,
       placement: 'left',
+      cardPosition: { x: 0.4055, y: 0.6003 },
       ensure: FOCUSED,
       arrive: [at(REG4_REGION), { type: 'browserControls', drawerTranscripts: 'expanded' }],
-      title: 'Go deeper',
-      body: 'The information mark opens a panel beside the drawer with the transcript’s '
-        + 'exons, its identifiers and its sequence. It is the same mark the genome pill '
-        + 'carries: there is more to read here.',
+      title: 'Accessing transcript sequences',
+      body: 'The information mark beside each transcript expands the drawer further to expose '
+        + 'more information about a particular transcript, including sequences associated with '
+        + 'it. Try clicking the information mark icon now.',
       advanceOn: { type: 'click' },
+    },
+    {
+      // The panel as a whole, before anything inside it. Opening it is a big change — the
+      // track narrows, the browser re-frames, and a second column of information appears
+      // beside the drawer — and the step that follows goes straight to two buttons well
+      // down inside it. Naming the panel first gives the reader somewhere to stand.
+      //
+      // Look-only: everything here is taught by the steps after it, and the panel scrolls,
+      // so letting it be used would move the very thing the next step spotlights.
+      id: 'transcript-detail-panel',
+      section: SECTION.detail,
+      view: 'genome_browser',
+      anchor: { selector: '[data-focus-transcript-detail]' },
+      placement: 'left',
+      cardPosition: { x: 0.2015, y: 0.4758 },
+      placeAgainst: { selector: '[data-focus-transcript-detail]' },
+      align: 'center',
+      interactive: false,
+      // The panel animates open and the browser re-frames behind it. Wait for both before
+      // drawing a spotlight the size of the whole panel, or it is traced around a shape
+      // that is still growing.
+      deferUntilReady: true,
+      ensure: FOCUSED,
+      // Panel first, view second, for the reason given on the step below: opening the
+      // panel narrows the track, so a view set before it lands somewhere slightly else.
+      arrive: [
+        { type: 'browserControls', transcriptDetail: 'open', transcriptSequence: 'genomic' },
+        at(REG4_REGION),
+      ],
+      title: 'The transcript panel',
+      body: 'This transcript panel. At the top there\'s some metadata on the gene (which is '
+        + 'identical across the transcripts), followed by some transcript-specific metadata.  '
+        + 'Below that is a sequence section that we\'ll look at in the next step. This drawer '
+        + 'acts as a simple and quick way to fetch metadata and sequences related to a '
+        + 'transcript while in the Genome Browser view. The Feature Explorer, which we\'ll '
+        + 'look at in a different tutorial, provides a much deeper insight in the features and '
+        + 'sequences associated with a gene.',
     },
     {
       id: 'sequences',
@@ -842,6 +870,7 @@ export default {
       // the two buttons inside it are named below.
       anchor: 'focus-sequence-coding-types',
       placement: 'left',
+      cardPosition: { x: 0.2047, y: 0.4738 },
       placeAgainst: { selector: '[data-focus-transcript-detail]' },
       align: 'center',
       reveal: SHOW_TRANSCRIPT_DETAIL,
@@ -861,11 +890,13 @@ export default {
         { anchor: 'focus-sequence-cds', capability: 'activate' },
         { anchor: 'focus-sequence-protein', capability: 'activate' },
       ],
-      title: 'Seven sequences',
-      body: 'Genomic, cDNA, CDS, protein, UTR, exons and introns — each derived from the '
-        + 'annotation and each copyable as FASTA. Compare CDS with its protein translation '
-        + 'using either highlighted button, then use Next. If the tutorial demonstrates it, '
-        + 'CDS is shown first and protein second.',
+      title: 'Transcript sequences',
+      body: 'For each transcript you can get a variety of different sequences in FASTA format, '
+        + 'which can be seen along the right hand edge of the drawer beside the sequence '
+        + 'itself. The default selection is the genomic sequence for the transcript. In this '
+        + 'case the transcript is protein-coding, so the CDS and protein sequences are '
+        + 'available. Try clicking on each to switch the sequence displayed in the panel and '
+        + 'then use Next to continue.',
       action: {
         type: 'click',
         anchor: 'focus-sequence-coding-types',
@@ -882,27 +913,57 @@ export default {
       view: 'genome_browser',
       anchor: 'focus-transcript-detail-close',
       placement: 'top',
+      cardPosition: { x: 0.5259, y: 0.2122 },
       reveal: SHOW_TRANSCRIPT_DETAIL,
       ensure: FOCUSED,
       arrive: [
         { type: 'browserControls', transcriptDetail: 'open', transcriptSequence: 'protein' },
         at(REG4_REGION),
       ],
-      title: 'Close transcript details',
+      title: 'Close the transcript panel',
       body: 'Use the X to close the transcript information panel and return to the gene '
-        + 'drawer. The Notes section is underneath it, and the tutorial continues as soon '
-        + 'as the panel closes.',
+        + 'drawer.',
       action: { type: 'click', anchor: 'focus-transcript-detail-close' },
       advanceOn: { type: 'click' },
     },
 
     // ── Notes ──────────────────────────────────────────────────────────────
     {
+      // The section before the button in it, for the same reason as the transcript panel
+      // above: a reader who has been shown transcripts and sequences has no reason to
+      // expect the drawer to hold their own writing as well, and the step after this one
+      // goes straight for a small plus icon.
+      //
+      // Look-only. The one thing to do here is add a note, which is the next step's job.
+      id: 'notes-section',
+      section: SECTION.notes,
+      view: 'genome_browser',
+      anchor: { selector: '[data-focus-drawer-notes]' },
+      placement: 'left',
+      interactive: false,
+      ensure: FOCUSED,
+      // The same arrival as the step below, so walking back into it from a written note
+      // takes the note away again and the section reads as it does the first time.
+      arrive: [
+        at(REG4_REGION),
+        { type: 'browserControls', transcriptDetail: 'closed', tutorialNote: 'none' },
+      ],
+      title: 'Notes on a gene',
+      body: 'The bottom part of the gene draw is for notes. You can write notes on a '
+        + 'particular gene for future reference. This could be about an issue you\'ve found, '
+        + 'or a particular exon you\'re studying, anything you might find useful when looking '
+        + 'at the gene in future. There is a dedicated Notes view that we\'ll look at in a '
+        + 'separate tutorial where you can look at all the notes you\'ve written across all '
+        + 'the genomes you, with the ability to search and jump from a note into the genome '
+        + 'browser.',
+    },
+    {
       id: 'add-note',
       section: SECTION.notes,
       view: 'genome_browser',
       anchor: 'focus-notes-add',
       placement: 'left',
+      cardPosition: { x: 0.4056, y: 0.6683 },
       ensure: FOCUSED,
       // Always starts with no note, so the step writes exactly one however many times it
       // is walked through.
@@ -910,10 +971,8 @@ export default {
         at(REG4_REGION),
         { type: 'browserControls', transcriptDetail: 'closed', tutorialNote: 'none' },
       ],
-      title: 'Write something down',
-      body: 'Notes belong to a gene rather than to a view, so one written here is waiting for '
-        + 'you the next time you focus this gene — in the browser, or in the Notes app. This '
-        + 'starts one.',
+      title: 'Create a new note',
+      body: 'Trying clicking the \'+\' button to add a new note to REG4.',
       action: { type: 'click', anchor: 'focus-notes-add' },
       advanceOn: { type: 'signal', name: 'browser.noteCreated' },
     },
@@ -925,9 +984,11 @@ export default {
       placement: 'left',
       ensure: FOCUSED,
       arrive: [at(REG4_REGION), { type: 'browserControls', noteEditor: 'open' }],
-      title: 'Say what you found',
-      body: 'Type whatever you would want to read later. The tutorial writes ‘Five '
-        + 'transcripts, one MANE Select’ — anything you type instead works just as well.',
+      title: 'Add some text',
+      body: 'Notes have an optional title, and then the note body where you can put the main '
+        + 'text of the note. The note body is highlighted to the right, try entering some '
+        + 'text. It will automatically save as you type. Click Next when you\'re ready to move '
+        + 'on.',
       action: {
         type: 'type',
         anchor: 'focus-note-body',
@@ -946,14 +1007,18 @@ export default {
       view: 'genome_browser',
       anchor: `browser-gene-note-${REG4.id}`,
       placement: 'top',
+      cardPosition: { x: 0.2774, y: 0.0363 },
       placeAgainst: ABOVE_THE_BROWSER,
       reveal: SHOW_BROWSER_TRACK,
       interactive: false,
       ensure: FOCUSED,
       arrive: [at(REG4_REGION), { type: 'browserControls', noteEditor: 'open' }],
-      title: 'The note is on the gene',
-      body: `As soon as the note exists, an icon appears above the top-left corner of ${REG4.symbol}. `
-        + 'That mark stays with the gene wherever you encounter it in the browser.',
+      title: 'The note has been saved',
+      body: 'The note is now both listed in the gene drawer, and also there is a small note '
+        + 'icon on the REG4 gene in the browser window, which you can see highlighted to the '
+        + 'left. This is a simple visual indication that a gene has one or more notes. As the '
+        + 'note panel is already open, the note icon is not active, but when browsing you can '
+        + 'click on the icon to automatically open the most recent note on the gene.',
     },
     {
       id: 'unfocus',
@@ -968,41 +1033,22 @@ export default {
       // a tutorial note to preserve after the drawer closes.
       arrive: [at(REG4_REGION), { type: 'browserControls', noteEditor: 'open' }],
       title: 'Close the focus drawer',
-      body: 'Use the X beside the gene identifier to clear REG4 as the gene in focus and '
-        + 'close its drawer. The note stays attached to the gene after the drawer closes.',
+      body: 'Use the X beside the gene identifier to clear REG4 as the gene in focus and close '
+        + 'its drawer. The note stays attached to the gene after the drawer closes. The gene '
+        + 'focus bar and highlighting of the gene will disappear from the browser window.',
       action: { type: 'click', anchor: 'focus-gene-dismiss' },
       advanceOn: { type: 'click' },
-    },
-    {
-      id: 'note-bubble',
-      section: SECTION.notes,
-      view: 'genome_browser',
-      anchor: `browser-gene-note-${REG4.id}`,
-      placement: 'top',
-      placeAgainst: ABOVE_THE_BROWSER,
-      reveal: SHOW_BROWSER_TRACK,
-      interactive: false,
-      // Deliberately not FOCUSED, unlike every step before it. The step before this one
-      // unfocuses the gene, and that is the whole point of this one: the mark is on the
-      // track whether or not the gene is in focus. Asking for the focus here would have
-      // the precondition quietly put back what the last step just took away, and the
-      // drawer would reopen over the thing being pointed at.
-      ensure: SLICE,
-      arrive: at(REG4_REGION),
-      title: 'The gene remembers',
-      body: `${REG4.symbol} now carries a mark on the track, which is how a gene tells you `
-        + 'there is something written about it. Clicking it focuses the gene and opens your '
-        + 'notes on it — worth knowing, but there is no need to now.',
     },
 
     {
       id: 'finish',
       section: SECTION.finish,
       placement: 'center',
-      title: 'That is the browser',
-      body: 'Two bars of controls, three tracks, a drawer that goes from a gene down to its '
-        + 'amino acids, and notes that stay with the gene. The same controls work on any '
-        + 'genome you download.',
+      title: 'The Genome Browser tutorial is complete',
+      body: 'You should now have a good grasp on the basics of browsing the genome, how to '
+        + 'look at and compact transcripts, focusing on a gene, the gene drawers, how to '
+        + 'manipulate what transcript are displayed, how to quickly fetch transcript sequences '
+        + 'and how to add notes. It\'s actually quite a lot of stuff.',
     },
   ],
 }

@@ -1,0 +1,57 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "slice-5ff4df6986ca",
+  "datasetRef": "embedded:slice-5ff4df6986ca@1",
+  "speciesKey": "tutorial_slice_5ff4df6986ca",
+  "assembly": "EGT_5FF4DF6986.1",
+  "assemblyName": "GRCm39",
+  "displayName": "Mouse GENCODE (Ensembl) (tutorial slice)",
+  "scientificName": "Mus musculus",
+  "commonName": "Mouse GENCODE (Ensembl)",
+  "browsableRange": {
+    "4": [
+      156249740,
+      156430000
+    ]
+  },
+  "source": {
+    "display_name": "Mouse GENCODE (Ensembl)",
+    "scientific_name": "Mus musculus",
+    "common_name": "Mouse GENCODE (Ensembl)",
+    "assembly_name": "GRCm39",
+    "provider": "ensembl",
+    "release": "2026_04",
+    "chrom": "4",
+    "start": 156249740,
+    "end": 156430000
+  },
+  "genes": [
+    "gene:ENSMUSG00000035692",
+    "gene:ENSMUSG00000041936",
+    "gene:ENSMUSG00000078349",
+    "gene:ENSMUSG00000078485",
+    "gene:ENSMUSG00000078486",
+    "gene:ENSMUSG00000095567",
+    "gene:ENSMUSG00000096351",
+    "gene:ENSMUSG00000098954",
+    "gene:ENSMUSG00000111895",
+    "gene:ENSMUSG00000120951",
+    "gene:ENSMUSG00000144291",
+    "gene:ENSMUSG00002076083"
+  ],
+  "files": {
+    "fasta": "slice.fa.bgz",
+    "fasta_index": "slice.fa.bgz.fai",
+    "fasta_gzi": "slice.fa.bgz.gzi",
+    "gff3": "slice.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "6a11bab385b35800695908c9d2dc4668cead8095c3138de75c805ccb62bc24e5",
+    "fasta_index": "2f72c5d79cc3348de62a83f1e706b003ac8ecf6489262e94266700fdd6a8de06",
+    "fasta_gzi": "16f8169c87f3f035e45a84caedcbeafd0ba66c3fd2052eab66907e6b4402a380",
+    "gff3": "9117bdfc70168ab10fddc29d49d7677c1c0d34344ea96e434ebc3f3d06fc2f50",
+    "metadata": "9bbc63c6d9188d30993f3c762558cdc4580fd274422172e4ab47f7379fc590b7"
+  }
+}
