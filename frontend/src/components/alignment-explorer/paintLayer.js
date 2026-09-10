@@ -69,10 +69,13 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       routedQueue.push({points,selected,rowId:connection.rowId})
       mx=(points[2].x+points[3].x)/2;my=lane
     } else {
-      ctx.beginPath();ctx.moveTo(ax,ay);ctx.bezierCurveTo(ax+reach,ay-arc,bx-reach,by-arc,bx,by);ctx.stroke();ctx.globalAlpha=1
+      ctx.beginPath();ctx.moveTo(ax,ay);ctx.bezierCurveTo(ax+reach,ay-arc,bx-reach,by-arc,bx,by);ctx.stroke()
       points=Array.from({length:17},(_,i)=>{const t=i/16,u=1-t;return {x:u*u*u*ax+3*u*u*t*(ax+reach)+3*u*t*t*(bx-reach)+t*t*t*bx,y:u*u*u*ay+3*u*u*t*(ay-arc)+3*u*t*t*(by-arc)+t*t*t*by}})
       mx=(ax+bx)/2;my=(ay+by)/2-arc*.75
     }
+    // Restore on every path, deferred routes included: a leak here tints every
+    // later fill, including the opaque name gutter, by whatever is beneath it.
+    ctx.globalAlpha=1
     hits.push({kind:'connection',connection,points})
     const count=counts[connection.id],value=state.connectionUnit==='bases'?count?.bases:connection.columns
     const label=value==null?'?':value<0?`↔ ${Math.abs(value).toLocaleString()}`:value.toLocaleString()
