@@ -784,3 +784,30 @@ test('in Original a skipped link stays skipped while its blocks are still loadin
   assert.equal(pathIsOccluded(link,[rect(4),rect(9)]),false)
   assert.equal(pathIsOccluded(link,[rect(4),rect(6),rect(9)]),true)
 })
+
+test('a row lands where it was dropped, named by the row it was dropped on',async()=>{
+  const {moveRowBefore}=await import('../src/components/alignment-explorer/layers.js')
+  const order=['a','b','c','d','e']
+  // Dropped on 'd', the row takes d's place and pushes d down. Dragging down and
+  // dragging up land in the same place, which an index cannot promise: removing
+  // the row first shifts everything below it by one.
+  assert.deepEqual(moveRowBefore(order,'a','d'),['b','c','a','d','e'])
+  assert.deepEqual(moveRowBefore(order,'e','d'),['a','b','c','e','d'])
+  // Dropped past the last row it goes to the end.
+  assert.deepEqual(moveRowBefore(order,'a',null),['b','c','d','e','a'])
+  // Dropped on itself, or on a row that is not there, nothing moves.
+  assert.deepEqual(moveRowBefore(order,'c','c'),order)
+  assert.deepEqual(moveRowBefore(order,'c','zz'),order)
+  assert.deepEqual(moveRowBefore(order,'zz','c'),order)
+  // The set of rows never changes, wherever anything is dropped.
+  for(const id of order)for(const before of [...order,null,'zz'])
+    assert.deepEqual([...moveRowBefore(order,id,before)].sort(),[...order].sort(),`${id} onto ${before}`)
+
+  // The bug this replaced: an index read off the screen is not an index into the
+  // order. Compact rows draw one block's sequences at rows 0..n, so a drop on
+  // the fifth row drawn used to move the sequence to position five of over a
+  // thousand. Naming the row cannot go wrong that way.
+  const wide=['s0','s1','s2','s3','s4','s5','s6','s7','s8','s9']
+  const drawn=['s7','s4','s9']            // what a compact block happens to list
+  assert.deepEqual(moveRowBefore(wide,'s0',drawn[1]),['s1','s2','s3','s0','s4','s5','s6','s7','s8','s9'])
+})

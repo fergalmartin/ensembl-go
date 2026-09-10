@@ -83,16 +83,24 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     })
     e.camera.updateMatrixWorld(true);e.scene.updateMatrixWorld(true);e.renderer.render(e.scene,e.camera)
   },[layer,layers,state,inventory,tiles,annotations,connections,offWindow,counts,gaps,light,size,drag,hover,reorder,rectangle])
-  const rowIndexAt=y=>Math.round((y-MARGIN_Y+state.camera.y)/ROW_HEIGHT)
-  // In Original a row belongs to one shared order; in a layer it belongs to the
-  // chunk its name sits beside, so the drop is measured against that chunk.
+  // Where a drop lands, read off the layout as drawn rather than worked out from
+  // a row height. The indicator and the move both come from this, so what is
+  // shown and what happens cannot disagree.
   function reorderTarget(current,y){
-    if(state.original)return {target:clamp(rowIndexAt(y),0,Math.max(0,inventory.length-1)),index:clamp(rowIndexAt(y),0,Math.max(0,inventory.length-1))}
+    if(state.original){
+      // The gutter publishes every row it draws, in both aligned and compact
+      // rows and through a filter, so it is the layout rather than a model of it.
+      const rows=(hits.current||[]).filter(h=>h.kind==='label').sort((a,b)=>a.y-b.y)
+      if(!rows.length)return {beforeId:null,lineY:y}
+      const at=rows.findIndex(h=>y<h.y+h.height/2)
+      const last=rows[rows.length-1]
+      return at<0?{beforeId:null,lineY:last.y+last.height}:{beforeId:rows[at].rowId,lineY:rows[at].y}
+    }
     const f=layer.fragments.find(x=>x.id===current.fragmentId)
-    if(!f)return {target:0,index:0}
+    if(!f)return {slot:0,lineY:y}
     const top=panelRect(f,state.camera).y
     const slot=clamp(Math.round((y-top)/ROW_HEIGHT),0,Math.max(0,rowCount(f)-1))
-    return {target:slot,index:(top-MARGIN_Y+state.camera.y)/ROW_HEIGHT+slot}
+    return {slot,lineY:top+slot*ROW_HEIGHT}
   }
   function pointerHover(point){
     // A block or merged block under the cursor, with the layout position inside
@@ -189,7 +197,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(current.kind==='reorder'){
       // A press that never travelled is still a click on the name; one that did
       // drops the row where it was let go.
-      if(current.dragging)onReorderRow?.(current.rowId,reorderTarget(current,point.y).target,current.fragmentId)
+      if(current.dragging)onReorderRow?.(current.rowId,reorderTarget(current,point.y),current.fragmentId)
       else if(current.jumpBlock!=null)onSourceBlock?.(current.jumpBlock)
       else if(current.fromLabel&&current.wasPicked)onSelection(removeRowPicks(state.selection,current.rowId))
       setReorder(null)

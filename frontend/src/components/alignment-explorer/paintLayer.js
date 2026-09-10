@@ -344,7 +344,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   // Where a dragged row would land, drawn over everything so the answer is
   // visible whichever block the cursor happens to be over.
   if(reorder){
-    const y=MARGIN_Y+reorder.index*ROW_HEIGHT-camera.y
+    const y=reorder.lineY
     ctx.fillStyle=PICKED;ctx.globalAlpha=.9;ctx.fillRect(0,y-1,size.width,2);ctx.globalAlpha=1
     ctx.beginPath();ctx.arc(MARGIN_X-6,y,4,0,Math.PI*2);ctx.fill()
     const row=byId.get(reorder.rowId)

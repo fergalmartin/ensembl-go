@@ -233,6 +233,22 @@ export function resolveRowOrder(ids, custom) {
   return ordered
 }
 
+/** Put a row where another one currently sits, pushing that one down.
+ *
+ * The drop is named by the row the reader let go over rather than by a number,
+ * because the number a row is drawn at is not its number in the order: compact
+ * rows list one block's sequences, a filter lists a subset, and either way an
+ * index taken off the screen means something else in the order behind it. Naming
+ * the row makes the two agree by construction. A null target appends. */
+export function moveRowBefore(order,id,beforeId) {
+  // Moving a row the order does not have must not add one.
+  if(beforeId===id||!order.includes(id))return order
+  const rest=order.filter(other=>other!==id)
+  if(beforeId==null)return [...rest,id]
+  const at=rest.indexOf(beforeId)
+  return at<0?order:[...rest.slice(0,at),id,...rest.slice(at)]
+}
+
 /** Move one row to a position in the order, closing the gap it left behind. */
 export function moveRow(order,id,toIndex) {
   const from=order.indexOf(id)
