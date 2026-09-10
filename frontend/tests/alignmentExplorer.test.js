@@ -230,32 +230,40 @@ test('adjacent blocks are separated by the same pixel channel at every zoom',asy
   }
 })
 
-test('a string skipping blocks is routed clear of the panels that would bury it',async()=>{
-  const {routedPath,pathIsOccluded}=await import('../src/components/alignment-explorer/layers.js')
+test('a link skipping blocks becomes a marker on each block edge, pointing the same way',async()=>{
+  const {blockJumpMarkers,pathIsOccluded}=await import('../src/components/alignment-explorer/layers.js')
   const rect=(sourceBlock,x,width)=>({sourceBlock,x,width,y:100,height:200})
-  const link=(from,to)=>({from:{sourceBlock:from},to:{sourceBlock:to}})
+  const link=(id,from,to)=>({id,rowId:'r',from:{id:`f${from}`,sourceBlock:from},to:{id:`f${to}`,sourceBlock:to}})
   const drawn=[rect(4,0,100),rect(5,140,100),rect(6,280,100),rect(7,420,100)]
-  // Adjacent blocks have nothing in between: the direct curve stays visible.
-  assert.equal(pathIsOccluded(link(4,5),drawn),false)
-  // Skipping blocks 5 and 6 would run the string underneath both panels.
-  assert.equal(pathIsOccluded(link(4,7),drawn),true)
-  // Order on screen does not change what stands between the endpoints.
-  assert.equal(pathIsOccluded(link(7,4),drawn),true)
-  // Blocks that are not drawn cannot bury anything.
-  assert.equal(pathIsOccluded(link(4,7),[rect(4,0,100),rect(7,420,100)]),false)
 
-  const path=routedPath(100,120,400,180,360,11)
-  assert.deepEqual(path,[{x:100,y:120},{x:111,y:120},{x:111,y:360},{x:389,y:360},{x:389,y:180},{x:400,y:180}])
-  // It leaves and enters at the rows it actually connects, and every part of the
-  // long run sits in the lane below the blocks rather than across them.
-  assert.deepEqual(path.at(0),{x:100,y:120})
-  assert.deepEqual(path.at(-1),{x:400,y:180})
-  assert.ok(path.slice(1,-1).every(p=>p.y===120||p.y===180||p.y===360))
-  assert.ok(path.filter(p=>p.y===360).length===2)
-  // A backwards link turns the other way so it still clears its own block.
-  const back=routedPath(400,120,100,180,360,11)
-  assert.equal(back[1].x,389)
-  assert.equal(back[3].x,111)
+  // Adjacent blocks have nothing in between, so the direct curve still carries them.
+  assert.equal(pathIsOccluded(link('a',4,5),drawn),false)
+  assert.deepEqual(blockJumpMarkers([link('a',4,5)],[],drawn),[])
+  // Blocks that are not drawn cannot bury anything either.
+  assert.deepEqual(blockJumpMarkers([link('a',4,7)],[],[rect(4,0,100),rect(7,420,100)]),[])
+
+  // Skipping 5 and 6 gives one marker leaving block 4 and one entering block 7.
+  const [out,into]=blockJumpMarkers([link('a',4,7)],[],drawn)
+  assert.deepEqual([out.fragmentId,out.edge,out.flow,out.block],['f4',1,1,7])
+  assert.deepEqual([into.fragmentId,into.edge,into.flow,into.block],['f7',-1,1,4])
+  // Each names the block at the far end, so either is a jump target.
+  assert.equal(out.block,7)
+  assert.equal(into.block,4)
+  // They sit on opposite edges but point the same way, so the link reads as one
+  // direction of travel rather than two unrelated arrows.
+  assert.equal(out.flow,into.flow)
+  assert.notEqual(out.edge,into.edge)
+
+  // A backwards link mirrors both ends rather than crossing them over.
+  const [bout,bin]=blockJumpMarkers([link('b',7,4)],[],drawn)
+  assert.deepEqual([bout.fragmentId,bout.edge,bout.flow],['f7',-1,-1])
+  assert.deepEqual([bin.fragmentId,bin.edge,bin.flow],['f4',1,-1])
+
+  // A path leaving the loaded window contributes only the end that exists.
+  const off=[{id:'off',rowId:'r',fragment:{id:'f7'},block:145,direction:1}]
+  const [only]=blockJumpMarkers([],off,drawn)
+  assert.deepEqual([only.fragmentId,only.edge,only.flow,only.block],['f7',1,1,145])
+  assert.equal(blockJumpMarkers([],off,drawn).length,1)
 })
 
 test('paths continuing outside the loaded window become stubs on the outermost block holding the row',async()=>{

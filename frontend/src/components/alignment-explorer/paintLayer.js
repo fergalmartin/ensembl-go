@@ -1,5 +1,5 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './data.js'
-import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, routedPath, pathIsOccluded } from './layers.js'
+import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded } from './layers.js'
 import { renderResolution } from './renderResolution'
 import { denseOriginal } from './originalLayout'
 import { FEATURE_COLORS } from '../FeatureLegend'
@@ -33,18 +33,9 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   const first=firstBlocks(drawLayer),byId=new Map(inventory.map(r=>[r.id,r])),hits=[]
   ctx.font='11px "IBM Plex Mono", monospace'
   // Strings are drawn first so the sequence panels cover their endpoints.
-  // Panels paint over strings, so a string skipping blocks it is not in would be
-  // buried. Those are routed below the stack instead; the lane sits under the
-  // deepest drawn panel, kept on screen, with a few offsets so parallel routes
-  // stay readable.
+  // Panels paint over strings, so a link skipping blocks it is not in would be
+  // buried under them. Those are carried by edge markers drawn after the panels.
   const drawnRects=drawLayer.fragments.filter(f=>!f.aggregate).map(f=>({sourceBlock:f.sourceBlock,...panelRect(f,camera)}))
-  const stackBottom=drawnRects.length?Math.max(...drawnRects.map(r=>r.y+r.height)):MARGIN_Y
-  // The row stack usually runs past the bottom of the viewport, so the lane
-  // settles into the clear band just inside the canvas rather than below a
-  // stack bottom that is not on screen.
-  const laneTop=Math.min(Math.max(stackBottom+16,MARGIN_Y+16),size.height-34)
-  let routed=0
-  const routedQueue=[]
   for(const connection of connections) {
     const originalA=fragmentById.get(connection.from.id),originalB=fragmentById.get(connection.to.id)
     if(!originalA||!originalB)continue
@@ -57,31 +48,22 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     if(Math.max(ax,bx)<0||Math.min(ax,bx)>size.width||Math.min(ay,by)>size.height||Math.max(ay,by)<0)continue
     const reach=Math.max(28,Math.abs(bx-ax)*0.42)
     const backwards=bx<ax,arc=backwards?30:0
-    const buried=pathIsOccluded(connection,drawnRects)
+    // A link that skips blocks is carried by a marker on each block edge rather
+    // than a line routed around everything in between.
+    if(pathIsOccluded(connection,drawnRects))continue
     ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9';ctx.lineWidth=selected?3:1.8;ctx.globalAlpha=state.highlighted&&!selected?0.3:0.95
-    let points,mx,my
-    if(buried){
-      // A block stack taller than the viewport reaches past any lane, so a
-      // routed string is stroked after the panels instead of under them. That is
-      // the point of routing it: it has to stay readable where it bypasses them.
-      const lane=Math.min(laneTop+(routed++%4)*6,size.height-10)
-      points=routedPath(ax,ay,bx,by,lane)
-      routedQueue.push({points,selected,rowId:connection.rowId})
-      mx=(points[2].x+points[3].x)/2;my=lane
-    } else {
-      ctx.beginPath();ctx.moveTo(ax,ay);ctx.bezierCurveTo(ax+reach,ay-arc,bx-reach,by-arc,bx,by);ctx.stroke()
-      points=Array.from({length:17},(_,i)=>{const t=i/16,u=1-t;return {x:u*u*u*ax+3*u*u*t*(ax+reach)+3*u*t*t*(bx-reach)+t*t*t*bx,y:u*u*u*ay+3*u*u*t*(ay-arc)+3*u*t*t*(by-arc)+t*t*t*by}})
-      mx=(ax+bx)/2;my=(ay+by)/2-arc*.75
-    }
-    // Restore on every path, deferred routes included: a leak here tints every
-    // later fill, including the opaque name gutter, by whatever is beneath it.
+    ctx.beginPath();ctx.moveTo(ax,ay);ctx.bezierCurveTo(ax+reach,ay-arc,bx-reach,by-arc,bx,by);ctx.stroke()
+    const points=Array.from({length:17},(_,i)=>{const t=i/16,u=1-t;return {x:u*u*u*ax+3*u*u*t*(ax+reach)+3*u*t*t*(bx-reach)+t*t*t*bx,y:u*u*u*ay+3*u*u*t*(ay-arc)+3*u*t*t*(by-arc)+t*t*t*by}})
+    const mx=(ax+bx)/2,my=(ay+by)/2-arc*.75
+    // Restore before anything else paints: a leak here tints every later fill,
+    // including the opaque name gutter, by whatever is beneath it.
     ctx.globalAlpha=1
     hits.push({kind:'connection',connection,points})
     const count=counts[connection.id],value=state.connectionUnit==='bases'?count?.bases:connection.columns
     const label=value==null?'?':value<0?`↔ ${Math.abs(value).toLocaleString()}`:value.toLocaleString()
     ctx.font=`${selected?'bold ':''}10px "IBM Plex Mono", monospace`
     const labelWidth=ctx.measureText(label).width+10
-    if((buried?Math.abs(mx-ax)>18:Math.abs(bx-ax)>38||backwards)&&(!state.original||connection.columns!=null)){ctx.fillStyle=colors.background;rounded(ctx,mx-labelWidth/2,my-8,labelWidth,15,4);ctx.fill();ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.textAlign='center';ctx.fillText(label,mx,my+3);ctx.textAlign='left';hits.push({kind:'connection',x:mx-labelWidth/2,y:my-10,width:labelWidth,height:20,connection})}
+    if((Math.abs(bx-ax)>38||backwards)&&(!state.original||connection.columns!=null)){ctx.fillStyle=colors.background;rounded(ctx,mx-labelWidth/2,my-8,labelWidth,15,4);ctx.fill();ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.textAlign='center';ctx.fillText(label,mx,my+3);ctx.textAlign='left';hits.push({kind:'connection',x:mx-labelWidth/2,y:my-10,width:labelWidth,height:20,connection})}
   }
   for(const f of drawLayer.fragments) {
     const r=panelRect(f,camera),w=Math.max(1,r.width)
@@ -262,47 +244,42 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     }
   }
   if(dense){ctx.fillStyle=colors.muted;ctx.font='11px Lato, sans-serif';ctx.fillText(drawLayer.fragments.some(f=>f.aggregate)?'Block presence · filled width = fraction of blocks containing each sequence · click a header to zoom':'Source-block overview · zoom in for coordinates and chunk actions',MARGIN_X+8,13)}
-  // Paths continuing outside the loaded window. The block they resume in is
-  // usually far off screen and the block they leave from is often just off it
-  // too, so a line drawn between them would cross the whole viewport from
-  // nowhere to nowhere. Instead each is a short dashed mark on the row's own
-  // line at the edge it leaves by, naming the block to jump to. The distance is
-  // genuinely unknown, so it never carries a column count.
-  for(const link of offWindow){
-    const f=fragmentById.get(link.fragment.id)
+  // Both ends of a skipped link, and any path leaving the loaded window: a
+  // chevron on the block edge and the block at the other end, drawn after the
+  // panels so nothing buries them. Clicking one opens that block.
+  ctx.font='10px "IBM Plex Mono", monospace'
+  for(const marker of blockJumpMarkers(connections,offWindow,drawnRects)){
+    const f=fragmentById.get(marker.fragmentId)
     if(!f)continue
-    const index=f.rowIds.indexOf(link.rowId)
+    const index=f.rowIds.indexOf(marker.rowId)
     if(index<0)continue
-    const selected=state.highlighted===link.rowId
+    const selected=state.highlighted===marker.rowId
     if(dense&&!selected)continue
     const r=panelRect(f,camera)
     const y=r.y+(rowSlot(f,index)+0.5)*ROW_HEIGHT
-    if(y<MARGIN_Y||y>size.height-4)continue
+    if(y<MARGIN_Y-2||y>size.height-2)continue
+    const anchor=marker.edge>0?r.x+r.width:r.x
+    const label=String(marker.block)
     ctx.font=`${selected?'bold ':''}10px "IBM Plex Mono", monospace`
-    const label=link.direction>0?`block ${link.block} \u25b8`:`\u25c2 block ${link.block}`
-    const width=ctx.measureText(label).width+10
-    const run=56
-    const edge=link.direction>0?size.width-2:MARGIN_X+2
-    const inner=edge-link.direction*run
-    ctx.strokeStyle=selected?'#f2c766':light?'#7d90a8':'#6f88a8'
-    ctx.lineWidth=selected?2.4:1.4
-    ctx.globalAlpha=state.highlighted&&!selected?0.35:0.85
-    ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(inner,y);ctx.lineTo(edge,y);ctx.stroke()
-    ctx.setLineDash([]);ctx.globalAlpha=1
-    const lx=link.direction>0?Math.max(MARGIN_X+2,edge-width):edge
-    ctx.fillStyle=colors.background;rounded(ctx,lx,y-15,width,14,4);ctx.fill()
-    ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.fillText(label,lx+5,y-5)
-    hits.push({kind:'offwindow',rowId:link.rowId,block:link.block,x:Math.min(lx,inner),y:y-16,width:Math.max(width,run),height:22})
+    const width=ctx.measureText(label).width+8
+    const stem=marker.edge*9,tip=marker.edge*15
+    const labelX=marker.edge>0?anchor+17:anchor-17-width
+    if(labelX+width<MARGIN_X||labelX>size.width)continue
+    ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9'
+    ctx.lineWidth=selected?2.2:1.5
+    ctx.globalAlpha=state.highlighted&&!selected?0.35:0.95
+    ctx.beginPath();ctx.moveTo(anchor,y);ctx.lineTo(anchor+stem,y);ctx.stroke()
+    // The chevron points the way the path travels, so both ends of one link
+    // agree regardless of which edge they sit on.
+    const cx=anchor+tip
+    ctx.beginPath();ctx.moveTo(cx-marker.flow*4,y-4);ctx.lineTo(cx,y);ctx.lineTo(cx-marker.flow*4,y+4);ctx.stroke()
+    ctx.globalAlpha=1
+    ctx.fillStyle=colors.background;rounded(ctx,labelX,y-7,width,14,4);ctx.fill()
+    ctx.strokeStyle=selected?'#d9a638':colors.border;ctx.lineWidth=1;rounded(ctx,labelX+.5,y-6.5,width-1,13,4);ctx.stroke()
+    ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.fillText(label,labelX+4,y+3)
+    hits.push({kind:'blockjump',rowId:marker.rowId,block:marker.block,
+      x:Math.min(labelX,anchor+Math.min(0,tip)),y:y-9,width:Math.abs(tip)+width+2,height:18})
   }
-  for(const route of routedQueue){
-    ctx.strokeStyle=route.selected?'#f2c766':light?'#526f91':'#9eb9d9'
-    ctx.lineWidth=route.selected?3:1.8
-    ctx.globalAlpha=state.highlighted&&!route.selected?0.32:0.95
-    ctx.beginPath();ctx.moveTo(route.points[0].x,route.points[0].y)
-    for(let i=1;i<route.points.length-1;i++)ctx.arcTo(route.points[i].x,route.points[i].y,route.points[i+1].x,route.points[i+1].y,6)
-    ctx.lineTo(route.points.at(-1).x,route.points.at(-1).y);ctx.stroke()
-  }
-  ctx.globalAlpha=1
   if(selectionRect){ctx.fillStyle='#78cfbb27';ctx.fillRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.strokeStyle='#8ee1ce';ctx.setLineDash([5,3]);ctx.strokeRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.setLineDash([])}
   if(!layer.fragments.length){ctx.fillStyle=colors.muted;ctx.font='14px Lato, sans-serif';ctx.textAlign='center';ctx.fillText('This layer is empty. Move a selection here from another layer.',size.width/2,size.height/2);ctx.textAlign='left'}
   if(ghost){ctx.fillStyle=colors.head;ctx.fillRect(0,0,size.width,34);ctx.fillStyle=layer.color;ctx.font='bold 13px Lato, sans-serif';ctx.fillText(layer.name,16,23)}

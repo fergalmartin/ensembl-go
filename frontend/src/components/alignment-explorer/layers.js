@@ -187,20 +187,30 @@ export function columnScale(f,camera) {
 /** Inverse of the painter's column placement: an undistorted layer-space x back
  * to the source column actually drawn there. Without a camera this is the plain
  * linear mapping, which is what layer geometry tests describe. */
-/** Route a string that skips blocks it is not a member of.
+/** Where a path leaves one block and where it arrives in another, for links
+ * that skip blocks in between.
  *
- * Panels are painted over strings so a block's own cells stay readable, so a
- * direct curve between two non-adjacent blocks is buried under every block in
- * between and appears to stop at the edge of its own block. Such a string leaves
- * its block into the channel beside it, drops to a clear lane below the stack,
- * runs across, and rises into its destination — visible for its whole length.
+ * Drawing such a link as a line means routing it around every block it is not a
+ * member of, which is a lot of ink for a relationship that is really just "this
+ * continues over there". Each end becomes a marker on its own block edge instead:
+ * a chevron out of the block it leaves, a chevron into the block it enters, each
+ * labelled with the block at the other end and each a jump target.
  *
- * Returns the corner points; the caller rounds and strokes them. `lane` is the
- * y of the horizontal run, `drop` how far into the channel the turn happens. */
-export function routedPath(ax,ay,bx,by,lane,drop=11) {
-  const forward=bx>=ax
-  const out=ax+(forward?drop:-drop),into=bx-(forward?drop:-drop)
-  return [{x:ax,y:ay},{x:out,y:ay},{x:out,y:lane},{x:into,y:lane},{x:into,y:by},{x:bx,y:by}]
+ * `edge` is the side of the fragment the marker sits on (1 right, -1 left) and
+ * `flow` the direction the path travels, so both ends of one link point the same
+ * way. A link whose far end is outside the loaded window contributes only the
+ * end that exists. */
+export function blockJumpMarkers(connections,offWindow,rects) {
+  const markers=[]
+  for(const c of connections){
+    if(!pathIsOccluded(c,rects))continue
+    const flow=c.to.sourceBlock>c.from.sourceBlock?1:-1
+    markers.push({id:`${c.id}:out`,fragmentId:c.from.id,rowId:c.rowId,edge:flow,flow,block:c.to.sourceBlock})
+    markers.push({id:`${c.id}:in`,fragmentId:c.to.id,rowId:c.rowId,edge:-flow,flow,block:c.from.sourceBlock})
+  }
+  for(const link of offWindow)
+    markers.push({id:link.id,fragmentId:link.fragment.id,rowId:link.rowId,edge:link.direction,flow:link.direction,block:link.block})
+  return markers
 }
 /** A string is buried whenever a block it does not belong to stands between its
  * endpoints. Comparing block numbers is not enough: only panels actually drawn
