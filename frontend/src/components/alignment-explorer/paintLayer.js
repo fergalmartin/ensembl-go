@@ -1,5 +1,5 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './data.js'
-import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded } from './layers.js'
+import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded, BLOCK_EDGE_GAP, blockAtLayoutX } from './layers.js'
 import { renderResolution } from './renderResolution'
 import { denseOriginal } from './originalLayout'
 import { FEATURE_COLORS } from '../FeatureLegend'
@@ -20,7 +20,7 @@ function niceStep(scale){const raw=80/scale,mag=10**Math.floor(Math.log10(raw));
 function rowChunks(fragment,rowId){return cellRanges(fragment,rowId)}
 
 /** Paint an alignment layer to a viewport-sized texture: no chromosome-sized canvases. */
-export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,connections,offWindow=[],counts,state,drag,selectionRect,ghost=false,light=false}) {
+export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,connections,offWindow=[],counts,state,drag,hover,selectionRect,ghost=false,light=false}) {
   const colors=light?{background:'#f6f8fb',panel:'#fff',text:'#27394c',muted:'#738196',border:'#cbd5e1',head:'#edf2f8',void:'#eef2f7'}:{background:'#152032',panel:'#1c293d',text:'#e3eaf4',muted:'#8f9fb3',border:'#3a4d65',head:'#24354c',void:'#152032'}
   const baseColors=NUCLEOTIDE_COLORS[light?'light':'dark']
   ctx.clearRect(0,0,size.width,size.height)
@@ -72,8 +72,10 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       const left=Math.max(MARGIN_X,r.x),right=Math.min(size.width,r.x+w),top=MARGIN_Y
       ctx.strokeStyle=colors.border;ctx.strokeRect(left+.5,top-HEADER_HEIGHT,right-left,Math.min(size.height-top,r.height)+HEADER_HEIGHT)
       ctx.font='10px Lato, sans-serif';ctx.fillStyle=colors.muted
-      const heading=`${f.aggregate.first}–${f.aggregate.last}`,labelWidth=Math.max(65,ctx.measureText(heading).width+12)
-      if(left>=MARGIN_X&&!headerBoxes.some(b=>left<b.right+8&&left+labelWidth>b.left-8)){ctx.fillText(heading,left+5,top-26);ctx.fillText(`${f.aggregate.count} blocks`,left+5,top-12);headerBoxes.push({left,right:left+labelWidth})}
+      const single=f.aggregate.first===f.aggregate.last
+      const heading=single?`Block ${f.aggregate.first}`:`${f.aggregate.first}–${f.aggregate.last}`
+      const labelWidth=Math.max(65,ctx.measureText(heading).width+12)
+      if(left>=MARGIN_X&&!headerBoxes.some(b=>left<b.right+8&&left+labelWidth>b.left-8)){ctx.fillText(heading,left+5,top-26);ctx.fillText(single?'1 block':`${f.aggregate.count} blocks`,left+5,top-12);headerBoxes.push({left,right:left+labelWidth})}
       for(let i=0;i<f.rowIds.length;i++){
         const id=f.rowIds[i],y=MARGIN_Y+rowSlot(f,i)*ROW_HEIGHT-camera.y
         if(y+ROW_HEIGHT<0||y>size.height)continue
@@ -81,14 +83,40 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         ctx.fillStyle=state.highlighted===id?'#f2c766':light?'#598b9d':'#66a9b6';ctx.globalAlpha=state.highlighted&&state.highlighted!==id ? .35 : .4+.6*fraction
         ctx.fillRect(left,y+4,Math.max(1,(right-left)*fraction),ROW_HEIGHT-8);ctx.globalAlpha=1
       }
+      if(hover?.fragmentId===f.id){
+        const bottom=Math.min(size.height,r.y+r.height)
+        ctx.strokeStyle=colors.text;ctx.globalAlpha=.5
+        ctx.strokeRect(left+.5,top-HEADER_HEIGHT+.5,right-left-1,bottom-top+HEADER_HEIGHT-1);ctx.globalAlpha=1
+        // Within a merged block, point at the individual block under the cursor
+        // rather than leaving the whole merge as the only unit on offer.
+        const inner=blockAtLayoutX(f,hover.layoutX)
+        if(inner){
+          const ix=r.x+(inner.x-f.x)*r.scale,iw=Math.max(2,(inner.end_x-inner.x)*r.scale)
+          ctx.fillStyle=light?'#26374d18':'#cfe0f818';ctx.fillRect(Math.max(left,ix),top,Math.min(right,ix+iw)-Math.max(left,ix),bottom-top)
+          ctx.strokeStyle='#f2c766';ctx.lineWidth=1.5
+          ctx.strokeRect(Math.max(left,ix)+.5,top-HEADER_HEIGHT+.5,Math.min(right,ix+iw)-Math.max(left,ix)-1,bottom-top+HEADER_HEIGHT-1)
+          ctx.lineWidth=1
+          const note=`Block ${inner.block} \u00b7 ${(inner.end_x-inner.x).toLocaleString()} columns`
+          ctx.font='10px "IBM Plex Mono", monospace'
+          const nw=ctx.measureText(note).width+12
+          const nx=Math.min(Math.max(MARGIN_X+4,ix+iw/2-nw/2),size.width-nw-4)
+          ctx.fillStyle=colors.head;rounded(ctx,nx,top-HEADER_HEIGHT-20,nw,17,4);ctx.fill()
+          ctx.strokeStyle=colors.border;rounded(ctx,nx+.5,top-HEADER_HEIGHT-19.5,nw-1,16,4);ctx.stroke()
+          ctx.fillStyle=colors.text;ctx.fillText(note,nx+6,top-HEADER_HEIGHT-8)
+        }
+      }
       hits.push({kind:'aggregate',fragmentId:f.id,x:left,y:top-HEADER_HEIGHT,width:right-left,height:HEADER_HEIGHT});continue
     }
     const tile=tiles[f.id],data=renderResolution(tile?.data,camera.scale),rowData=new Map((data?.rows||[]).map(row=>[row.id,row]))
     ctx.save();ctx.beginPath();ctx.rect(Math.max(0,r.x),Math.max(0,r.y-HEADER_HEIGHT),Math.min(size.width,w+1),Math.min(size.height,r.height+HEADER_HEIGHT));ctx.clip()
     ctx.fillStyle=colors.background;ctx.fillRect(r.x,r.y,w,r.height)
     if(aligned&&!f.compact){ctx.strokeStyle=colors.border;ctx.globalAlpha=.28;for(let y=Math.max(r.y,MARGIN_Y+Math.floor(camera.y/ROW_HEIGHT)*ROW_HEIGHT-camera.y);y<Math.min(size.height,r.y+r.height);y+=ROW_HEIGHT)ctx.strokeRect(r.x+.5,y+.5,w,ROW_HEIGHT);ctx.globalAlpha=1}
+    const hovered=hover?.fragmentId===f.id
     ctx.fillStyle=colors.head;ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,HEADER_HEIGHT)
-    ctx.strokeStyle=state.selection.some(s=>s.fragmentId===f.id)?layer.color:colors.border;ctx.lineWidth=1;ctx.strokeRect(r.x+.5,r.y-HEADER_HEIGHT+.5,w,r.height+HEADER_HEIGHT)
+    // Pointing at a block's header picks the whole block out of the row of them.
+    if(hovered){ctx.fillStyle=light?'#26374d12':'#cfe0f812';ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,r.height+HEADER_HEIGHT)}
+    ctx.strokeStyle=state.selection.some(s=>s.fragmentId===f.id)?layer.color:hovered?colors.text:colors.border
+    ctx.lineWidth=hovered?1.5:1;ctx.strokeRect(r.x+.5,r.y-HEADER_HEIGHT+.5,w,r.height+HEADER_HEIGHT);ctx.lineWidth=1
     const leftVisible=Math.max(0,-r.x),firstCol=f.start+leftVisible/r.scale,step=niceStep(camera.scale)
     ctx.font='10px "IBM Plex Mono", monospace';ctx.fillStyle=colors.muted
     if(!dense)for(let col=Math.ceil(firstCol/step)*step;col<f.end;col+=step){const x=r.x+(col-f.start)*r.scale;if(x>size.width)break;ctx.fillText((col+1).toLocaleString(),x+3,r.y-9);ctx.fillRect(x,r.y-5,1,5)}
@@ -262,23 +290,27 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     const label=String(marker.block)
     ctx.font=`${selected?'bold ':''}10px "IBM Plex Mono", monospace`
     const width=ctx.measureText(label).width+8
-    const stem=marker.edge*9,tip=marker.edge*15
-    const labelX=marker.edge>0?anchor+17:anchor-17-width
+    // The label sits centred in the channel beside the block, so it has room on
+    // both sides instead of being crushed against the next block.
+    const mid=anchor+marker.edge*BLOCK_EDGE_GAP/2
+    const labelX=mid-width/2
+    const near=marker.edge>0?labelX-3:labelX+width+3
+    // Leaving a block, the chevron arrives at the label; entering one, it arrives
+    // at the block. Either way it points the way the path travels.
+    const departing=marker.edge===marker.flow
+    const cx=departing?near:anchor-marker.flow*2
     if(labelX+width<MARGIN_X||labelX>size.width)continue
     ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9'
     ctx.lineWidth=selected?2.2:1.5
     ctx.globalAlpha=state.highlighted&&!selected?0.35:0.95
-    ctx.beginPath();ctx.moveTo(anchor,y);ctx.lineTo(anchor+stem,y);ctx.stroke()
-    // The chevron points the way the path travels, so both ends of one link
-    // agree regardless of which edge they sit on.
-    const cx=anchor+tip
+    ctx.beginPath();ctx.moveTo(anchor,y);ctx.lineTo(near,y);ctx.stroke()
     ctx.beginPath();ctx.moveTo(cx-marker.flow*4,y-4);ctx.lineTo(cx,y);ctx.lineTo(cx-marker.flow*4,y+4);ctx.stroke()
     ctx.globalAlpha=1
     ctx.fillStyle=colors.background;rounded(ctx,labelX,y-7,width,14,4);ctx.fill()
     ctx.strokeStyle=selected?'#d9a638':colors.border;ctx.lineWidth=1;rounded(ctx,labelX+.5,y-6.5,width-1,13,4);ctx.stroke()
     ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.fillText(label,labelX+4,y+3)
     hits.push({kind:'blockjump',rowId:marker.rowId,block:marker.block,
-      x:Math.min(labelX,anchor+Math.min(0,tip)),y:y-9,width:Math.abs(tip)+width+2,height:18})
+      x:Math.min(anchor,labelX),y:y-9,width:Math.abs(labelX+width/2-anchor)+width/2+4,height:18})
   }
   if(selectionRect){ctx.fillStyle='#78cfbb27';ctx.fillRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.strokeStyle='#8ee1ce';ctx.setLineDash([5,3]);ctx.strokeRect(selectionRect.x,selectionRect.y,selectionRect.width,selectionRect.height);ctx.setLineDash([])}
   if(!layer.fragments.length){ctx.fillStyle=colors.muted;ctx.font='14px Lato, sans-serif';ctx.textAlign='center';ctx.fillText('This layer is empty. Move a selection here from another layer.',size.width/2,size.height/2);ctx.textAlign='left'}

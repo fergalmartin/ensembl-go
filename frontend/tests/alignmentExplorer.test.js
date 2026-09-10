@@ -290,3 +290,44 @@ test('paths continuing outside the loaded window become stubs on the outermost b
   assert.deepEqual(offWindowLinks(layer,null),[])
   assert.deepEqual(offWindowLinks(layer,{before:{},after:{}}),[])
 })
+
+test('level of detail keeps blocks readable and merges only when they are many',async()=>{
+  const {mergeWidth,BLOCK_DETAIL_SPAN,MERGED_BLOCKS_ON_SCREEN}=await import('../src/components/alignment-explorer/layers.js')
+  // Zoomed in far enough to read a block, never merge.
+  assert.equal(mergeWidth(1),0)
+  assert.equal(mergeWidth(BLOCK_DETAIL_SPAN),0)
+  assert.ok(mergeWidth(BLOCK_DETAIL_SPAN+1)>0)
+  // Roughly a dozen merged blocks on screen at any zoom past the threshold.
+  for(const span of [900_000,5_000_000,43_023_632,400_000_000]){
+    const onScreen=span/mergeWidth(span)
+    assert.ok(onScreen>=MERGED_BLOCKS_ON_SCREEN/2&&onScreen<=MERGED_BLOCKS_ON_SCREEN*2,`${span} -> ${onScreen}`)
+  }
+  // Powers of two, so levels nest: a merged block splits in half on zooming in
+  // rather than resegmenting into unrelated groups, and every level caches.
+  for(const span of [900_000,5_000_000,43_023_632]){
+    const w=mergeWidth(span)
+    assert.equal(w,2**Math.round(Math.log2(w)))
+    assert.ok(mergeWidth(span/2)===w/2||mergeWidth(span/2)===0,`${span} does not nest`)
+  }
+  // The whole primate file lands near the 5M-per-merge size this was sized for.
+  assert.equal(mergeWidth(43_023_632),4_194_304)
+})
+
+test('pointing inside a merged block finds the block actually under the cursor',async()=>{
+  const {blockAtLayoutX}=await import('../src/components/alignment-explorer/layers.js')
+  // Widths differ by two orders of magnitude, so dividing the merge evenly would
+  // name the wrong block almost everywhere.
+  const edges=[{block:7,x:1000,end_x:1_001_000},{block:8,x:1_001_032,end_x:1_003_032},{block:9,x:1_003_064,end_x:1_103_064}]
+  const merged={aggregate:{first:7,last:9,count:3,edges}}
+  assert.equal(blockAtLayoutX(merged,1000).block,7)
+  assert.equal(blockAtLayoutX(merged,900_000).block,7)
+  assert.equal(blockAtLayoutX(merged,1_002_000).block,8)
+  assert.equal(blockAtLayoutX(merged,1_100_000).block,9)
+  // The gaps between blocks belong to no block, and neither does outside.
+  assert.equal(blockAtLayoutX(merged,1_001_010),null)
+  assert.equal(blockAtLayoutX(merged,10),null)
+  // A merge too fine-grained to carry its edges points at nothing rather than guessing.
+  assert.equal(blockAtLayoutX({aggregate:{first:1,last:900,count:900,edges:[]}},500),null)
+  assert.equal(blockAtLayoutX({},500),null)
+  assert.equal(blockAtLayoutX(null,500),null)
+})

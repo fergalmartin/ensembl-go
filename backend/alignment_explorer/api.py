@@ -167,9 +167,10 @@ def create_router(cache_root=None, annotation_provider=None):
         return store_for(dataset_id).blocks(offset, limit, sequence_id, coordinate)
 
     @router.get('/datasets/{dataset_id}/layout')
-    def layout(dataset_id: str, start: int = Query(0,ge=0), end: int = Query(1,ge=1), limit: int = Query(256,ge=16,le=512)):
+    def layout(dataset_id: str, start: int = Query(0,ge=0), end: int = Query(1,ge=1), limit: int = Query(256,ge=16,le=512),
+               merge: int = Query(0,ge=0), detail: int = Query(0,ge=0,le=512)):
         if end<=start: raise HTTPException(400,'Empty layout interval')
-        return store_for(dataset_id).layout_region(start,end,limit)
+        return store_for(dataset_id).layout_region(start,end,limit,merge,detail)
 
     @router.post('/datasets/{dataset_id}/region')
     def region(dataset_id: str, payload: RegionRequest):

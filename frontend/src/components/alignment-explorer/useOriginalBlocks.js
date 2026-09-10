@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, MARGIN_X } from './data'
-import { createFragment } from './layers'
+import { createFragment, mergeWidth, BLOCK_DETAIL_COUNT } from './layers'
 import { TileScheduler } from './tileScheduler'
 
 /** Stable source coordinates with indexed viewport lookup. No sequential walk
@@ -15,11 +15,12 @@ export default function useOriginalBlocks(dataset,source,camera,size,_total,enab
   const span=Math.max(1,size.width/camera.scale),quantum=2**Math.ceil(Math.log2(span))
   const start=Math.max(0,Math.floor((camera.x-MARGIN_X/camera.scale-span*.5)/quantum)*quantum)
   const end=Math.min(extent,Math.max(start+1,Math.ceil((camera.x+span*1.5)/quantum)*quantum))
-  const key=`${dataset?.id}:${start}:${end}`
+  const merge=mergeWidth(span)
+  const key=`${dataset?.id}:${start}:${end}:${merge}`
   useEffect(()=>{
     if(!dataset||!enabled||end<=start){cache.setWanted([]);return}
-    cache.setWanted([{key,label:'Source block layout',run:signal=>api(`/datasets/${dataset.id}/layout?start=${start}&end=${end}&limit=64`,undefined,signal)}])
-  },[cache,dataset,key,start,end,enabled,revision])
+    cache.setWanted([{key,label:'Source block layout',run:signal=>api(`/datasets/${dataset.id}/layout?start=${start}&end=${end}&limit=96&merge=${merge}&detail=${BLOCK_DETAIL_COUNT}`,undefined,signal)}])
+  },[cache,dataset,key,start,end,merge,enabled,revision])
   const exact=cache.get(key)
   const fragments=useMemo(()=>{
     // Cached overlapping regions continue to render immediately during a pan.
@@ -33,7 +34,7 @@ export default function useOriginalBlocks(dataset,source,camera,size,_total,enab
     for(const result of exact?[exact]:best?[best]:[])for(const b of result.blocks){
       if(b.end_x<start||b.x>end)continue
       const id=b.aggregate?`aggregate:${b.block}:${b.last_block}`:`original:${b.block}`
-      records.set(id,createFragment(b.block,0,b.end_x-b.x,b.row_ids,{id,x:b.x,aggregate:b.aggregate?{first:b.block,last:b.last_block,count:b.count,presence:b.presence}:null,sourceRowCount:b.row_count,availableRows:b.available_row_ids}))
+      records.set(id,createFragment(b.block,0,b.end_x-b.x,b.row_ids,{id,x:b.x,aggregate:b.aggregate?{first:b.block,last:b.last_block,count:b.count,presence:b.presence,edges:b.edges||[]}:null,sourceRowCount:b.row_count,availableRows:b.available_row_ids}))
     }
     // The directly jumped-to block is already available without a layout round trip.
     if(source&&!exact&&!best){const id=`original:${source.block}`;records.set(id,createFragment(source.block,0,source.length,source.rows.map(r=>r.id),{id,x:source.layout_start||0,availableRows:source.rows.filter(r=>!r.empty_status).map(r=>r.id)}))}

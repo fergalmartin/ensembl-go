@@ -176,7 +176,40 @@ export function coordinateFragments(layer) {
  * The block's LEFT edge stays on its exact affine position, so camera.x keeps its
  * meaning and zoom anchoring, camera bounds and layout-region requests are all
  * unaffected. Only positions within a block shift, by at most this gap. */
-export const BLOCK_EDGE_GAP=34
+/** Level of detail for the Original layout, chosen from the visible span.
+ *
+ * Individual blocks keep their headers, rulers and connecting chevrons up to
+ * BLOCK_DETAIL_SPAN columns, and past it for as long as no more than
+ * BLOCK_DETAIL_COUNT of them are in view (the server applies that second half,
+ * since only it knows how many blocks a span holds). Merging earlier than that
+ * produces merged blocks holding one or two blocks, which says less than the
+ * blocks themselves and costs their headers, rulers and connections.
+ *
+ * The merge width tracks the span so roughly a dozen merged blocks are on screen
+ * at any zoom, and is rounded to a power of two so the grid nests as you zoom:
+ * merged blocks split in half rather than resegmenting into unrelated groups,
+ * and every level stays cacheable. On a 43M-column file the widest level lands
+ * near 4M columns per merged block. Returns 0 when individual blocks are wanted.
+ */
+export const BLOCK_DETAIL_SPAN=500_000
+export const BLOCK_DETAIL_COUNT=40
+export const MERGED_BLOCKS_ON_SCREEN=12
+export function mergeWidth(span) {
+  if(!(span>BLOCK_DETAIL_SPAN))return 0
+  return 2**Math.ceil(Math.log2(Math.max(1,span/MERGED_BLOCKS_ON_SCREEN)))
+}
+/** The individual source block at a display position inside a merged block.
+ *
+ * A merged descriptor carries the edges of the blocks it covers, so pointing at
+ * one is exact rather than an even division of the merge — which would be wrong
+ * by orders of magnitude when block lengths vary as much as they do. Returns
+ * null when the merge was too fine-grained to carry its edges. */
+export function blockAtLayoutX(fragment,layoutX) {
+  const edges=fragment?.aggregate?.edges
+  if(!edges?.length)return null
+  return edges.find(e=>layoutX>=e.x&&layoutX<e.end_x)||null
+}
+export const BLOCK_EDGE_GAP=52
 /** Never eat a narrow block to feed the channel beside it. */
 export const blockGap=(f,camera)=>Math.min(BLOCK_EDGE_GAP,(f.end-f.start)*camera.scale*0.25)
 /** Pixels per alignment column inside a block, slightly under camera.scale. */

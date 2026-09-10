@@ -26,6 +26,9 @@ SOURCE_GAP = 32
 # Bump whenever the spacing formula changes so existing datasets rebuild the
 # disposable layout index instead of keeping positions from the old formula.
 LAYOUT_VERSION = 3
+# Individual block edges carried inside a merged descriptor, for pointing at the
+# block under the cursor. Beyond this a merge is too fine-grained to point at.
+EDGES_PER_MERGE = 96
 _LAYOUT_LOCK = threading.Lock()
 
 
@@ -314,7 +317,22 @@ class AlignmentStore:
         return {'before': {r['id']: r['block'] for r in before},
                 'after': {r['id']: r['block'] for r in after}}
 
-    def layout_region(self, start, end, limit=256):
+    def layout_region(self, start, end, limit=256, merge=0, detail=0):
+        """Descriptors for the blocks across a display interval.
+
+        `merge` is a column budget: blocks are bucketed onto a fixed grid of that
+        width and each bucket returned as one merged descriptor. Bucketing by
+        width rather than by block count matters because block lengths span three
+        orders of magnitude, so equal-count groups come out wildly uneven and the
+        overview reads as a jumble. A fixed grid also keeps a merged block's
+        identity and position stable while panning, instead of regrouping around
+        whichever block happens to be leftmost.
+
+        merge=0 asks for individual blocks; `limit` still caps the response, and a
+        range holding more than that falls back to a grid coarse enough to fit.
+        `detail` keeps individual blocks whenever the range holds no more than
+        that many, whatever merge was asked for.
+        """
         self.ensure_layout()
         with self.connect() as db:
             first=db.execute('SELECT block FROM source_layout WHERE x<=? ORDER BY x DESC LIMIT 1',(start,)).fetchone()
@@ -322,19 +340,36 @@ class AlignmentStore:
             if not last: return {'blocks':[],**self.layout_info()}
             lo=first['block'] if first else 1
             hi=last['block']
-            # Broad overviews explicitly aggregate adjacent blocks. Every block
-            # remains represented; zooming in resolves its individual identity.
-            group=max(1,(hi-lo+limit)//limit)
+            merge=max(0,int(merge))
+            # Merging only pays once blocks are too many and too thin to read.
+            # Below that a merge holds one or two blocks, which says less than the
+            # blocks themselves and costs their headers, rulers and connections.
+            if detail and hi-lo+1<=detail: merge=0
+            if not merge and hi-lo+1>limit:
+                # More blocks than the response may carry: coarsen rather than truncate,
+                # so every block stays represented by something.
+                merge=max(1,(end-start)//max(1,limit))
             result=[]
-            if group>1:
-                for row in db.execute('SELECT min(block) AS block,max(block) AS last_block,min(x) AS x,max(end_x) AS end_x,max(row_count) AS row_count,count(*) AS count FROM source_layout WHERE block BETWEEN ? AND ? GROUP BY ((block-?)/?) ORDER BY block',(lo,hi,lo,group)):
+            if merge:
+                for row in db.execute('SELECT min(block) AS block,max(block) AS last_block,min(x) AS x,max(end_x) AS end_x,max(row_count) AS row_count,count(*) AS count FROM source_layout WHERE block BETWEEN ? AND ? GROUP BY (x/?) ORDER BY block',(lo,hi,merge)):
                     result.append({**dict(row),'aggregate':True,'row_ids':[]})
                 presence={}
-                for row in db.execute('SELECT ((block-?)/?) AS bucket,id,count(*) AS n FROM rows WHERE block BETWEEN ? AND ? AND empty_status IS NULL GROUP BY bucket,id',(lo,group,lo,hi)):
+                for row in db.execute('SELECT (l.x/?) AS bucket,r.id,count(*) AS n FROM rows r JOIN source_layout l ON l.block=r.block WHERE r.block BETWEEN ? AND ? AND r.empty_status IS NULL GROUP BY bucket,r.id',(merge,lo,hi)):
                     presence.setdefault(row['bucket'],{})[row['id']]=row['n']
-                for i,item in enumerate(result):
-                    item['presence']=presence.get(i,{})
+                # Individual block edges inside a merged descriptor, so the view can
+                # point at the block under the cursor. Omitted when a merge holds too
+                # many to be worth sending or pointing at.
+                edges={}
+                for item in result:
+                    if item['count']<=EDGES_PER_MERGE:
+                        edges[item['x']//merge]=[dict(r) for r in db.execute(
+                            'SELECT block,x,end_x FROM source_layout WHERE block BETWEEN ? AND ? ORDER BY block',
+                            (item['block'],item['last_block']))]
+                for item in result:
+                    bucket=item['x']//merge
+                    item['presence']=presence.get(bucket,{})
                     item['row_ids']=list(item['presence'])
+                    item['edges']=edges.get(bucket,[])
             else:
                 records=db.execute('SELECT * FROM source_layout WHERE block BETWEEN ? AND ? ORDER BY block',(lo,hi)).fetchall()
                 memberships={r['block']:[] for r in records}

@@ -274,3 +274,49 @@ class LayoutPerformanceTests(unittest.TestCase):
         a=stable_id('a')
         self.assertEqual(self.store.outside_neighbours([a],2,2)['after'],{a:4})
         self.assertEqual(self.store.outside_neighbours([a],3,3)['before'],{a:2})
+
+    def test_merging_buckets_by_width_not_by_block_count(self):
+        # Equal-count groups come out wildly uneven when block lengths vary, which
+        # is what made the overview read as a jumble. Widths do not.
+        for length in [200_000]*4+[2_000]*40+[150_000]*4:
+            self.store.add_block([{'source':'a','sequence':'A'*length}])
+        end=self.store.layout_info()['layout_end']
+        merged=[b for b in self.store.layout_region(0,end,merge=400_000,detail=0)['blocks']]
+        self.assertTrue(all(b['aggregate'] for b in merged))
+        widths=[b['end_x']-b['x'] for b in merged]
+        # Every merged block lands within one block's length of the budget rather
+        # than varying by orders of magnitude.
+        self.assertLessEqual(max(widths),400_000+200_000)
+        self.assertEqual(sum(b['count'] for b in merged),48)
+        # Buckets sit on a fixed grid, so a merged block keeps its identity and
+        # position while panning instead of regrouping around the leftmost block.
+        window=self.store.layout_region(300_000,end,merge=400_000,detail=0)['blocks']
+        shared={b['x'] for b in merged}&{b['x'] for b in window}
+        self.assertTrue(shared)
+        for x in shared:
+            a=next(b for b in merged if b['x']==x); c=next(b for b in window if b['x']==x)
+            self.assertEqual((a['block'],a['last_block'],a['end_x']),(c['block'],c['last_block'],c['end_x']))
+
+    def test_a_few_blocks_are_never_merged_however_wide_the_view(self):
+        # Merging here would hand back merged blocks holding one block each, which
+        # says less than the blocks do and costs their headers and rulers.
+        for _ in range(6):
+            self.store.add_block([{'source':'a','sequence':'A'*100_000}])
+        end=self.store.layout_info()['layout_end']
+        blocks=self.store.layout_region(0,end,merge=50_000,detail=40)['blocks']
+        self.assertEqual(len(blocks),6)
+        self.assertTrue(all(not b.get('aggregate') for b in blocks))
+        # Past the threshold the same request merges.
+        self.assertTrue(all(b['aggregate'] for b in self.store.layout_region(0,end,merge=50_000,detail=4)['blocks']))
+
+    def test_a_merged_block_carries_the_edges_of_the_blocks_it_covers(self):
+        for length in (10_000,20_000,30_000):
+            self.store.add_block([{'source':'a','sequence':'A'*length}])
+        end=self.store.layout_info()['layout_end']
+        [merged]=self.store.layout_region(0,end,merge=1_000_000,detail=0)['blocks']
+        self.assertEqual([e['block'] for e in merged['edges']],[1,2,3])
+        self.assertEqual([e['end_x']-e['x'] for e in merged['edges']],[10_000,20_000,30_000])
+        # Edges are in the same display space as the merged block itself, so the
+        # view can point at the block under the cursor without another request.
+        self.assertEqual(merged['edges'][0]['x'],merged['x'])
+        self.assertEqual(merged['edges'][-1]['end_x'],merged['end_x'])
