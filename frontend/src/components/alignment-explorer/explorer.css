@@ -201,3 +201,9 @@ label.al-filter-range input { width:100%; padding:3px!important; }
   border:1px solid var(--al-border,#3a4d65); background:#ffffff0f; font-size:10px; }
 .al-terms li button { background:none; border:0; padding:0 3px; font-size:12px; line-height:1; opacity:.6; }
 .al-terms li button:hover { opacity:1; }
+
+/* Lit while Original is filtered, so the state is visible from the alignment
+   itself rather than only from inside the filter panel. */
+.al-filter-flag { font-size:11px; white-space:nowrap; }
+.al-filter-flag.selected { border-color:#edc263; color:#edc263; background:#edc2631a; }
+.al-filter-flag:disabled { opacity:.35; }
