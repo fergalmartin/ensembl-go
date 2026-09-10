@@ -12,7 +12,7 @@ import FilterPanel from './FilterPanel'
 import GenomeColorPicker from '../GenomeColorPicker'
 import { genomeColorPalette } from '../../genomeColorSchemes'
 import { api, download, demoAlignment } from './data'
-import { emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, sourceViewAnchor, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRow, reorderFragmentRow } from './layers'
+import { emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, sourceViewAnchor, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRow, reorderFragmentRow, resolvePicks } from './layers'
 import { NUCLEOTIDE_COLORS, NUCLEOTIDE_LETTER_THRESHOLD } from '../../utils/nucleotideStyle'
 import './explorer.css'
 
@@ -128,7 +128,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     try{
       const result=await api(`/datasets/${dataset.id}/blocks/${id}/rows`)
       if(token!==blockNav.current)return
-      setSource(result);patch({sourceBlock:Number(id),original:true,selection:[],camera:fitCamera({fragments:[createFragment(result.block,0,result.length,result.rows.map(r=>r.id),{x:result.layout_start||0})]},size.width,size.height)})
+      setSource(result);patch({sourceBlock:Number(id),original:true,camera:fitCamera({fragments:[createFragment(result.block,0,result.length,result.rows.map(r=>r.id),{x:result.layout_start||0})]},size.width,size.height)})
     }catch(e){if(token===blockNav.current)setError(e.message)}
   }
   function layerFromFilter(chunks){
@@ -150,6 +150,13 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   }
   function transfer(copy=false,destinationId=target){
     const newLayer=destinationId==='new'?createLayer(layerName.trim()||`Layer ${state.layers.length+1}`,state.layers.length):null
+    const present=new Set(active.fragments.map(f=>f.id))
+    const resolved=resolvePicks(state.selection)
+    const waiting=resolved.filter(pick=>!present.has(pick.fragmentId))
+    if(waiting.length)setNotice(`${waiting.length} picked ${waiting.length===1?'block is':'blocks are'} not loaded, so ${waiting.length===1?'it was':'they were'} left behind. Navigate to them and move again.`)
+    // Nothing to move means nothing to commit: going ahead would leave the
+    // workspace pointing at a layer that was never made.
+    if(waiting.length===resolved.length)return
     commit(s=>{
       // Original is immutable. Extracting from it creates working cells without
       // removing any source data or storing a duplicate of the full alignment.
