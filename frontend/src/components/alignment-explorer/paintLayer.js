@@ -1,6 +1,6 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './data.js'
 import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, pathIsOccluded, sourceViewAnchor, BLOCK_EDGE_GAP, blockAtLayoutX, pickedRowIds, planeOf } from './layers.js'
-import { renderResolution } from './renderResolution'
+import { rowCoverage } from './tileCoverage'
 import { visibleGaps } from './gapMemory'
 import { denseOriginal } from './originalLayout'
 import { FEATURE_COLORS } from '../FeatureLegend'
@@ -132,7 +132,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       }
       hits.push({kind:'aggregate',fragmentId:f.id,x:left,y:top-HEADER_HEIGHT,width:right-left,height:HEADER_HEIGHT});continue
     }
-    const tile=tiles[f.id],data=renderResolution(tile?.data,onScreen),rowData=new Map((data?.rows||[]).map(row=>[row.id,row]))
+    const tile=tiles[f.id],sources=tile?.sources||[tile?.data].filter(Boolean)
     ctx.save();ctx.beginPath();ctx.rect(Math.max(0,r.x),Math.max(0,r.y-HEADER_HEIGHT),Math.min(size.width,w+1),Math.min(size.height,r.height+HEADER_HEIGHT));ctx.clip()
     ctx.fillStyle=colors.background;ctx.fillRect(r.x,r.y,w,r.height)
     if(aligned&&!f.compact&&!flatRows){ctx.strokeStyle=colors.border;ctx.globalAlpha=.28;for(let y=Math.max(r.y,MARGIN_Y+Math.floor(camera.y/ROW_HEIGHT)*ROW_HEIGHT-camera.y);y<Math.min(size.height,r.y+r.height);y+=ROW_HEIGHT)ctx.strokeRect(r.x+.5,y+.5,w,ROW_HEIGHT);ctx.globalAlpha=1}
@@ -152,26 +152,19 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     for(let index=0;index<f.rowIds.length;index++) {
       const id=f.rowIds[index],y=r.y+rowSlot(f,index)*ROW_HEIGHT
       if(y+ROW_HEIGHT<0||y>size.height)continue
-      const row=rowData.get(id),ranges=rowChunks(f,id),selected=lit.has(id)
+      const ranges=rowChunks(f,id),selected=lit.has(id)
       ctx.globalAlpha=anyLit&&!selected?0.36:1
       ctx.fillStyle=colors.void;ctx.fillRect(r.x,y,w,ROW_HEIGHT)
-      const background=tile?.overview,overviewRow=background?.rows.find(row=>row.id===id)
-      if(!flatRows&&background&&background!==data&&overviewRow?.bins){
-        overviewRow.bins.forEach((bin,i)=>{
-          const a=background.start+i*background.bin_size,z=Math.min(background.end,a+background.bin_size)
-          const total=Object.values(bin).reduce((n,v)=>n+v,0),canonical='ACGT'.split('').reduce((n,c)=>n+(bin[c]||0),0),div=overviewRow.divergence_bins?.[i]?.fraction
-          for(const [ra,rz] of ranges){const start=Math.max(a,ra),end=Math.min(z,rz);if(end<=start)continue
-            ctx.fillStyle=bin['-']===total?colors.background:div==null?(canonical?(light?'#7baeb5':'#448d99'):'#877b9f'):`hsl(${168-div*130} ${light?30:36}% ${light?65:49}%)`
-            ctx.fillRect(r.x+(start-f.start)*r.scale,y+3,(end-start)*r.scale,ROW_HEIGHT-6)
-          }
-        })
-      }
       for(const [rangeStart,rangeEnd] of ranges){
-        const start=Math.max(rangeStart,data?.start??rangeStart,Math.floor(f.start-r.x/r.scale)),end=Math.min(rangeEnd,data?.end??rangeEnd,Math.ceil(f.start+(size.width-r.x)/r.scale))
+        const left=Math.max(rangeStart,Math.floor(f.start-r.x/r.scale)),right=Math.min(rangeEnd,Math.ceil(f.start+(size.width-r.x)/r.scale))
+        const coverage=rowCoverage(sources,id,left,right,onScreen)
+        for(const {start,end,data,row} of [...coverage.spans,...coverage.holes.map(([start,end])=>({start,end,data:null,row:null}))]){
         if(end<=start)continue
         const x=r.x+(start-f.start)*r.scale,width=(end-start)*r.scale
         if(!row||row.missing||row.sequence==null&&data?.detail){
-          ctx.fillStyle=colors.void;ctx.fillRect(x,y+2,width,ROW_HEIGHT-4)
+          // Membership is known before bases arrive. Keep an explicitly neutral
+          // presence mark instead of making the block body disappear.
+          ctx.fillStyle=!row&&f.availableRows?.includes(id)?(light?'#aab8c6':'#415268'):colors.void;ctx.fillRect(x,y+2,width,ROW_HEIGHT-4)
           if(width>24&&!dense)dashed(ctx,x,y+2,width,ROW_HEIGHT-4,row?.missing?colors.border:light?'#e0e6ed':'#243247')
           if(width>160){ctx.fillStyle=colors.muted;ctx.font='10px Lato, sans-serif';ctx.fillText(tile?.error?'Unavailable · Retry loading':!data||!row?'Loading…':row?.missing?'No alignment coverage':'Unavailable',x+8,y+17)}
           continue
@@ -221,6 +214,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             if(type==='cds'&&onScreen>=4){ctx.fillStyle='#bfdbfe';for(let p=a;p<z;p+=6)ctx.fillRect(r.x+(p-f.start)*r.scale,y+ROW_HEIGHT-h,Math.min(3,z-p)*r.scale,h)}
           }
         }
+      }
       }
       // Gaps last, from memory rather than from whichever tile is to hand, so one
       // resolved at any zoom stays resolved instead of flickering as tiles swap.

@@ -2,59 +2,62 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, visibleRequest, requestKey } from './data'
 import { layerConnections, offWindowLinks } from './layers'
 import { TileScheduler } from './tileScheduler'
-import { createGapMemory, rememberGaps } from './gapMemory'
+import { datasetTiles } from './tileService'
+import { planTiles, resolutionLevel } from './tilePlan'
+import { planeOf } from './layers'
+import { recordPerformance } from './performance'
 
 /** Independent, persistent tile requests. A slow block never prevents another
  * block rendering and camera movement never waits for the data pipeline. */
-export default function useLayerData(dataset,layer,camera,size,showAnnotations,revision,onError) {
-  const [tick,repaint]=useState(0),error=useRef(onError),scheduler=useRef(null)
+export default function useLayerData(dataset,layer,camera,size,showAnnotations,revision,onError,preview=false) {
+  const [tick,repaint]=useState(0),error=useRef(onError),owner=useRef(Symbol('alignment')),level=useRef(null),motion=useRef(null)
   error.current=onError
-  if(!scheduler.current)scheduler.current=new TileScheduler({onChange:()=>repaint(n=>n+1),onError:message=>error.current(message)})
-  const cache=scheduler.current
-  useEffect(()=>{cache.clear();return()=>cache.clear()},[cache,dataset?.id,revision])
-  const requests=layer?.fragments.map(f=>({id:f.id,request:visibleRequest(f,camera,size),x:f.x})).filter(x=>x.request)||[]
-  const signature=JSON.stringify(requests)
+  const service=useMemo(()=>datasetTiles(dataset?.id||'empty'),[dataset?.id])
+  const cache=service.fine,coarseCache=service.coarse
   useEffect(()=>{
-    if(!dataset){cache.setWanted([]);return}
-    const tasks=[]
-    for(const {id,request,x} of JSON.parse(signature)){
-      const key=dataset.id+requestKey(request)+revision
-      tasks.push({key,label:`Block ${request.block}`,priority:Math.max(0,x-camera.x-size.width/camera.scale,camera.x-x-(layer.fragments.find(f=>f.id===id)?.end||request.end)+(layer.fragments.find(f=>f.id===id)?.start||0)),run:async signal=>({data:await api(`/datasets/${dataset.id}/region`,request,signal),request})})
-      // A bounded coarse fallback for this block is warmed independently of exact
-      // rows. It covers a wider region so edges do not disappear during zoom-out.
-      // At every zoom, not only close in. A wide coarse tile is what covers the
-      // ground a pan opens up before its own tile arrives; without one, zoomed
-      // out, whatever the pan exposed simply stayed blank.
-      {
-        const length=layer.fragments.find(f=>f.sourceBlock===request.block)?.end||request.end
-        const width=Math.max(4096,request.end-request.start),start=Math.max(0,request.start-width*2),end=Math.min(length,request.end+width*2)
-        const coarse={...request,start,end,summary:true,bins:128}
-        tasks.push({key:dataset.id+requestKey(coarse)+revision,priority:1e15+Math.abs(x-camera.x),run:async signal=>({data:await api(`/datasets/${dataset.id}/region`,coarse,signal),request:coarse})})
-      }
-    }
-    cache.setWanted(tasks)
-    // Geometry changes within a quantized tile don't cancel running requests.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[cache,dataset?.id,signature,revision])
-  // Gaps are remembered across resolutions so one resolved at any zoom is never
-  // filled back in by a coarser tile driving a later repaint.
-  const gaps=useRef(null)
-  if(!gaps.current)gaps.current=createGapMemory()
-  useEffect(()=>{gaps.current=createGapMemory()},[dataset?.id,revision])
+    service.users++
+    let frame=null
+    const changed=()=>{if(frame==null)frame=requestAnimationFrame(()=>{frame=null;repaint(n=>n+1)})}
+    const off=cache.subscribe(changed),offCoarse=coarseCache.subscribe(changed),consumer=owner.current
+    return()=>{off();offCoarse();if(frame!=null)cancelAnimationFrame(frame);cache.release(consumer);coarseCache.release(consumer);service.users--}
+  },[service,cache,coarseCache])
+  useEffect(()=>{cache.retryFailed();coarseCache.retryFailed()},[cache,coarseCache,revision])
+  level.current=resolutionLevel(camera.scale*planeOf(camera),level.current)
+  const previous=motion.current,now=performance.now()
+  const dx=previous?camera.x-previous.x:0
+  const lookahead=previous&&now-previous.time<Math.min(600,Math.max(200,cache.latency))&&Math.abs(dx)<size.width/camera.scale*2?(Math.sign(dx)||previous.direction||0):0
+  if(!previous||previous.x!==camera.x)motion.current={x:camera.x,time:now,direction:Math.sign(dx)}
+  const requests=useMemo(()=>layer?.fragments.map(f=>({id:f.id,request:visibleRequest(f,camera,size),x:f.x})).filter(x=>x.request)||[],[layer,camera,size])
+  const signature=useMemo(()=>JSON.stringify(requests),[requests])
+  const selectedLevel=level.current
+  const plans=useMemo(()=>(layer?.fragments||[]).flatMap(f=>planTiles(f,camera,size,selectedLevel,lookahead)),[layer,camera,size,selectedLevel,lookahead])
+  const planSignature=useMemo(()=>JSON.stringify(plans),[plans])
+  useEffect(()=>{
+    const tasks=dataset?JSON.parse(planSignature).map(({request,priority,coarse})=>({key:dataset.id+requestKey(request),priority:priority+(preview?10:0),coarse,label:`Block ${request.block}`,run:async signal=>service.ingest({data:await api(`/datasets/${dataset.id}/region`,request,signal),request})})):[]
+    cache.setWanted(tasks.filter(t=>!t.coarse),owner.current)
+    coarseCache.setWanted(tasks.filter(t=>t.coarse),owner.current)
+  },[service,cache,coarseCache,dataset,planSignature,preview])
   const tiles={},annotations={},warnings=[];let pending=false
-  const values=cache.values()
+  const byBlock=useMemo(()=>{
+    const result=new Map()
+    for(const item of [...cache.values(),...coarseCache.values()]){const key=`${item.request.block}:${item.request.focus}`;if(!result.has(key))result.set(key,[]);result.get(key).push(item.data)}
+    return result
+  },[cache,coarseCache,tick]) // eslint-disable-line react-hooks/exhaustive-deps
   for(const {id,request} of requests){
-    const key=dataset?.id+requestKey(request)+revision
-    const exact=cache.get(key)
-    const matching=values.filter(item=>item.request?.block===request.block&&item.request.focus===request.focus&&item.data.end>request.start&&item.data.start<request.end)
-    const overview=matching.filter(item=>!item.data.detail).sort((a,b)=>(b.data.end-b.data.start)-(a.data.end-a.data.start))[0]
-    const fallback=matching.filter(item=>item.data.detail).sort((a,b)=>(b.data.end-b.data.start)-(a.data.end-a.data.start))[0]
-    const item=exact||(request.summary?overview||fallback:fallback||overview)
-    if(item)tiles[id]={data:item.data,overview:overview?.data}
-    for(const seen of matching)rememberGaps(gaps.current,seen.request.block,seen.data)
-    if(cache.failed.has(key))tiles[id]={...tiles[id],error:cache.failed.get(key).message}
-    if(!exact&&!cache.failed.has(key))pending=true
+    const sources=(byBlock.get(`${request.block}:${request.focus}`)||[]).filter(data=>data.end>request.start&&data.start<request.end)
+    if(sources.length)tiles[id]={data:sources.find(data=>data.detail)||sources[0],sources}
   }
+  for(const {request,priority,coarse} of plans){
+    if(priority>1)continue
+    const target=coarse?coarseCache:cache,key=dataset?.id+requestKey(request)
+    if(!target.get(key)&&!target.failed.has(key)&&(target.running.has(key)||target.queue.some(t=>t.key===key)))pending=true
+    if(target.failed.has(key)){
+      for(const {id,request:visible} of requests)if(visible.block===request.block)tiles[id]={...tiles[id],error:target.failed.get(key).message}
+    }
+  }
+  const failure=Object.values(tiles).find(tile=>tile.error)?.error
+  useEffect(()=>{if(failure&&!preview)error.current(failure)},[failure,preview])
+  recordPerformance('coverage',{fragments:requests.length,represented:Object.keys(tiles).length,pending})
   // Annotation and distance reads have separate budgets, so they cannot occupy
   // the sequence-tile workers or hold up the alignment itself.
   const extras=useRef(null)
@@ -74,7 +77,7 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
     ids:[...new Set(solid.flatMap(f=>f.rowIds))].sort()}:null
   let neighbours=null
   if(dataset&&loaded&&loaded.ids.length&&loaded.ids.length<=500){
-    const key=`neighbours:${dataset.id}:${loaded.lo}:${loaded.hi}:${loaded.ids.length}:${revision}`
+    const key=`neighbours:${dataset.id}:${loaded.lo}:${loaded.hi}:${JSON.stringify(loaded.ids)}:${revision}`
     neighbours=extraCache.get(key)||null
     extraTasks.push({key,run:signal=>api(`/datasets/${dataset.id}/neighbours`,{ids:loaded.ids,lo:loaded.lo,hi:loaded.hi},signal)})
   }
@@ -99,5 +102,5 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   useEffect(()=>{extraCache.setWanted(dataset?extraTasks:[])},[extraCache,dataset?.id,extraSignature]) // eslint-disable-line react-hooks/exhaustive-deps
   // Hover-only parent updates do not invalidate the canvas texture.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(()=>({tiles,annotations,connections,offWindow,counts,pending,warnings,gaps:gaps.current,displayCamera:camera}),[tick,signature,extraSignature,camera,layer,showAnnotations,dataset?.id,revision])
+  return useMemo(()=>({tiles,annotations,connections,offWindow,counts,pending,warnings,gaps:service.gaps,displayCamera:camera}),[tick,signature,extraSignature,camera,layer,showAnnotations,dataset?.id,revision])
 }

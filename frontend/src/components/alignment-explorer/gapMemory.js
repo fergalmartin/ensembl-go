@@ -14,7 +14,7 @@ import { unionRanges } from './layers.js'
  * it: once known, a gap is drawn from memory whatever the current tile says.
  */
 export function createGapMemory() {
-  return new Map()
+  const memory=new Map();memory.rangeCount=0;return memory
 }
 
 export const gapKey = (block, rowId) => `${block}:${rowId}`
@@ -59,7 +59,14 @@ export function rememberGaps(memory, block, data) {
     const before = memory.get(key) || []
     const merged = unionRanges([...before, ...found])
     if (merged.length !== before.length || merged.some((r, i) => r[0] !== before[i][0] || r[1] !== before[i][1])) {
-      memory.set(key, merged); changed = true
+      memory.delete(key);memory.set(key, merged); changed = true
+      memory.rangeCount=(memory.rangeCount||0)+merged.length-before.length
+      // Gap history is derived data too. Bound sparse, gap-heavy sessions; old
+      // rows are recoverable from the persistent source summaries.
+      while(memory.size>4096||memory.rangeCount>250000){
+        const oldest=memory.keys().next().value
+        memory.rangeCount-=memory.get(oldest).length;memory.delete(oldest)
+      }
     }
   }
   return changed

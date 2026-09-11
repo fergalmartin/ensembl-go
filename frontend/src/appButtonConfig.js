@@ -54,7 +54,12 @@ export const APP_BUTTON_META = {
 }
 
 export const normalizeActiveAppButtons = (candidate) => {
-  const raw = Array.isArray(candidate) ? candidate : DEFAULT_ACTIVE_APP_BUTTONS
+  // A stored array is the user's own choice of active buttons, so a button it
+  // leaves out stays out — that is exactly what deactivating one in the app
+  // organiser means. Only a missing or malformed setting falls back to the
+  // full default set.
+  const hasStoredSelection = Array.isArray(candidate)
+  const raw = hasStoredSelection ? candidate : DEFAULT_ACTIVE_APP_BUTTONS
   // Compatibility for configs saved before the Species Selector code name was
   // aligned with the Genome Selector UI name.
   const legacyAliases = { species_selector: 'genome_selector' }
@@ -70,10 +75,10 @@ export const normalizeActiveAppButtons = (candidate) => {
     }
   }
 
-  const insertMissingDataViewsBeforeActions = () => {
+  const insertMissingDataViewsBeforeActions = (ids) => {
     let insertIndex = normalized.findIndex((id) => ACTION_BUTTON_ID_SET.has(id))
     if (insertIndex < 0) insertIndex = normalized.length
-    for (const id of DATA_VIEW_BUTTON_IDS) {
+    for (const id of ids) {
       if (!allowed.has(id) || seen.has(id) || IN_PROGRESS_VIEW_BUTTON_IDS.includes(id)) continue
       seen.add(id)
       normalized.splice(insertIndex, 0, id)
@@ -89,8 +94,19 @@ export const normalizeActiveAppButtons = (candidate) => {
     }
   }
 
-  insertMissingDataViewsBeforeActions()
-  appendMissing(ACTION_BUTTON_IDS)
+  if (!hasStoredSelection) {
+    insertMissingDataViewsBeforeActions(DATA_VIEW_BUTTON_IDS)
+    appendMissing(ACTION_BUTTON_IDS)
+  }
+
+  // Configuration is the only way back to the organiser, so it survives a
+  // stored selection that has somehow lost it.
+  insertMissingDataViewsBeforeActions(
+    NON_DEACTIVATABLE_APP_BUTTON_IDS.filter((id) => DATA_VIEW_BUTTON_ID_SET.has(id))
+  )
+  appendMissing(
+    NON_DEACTIVATABLE_APP_BUTTON_IDS.filter((id) => ACTION_BUTTON_ID_SET.has(id))
+  )
 
   const firstActionIndex = normalized.findIndex((id) => ACTION_BUTTON_ID_SET.has(id))
   const hasDataViewAfterActions = firstActionIndex >= 0 && normalized

@@ -1,5 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { sampleBase } from './tileCoverage'
+import { recordPerformance } from './performance'
 import { hitCanvasItem } from './originalLayout'
 import { paintLayer, panelRect } from './paintLayer'
 import { MARGIN_X, HEADER_HEIGHT, MARGIN_Y, ROW_HEIGHT } from './data'
@@ -11,13 +13,14 @@ import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWhee
 const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navigationCamera, inventory, tiles, annotations, connections, offWindow, counts, gaps, light, config, onCamera, onCopyChunk, onBlockToLayer, onAggregate, onToggleRows, onSelection, onSelectionDrag, onSelectionDrop, onMove, onHighlight, onInspect, onSize, onFallback, onSourceBlock, onReorderRow }, ref) {
   const host = useRef(null), engine = useRef(null), latest = useRef(null), interaction = useRef(null), hits = useRef([]), space = useRef(false)
   const [size, setSize] = useState({width:800,height:500}), [drag,setDrag] = useState(null), [rectangle,setRectangle] = useState(null), [reorder,setReorder] = useState(null), [overSelection,setOverSelection] = useState(false), [hover,setHover] = useState(null)
-  useLayoutEffect(()=>{ latest.current = {layer,layers,state,navigationCamera,inventory,tiles,annotations,connections,counts,light,config,onCamera,onSelection,onSelectionDrag,onSelectionDrop,onMove,onHighlight,onInspect,onSize,onFallback,size,drag,rectangle} })
+  useLayoutEffect(()=>{ latest.current = {layer,layers,state,navigationCamera,inventory,tiles,annotations,connections,counts,light,config,onCamera:navigate,onSelection,onSelectionDrag,onSelectionDrop,onMove,onHighlight,onInspect,onSize,onFallback,size,drag,rectangle} })
   // Plane units, the coordinates the painter drew in and every hit region, drag
   // and drop target is expressed in. Dividing here once is the whole of what
   // plane zoom costs the gestures below: nothing downstream knows about it.
-  function canvasPoint(event){
+  function navigate(value){const bounded=onCamera(value);if(latest.current)latest.current.navigationCamera=bounded||value}
+  function canvasPoint(event,camera=latest.current?.state?.camera){
     const r=host.current.getBoundingClientRect(),x=event.clientX-r.left,y=event.clientY-r.top,e=engine.current
-    const plane=planeOf(latest.current?.state?.camera)
+    const plane=planeOf(camera)
     if(e?.renderer&&!e.failed){e.raycaster.setFromCamera(new THREE.Vector2(x/r.width*2-1,1-y/r.height*2),e.camera);const hit=e.raycaster.intersectObject(e.mesh)[0];if(hit)return {x:hit.uv.x*r.width/plane,y:(1-hit.uv.y)*r.height/plane}}
     return {x:x/plane,y:y/plane}
   }
@@ -49,7 +52,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       // Scrolling the name list scrolls the rows, carrying the alignment with it.
       // Left of the gutter edge the horizontal controls would otherwise take the
       // wheel and there would be no way to move down a long list of sequences.
-      if(wheelScrollsRowList(canvasPoint(event).x,descriptor,MARGIN_X)){
+      if(wheelScrollsRowList(canvasPoint(event,camera).x,descriptor,MARGIN_X)){
         event.preventDefault();event.stopPropagation()
         p.onCamera({...camera,y:camera.y+descriptor.dy/plane});return
       }
@@ -60,7 +63,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       if(intent.type==='page_scroll'){p.onCamera({...camera,y:camera.y+descriptor.dy/plane});return}
       if(intent.type==='pan'){p.onCamera({...camera,x:camera.x+intent.dxPx/plane/camera.scale});return}
       if(intent.type==='zoom'){
-        const point=canvasPoint(event),x=intent.anchor==='center'?p.size.width/plane/2:point.x
+        const point=canvasPoint(event,camera),x=intent.anchor==='center'?p.size.width/plane/2:point.x
         // The same gesture, walking the panel ladder instead of the columns.
         if(p.state.planeZoom){
           p.onCamera(panelZoom(camera,1/intent.factor,{blockScale:blockFitScale(p.layer,camera,p.size),size:p.size}));return
@@ -72,10 +75,11 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     el.addEventListener('wheel',wheel,{passive:false})
     return()=>{observer.disconnect();el.removeEventListener('wheel',wheel);if(e.renderer){e.renderer.domElement.removeEventListener('webglcontextlost',e.lost);e.renderer.dispose();e.group.children.forEach(m=>{m.geometry.dispose();m.material.dispose()});e.texture.dispose()}el.replaceChildren();engine.current=null}
   },[])
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     const e=engine.current;if(!e)return
+    const started=performance.now()
     const dpr=Math.min(window.devicePixelRatio||1,2),canvas=e.textureCanvas
-    if(canvas.width!==size.width*dpr||canvas.height!==size.height*dpr){
+    if(canvas.width!==Math.floor(size.width*dpr)||canvas.height!==Math.floor(size.height*dpr)){
       canvas.width=size.width*dpr;canvas.height=size.height*dpr
       if(e.texture){e.texture.dispose();e.texture=new THREE.CanvasTexture(canvas);e.texture.colorSpace=THREE.SRGBColorSpace;e.texture.minFilter=THREE.LinearFilter;e.texture.magFilter=THREE.NearestFilter;e.mesh.material.map=e.texture;e.mesh.material.needsUpdate=true}
     }
@@ -84,18 +88,23 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     const plane=planeOf(state.camera),view=planeViewport(size,state.camera)
     const ctx=canvas.getContext('2d');ctx.setTransform(dpr*plane,0,0,dpr*plane,0,0)
     hits.current=paintLayer(ctx,{layer,camera:state.camera,size:view,inventory,tiles,annotations,connections,offWindow,counts,state,drag,hover,gaps,reorder,selectionRect:rectangle,light})
-    if(e.failed){e.fallback.width=canvas.width;e.fallback.height=canvas.height;e.fallback.getContext('2d').drawImage(canvas,0,0);return}
-    e.renderer.setSize(size.width,size.height,false)
+    if(e.failed){if(e.fallback.width!==canvas.width||e.fallback.height!==canvas.height){e.fallback.width=canvas.width;e.fallback.height=canvas.height}e.fallback.getContext('2d').drawImage(canvas,0,0);return}
+    if(e.width!==size.width||e.height!==size.height||e.dpr!==dpr){e.renderer.setPixelRatio(dpr);e.renderer.setSize(size.width,size.height,false);e.width=size.width;e.height=size.height;e.dpr=dpr}
     e.camera.left=-size.width/2;e.camera.right=size.width/2;e.camera.top=size.height/2;e.camera.bottom=-size.height/2;e.camera.updateProjectionMatrix()
     e.mesh.scale.set(size.width,size.height,1);e.texture.needsUpdate=true
     e.group.rotation.set(state.tilted?-.28:0,state.tilted?.12:0,0);e.group.scale.setScalar(state.tilted?.82:1)
     // Backplates give named layers depth, while the active plane retains exact data.
+    const backplates=JSON.stringify([size.width,size.height,state.tilted,layer.id,layers.map(l=>[l.id,l.color])])
+    if(e.backplates!==backplates){
+    e.backplates=backplates
     while(e.group.children.length>1){const m=e.group.children.at(-1);e.group.remove(m);m.geometry.dispose();m.material.dispose()}
     if(state.tilted)layers.filter(l=>l.id!==layer.id).slice(0,8).forEach((l,i)=>{
       const m=new THREE.Mesh(new THREE.PlaneGeometry(size.width,size.height),new THREE.MeshBasicMaterial({color:l.color,transparent:true,opacity:.16,side:THREE.DoubleSide,depthWrite:false}))
       m.position.set((i+1)*9,-(i+1)*14,-(i+1)*65);e.group.add(m)
     })
+    }
     e.camera.updateMatrixWorld(true);e.scene.updateMatrixWorld(true);e.renderer.render(e.scene,e.camera)
+    recordPerformance('paint',{ms:performance.now()-started,textureBytes:canvas.width*canvas.height*4})
   },[layer,layers,state,inventory,tiles,annotations,connections,offWindow,counts,gaps,light,size,drag,hover,reorder,rectangle])
   // Where a drop lands, read off the layout as drawn rather than worked out from
   // a row height. The indicator and the move both come from this, so what is
@@ -123,7 +132,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       const r=panelRect(f,state.camera)
       if(point.x<r.x||point.x>r.x+r.width||point.y<r.y-HEADER_HEIGHT||point.y>r.y+r.height)continue
       const column=layerXToColumn(f,state.camera,state.camera.x+(point.x-MARGIN_X)/state.camera.scale)
-      return {fragmentId:f.id,layoutX:f.x+column-f.start}
+      return {fragmentId:f.id,layoutX:f.aggregate?f.x+column-f.start:null}
     }
     return null
   }
@@ -178,7 +187,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       host.current.title=hit?.kind==='blockjump'?`Open source block ${hit.block}`:hit?.kind==='aggregate'?`Zoom into source blocks ${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.first}–${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.last}`:hit?.kind==='rows'?'Collapse or align absent rows for this block':hit?.kind==='copy'?'Copy chunk as aligned FASTA':hit?.kind==='layer'?'Create a layer from this source block':''
       if(hit?.kind==='connection'){onInspect(hit);return}
       for(const f of layer.fragments){const r=panelRect(f,state.camera),index=f.rowIds.findIndex((_,i)=>point.y>=r.y+rowSlot(f,i)*ROW_HEIGHT&&point.y<r.y+(rowSlot(f,i)+1)*ROW_HEIGHT)
-        if(point.x>=r.x&&point.x<r.x+r.width&&index>=0){if(f.aggregate){onInspect({kind:'aggregate',rowId:f.rowIds[index],aggregate:f.aggregate});return}const column=f.start+Math.floor((point.x-r.x)/r.scale),row=tiles[f.id]?.data?.rows.find(r=>r.id===f.rowIds[index]);onInspect({kind:'cell',rowId:f.rowIds[index],fragment:f,column,base:hasCell(f,f.rowIds[index],column)?row?.sequence?.[column-(tiles[f.id]?.data?.start||0)]:'Unselected cell',placed:(state.placedOverlay||[]).filter(p=>p.sourceBlock===f.sourceBlock&&hasCell(p,f.rowIds[index],column)).map(p=>p.name),features:(annotations[f.id]?.[f.rowIds[index]]||[]).filter(a=>column>=a.start&&column<=a.end)});return}}
+        if(point.x>=r.x&&point.x<r.x+r.width&&index>=0){if(f.aggregate){onInspect({kind:'aggregate',rowId:f.rowIds[index],aggregate:f.aggregate});return}const column=f.start+Math.floor((point.x-r.x)/r.scale),base=sampleBase(tiles[f.id],f.rowIds[index],column);onInspect({kind:'cell',rowId:f.rowIds[index],fragment:f,column,base:hasCell(f,f.rowIds[index],column)?base:'Unselected cell',placed:(state.placedOverlay||[]).filter(p=>p.sourceBlock===f.sourceBlock&&hasCell(p,f.rowIds[index],column)).map(p=>p.name),features:(annotations[f.id]?.[f.rowIds[index]]||[]).filter(a=>column>=a.start&&column<=a.end)});return}}
       return
     }
     if(current.kind==='transfer'){
@@ -188,7 +197,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       return
     }
     const dx=point.x-current.point.x,dy=point.y-current.point.y
-    if(current.kind==='pan')onCamera({...current.camera,x:current.camera.x-dx/current.camera.scale,y:current.camera.y-dy})
+    if(current.kind==='pan')navigate({...current.camera,x:current.camera.x-dx/current.camera.scale,y:current.camera.y-dy})
     if(current.kind==='move')setDrag({fragmentId:current.fragment.id,x:current.fragment.x+dx/current.camera.scale,y:current.fragment.y+dy/ROW_HEIGHT})
     if(current.kind==='reorder'){
       // Both thresholds are half a row or a few real pixels, whichever is larger:
@@ -240,6 +249,6 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
   useEffect(()=>{const cancel=()=>{interaction.current=null;setDrag(null);setRectangle(null);latest.current.onSelectionDrag(null)};window.addEventListener('blur',cancel);return()=>window.removeEventListener('blur',cancel)},[])
   return <div className={`al-canvas ${state.mode==='pan'?'is-pan':'is-select'} ${state.selection.length?'has-selection':''} ${overSelection?'over-selection':''}`} ref={host} tabIndex={0} role="application" aria-label="Alignment panel. Use arrow keys to pan, plus and minus to zoom. Choose rectangle or columns to select. Drag highlighted cells to a sidebar layer or New layer. Drag chunk headers to arrange. Each header has a clipboard to copy FASTA; original source blocks also have a plus to create a layer."
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerLeave={()=>setHover(null)} onPointerCancel={cancelGesture} onLostPointerCapture={()=>{if(interaction.current)cancelGesture()}}
-    onKeyDown={e=>{if(interaction.current?.kind==='transfer'){if(e.key==='Escape'){e.preventDefault();cancelGesture()}return}if(e.key===' '){space.current=true;e.preventDefault()}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const plane=planeOf(state.camera);onCamera({...state.camera,x:state.camera.x+(e.key==='ArrowLeft'?-80:e.key==='ArrowRight'?80:0)/plane/state.camera.scale,y:state.camera.y+(e.key==='ArrowUp'?-80:e.key==='ArrowDown'?80:0)/plane})}if(['+','=','-'].includes(e.key)){e.preventDefault();const current=navigationCamera||state.camera,factor=e.key==='-'?1/1.4:1.4,plane=planeOf(current);if(state.planeZoom){onCamera(panelZoom(current,factor,{blockScale:blockFitScale(layer,current,size),size}))}else{const scale=clamp(current.scale*factor,Number.EPSILON,24);onCamera({...current,scale,x:current.x+(size.width/plane/2-MARGIN_X)*(1/current.scale-1/scale)})}}if(e.key==='Escape')onSelection([])}} onKeyUp={e=>{if(e.key===' ')space.current=false}} onBlur={()=>{space.current=false}} />
+    onKeyDown={e=>{if(interaction.current?.kind==='transfer'){if(e.key==='Escape'){e.preventDefault();cancelGesture()}return}if(e.key===' '){space.current=true;e.preventDefault()}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const plane=planeOf(state.camera);onCamera({...state.camera,x:state.camera.x+(e.key==='ArrowLeft'?-80:e.key==='ArrowRight'?80:0)/plane/state.camera.scale,y:state.camera.y+(e.key==='ArrowUp'?-80:e.key==='ArrowDown'?80:0)/plane})}if(['+','=','-'].includes(e.key)){e.preventDefault();const current=latest.current?.navigationCamera||navigationCamera||state.camera,factor=e.key==='-'?1/1.4:1.4,plane=planeOf(current);if(state.planeZoom){navigate(panelZoom(current,factor,{blockScale:blockFitScale(layer,current,size),size}))}else{const scale=clamp(current.scale*factor,Number.EPSILON,24);navigate({...current,scale,x:current.x+(size.width/plane/2-MARGIN_X)*(1/current.scale-1/scale)})}}if(e.key==='Escape')onSelection([])}} onKeyUp={e=>{if(e.key===' ')space.current=false}} onBlur={()=>{space.current=false}} />
 })
 export default LayerCanvas

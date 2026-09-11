@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import os
@@ -8,7 +9,8 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -168,14 +170,32 @@ def create_router(cache_root=None, annotation_provider=None):
 
     @router.get('/datasets/{dataset_id}/layout')
     def layout(dataset_id: str, start: int = Query(0,ge=0), end: int = Query(1,ge=1), limit: int = Query(256,ge=16,le=512),
-               merge: int = Query(0,ge=0), detail: int = Query(0,ge=0,le=512)):
+               merge: int = Query(0,ge=0), detail: int = Query(0,ge=0,le=512), individual: bool = False, after: int = Query(0,ge=0)):
         if end<=start: raise HTTPException(400,'Empty layout interval')
-        return store_for(dataset_id).layout_region(start,end,limit,merge,detail)
+        store = store_for(dataset_id)
+        if individual: return store.individual_layout_region(start,end,limit,after)
+        return store.layout_region(start,end,limit,merge,detail)
 
     @router.post('/datasets/{dataset_id}/region')
-    def region(dataset_id: str, payload: RegionRequest):
-        try: return store_for(dataset_id).region(payload.block, payload.start, payload.end, payload.ids, max_cells=0 if payload.summary else 2_000_000, bins=payload.bins, focus_id=payload.focus)
+    async def region(dataset_id: str, payload: RegionRequest, request: Request):
+        cancelled = threading.Event()
+        def read():
+            return store_for(dataset_id).region(payload.block, payload.start, payload.end, payload.ids,
+                max_cells=0 if payload.summary else 2_000_000, bins=payload.bins, focus_id=payload.focus, cancelled=cancelled.is_set)
+        worker = asyncio.create_task(run_in_threadpool(read))
+        try:
+            while not worker.done():
+                done, _ = await asyncio.wait({worker}, timeout=.05)
+                if done: break
+                if await request.is_disconnected(): cancelled.set()
+            return await worker
+        except InterruptedError as exc: raise HTTPException(499, 'Navigation changed') from exc
         except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+        finally:
+            cancelled.set()
+            # Retrieve exceptions if the ASGI task itself was cancelled. The
+            # bounded row/chunk work will observe the event and leave the pool.
+            if not worker.done(): worker.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
 
     @router.get('/datasets/{dataset_id}/blocks/{block_id}/rows')
     def block_rows(dataset_id: str, block_id: int):

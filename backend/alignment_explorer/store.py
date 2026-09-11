@@ -10,6 +10,7 @@ import sqlite3
 import threading
 from pathlib import Path
 from collections import Counter
+from .summary_cache import SummaryCache, summarize
 from contextlib import contextmanager
 
 DNA = set('ACGTRYSWKMBDHVN-?.')
@@ -479,8 +480,28 @@ class AlignmentStore:
                 result=[{**dict(r),'row_ids':memberships[r['block']],'available_row_ids':available[r['block']]} for r in records]
         return {'blocks':result,**self.layout_info()}
 
-    def region(self, block, start=0, end=None, ids=None, max_cells=2_000_000, bins=256, focus_id=None):
+    def individual_layout_region(self, start, end, limit=256, after=0):
+        """A bounded page of individual blocks. Panel zoom never changes meaning
+        to grouped presence merely because more than 256 blocks are visible."""
+        self.ensure_layout()
         with self.connect() as db:
+            first = db.execute('SELECT block FROM source_layout WHERE x<=? ORDER BY x DESC LIMIT 1', (start,)).fetchone()
+            lo = max(first['block'] if first else 1, after + 1)
+            records = [dict(r) for r in db.execute('SELECT * FROM source_layout WHERE block>=? AND x<? ORDER BY block LIMIT ?', (lo, end, limit + 1))]
+            following = records[limit] if len(records) > limit else None
+            records = records[:limit]
+            if records:
+                by_block = {r['block']: r for r in records}
+                for item in records: item.update(row_ids=[], available_row_ids=[])
+                for row in db.execute('SELECT r.block,r.id,r.empty_status FROM rows r JOIN sequences s ON s.id=r.id WHERE r.block BETWEEN ? AND ? ORDER BY r.block,s.rowid', (records[0]['block'], records[-1]['block'])):
+                    by_block[row['block']]['row_ids'].append(row['id'])
+                    if not row['empty_status']: by_block[row['block']]['available_row_ids'].append(row['id'])
+        return {'blocks': records, 'next': records[-1]['block'] if following else None,
+                'cover_start': records[0]['x'] if after and records else start,
+                'cover_end': following['x'] if following else end}
+
+    def region(self, block, start=0, end=None, ids=None, max_cells=2_000_000, bins=256, focus_id=None, cancelled=lambda: False):
+        with self.connect() as db, SummaryCache(self, cancelled) as summary_cache:
             b = db.execute('SELECT * FROM blocks WHERE id=?', (block,)).fetchone()
             if b is None: raise ValueError('Alignment block not found')
             start, end = max(0, int(start)), min(b['length'], int(end if end is not None else b['length']))
@@ -492,48 +513,24 @@ class AlignmentStore:
             rows = [dict(r) for r in db.execute(sql + ' ORDER BY s.rowid', args)]
             detail = (end - start) * max(1, len(rows)) <= max_cells
             step = max(1, (end - start + bins - 1) // bins)
-            reference_cache={}
             for row in rows:
+                if cancelled(): raise InterruptedError('Navigation changed')
                 row['metadata'] = json.loads(row['metadata'])
+                if not detail:
+                    summarize(self, db, block, b['length'], row, start, end, step, focus_id, summary_cache)
+                    continue
                 chunks = db.execute('SELECT * FROM chunks WHERE block=? AND id=? AND offset>=? AND offset<? ORDER BY offset', (block, row['id'], (start // CHUNK) * CHUNK, end))
-                counts, sequence, before, divergence = [], [], 0, []
+                sequence, before = [], 0
                 for chunk in chunks:
                     a, z = max(start, chunk['offset']), min(end, chunk['offset'] + len(chunk['bases']))
                     if a == start: before = chunk['ungapped_before'] + len(chunk['bases'][:a - chunk['offset']].replace('-', ''))
                     text = chunk['bases'][a - chunk['offset']:z - chunk['offset']]
-                    if detail: sequence.append(text)
-                    else:
-                        offset=chunk['offset']
-                        if focus_id and offset not in reference_cache:
-                            ref=db.execute('SELECT bases FROM chunks WHERE block=? AND id=? AND offset=?',(block,focus_id,offset)).fetchone()
-                            reference_cache[offset]=ref['bases'] if ref else ''
-                            if len(reference_cache)>16: reference_cache.pop(next(iter(reference_cache)))
-                        reference=reference_cache.get(offset,'')
-                        # Counter's C loop processes slices rather than updating
-                        # Python dictionaries once per base. Reference chunks are
-                        # reused across rows instead of queried for every bin.
-                        pos=a
-                        while pos<z:
-                            index=(pos-start)//step
-                            stop=min(z,start+(index+1)*step)
-                            while len(counts)<=index: counts.append(Counter())
-                            counts[index].update(chunk['bases'][pos-offset:stop-offset])
-                            while len(divergence)<=index: divergence.append({'different':0,'comparable':0})
-                            d=divergence[index]
-                            text_slice=chunk['bases'][pos-offset:stop-offset]
-                            ref_slice=reference[pos-offset:stop-offset]
-                            if row['id']==focus_id:
-                                d['comparable']+=sum(text_slice.count(c) for c in 'ACGT')
-                            elif ref_slice:
-                                for base,ref in zip(text_slice,ref_slice):
-                                    if base in CANONICAL and ref in CANONICAL:
-                                        d['comparable']+=1;d['different']+=base!=ref
-                            pos=stop
-                row['divergence_bins'] = [{**d, 'fraction': d['different']/d['comparable'] if d['comparable'] else None} for d in divergence]
+                    sequence.append(text)
+                row['divergence_bins'] = []
                 row['offset_bases'] = before
-                row['missing'] = not sequence and not counts
+                row['missing'] = not sequence
                 row['sequence'] = ''.join(sequence) if detail and not row['missing'] else None
-                row['bins'] = [dict(c) for c in counts] if not detail else None
+                row['bins'] = None
             return {'block': block, 'start': start, 'end': end, 'length': b['length'], 'rows': rows, 'detail': detail, 'bin_size': step, 'metadata': json.loads(b['metadata']), 'focus':focus_id}
 
     def update_metadata(self, entries):

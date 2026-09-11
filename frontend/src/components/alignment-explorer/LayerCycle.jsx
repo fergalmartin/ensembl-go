@@ -10,7 +10,7 @@ const previewSize={width:1100,height:280}
 function LayerPreview({layer,dataset,inventory,light,revision}) {
   const canvas=useRef(null),camera=fitCamera(layer,previewSize.width,previewSize.height)
   const [error,setError]=useState('')
-  const data=useLayerData(dataset,layer,camera,previewSize,false,revision,setError)
+  const data=useLayerData(dataset,layer,camera,previewSize,false,revision,setError,true)
   useEffect(()=>{if(canvas.current)paintLayer(canvas.current.getContext('2d'),{...data,layer,camera,size:previewSize,inventory,state:{selection:[],connectionUnit:'columns'},light})},[data,layer,camera,inventory,light])
   return <div className="genome-wheel-preview"><canvas ref={canvas} width={previewSize.width} height={previewSize.height} aria-label={`Alignment preview: ${layer.name}`}/>{error&&<span>{error}</span>}</div>
 }
@@ -77,7 +77,7 @@ export default function LayerCycle({layers,active,onChoose,dataset,inventory,lig
       onWheel={e=>{const s=sessionRef.current;update({...s,position:clamp(s.position+e.deltaY/160,0,layers.length-1)})}}>
       <div className="genome-wheel-scene"><div className="genome-wheel-drum" style={{'--face-height':'322px','--radius':`${radius}px`,'--face-step':`${step}deg`,'--wheel-position':session.position}}>
         {layers.map((l,i)=><div key={l.id} className="genome-wheel-face" style={{'--face-index':i}}>
-          <LayerPreview layer={l} dataset={dataset} inventory={inventory} light={light} revision={revision}/></div>)}
+          {Math.min(Math.abs(i-selected),layers.length-Math.abs(i-selected))<=1?<LayerPreview layer={l} dataset={dataset} inventory={inventory} light={light} revision={revision}/>:<div className="genome-wheel-preview">{l.name}</div>}</div>)}
       </div></div>
       <div className="genome-wheel-rail" role="slider" tabIndex={0} aria-label="Layer preview" aria-valuemin={1}
         aria-valuemax={layers.length} aria-valuenow={selected+1} aria-valuetext={layers[selected].name}

@@ -46,7 +46,17 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const allLayers=useMemo(()=>[original,...state.layers],[original,state.layers])
   const active=state.original?original:state.layers.find(l=>l.id===state.active)||original
   const layer=active
-  const camera=useCallback(value=>setState(s=>{const bounded=constrainCamera(s.original?original:s.layers.find(l=>l.id===s.active)||original,value,size);return {...s,camera:bounded,layers:s.layers.map(l=>l.id===s.active&&!s.original?{...l,camera:bounded}:l)}}),[original,size])
+  const cameraFrame=useRef(null),pendingCamera=useRef(null)
+  const camera=useCallback(value=>{
+    const current=stateRef.current,bounded=constrainCamera(current.original?original:current.layers.find(l=>l.id===current.active)||original,value,size)
+    pendingCamera.current={camera:bounded,active:current.active,original:current.original}
+    if(cameraFrame.current==null)cameraFrame.current=requestAnimationFrame(()=>{
+      cameraFrame.current=null;const next=pendingCamera.current
+      setState(s=>s.active!==next.active||s.original!==next.original?s:{...s,camera:next.camera,layers:s.layers.map(l=>l.id===s.active&&!s.original?{...l,camera:next.camera}:l)})
+    })
+    return bounded
+  },[original,size])
+  useEffect(()=>()=>{if(cameraFrame.current!=null)cancelAnimationFrame(cameraFrame.current)},[])
   const renderState=useMemo(()=>({...state,original:layer.id==='original',camera:constrainCamera(layer,state.camera,size),placedOverlay:state.original&&state.overlay?state.layers.flatMap(l=>l.fragments.map(f=>({...f,color:l.color,name:l.name}))):[]}),[state,layer,size])
   const renderView=useMemo(()=>planeViewport(size,renderState.camera),[size,renderState.camera])
   const {tiles,annotations,connections,offWindow,counts,pending,warnings,gaps,displayCamera}=useLayerData(dataset,layer,renderState.camera,renderView,state.annotations,revision,setError)
@@ -124,12 +134,17 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     },400)
     return()=>{clearTimeout(timer);controller.abort()}
   },[job,load])
+  const saveLatest=useRef(null)
+  saveLatest.current=()=>{if(dataset)try{localStorage.setItem(`alignment-layers:${dataset.id}`,JSON.stringify(workspaceForSave(stateRef.current,originalFragments)))}catch{/* Explicit Save remains available */}}
   useEffect(()=>{
-    if(!dataset)return
-    const persist=()=>{try{localStorage.setItem(`alignment-layers:${dataset.id}`,JSON.stringify(workspaceForSave(state,originalFragments)))}catch{/* Save workspace remains available */}}
-    const timer=setTimeout(persist,300)
-    return()=>{clearTimeout(timer);persist()}
+    const timer=setTimeout(()=>saveLatest.current?.(),300)
+    return()=>clearTimeout(timer)
   },[dataset,state,originalFragments])
+  useEffect(()=>{
+    const flush=()=>saveLatest.current?.()
+    window.addEventListener('pagehide',flush)
+    return()=>{window.removeEventListener('pagehide',flush);flush()}
+  },[])
   useEffect(()=>{
     const key=e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'&&!['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){e.preventDefault();undo(e.shiftKey)}}
     window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key)

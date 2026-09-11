@@ -10,7 +10,9 @@ export async function api(path, body, signal, method) {
   if (!response.ok) {
     let detail
     try { detail = (await response.json()).detail } catch { detail = response.statusText }
-    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+    const error=new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+    error.status=response.status;error.retryable=response.status===429||response.status>=500
+    throw error
   }
   return response.headers.get('content-type')?.includes('json') ? response.json() : response.text()
 }

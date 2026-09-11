@@ -374,7 +374,16 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
     const activateAppButton = (buttonId) => {
         setActiveButtons((prevButtons) => {
             if (prevButtons.includes(buttonId)) return prevButtons
-            return [...prevButtons, buttonId]
+            // The action buttons live at the end of the top bar, so a returning
+            // data view goes in front of them rather than after them.
+            if (APP_BUTTON_META[buttonId]?.kind === 'action') return [...prevButtons, buttonId]
+            const firstActionIndex = prevButtons.findIndex(
+                (id) => APP_BUTTON_META[id]?.kind === 'action'
+            )
+            if (firstActionIndex < 0) return [...prevButtons, buttonId]
+            const next = [...prevButtons]
+            next.splice(firstActionIndex, 0, buttonId)
+            return next
         })
         setInactiveDataPriority((prev) => prev.filter((id) => id !== buttonId))
         setInactiveActionPriority((prev) => prev.filter((id) => id !== buttonId))
