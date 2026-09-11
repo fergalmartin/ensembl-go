@@ -515,10 +515,10 @@ export const planeOf=camera=>clamp(Number(camera?.plane)||1,PLANE_MIN,1)
 /** The viewport the painter is given: real pixels over the plane factor, so
  * shrinking the sheet shows more of the world rather than less of it. */
 export const planeViewport=(size,camera)=>{const plane=planeOf(camera);return {width:size.width/plane,height:size.height/plane}}
-/** Where panel mode stops widening the columns: the scale at which the thing
- * being looked at fills the width - one source block in Original, the whole
- * arrangement in a layer - but never past the point where blocks would start
- * being merged.
+/** The scale at which the thing being looked at fills the width - one source
+ * block in Original, the whole arrangement in a layer - but never past the point
+ * where blocks would start being merged. Panel zoom no longer moves the column
+ * scale at all, so this is left for callers that still want that limit.
  *
  * That second half matters because a source block can be twice the width at
  * which merging begins, so fitting one to the window is enough on its own to
@@ -531,26 +531,21 @@ export function blockFitScale(layer,camera,size) {
   const fit=target?.fragments?.length?fitCamera(target,size.width,size.height).scale:Math.max(Number.EPSILON,Number(camera?.scale)||1)
   return layer?.id==='original'?Math.max(fit,size.width/BLOCK_DETAIL_SPAN):fit
 }
-/** One zoom step in panel mode, always about the middle of the window.
+/** One zoom step in panel mode: the panel, and nothing else.
  *
- * Zooming out spends the horizontal magnification first and only then starts
- * shrinking the sheet. That is what makes the way out of sequence detail a walk
- * - letters, then bases, then binned columns, then whole blocks, then the sheet
- * pulling away - instead of a jump from letters to a low-detail overview with
- * nothing in between. Zooming in reverses the same ladder, so a gesture and its
- * opposite land back where they started.
+ * Always the sheet, never the columns. Spending the column magnification first
+ * made the mode a hybrid - zooming out over the alignment behaved exactly like
+ * Alignment mode until that magnification ran out, which is not what a control
+ * called Panel should do. One gesture, one meaning: out shrinks the sheet from
+ * the first step, in gives its size back and stops at full size, because going
+ * closer than that is what Alignment mode is for.
  *
- * Anchoring on the middle rather than the cursor is what centres the view: every
- * zoom out pulls the drawing toward the centre of the window, so whitespace
+ * Always about the middle of the window, never the cursor. That is what centres
+ * the view: every zoom out pulls the drawing toward the middle, so whitespace
  * opens above and below it instead of the blocks staying pinned under the ruler. */
-export function panelZoom(camera,factor,{blockScale,size,floor=PLANE_MIN}) {
-  const plane=planeOf(camera),out=factor<1
-  const centre={x:size.width/plane/2,y:size.height/plane/2}
-  if(out?camera.scale>blockScale*1.0001:plane>=1){
-    const scale=out?Math.max(blockScale,camera.scale*factor):clamp(camera.scale*factor,Number.EPSILON,24)
-    return {...camera,scale,x:camera.x+(centre.x-MARGIN_X)*(1/camera.scale-1/scale)}
-  }
-  return zoomPlane(camera,factor,centre,floor)
+export function panelZoom(camera,factor,{size,floor=PLANE_MIN}) {
+  const plane=planeOf(camera)
+  return zoomPlane(camera,factor,{x:size.width/plane/2,y:size.height/plane/2},floor)
 }
 /** Entering panel mode lands on blocks.
  *
