@@ -343,16 +343,16 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     const mid=anchor+marker.edge*BLOCK_EDGE_GAP/2
     const labelX=mid-width/2
     const near=marker.edge>0?labelX-3:labelX+width+3
-    // Leaving a block, the chevron arrives at the label; entering one, it arrives
-    // at the block. Either way it points the way the path travels.
-    const departing=marker.edge===marker.flow
-    const cx=departing?near:anchor-marker.flow*2
+    // The chevron points the way a click would take the reader: out of the block
+    // and toward the one named on the label, which is always the side the marker
+    // sits on. Following the path's direction of travel instead left the marker
+    // that joins back to an earlier block aiming away from the block it names.
     if(labelX+width<MARGIN_X||labelX>size.width)continue
     ctx.strokeStyle=selected?'#f2c766':light?'#526f91':'#9eb9d9'
     ctx.lineWidth=hair(selected?2.2:1.5)
     ctx.globalAlpha=anyLit&&!selected?0.35:0.95
     ctx.beginPath();ctx.moveTo(anchor,y);ctx.lineTo(near,y);ctx.stroke()
-    ctx.beginPath();ctx.moveTo(cx-marker.flow*4,y-4);ctx.lineTo(cx,y);ctx.lineTo(cx-marker.flow*4,y+4);ctx.stroke()
+    ctx.beginPath();ctx.moveTo(near-marker.edge*4,y-4);ctx.lineTo(near,y);ctx.lineTo(near-marker.edge*4,y+4);ctx.stroke()
     ctx.globalAlpha=1
     if(legible){
       ctx.fillStyle=colors.background;rounded(ctx,labelX,y-7,width,14,4);ctx.fill()

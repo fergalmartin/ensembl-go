@@ -413,20 +413,21 @@ export function columnScale(f,camera) {
  * a chevron out of the block it leaves, a chevron into the block it enters, each
  * labelled with the block at the other end and each a jump target.
  *
- * `edge` is the side of the fragment the marker sits on (1 right, -1 left) and
- * `flow` the direction the path travels, so both ends of one link point the same
- * way. A link whose far end is outside the loaded window contributes only the
- * end that exists. */
+ * `edge` is the side of the fragment the marker sits on (1 right, -1 left), and
+ * it always faces the block named on the label - forward to where the path goes,
+ * back to where it came from - so the chevron drawn along it points at whatever
+ * clicking the marker would open. A link whose far end is outside the loaded
+ * window contributes only the end that exists. */
 export function blockJumpMarkers(connections,offWindow,rects,everyBlockExists=false) {
   const markers=[]
   for(const c of connections){
     if(!pathIsOccluded(c,rects,everyBlockExists))continue
     const flow=c.to.sourceBlock>c.from.sourceBlock?1:-1
-    markers.push({id:`${c.id}:out`,fragmentId:c.from.id,rowId:c.rowId,edge:flow,flow,block:c.to.sourceBlock})
-    markers.push({id:`${c.id}:in`,fragmentId:c.to.id,rowId:c.rowId,edge:-flow,flow,block:c.from.sourceBlock})
+    markers.push({id:`${c.id}:out`,fragmentId:c.from.id,rowId:c.rowId,edge:flow,block:c.to.sourceBlock})
+    markers.push({id:`${c.id}:in`,fragmentId:c.to.id,rowId:c.rowId,edge:-flow,block:c.from.sourceBlock})
   }
   for(const link of offWindow)
-    markers.push({id:link.id,fragmentId:link.fragment.id,rowId:link.rowId,edge:link.direction,flow:link.direction,block:link.block})
+    markers.push({id:link.id,fragmentId:link.fragment.id,rowId:link.rowId,edge:link.direction,block:link.block})
   return markers
 }
 /** A string is buried whenever a block it does not belong to stands between its

@@ -337,7 +337,7 @@ test('adjacent blocks are separated by the same pixel channel at every zoom',asy
   }
 })
 
-test('a link skipping blocks becomes a marker on each block edge, pointing the same way',async()=>{
+test('a link skipping blocks becomes a marker on each block edge, each pointing at the block it names',async()=>{
   const {blockJumpMarkers,pathIsOccluded}=await import('../src/components/alignment-explorer/layers.js')
   const rect=(sourceBlock,x,width)=>({sourceBlock,x,width,y:100,height:200})
   const link=(id,from,to)=>({id,rowId:'r',from:{id:`f${from}`,sourceBlock:from},to:{id:`f${to}`,sourceBlock:to}})
@@ -351,25 +351,26 @@ test('a link skipping blocks becomes a marker on each block edge, pointing the s
 
   // Skipping 5 and 6 gives one marker leaving block 4 and one entering block 7.
   const [out,into]=blockJumpMarkers([link('a',4,7)],[],drawn)
-  assert.deepEqual([out.fragmentId,out.edge,out.flow,out.block],['f4',1,1,7])
-  assert.deepEqual([into.fragmentId,into.edge,into.flow,into.block],['f7',-1,1,4])
-  // Each names the block at the far end, so either is a jump target.
-  assert.equal(out.block,7)
-  assert.equal(into.block,4)
-  // They sit on opposite edges but point the same way, so the link reads as one
-  // direction of travel rather than two unrelated arrows.
-  assert.equal(out.flow,into.flow)
-  assert.notEqual(out.edge,into.edge)
+  assert.deepEqual([out.fragmentId,out.edge,out.block],['f4',1,7])
+  assert.deepEqual([into.fragmentId,into.edge,into.block],['f7',-1,4])
+
+  // The invariant the chevron is drawn from: a marker's edge faces the block it
+  // names, so the arrow points at whatever clicking it opens. The one joining
+  // back to block 4 therefore points left, however the path itself travels.
+  const facesItsBlock=(m,on)=>m.edge===Math.sign(m.block-on)
+  assert.ok(facesItsBlock(out,4)&&facesItsBlock(into,7))
 
   // A backwards link mirrors both ends rather than crossing them over.
   const [bout,bin]=blockJumpMarkers([link('b',7,4)],[],drawn)
-  assert.deepEqual([bout.fragmentId,bout.edge,bout.flow],['f7',-1,-1])
-  assert.deepEqual([bin.fragmentId,bin.edge,bin.flow],['f4',1,-1])
+  assert.deepEqual([bout.fragmentId,bout.edge,bout.block],['f7',-1,4])
+  assert.deepEqual([bin.fragmentId,bin.edge,bin.block],['f4',1,7])
+  assert.ok(facesItsBlock(bout,7)&&facesItsBlock(bin,4))
 
   // A path leaving the loaded window contributes only the end that exists.
   const off=[{id:'off',rowId:'r',fragment:{id:'f7'},block:145,direction:1}]
   const [only]=blockJumpMarkers([],off,drawn)
-  assert.deepEqual([only.fragmentId,only.edge,only.flow,only.block],['f7',1,1,145])
+  assert.deepEqual([only.fragmentId,only.edge,only.block],['f7',1,145])
+  assert.ok(facesItsBlock(only,7))
   assert.equal(blockJumpMarkers([],off,drawn).length,1)
 })
 
