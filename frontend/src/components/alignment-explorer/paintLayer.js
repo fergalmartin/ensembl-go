@@ -93,12 +93,35 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     if(r.x>size.width||r.x+w<0||r.y-HEADER_HEIGHT>size.height||r.y+r.height<0)continue
     if(f.aggregate){
       const left=Math.max(MARGIN_X,r.x),right=Math.min(size.width,r.x+w),top=MARGIN_Y
-      ctx.strokeStyle=colors.border;ctx.lineWidth=hair(1);ctx.strokeRect(left+.5,top-HEADER_HEIGHT,right-left,Math.min(size.height-top,r.height)+HEADER_HEIGHT);ctx.lineWidth=1
+      const bottom=Math.min(size.height,r.y+r.height)
+      // The header is its own band: filled, and ruled off from the bars below it.
+      // Drawn as one undivided box, the group's name and its contents read as a
+      // single object, and a highlight inside it had nothing to stop against.
+      ctx.fillStyle=colors.head;ctx.fillRect(left,top-HEADER_HEIGHT,right-left,HEADER_HEIGHT)
+      ctx.strokeStyle=colors.border;ctx.lineWidth=hair(1)
+      ctx.strokeRect(left+.5,top-HEADER_HEIGHT+.5,right-left-1,bottom-top+HEADER_HEIGHT-1)
+      ctx.beginPath();ctx.moveTo(left,top+.5);ctx.lineTo(right,top+.5);ctx.stroke()
+      ctx.lineWidth=1
+      // The individual block under the cursor: named in the header, outlined
+      // below it, and the one a click on the header opens.
+      const inner=hover?.fragmentId===f.id?blockAtLayoutX(f,hover.layoutX):null
       ctx.font='10px Lato, sans-serif';ctx.fillStyle=colors.muted
       const single=f.aggregate.first===f.aggregate.last
       const heading=single?`Block ${f.aggregate.first}`:`${f.aggregate.first}–${f.aggregate.last}`
       const labelWidth=Math.max(65,ctx.measureText(heading).width+12)
-      if(left>=MARGIN_X&&!headerBoxes.some(b=>left<b.right+8&&left+labelWidth>b.left-8)){ctx.fillText(heading,left+5,top-26);ctx.fillText(single?'1 block':`${f.aggregate.count} blocks`,left+5,top-12);headerBoxes.push({left,right:left+labelWidth})}
+      if(legible&&left>=MARGIN_X&&!headerBoxes.some(b=>left<b.right+8&&left+labelWidth>b.left-8)){
+        ctx.fillText(heading,left+5,top-26)
+        // While a block is picked out below, the second line names that block
+        // rather than counting the group, because that is what a click here
+        // opens. A merged header is rarely wide enough for both.
+        if(inner){
+          const room=right-11-left,columns=(inner.end_x-inner.x).toLocaleString()
+          const note=[`Block ${inner.block} \u00b7 ${columns} columns \u203a`,`Block ${inner.block} \u203a`,`${inner.block} \u203a`]
+            .find(text=>ctx.measureText(text).width<=room)
+          ctx.fillStyle=colors.text;ctx.fillText(note||String(inner.block),left+5,top-12);ctx.fillStyle=colors.muted
+        } else ctx.fillText(single?'1 block':`${f.aggregate.count} blocks`,left+5,top-12)
+        headerBoxes.push({left,right:left+labelWidth})
+      }
       for(let i=0;i<f.rowIds.length;i++){
         const id=f.rowIds[i],y=MARGIN_Y+rowSlot(f,i)*ROW_HEIGHT-camera.y
         if(y+ROW_HEIGHT<0||y>size.height)continue
@@ -109,25 +132,20 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         ctx.fillRect(left,y+rowPad,Math.max(1/plane,(right-left)*fraction),ROW_HEIGHT-2*rowPad);ctx.globalAlpha=1
       }
       if(hover?.fragmentId===f.id){
-        const bottom=Math.min(size.height,r.y+r.height)
         ctx.strokeStyle=colors.text;ctx.globalAlpha=.5
         ctx.strokeRect(left+.5,top-HEADER_HEIGHT+.5,right-left-1,bottom-top+HEADER_HEIGHT-1);ctx.globalAlpha=1
-        // Within a merged block, point at the individual block under the cursor
-        // rather than leaving the whole merge as the only unit on offer.
-        const inner=blockAtLayoutX(f,hover.layoutX)
+        // Within a merged group, point at the individual block under the cursor
+        // rather than leaving the whole group as the only unit on offer.
         if(inner){
           const ix=r.x+(inner.x-f.x)*r.scale,iw=Math.max(2,(inner.end_x-inner.x)*r.scale)
-          ctx.fillStyle=light?'#26374d18':'#cfe0f818';ctx.fillRect(Math.max(left,ix),top,Math.min(right,ix+iw)-Math.max(left,ix),bottom-top)
-          ctx.strokeStyle='#f2c766';ctx.lineWidth=1.5
-          ctx.strokeRect(Math.max(left,ix)+.5,top-HEADER_HEIGHT+.5,Math.min(right,ix+iw)-Math.max(left,ix)-1,bottom-top+HEADER_HEIGHT-1)
+          const a=Math.max(left,ix),z=Math.min(right,ix+iw)
+          // Only the block, and only below the rule. Carrying the highlight up
+          // through the header made the two look like one object and left it
+          // unclear what clicking would open.
+          ctx.fillStyle=light?'#26374d18':'#cfe0f818';ctx.fillRect(a,top+1,z-a,bottom-top-1)
+          ctx.strokeStyle='#f2c766';ctx.lineWidth=hair(1.5)
+          ctx.strokeRect(a+.5,top+1.5,z-a-1,bottom-top-2)
           ctx.lineWidth=1
-          const note=`Block ${inner.block} \u00b7 ${(inner.end_x-inner.x).toLocaleString()} columns`
-          ctx.font='10px "IBM Plex Mono", monospace'
-          const nw=ctx.measureText(note).width+12
-          const nx=Math.min(Math.max(MARGIN_X+4,ix+iw/2-nw/2),size.width-nw-4)
-          ctx.fillStyle=colors.head;rounded(ctx,nx,top-HEADER_HEIGHT-20,nw,17,4);ctx.fill()
-          ctx.strokeStyle=colors.border;rounded(ctx,nx+.5,top-HEADER_HEIGHT-19.5,nw-1,16,4);ctx.stroke()
-          ctx.fillStyle=colors.text;ctx.fillText(note,nx+6,top-HEADER_HEIGHT-8)
         }
       }
       hits.push({kind:'aggregate',fragmentId:f.id,x:left,y:top-HEADER_HEIGHT,width:right-left,height:HEADER_HEIGHT});continue

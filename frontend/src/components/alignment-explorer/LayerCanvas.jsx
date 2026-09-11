@@ -5,7 +5,7 @@ import { recordPerformance } from './performance'
 import { hitCanvasItem } from './originalLayout'
 import { paintLayer, panelRect } from './paintLayer'
 import { MARGIN_X, HEADER_HEIGHT, MARGIN_Y, ROW_HEIGHT } from './data'
-import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks, removeRowPicks, planeOf, planeViewport, panelZoom, blockFitScale } from './layers'
+import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks, removeRowPicks, planeOf, planeViewport, panelZoom, blockFitScale, blockAtLayoutX } from './layers'
 import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWheelAction } from '../../utils/browsingControls'
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
@@ -141,7 +141,13 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(event.button!==0&&event.button!==1)return
     host.current.focus();const point=canvasPoint(event),p=latest.current
     const hit=[...hits.current].reverse().find(h=>hitCanvasItem(h,point))
-    if(hit?.kind==='aggregate'){onAggregate?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
+    if(hit?.kind==='aggregate'){
+      // The block under the cursor, which is the one the header names and the
+      // one highlighted below it, rather than the whole merged group.
+      const f=layer.fragments.find(x=>x.id===hit.fragmentId)
+      onAggregate?.(f,f?blockAtLayoutX(f,f.x+layerXToColumn(f,state.camera,state.camera.x+(point.x-MARGIN_X)/state.camera.scale)-f.start):null)
+      return
+    }
     if(hit?.kind==='rows'){onToggleRows?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='copy'){onCopyChunk?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='layer'){onBlockToLayer?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
@@ -184,7 +190,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       const next=pointerHover(point)
       setHover(prev=>prev?.fragmentId===next?.fragmentId&&prev?.layoutX===next?.layoutX?prev:next)
       const hit=[...hits.current].reverse().find(h=>hitCanvasItem(h,point))
-      host.current.title=hit?.kind==='blockjump'?`Open source block ${hit.block}`:hit?.kind==='aggregate'?`Zoom into source blocks ${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.first}–${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.last}`:hit?.kind==='rows'?'Collapse or align absent rows for this block':hit?.kind==='copy'?'Copy chunk as aligned FASTA':hit?.kind==='layer'?'Create a layer from this source block':''
+      host.current.title=hit?.kind==='blockjump'?`Open source block ${hit.block}`:hit?.kind==='aggregate'?(next&&blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX)?`Open source block ${blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX).block}`:`Zoom into source blocks ${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.first}–${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.last}`):hit?.kind==='rows'?'Collapse or align absent rows for this block':hit?.kind==='copy'?'Copy chunk as aligned FASTA':hit?.kind==='layer'?'Create a layer from this source block':''
       if(hit?.kind==='connection'){onInspect(hit);return}
       for(const f of layer.fragments){const r=panelRect(f,state.camera),index=f.rowIds.findIndex((_,i)=>point.y>=r.y+rowSlot(f,i)*ROW_HEIGHT&&point.y<r.y+(rowSlot(f,i)+1)*ROW_HEIGHT)
         if(point.x>=r.x&&point.x<r.x+r.width&&index>=0){if(f.aggregate){onInspect({kind:'aggregate',rowId:f.rowIds[index],aggregate:f.aggregate});return}const column=f.start+Math.floor((point.x-r.x)/r.scale),base=sampleBase(tiles[f.id],f.rowIds[index],column);onInspect({kind:'cell',rowId:f.rowIds[index],fragment:f,column,base:hasCell(f,f.rowIds[index],column)?base:'Unselected cell',placed:(state.placedOverlay||[]).filter(p=>p.sourceBlock===f.sourceBlock&&hasCell(p,f.rowIds[index],column)).map(p=>p.name),features:(annotations[f.id]?.[f.rowIds[index]]||[]).filter(a=>column>=a.start&&column<=a.end)});return}}
