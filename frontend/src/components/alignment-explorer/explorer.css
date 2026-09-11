@@ -110,6 +110,13 @@
 .al-source>strong { font-size:11px; }
 .al-toolbar { flex-wrap:nowrap; padding:4px 8px; min-height:37px; gap:8px; flex-shrink:0; box-sizing:border-box; }
 .al-toolbar button { padding:4px 8px; }
+/* Each control keeps its own width and the bar scrolls when they will not fit.
+   Squeezed to a few pixels their labels spilled over their neighbours, and a row
+   of half-drawn words reads as one jumble rather than as controls. The layer
+   name gives way first, since it already ellipses. */
+.al-toolbar { overflow-x:auto; }
+.al-toolbar > * { flex-shrink:0; }
+.al-toolbar > .al-active-name { flex-shrink:1; min-width:54px; }
 .al-tools { flex-wrap:nowrap; }
 .al-active-name { margin-left:auto; border-left:3px solid; padding-left:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
 .al-status { min-height:22px; padding:3px 9px; box-sizing:border-box; }
@@ -135,7 +142,7 @@
    visible while the alignment is still on screen behind them. */
 .al-filter { display:flex; flex-direction:column; width:min(58vw,780px); min-width:min(58vw,780px);
   border-right:1px solid var(--al-border,#3a4d65); background:var(--al-panel,#1c293d); overflow-y:auto; }
-.al-filter-head { position:sticky; top:0; z-index:2; background:var(--al-panel,#1c293d); }
+.al-filter-top { position:sticky; top:0; z-index:2; background:var(--al-panel,#1c293d); }
 .al-filter-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--al-border,#3a4d65); }
 .al-filter-head strong { font-size:12px; letter-spacing:.02em; }
 .al-filter-head .al-close { margin-left:auto; }
@@ -156,11 +163,13 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-filter-row:hover { background:#ffffff0d; }
 .al-filter-row small { grid-column:2; opacity:.6; font-size:10px; }
 .al-filter-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.al-filter-foot { display:flex; flex-direction:column; gap:5px; padding:9px 10px; border-top:1px solid var(--al-border,#3a4d65); }
+.al-filter-apply { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:7px 10px; font-size:11px;
+  border-bottom:1px solid var(--al-border,#3a4d65); }
+.al-filter-apply strong { font-size:11px; }
+.al-filter-apply small { opacity:.65; font-size:10px; margin-right:auto; }
 .al-grid-caption { display:flex; align-items:center; gap:8px; padding:3px 6px; font-size:11px; }
 .al-grid-caption button { background:none; border:0; font-size:11px; padding:1px 3px; font-weight:600; }
 .al-grid-caption span { opacity:.6; font-size:10px; margin-left:auto; }
-.al-filter-foot small { opacity:.65; font-size:10px; }
 .al-filter-active { display:flex; flex-direction:column; gap:3px; margin-top:6px; padding:6px 8px; border-radius:5px;
   border:1px solid #edc26355; background:#edc2631a; font-size:11px; }
 .al-filter-active small { opacity:.75; font-size:10px; }

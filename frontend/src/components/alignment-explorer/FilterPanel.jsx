@@ -139,13 +139,26 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
   const ready=!!summary
 
   return <aside className="al-filter" aria-label="Filter sequences and blocks">
-    <div className="al-filter-head">
-      <strong>Filter</strong>
-      <div className="al-filter-tabs" role="tablist">
-        <button role="tab" aria-selected={tab==='sequences'} className={tab==='sequences'?'selected':''} onClick={()=>setTab('sequences')}>Sequences</button>
-        <button role="tab" aria-selected={tab==='blocks'} className={tab==='blocks'?'selected':''} onClick={()=>setTab('blocks')}>Blocks</button>
+    {/* What the filter would give and what to do with it, above the list and
+        pinned there: at the foot they sat below twenty rows of grid, so the
+        reader had to scroll past the thing they were choosing to act on it. */}
+    <div className="al-filter-top">
+      <div className="al-filter-head">
+        <strong>Filter</strong>
+        <div className="al-filter-tabs" role="tablist">
+          <button role="tab" aria-selected={tab==='sequences'} className={tab==='sequences'?'selected':''} onClick={()=>setTab('sequences')}>Sequences</button>
+          <button role="tab" aria-selected={tab==='blocks'} className={tab==='blocks'?'selected':''} onClick={()=>setTab('blocks')}>Blocks</button>
+        </div>
+        <button className="al-close" aria-label="Close filter" onClick={onClose}>×</button>
       </div>
-      <button className="al-close" aria-label="Close filter" onClick={onClose}>×</button>
+      {ready&&<div className="al-filter-apply">
+        <strong>{number(chosenSequenceIds.length)} sequences · {number(chosenBlockIds.length)} blocks</strong>
+        {chunks.length?<small>{number(chunks.length)} chunks · {number(cells)} cells</small>
+          :<small>Narrow the sequences to build a layer from the result.</small>}
+        <button className="primary" disabled={!chunks.length} onClick={()=>onNewLayer(chunks)}>New layer from filter</button>
+        <button onClick={()=>onApplyToOriginal({sequences:chosenSequenceIds,blocks:chosenBlockIds})}>Show only these in Original</button>
+        {filterApplied&&<button onClick={onClearFilter}>Clear filter from Original</button>}
+      </div>}
     </div>
 
     {!ready&&<p className="al-hint">Reading the alignment inventory…</p>}
@@ -203,15 +216,6 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
       </div>
       <FilterGrid rows={blocks} columns={blockColumns} rowKey={b=>b.id} chosen={chosenBlocks}
         onChosen={setChosenBlocks} label="Blocks" empty="No blocks match."/>
-    </div>}
-
-    {ready&&<div className="al-filter-foot">
-      <strong>{number(chosenSequenceIds.length)} sequences · {number(chosenBlockIds.length)} blocks</strong>
-      {chunks.length?<small>{number(chunks.length)} chunks · {number(cells)} cells</small>
-        :<small>Narrow the sequences to build a layer from the result.</small>}
-      <button className="primary" disabled={!chunks.length} onClick={()=>onNewLayer(chunks)}>New layer from filter</button>
-      <button onClick={()=>onApplyToOriginal({sequences:chosenSequenceIds,blocks:chosenBlockIds})}>Show only these in Original</button>
-      {filterApplied&&<button onClick={onClearFilter}>Clear filter from Original</button>}
     </div>}
   </aside>
 }
