@@ -5,7 +5,7 @@ import { TileScheduler } from './tileScheduler'
 
 /** Stable source coordinates with indexed viewport lookup. No sequential walk
  * from block 1, changing layout origin, or finite neighbour-window boundary. */
-export default function useOriginalBlocks(dataset,source,camera,size,_total,enabled,onError,revision=0) {
+export default function useOriginalBlocks(dataset,source,camera,size,_total,enabled,onError,revision=0,panel=false) {
   const [tick,repaint]=useState(0),error=useRef(onError),scheduler=useRef(null)
   error.current=onError
   if(!scheduler.current)scheduler.current=new TileScheduler({concurrency:2,maxEntries:24,onChange:()=>repaint(n=>n+1),onError:message=>error.current(message)})
@@ -15,16 +15,19 @@ export default function useOriginalBlocks(dataset,source,camera,size,_total,enab
   const span=Math.max(1,size.width/camera.scale),quantum=2**Math.ceil(Math.log2(span))
   const start=Math.max(0,Math.floor((camera.x-MARGIN_X/camera.scale-span*.5)/quantum)*quantum)
   const end=Math.min(extent,Math.max(start+1,Math.ceil((camera.x+span*1.5)/quantum)*quantum))
-  // Panel zoom shrinks the drawing; it does not coarsen it. The merge follows
-  // the real window rather than the enlarged one, so flicking to panel keeps
-  // individual blocks instead of collapsing them into bars that are already a
-  // summary of a summary.
-  const merge=mergeWidth(Math.max(1,size.width*planeOf(camera)/camera.scale))
-  const key=`${dataset?.id}:${start}:${end}:${merge}`
+  // Panel zoom shrinks the drawing; it never coarsens it. In panel mode blocks
+  // are asked for individually and `detail` is raised to the whole response, so
+  // the server keeps them individual rather than falling back to a grid - its
+  // own coarsening is by block count, and the enlarged viewport brings far more
+  // blocks into range than the window holds.
+  const limit=panel?256:96
+  const merge=panel?0:mergeWidth(Math.max(1,size.width*planeOf(camera)/camera.scale))
+  const detail=panel?limit:BLOCK_DETAIL_COUNT
+  const key=`${dataset?.id}:${start}:${end}:${merge}:${detail}`
   useEffect(()=>{
     if(!dataset||!enabled||end<=start){cache.setWanted([]);return}
-    cache.setWanted([{key,label:'Source block layout',run:signal=>api(`/datasets/${dataset.id}/layout?start=${start}&end=${end}&limit=96&merge=${merge}&detail=${BLOCK_DETAIL_COUNT}`,undefined,signal)}])
-  },[cache,dataset,key,start,end,merge,enabled,revision])
+    cache.setWanted([{key,label:'Source block layout',run:signal=>api(`/datasets/${dataset.id}/layout?start=${start}&end=${end}&limit=${limit}&merge=${merge}&detail=${detail}`,undefined,signal)}])
+  },[cache,dataset,key,start,end,merge,detail,limit,enabled,revision])
   const exact=cache.get(key)
   const fragments=useMemo(()=>{
     // Cached overlapping regions continue to render immediately during a pan.

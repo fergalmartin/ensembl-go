@@ -40,7 +40,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   // screen, and the block layout and the sequence tiles have to be told so, or
   // the level of detail would be chosen for a view nobody is looking at.
   const sourceView=useMemo(()=>planeViewport(size,state.camera),[size,state.camera])
-  const sourceFragments=useOriginalBlocks(dataset,source,state.camera,sourceView,blocks.total,state.original,setError,revision)
+  const sourceFragments=useOriginalBlocks(dataset,source,state.camera,sourceView,blocks.total,state.original,setError,revision,!!state.planeZoom)
   const originalFragments=useMemo(()=>layoutOriginal(sourceFragments,orderedInventory.map(r=>r.id),state.originalRows||'aligned',state.blockRows||{},dataset?.max_source_rows,state.filter),[sourceFragments,orderedInventory,state.originalRows,state.blockRows,dataset?.max_source_rows,state.filter])
   const original=useMemo(()=>({id:'original',name:'Original alignment',color:'#b9c5d9',fragments:originalFragments,rowExtent:Math.max(inventory.length,2*(dataset?.max_source_rows||0)+3),extent:dataset?.layout_end||source?.layout_end||source?.length||1}),[originalFragments,dataset?.layout_end,source?.layout_end,source?.length,inventory.length,dataset?.max_source_rows])
   const allLayers=useMemo(()=>[original,...state.layers],[original,state.layers])

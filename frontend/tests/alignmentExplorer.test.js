@@ -121,6 +121,22 @@ test('panel zoom spends the column magnification before it shrinks the sheet',as
   assert.equal(camera.plane,1)
   assert.ok(camera.scale>6,'the columns are magnified again')
 })
+test('panel mode never widens the columns to where blocks would be merged',async()=>{
+  const {blockFitScale,panelZoom,mergeWidth,BLOCK_DETAIL_SPAN,PLANE_MIN}=await import('../src/components/alignment-explorer/layers.js')
+  const size={width:1000,height:600}
+  // A source block can be twice the width at which merging begins, so fitting
+  // one to the window is on its own enough to ask the server for an overview -
+  // which is how a merged view came back in panel mode. The sheet shrinking is
+  // what shows more blocks there, never a coarser summary of them.
+  const original={id:'original',extent:43e6,rowExtent:1363,fragments:[createFragment(1,0,1_000_000,['a'],{x:0})]}
+  let camera={x:0,y:0,scale:12,plane:1}
+  for(let step=0;step<60;step++){
+    camera=panelZoom(camera,1/1.4,{blockScale:blockFitScale(original,camera,size),size})
+    assert.equal(mergeWidth(size.width/camera.scale),0,`step ${step} still asks for individual blocks`)
+  }
+  assert.ok(size.width/camera.scale<=BLOCK_DETAIL_SPAN,'the window never covers more than the detail span')
+  assert.equal(camera.plane,PLANE_MIN,'and the travel still reaches the limit')
+})
 test('panel mode opens on blocks, and leaving it puts the rows back at the top',async()=>{
   const {enterPanelZoom,exitPanelZoom,BLOCK_DETAIL_SPAN,planeOf}=await import('../src/components/alignment-explorer/layers.js')
   const {MARGIN_X}=await import('../src/components/alignment-explorer/layout.js')

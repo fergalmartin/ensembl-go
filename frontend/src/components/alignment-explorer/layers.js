@@ -514,14 +514,21 @@ export const planeOf=camera=>clamp(Number(camera?.plane)||1,PLANE_MIN,1)
 /** The viewport the painter is given: real pixels over the plane factor, so
  * shrinking the sheet shows more of the world rather than less of it. */
 export const planeViewport=(size,camera)=>{const plane=planeOf(camera);return {width:size.width/plane,height:size.height/plane}}
-/** The scale at which the thing being looked at fills the width: one source
- * block in Original, the whole arrangement in a layer. */
+/** Where panel mode stops widening the columns: the scale at which the thing
+ * being looked at fills the width - one source block in Original, the whole
+ * arrangement in a layer - but never past the point where blocks would start
+ * being merged.
+ *
+ * That second half matters because a source block can be twice the width at
+ * which merging begins, so fitting one to the window is enough on its own to
+ * ask the server for an overview. Panel mode is a view of individual blocks;
+ * the sheet shrinking is what shows more of them, not a coarser summary. */
 export function blockFitScale(layer,camera,size) {
   const solid=(layer?.fragments||[]).filter(f=>!f.aggregate)
   const anchor=layer?.id==='original'?sourceViewAnchor(solid,camera):null
   const target=anchor?{fragments:[anchor]}:layer?.id==='original'?null:layer
-  if(!target||!target.fragments?.length)return Math.max(Number.EPSILON,Number(camera?.scale)||1)
-  return fitCamera(target,size.width,size.height).scale
+  const fit=target?.fragments?.length?fitCamera(target,size.width,size.height).scale:Math.max(Number.EPSILON,Number(camera?.scale)||1)
+  return layer?.id==='original'?Math.max(fit,size.width/BLOCK_DETAIL_SPAN):fit
 }
 /** One zoom step in panel mode, always about the middle of the window.
  *
