@@ -366,6 +366,12 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-motif-delete { font-size:18px!important; padding:0 6px!important; }
 .al-motif-error { color:var(--al-error,#e05e64)!important; overflow-wrap:anywhere; }
 .al-motif-preview { padding:20px; border-radius:6px; font-family:'IBM Plex Mono',monospace; overflow-wrap:anywhere; }
+.al-menu-actions { position:sticky; bottom:-11px; display:flex; justify-content:flex-end; gap:8px; padding:10px 0 0; background:var(--al-panel); border-top:1px solid var(--al-border); }
+.al-motif-working { position:fixed; right:24px; bottom:30px; z-index:80; padding:12px; border:1px solid var(--al-border); border-radius:8px; background:var(--al-panel); box-shadow:0 8px 30px #0006; font-size:12px; }
+.al-motif-working button { margin-left:12px; }
+.al-motif-progress .al-modal { max-width:480px; }
+.al-motif-tile-status { position:absolute; bottom:5px; right:8px; z-index:3; padding:3px 6px; border-radius:4px; background:var(--al-panel); color:var(--al-muted); font-size:10px; max-width:80%; }
+.al-motif-tile-status button { margin-left:8px; }
 .al-menu-tab { display:flex; flex-direction:column; gap:9px; }
 .al-menu-hint { line-height:1.5; }
 /* Unnamed, so they fit in one row and are compared rather than read. */

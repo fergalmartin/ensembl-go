@@ -280,7 +280,11 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             colors,counter:paintCount})
           continue
         }
-        if(data.detail){
+        if(motifMode&&onScreen<NUCLEOTIDE_LETTER_THRESHOLD){
+          const top=data.detail?y+1:y+3,height=data.detail?24:ROW_HEIGHT-6
+          ctx.fillStyle=neutral;ctx.fillRect(x,top,width,height)
+          paintMotifSpan(ctx,{spans:motifSpans,start,end,x:r.x,scale:r.scale,fragmentStart:f.start,y:top,height})
+        } else if(data.detail){
           let motifIndex=firstMotifSpan(motifSpans,start)
           for(let col=start;col<end;col++){
             const base=row.sequence[col-data.start]

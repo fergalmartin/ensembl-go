@@ -17,7 +17,7 @@ const ZOOM_MODES = [
 ]
 
 export default function ZoomTool({ panel, plane = 1, root, onMode }) {
-  const [anchor, setAnchor] = useState(null)
+  const [anchor, setAnchor] = useState(null), [draft, setDraft] = useState(null)
   const [toast, setToast] = useState(null)
   const button = useRef(null)
   const close = useCallback(() => setAnchor(null), [])
@@ -36,19 +36,20 @@ export default function ZoomTool({ panel, plane = 1, root, onMode }) {
         title={`Zoom: ${current.label}. ${current.hint} Click to switch.`}
         onClick={switchTo}>Zoom{shrunk && <b>{shrunk}</b>}</button>
       <button className="al-split-arrow" aria-label="Zoom options" aria-expanded={!!anchor}
-        onClick={() => setAnchor(open => open ? null : menuPosition(button.current))}>▾</button>
+        onClick={() => { if(anchor)close();else{setDraft(current.id);setAnchor(menuPosition(button.current))} }}>▾</button>
     </div>
     {anchor && root && createPortal(<div className="al-tool-menu" role="dialog" aria-label="Zoom options" style={anchor}>
       <div className="al-menu-options">
         {ZOOM_MODES.map(option => <button key={option.id} type="button"
-          className={`al-menu-option ${option.id === current.id ? 'selected' : ''}`}
-          aria-pressed={option.id === current.id}
-          onClick={() => { onMode(option.id === 'panel'); close() }}>
+          className={`al-menu-option ${option.id === draft ? 'selected' : ''}`}
+          aria-pressed={option.id === draft}
+          onClick={() => setDraft(option.id)}>
           <strong>{option.label}</strong><small>{option.hint}</small></button>)}
       </div>
       <div className="al-menu-foot">
         <small>Dragging, picking and reordering work in both.{shrunk ? ` Panel is at ${shrunk}.` : ''}</small>
       </div>
+      <div className="al-menu-actions"><button onClick={close}>Cancel</button><button className="primary" onClick={()=>{onMode(draft==='panel');close()}}>Apply</button></div>
     </div>, root)}
     <ToolToast toast={toast} root={root} onDone={() => setToast(null)} />
   </>

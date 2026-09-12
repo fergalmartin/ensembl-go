@@ -1,4 +1,4 @@
-"""Search whole source rows, independently of the viewport and sequence tiles."""
+"""Compatibility endpoints. New rendering uses motif_jobs and motif_engine."""
 import time
 
 import regex
@@ -14,42 +14,11 @@ def motif_spans(sequence, pattern, kind='literal', timeout=0.5):
     Overlapping occurrences count. Anchors/lookarounds see the complete ungapped
     block, including sequence outside a cropped layer or a viewport tile.
     """
-    expression = regex.compile(regex.escape(pattern) if kind == 'literal' else pattern,
-                               regex.IGNORECASE | regex.VERSION1)
-    deadline = time.monotonic() + timeout
-    text = sequence.replace('-', '')
-    runs = []
-    for match in expression.finditer(text, overlapped=True, timeout=timeout):
-        if time.monotonic() > deadline:
-            raise TimeoutError()
-        a, z = match.span()
-        if a == z:
-            continue  # Assertions alone have no bases to colour.
-        if runs and a <= runs[-1][1]:
-            runs[-1][1] = max(z, runs[-1][1])
-        else:
-            runs.append([a, z])
-        if len(runs) > MAX_RUNS:
-            raise ValueError('Too many matches. Use a more specific motif.')
-    # Stream gap mapping instead of allocating one coordinate per base or gap.
-    aligned, index, offset = [], 0, 0
-    for segment in regex.finditer('[^-]+', sequence):
-        if index >= len(runs):
-            break
-        if time.monotonic() > deadline:
-            raise TimeoutError()
-        start, end = segment.span()
-        segment_end = offset + end - start
-        while index < len(runs) and runs[index][0] < segment_end:
-            a, z = runs[index]
-            aligned.append([start + max(0, a - offset), min(end, start + z - offset)])
-            if len(aligned) > MAX_RUNS:
-                raise ValueError('Too many match spans. Use a more specific motif.')
-            if z > segment_end:
-                break
-            index += 1
-        offset = segment_end
-    return aligned
+    from motif_engine import search_spans
+    flat = search_spans(sequence, pattern, kind, timeout=timeout)
+    if len(flat) // 2 > MAX_RUNS:
+        raise ValueError('Too many matches. Use a more specific motif.')
+    return [list(flat[i:i + 2]) for i in range(0, len(flat), 2)]
 
 
 def search_row(store, block, row_id, motifs):
@@ -111,7 +80,7 @@ def matching_blocks_page(store, motifs, after=0, limit=16):
                 text = ''.join(chunk['bases'] for chunk in db.execute(
                     'SELECT bases FROM chunks WHERE block=? AND id=? ORDER BY offset', (block['id'], row['id']))).replace('-', '')
                 try:
-                    found = any(any(m.end() > m.start() for m in expression.finditer(text, timeout=.5)) for expression in expressions)
+                    found = any(any(m.end() > m.start() for m in expression.finditer(text, overlapped=True, timeout=.5)) for expression in expressions)
                 except TimeoutError as exc:
                     raise ValueError('Block search timed out. Simplify the motifs before hiding blocks.') from exc
                 if found:

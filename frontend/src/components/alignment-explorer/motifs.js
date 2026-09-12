@@ -66,12 +66,4 @@ export function resolveMotifSpans(motifs, spans) {
   return result
 }
 
-export function firstMotifSpan(spans, column) {
-  let low = 0, high = spans.length
-  while (low < high) {
-    const mid = (low + high) >>> 1
-    if (spans[mid][1] <= column) low = mid + 1
-    else high = mid
-  }
-  return low
-}
+export { firstMotifSpan } from '../motifs/render.js'

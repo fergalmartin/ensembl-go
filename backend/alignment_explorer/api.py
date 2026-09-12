@@ -64,6 +64,18 @@ class MotifBlocksRequest(BaseModel):
     after: int = Field(default=0, ge=0)
 
 
+class MotifJobRequest(BaseModel):
+    motifs: list[MotifDefinition] = Field(min_length=1, max_length=100)
+
+
+class MotifTileRequest(BaseModel):
+    block: int = Field(ge=1)
+    ids: list[str] = Field(max_length=16)
+    start: int = Field(ge=0)
+    end: int = Field(ge=1)
+    step: int = Field(default=1, ge=1)
+
+
 class MetadataRequest(BaseModel):
     entries: list[dict] = Field(default_factory=list, max_length=100000)
     content: Optional[str] = Field(default=None, max_length=10_000_000)
@@ -77,6 +89,8 @@ class NativeRegion(BaseModel):
 
 
 def create_router(cache_root=None, annotation_provider=None):
+    from .motif_jobs import MotifJobs
+    motif_jobs = MotifJobs()
     root = Path(cache_root or os.environ.get('ENSEMBL_ALIGNMENT_CACHE', Path.home() / '.cache' / 'ensembl-go' / 'alignment-explorer'))
     router = APIRouter(prefix='/api/alignment-explorer', tags=['Alignment Explorer'])
     pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='alignment-explorer')
@@ -268,6 +282,37 @@ def create_router(cache_root=None, annotation_provider=None):
             return search_row(store_for(dataset_id), payload.block, payload.row, payload.motifs)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    @router.post('/datasets/{dataset_id}/motif-jobs')
+    def start_motif_job(dataset_id: str, payload: MotifJobRequest):
+        try:
+            return motif_jobs.start(dataset_id, store_for(dataset_id), payload.motifs)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @router.get('/motif-jobs/{job_id}')
+    def motif_job_status(job_id: str):
+        try: return motif_jobs.status(job_id)
+        except KeyError: raise HTTPException(404, 'Motif preparation expired. Apply the motifs again; searches remain cached.')
+
+    @router.post('/motif-jobs/{job_id}/cancel')
+    def cancel_motif_job(job_id: str):
+        try: return motif_jobs.cancel(job_id)
+        except KeyError: raise HTTPException(404, 'Motif job not found')
+
+    @router.get('/motif-jobs/{job_id}/blocks')
+    def motif_job_blocks(job_id: str, after: int = Query(0, ge=0)):
+        try: return motif_jobs.blocks(job_id, after)
+        except KeyError: raise HTTPException(404, 'Motif job not found')
+        except ValueError as exc: raise HTTPException(409, str(exc)) from exc
+
+    @router.post('/motif-jobs/{job_id}/region')
+    def motif_job_region(job_id: str, payload: MotifTileRequest):
+        try:
+            if payload.end <= payload.start: raise ValueError('Empty motif interval')
+            return motif_jobs.region(job_id, payload.block, payload.ids, payload.start, payload.end, payload.step)
+        except KeyError: raise HTTPException(404, 'Motif preparation expired. Apply again to reuse cached searches.')
+        except ValueError as exc: raise HTTPException(400, str(exc)) from exc
 
     @router.post('/datasets/{dataset_id}/motif-blocks')
     def motif_blocks(dataset_id: str, payload: MotifBlocksRequest):

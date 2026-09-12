@@ -40,3 +40,15 @@ test('highlight spans clip to tiles and cropped fragments while preserving gaps'
   paint(10, 12); paint(12, 20)
   assert.deepEqual(calls, [['blue', 100, 30, 4, 24], ['blue', 104, 30, 2, 24], ['blue', 110, 30, 6, 24]])
 })
+
+test('prepared tile requests are bounded and stable across tiny pans', async () => {
+  const {planMotifTiles, collectMotifTiles} = await import('../src/components/alignment-explorer/motifTiles.js')
+  const {createFragment} = await import('../src/components/alignment-explorer/layers.js')
+  const layer = {fragments:[createFragment(1,0,1000000,Array.from({length:1000},(_,i)=>String(i)),{x:0})]}
+  const camera={x:0,y:0,scale:.001,plane:1},size={width:800,height:400}
+  const first=planMotifTiles(layer,camera,size), second=planMotifTiles(layer,{...camera,x:1},size)
+  assert.deepEqual(first,second)
+  for(const [,request] of first){assert.ok(request.ids.length<=16);assert.equal((request.end-request.start)/request.step,1024)}
+  const values=new Map([['one',{block:1,start:0,step:1,rows:[{id:'a',runs:[[0,3,1]]}]}],['overlap',{block:1,start:0,step:1,rows:[{id:'a',runs:[[0,3,1]]}]}]])
+  assert.deepEqual(collectMotifTiles([['one'],['overlap']],values,['red']),{'1:a':[[0,3,'red']]})
+})

@@ -4,8 +4,8 @@ import { genomeColorPalette } from '../../genomeColorSchemes'
 import { readableTextOn } from '../../utils/genomePillColors'
 import { MAX_MOTIFS, moveMotif } from './motifs'
 
-export default function MotifEditor({ motifs, onChange, light, config, errors, pending, failure, saved, onPicker,
-  hideUnmatched, onHideUnmatched, motifBlocks }) {
+export default function MotifEditor({ motifs, onChange, light, config, errors, saved, onPicker,
+  hideUnmatched, onHideUnmatched }) {
   const [dragged, setDragged] = useState(null), [over, setOver] = useState(null), [colorId, setColorId] = useState(null)
   const palette = [...new Set([...genomeColorPalette(config), ...motifs.map(m=>m.color)])], chosen = motifs.find(m => m.id === colorId)
   const patch = (id, value) => onChange(motifs.map(m => m.id === id ? { ...m, ...value } : m))
@@ -42,9 +42,9 @@ export default function MotifEditor({ motifs, onChange, light, config, errors, p
       const color = palette.find(c => !motifs.some(m => m.color === c)) || palette[motifs.length % palette.length]
       onChange([...motifs, { id: crypto.randomUUID(), pattern: '', kind: 'literal', enabled: true, color }])
     }}>+ Add motif</button>
-    <small className={failure || !saved ? 'al-motif-error' : ''} role="status">{!saved ? 'Could not save motifs on this device.' : failure || (pending ? 'Searching sequences…' : 'Saved on this device, across alignments.')}</small>
+    <small className={!saved ? 'al-motif-error' : ''} role="status">{!saved ? 'Could not save motifs on this device.' : 'Edits take effect when you Apply. Motifs are remembered on this device.'}</small>
     <label className="al-menu-check"><input type="checkbox" checked={hideUnmatched} onChange={event=>onHideUnmatched(event.target.checked)} />Hide blocks without motif matches</label>
-    {hideUnmatched && <small role="status" className={motifBlocks.error?'al-motif-error':''}>{motifBlocks.message} A match to any enabled motif in any sequence keeps the block.</small>}
+    {hideUnmatched && <small role="status" >A match to any enabled motif in any sequence keeps the block.</small>}
     <small>Case-insensitive, on the displayed strand with gaps ignored. Each source block is searched separately. Regex: e.g. ATG[ACGT]{'{3}'}, without / delimiters. Empty matches have no highlight.</small>
     <GenomeColorPicker isOpen={!!chosen} theme={light ? 'light' : 'dark'} title="Motif colour" subtitle={chosen?.pattern || 'New motif'}
       paletteHint="Choose a palette colour or mix your own. Colours used by your motifs are also available here."

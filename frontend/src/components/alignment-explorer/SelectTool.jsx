@@ -14,34 +14,35 @@ import { SELECT_KINDS, isSelectMode, selectKind } from './selectKinds'
  * kind is armed belongs in the menu, the tooltip and the shape of the drag.
  */
 export default function SelectTool({ mode, kind, picked = 0, rows = 0, root, onMode, onKind, onClear }) {
-  const [anchor, setAnchor] = useState(null)
+  const [anchor, setAnchor] = useState(null), [draft, setDraft] = useState(null)
   const button = useRef(null)
   const close = useCallback(() => setAnchor(null), [])
   useMenuDismiss(!!anchor, close, button, 'al-tool-menu')
   const active = isSelectMode(mode)
   const current = selectKind(active ? mode : kind)
-  const choose = chosen => { onKind(chosen.mode); onMode(chosen.mode); close() }
+  const chosenMode = draft?.mode || current.mode
   return <>
     <div className={`al-split ${active ? 'selected' : ''}`} ref={button}>
       <button className="al-split-main" aria-pressed={active} title={`${current.label}: ${current.hint}`}
         onClick={() => onMode(active ? 'pan' : current.mode)}>Select</button>
       <button className="al-split-arrow" aria-label="Selection options" aria-expanded={!!anchor}
         title="Choose how a selection is drawn"
-        onClick={() => setAnchor(open => open ? null : menuPosition(button.current))}>▾</button>
+        onClick={() => { if(anchor)close();else{setDraft({mode:current.mode,clear:false});setAnchor(menuPosition(button.current))} }}>▾</button>
     </div>
     {anchor && root && createPortal(<div className="al-tool-menu" role="dialog" aria-label="Selection options" style={anchor}>
       <div className="al-menu-options">
         {SELECT_KINDS.map(option => <button key={option.mode} type="button"
-          className={`al-menu-option ${option.mode === current.mode ? 'selected' : ''}`}
-          aria-pressed={option.mode === current.mode} onClick={() => choose(option)}>
+          className={`al-menu-option ${option.mode === chosenMode ? 'selected' : ''}`}
+          aria-pressed={option.mode === chosenMode} onClick={() => setDraft(value=>({...value,mode:option.mode}))}>
           <strong>{option.label}</strong><small>{option.hint}</small></button>)}
       </div>
       <div className="al-menu-foot">
         <small>{picked
           ? `${rows} ${rows === 1 ? 'sequence' : 'sequences'} · ${picked} ${picked === 1 ? 'pick' : 'picks'}`
           : 'Nothing picked yet'}</small>
-        <button type="button" disabled={!picked} onClick={() => { onClear(); close() }}>Clear selection</button>
+        <button type="button" disabled={!picked} onClick={() => setDraft(value=>({...value,clear:true}))}>{draft?.clear ? 'Selection will be cleared' : 'Clear selection'}</button>
       </div>
+      <div className="al-menu-actions"><button onClick={close}>Cancel</button><button className="primary" onClick={()=>{if(draft?.clear)onClear();onKind(chosenMode);onMode(chosenMode);close()}}>Apply</button></div>
     </div>, root)}
   </>
 }
