@@ -19,6 +19,7 @@ const REQUIRED_MODULES = [
   'Bio',
   'requests',
   'pyBigWig',
+  'regex',
   'PyInstaller',
 ];
 

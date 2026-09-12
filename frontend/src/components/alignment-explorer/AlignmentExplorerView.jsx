@@ -7,6 +7,9 @@ import LayerCycle from './LayerCycle'
 import ColourLegend from './ColourLegend'
 import SelectTool from './SelectTool'
 import ColourTool from './ColourTool'
+import useMotifs from './useMotifs'
+import useMotifBlocks from './useMotifBlocks'
+import { loadMotifs, saveMotifs, motifLegend } from './motifs'
 import ZoomTool from './ZoomTool'
 import ImportProgress from './ImportProgress'
 import { layoutOriginal, blockRowLines, centreOnRow } from './originalLayout'
@@ -26,6 +29,8 @@ import { litRows } from './layers'
 import './explorer.css'
 
 export default function AlignmentExplorerView({theme='dark',config,genomes=[],incoming,onIncomingConsumed}) {
+  const [motifs,setMotifs]=useState(loadMotifs),[motifsSaved,setMotifsSaved]=useState(true)
+  const changeMotifs=useCallback(next=>{setMotifs(next);setMotifsSaved(saveMotifs(next))},[])
   const [dataset,setDataset]=useState(null),[inventory,setInventory]=useState([]),[blocks,setBlocks]=useState({blocks:[],total:0}),[source,setSource]=useState(null)
   const [state,setState]=useState(emptyWorkspace),[size,setSize]=useState({width:900,height:500}),[job,setJob]=useState(null),[opening,setOpening]=useState(''),[cancelling,setCancelling]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('')
   const [dialog,setDialog]=useState(null),[path,setPath]=useState(''),[merge,setMerge]=useState(null),[layerName,setLayerName]=useState(''),[target,setTarget]=useState('new'),[inspect,setInspect]=useState(null),[fallback,setFallback]=useState(false),[revision,setRevision]=useState(0)
@@ -77,6 +82,8 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const activeFilter=filterOn?state.filter:null
   const sourceView=useMemo(()=>planeViewport(size,state.camera),[size,state.camera])
   const hiddenBlocks=state.hidden?.blocks,hiddenRows=state.hidden?.rows
+  const motifBlocks=useMotifBlocks(dataset,motifs,state.colourScheme==='motif'&&!!state.hideUnmatchedMotifBlocks,revision)
+  const motifBlockIds=useMemo(()=>motifBlocks.blocks?new Set(motifBlocks.blocks.map(b=>b.block)):null,[motifBlocks.blocks])
   // Hiding sequences narrows the rows the same way a filter does, so the two
   // compose rather than fight: what survives is what both of them allow.
   const viewFilter=useMemo(()=>{
@@ -93,7 +100,13 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
       .catch(error=>{if(!cancelled)setError(error.message)})
     return()=>{cancelled=true}
   },[dataset,hiddenBlocks])
-  const packedFragments=useMemo(()=>hiddenLayout?packBlocks(hiddenLayout):null,[hiddenLayout])
+  const packedFragments=useMemo(()=>{
+    if(motifBlocks.blocks){
+      const allowed=hiddenBlocks?.length?new Set(hiddenBlocks):null
+      return packBlocks(motifBlocks.blocks.filter(b=>!allowed||allowed.has(b.block)))
+    }
+    return hiddenLayout?packBlocks(hiddenLayout):null
+  },[hiddenLayout,hiddenBlocks,motifBlocks.blocks])
   const packedKey=packedFragments?.map(f=>f.sourceBlock).join(',')
   // Fitting the whole packed sheet is the answer to "what survived", so it
   // happens when a hide is made and not when one is loaded: a saved workspace
@@ -103,13 +116,20 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     hideFit.current=null
     patch({camera:fitCamera({fragments:packedFragments},size.width,size.height)})
   },[packedKey]) // eslint-disable-line react-hooks/exhaustive-deps
-  const sourceFragments=useOriginalBlocks(dataset,source,state.camera,sourceView,blocks.total,state.original&&!hiddenBlocks?.length,setError,revision,!!state.planeZoom)
+  const sourceFragments=useOriginalBlocks(dataset,source,state.camera,sourceView,blocks.total,state.original&&!hiddenBlocks?.length&&!motifBlockIds,setError,revision,!!state.planeZoom)
   const laidOut=packedFragments||sourceFragments
   const originalFragments=useMemo(()=>layoutOriginal(laidOut,orderedInventory.map(r=>r.id),state.originalRows||'aligned',state.blockRows||{},dataset?.max_source_rows,viewFilter),[laidOut,orderedInventory,state.originalRows,state.blockRows,dataset?.max_source_rows,viewFilter])
   const original=useMemo(()=>({id:'original',name:'Original alignment',color:'#b9c5d9',fragments:originalFragments,packed:!!packedFragments,rowExtent:Math.max(inventory.length,2*(dataset?.max_source_rows||0)+3),extent:packedFragments?packedExtent(packedFragments):dataset?.layout_end||source?.layout_end||source?.length||1}),[originalFragments,packedFragments,dataset?.layout_end,source?.layout_end,source?.length,inventory.length,dataset?.max_source_rows])
   const allLayers=useMemo(()=>[original,...state.layers],[original,state.layers])
   const active=state.original?original:state.layers.find(l=>l.id===state.active)||original
-  const layer=active
+  const layer=useMemo(()=>motifBlockIds&&!state.original?{...active,fragments:active.fragments.filter(f=>motifBlockIds.has(f.sourceBlock))}:active,[active,motifBlockIds,state.original])
+  const previousMotifBlocks=useRef(null)
+  useEffect(()=>{
+    if(motifBlocks.blocks&&previousMotifBlocks.current!==motifBlocks.blocks&&state.original){
+      patch({camera:fitCamera(original,size.width,size.height)})
+    }
+    previousMotifBlocks.current=motifBlocks.blocks
+  },[motifBlocks.blocks,original,size.width,size.height,state.original,patch])
   const cameraFrame=useRef(null),pendingCamera=useRef(null)
   const camera=useCallback(value=>{
     const current=stateRef.current,bounded=constrainCamera(current.original?original:current.layers.find(l=>l.id===current.active)||original,value,size)
@@ -141,7 +161,8 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const scheme=schemeById(state.colourScheme)
   const cohort=useMemo(()=>scheme.cohort?cohortOf(layer,displayInventory,litRows(state)):null,[scheme,layer,displayInventory,state])
   const {tiles,annotations,connections,offWindow,counts,pending,warnings,conservation,gaps,displayCamera}=useLayerData(dataset,layer,renderState.camera,renderView,state.annotations,revision,setError,false,cohort)
-  const canvasState=useMemo(()=>({...renderState,camera:displayCamera}),[renderState,displayCamera])
+  const motifSearch=useMotifs(dataset,layer,displayCamera,renderView,motifs,scheme.id==='motif',revision)
+  const canvasState=useMemo(()=>({...renderState,camera:displayCamera,motifRows:motifSearch.rows}),[renderState,displayCamera,motifSearch.rows])
   const ids=useMemo(()=>orderedInventory.map(r=>r.id),[orderedInventory])
   // Original is the whole alignment however it is being looked at, so it is
   // described by the source's own totals. What a filter or a hide holds back is
@@ -563,6 +584,8 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
       <SelectTool mode={state.mode} kind={selectKind} picked={state.selection.length} rows={selectionRows} root={explorerRoot.current}
         onMode={mode=>patch({mode})} onKind={setSelectKind} onClear={()=>patch({selection:[],highlighted:[]})}/></div><button disabled={state.original||!active.fragments.length} onClick={()=>commit(s=>{const tidied=tidyLayer(active,ids,chunkGap(active.fragments,size.width)),view=fitCamera(tidied,size.width,size.height);return {...s,layers:s.layers.map(l=>l.id===active.id?{...tidied,camera:view}:l),camera:view}})}>Auto arrange</button><ZoomTool panel={!!state.planeZoom} plane={renderState.camera.plane} root={explorerRoot.current} onMode={zoomMode}/><ColourTool scheme={state.colourScheme} palette={state.palette} shading={state.shading} legendOverlay={!!state.legendOverlay}
         cohort={cohort} scale={conservation?.scale} light={theme==='light'} root={explorerRoot.current}
+        motifs={motifs} onMotifs={changeMotifs} motifSearch={motifSearch} motifsSaved={motifsSaved} config={config}
+        hideUnmatched={!!state.hideUnmatchedMotifBlocks} onHideUnmatched={value=>patch({hideUnmatchedMotifBlocks:value})} motifBlocks={motifBlocks}
         onScheme={id=>patch({colourScheme:id})} onPalette={(id,value)=>patch({palette:{...state.palette,[id]:value}})} onShading={value=>patch({shading:value})}
         onOverlay={value=>patch({legendOverlay:value})}/>{state.original&&<div className="al-source-nav" title={sourceRange?.grouped?'This overview groups source blocks. Enter a block number to open one.':undefined}><label>{sourceRange?.grouped?`Blocks ${sourceRange.first}–${sourceRange.last}`:'Block'} <input aria-label="Jump to source block" type="number" min="1" max={blocks.total} placeholder={sourceRange?.grouped?'Block…':undefined} key={sourceRange?.grouped?'grouped':visibleSourceBlock} defaultValue={sourceRange?.grouped?'':visibleSourceBlock} onKeyDown={e=>{if(e.key==='Enter'){const id=Number(e.currentTarget.value);if(Number.isInteger(id)&&id>=1&&id<=blocks.total)sourceBlock(id)}}}/></label><button aria-label="Previous source block" disabled={!!sourceRange?.grouped||stepBlock(-1)==null} onClick={()=>sourceBlock(stepBlock(-1))}>‹</button><button aria-label="Next source block" disabled={!!sourceRange?.grouped||stepBlock(1)==null} onClick={()=>sourceBlock(stepBlock(1))}>›</button></div>}<button className={`al-filter-flag ${filterOn?'selected':''}`} disabled={!state.filter}
   aria-pressed={filterOn}
@@ -574,11 +597,13 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   onClick={()=>hiding?showEverything():setHideMenu(open=>!open)}>{hiding?'Show':'Hide'}</button>
 <LayerCycle layers={allLayers} active={layer.id} onChoose={switchLayer} dataset={dataset} inventory={displayInventory} light={theme==='light'} revision={revision}/></div>
         <div className="al-stage">{!!zoomHint&&state.planeZoom&&<div className="al-zoom-hint" role="status" key={zoomHint}><span>Panel zoom is at full size. Switch to <strong>Alignment</strong> for sequence-level zoom.</span><button className="primary" onClick={()=>zoomMode(false)}>Switch</button><button aria-label="Dismiss zoom hint" onClick={dismissZoomHint}>×</button></div>}
-        {!!state.legendOverlay&&!!scheme.legend&&<ColourLegend legend={scheme.legend(theme==='light',conservation?.scale,state.palette?.[scheme.id],state.shading)}
+        {!!state.legendOverlay&&(!!scheme.legend||scheme.id==='motif')&&<ColourLegend legend={scheme.id==='motif'?motifLegend(motifs):scheme.legend(theme==='light',conservation?.scale,state.palette?.[scheme.id],state.shading)}
           cohort={scheme.cohort?cohort:null} onDismiss={()=>patch({legendOverlay:false})}/>}
         <LayerCanvas ref={canvas} layer={layer} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} conservation={conservation} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onRemoveBlock={removeBlock} onRemoveRow={removeRow} onDeselect={deselect} onAggregate={(f,inner)=>inner?sourceBlock(inner.block):camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={(value,lit)=>patch({selection:value,mode:'pan',...(lit?.length?{highlighted:toggleHighlights(state.highlighted,lit)}:{})})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:addHighlight(state.highlighted,id)})} onUnlight={id=>patch(unlightRow(state,id))} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock} onReorderRow={reorderRow} onZoomLimit={noteZoomLimit}/></div>
         <div className="al-status"><span>{pending?'Loading regional detail…':layer.fragments.some(f=>f.aggregate)?'Block presence overview':renderState.camera.scale*renderState.camera.plane>=NUCLEOTIDE_LETTER_THRESHOLD?'Sequence detail':renderState.camera.scale*renderState.camera.plane>=.65?'Base patterns':(scheme.status||state.shading==='uniform')?'Binned':'Binned agreement to first row'}{scheme.status?` \u00b7 ${scheme.status}${scheme.cohort?` among ${cohort?.ids.length||0} ${cohort?.ids.length===1?'sequence':'sequences'}${cohort?.picked?' picked':' in view'}`:''}`:''}{renderState.camera.plane<1?` · Whole panel at ${Math.round(renderState.camera.plane*100)}%`:''}{fallback?' · Canvas fallback':''}</span><span>{inspect?.kind==='aggregate'?`${namedRow?.label||''} · present in ${inspect.aggregate.presence?.[inspect.rowId]||0} of ${inspect.aggregate.count} source blocks (${inspect.aggregate.first}–${inspect.aggregate.last})`:inspect?.kind==='connection'?`${inventory.find(r=>r.id===inspect.connection.rowId)?.label||'Sequence'} · ${inspect.connection.columns==null?'Different source blocks: alignment distance unavailable':inspect.connection.columns<0?`${-inspect.connection.columns} overlapping alignment columns`:`${inspect.connection.columns} omitted alignment columns`} · ${counts[inspect.connection.id]?.bases??'?'} ungapped bases`:inspect?.kind==='cell'?`${namedRow?.label||''} · block ${inspect.fragment.sourceBlock}, column ${(inspect.column+1).toLocaleString()}${inspect.base?` · ${inspect.base}`:''}${inspect.placed?.length?` · In layers: ${inspect.placed.join(', ')}`:''}${inspect.features?.length?` · ${inspect.features.map(f=>f.type).join(', ')}`:''}`:'Click a name or a block header to pick it \u00b7 click a cell or a string to follow its path.'}</span></div>
 
+        {scheme.id==='motif'&&(motifSearch.pending||motifSearch.failure||Object.keys(motifSearch.errors).length>0||layer.fragments.some(f=>f.aggregate))&&<div className="al-annotation-warning" role="status">{motifSearch.failure|| (Object.keys(motifSearch.errors).length?'Some motifs could not be searched. Open Colour → Motif for details.':motifSearch.pending?'Searching motifs…':'Zoom into individual blocks to see motif matches.')}</div>}
+        {scheme.id==='motif'&&state.hideUnmatchedMotifBlocks&&<div className="al-annotation-warning" role="status">{motifBlocks.message} <button onClick={()=>patch({hideUnmatchedMotifBlocks:false})}>Show all blocks</button></div>}
         {!!warnings.length&&<div className="al-annotation-warning">Annotations unavailable for {warnings.length} visible rows: {warnings[0].message}</div>}
       </main>
     </div>}

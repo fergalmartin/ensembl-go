@@ -129,6 +129,7 @@ export default function GenomeColorPicker({
     // written for; anything else colouring something that is not a genome passes
     // its own, rather than previewing genes it does not have.
     renderPreview,
+    paletteHint = 'A colour mixed here joins the palette when it is applied, ready for the next genome.',
     onApply,
     onClose,
 }) {
@@ -252,8 +253,7 @@ export default function GenomeColorPicker({
                         </span>
                     </div>
                     <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                        A colour mixed here joins the palette when it is applied, ready for the
-                        next genome.
+                        {paletteHint}
                     </p>
                 </div>
 

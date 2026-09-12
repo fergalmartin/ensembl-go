@@ -12,6 +12,9 @@ import { recordPerformance } from './performance.js'
 import { schemeById } from './colourSchemes.js'
 import { paintConservationSpan } from './paintConservation.js'
 import { paintUniformSpan } from './paintUniform.js'
+import { paintMotifSpan } from './paintMotifs.js'
+import { firstMotifSpan } from './motifs.js'
+import { readableTextOn } from '../../utils/genomePillColors.js'
 import { monoFont } from '../../utils/typography'
 // The left edge is the exact affine position; the body is compressed into the
 // rect minus a constant pixel gap, leaving a channel before the next block.
@@ -56,6 +59,8 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   // Chosen once per paint. A scheme without a ramp is the original one, and the
   // loops below never learn that any other exists.
   const scheme=schemeById(state.colourScheme),ramp=scheme.ramp?scheme.ramp(light,state.palette?.[scheme.id]):null
+  const motifMode=scheme.id==='motif',neutral=light?'#cbd5e1':'#566477'
+  const motifTextColors=new Map()
   // Uniform shading is not a scheme of its own: it is what `bases` does where a
   // column is too narrow to be a base. Close up the sequence is still drawn,
   // which is the whole point of it being one mode rather than two.
@@ -231,6 +236,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
 
     for(let index=0;index<f.rowIds.length;index++) {
       const id=f.rowIds[index],y=r.y+rowSlot(f,index)*ROW_HEIGHT
+      const motifSpans=motifMode?(state.motifRows?.[`${f.sourceBlock}:${id}`]||[]):[]
       if(y+ROW_HEIGHT<0||y>size.height)continue
       const ranges=rowChunks(f,id),selected=lit.has(id)
       // Which geometry the row ended up drawn on, so the gap box sits exactly on
@@ -264,7 +270,9 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         // Below a few pixels a row is a mark rather than a sequence: one rect
         // says "present here", and the bins, gaps and features it would carry
         // are not resolvable at that size anyway.
-        if(flatRows){ctx.fillStyle=uniform||presence;ctx.fillRect(x,y+rowPad,width,ROW_HEIGHT-2*rowPad);continue}
+        if(flatRows){ctx.fillStyle=motifMode?neutral:uniform||presence;ctx.fillRect(x,y+rowPad,width,ROW_HEIGHT-2*rowPad)
+          if(motifMode)paintMotifSpan(ctx,{spans:motifSpans,start,end,x:r.x,scale:r.scale,fragmentStart:f.start,y:y+rowPad,height:ROW_HEIGHT-2*rowPad})
+          continue}
         // Below the bases and nowhere else: the detail branch under this paints
         // the sequence exactly as it always did, whichever shading is chosen.
         if(uniform&&!data.detail){
@@ -273,11 +281,14 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
           continue
         }
         if(data.detail){
+          let motifIndex=firstMotifSpan(motifSpans,start)
           for(let col=start;col<end;col++){
             const base=row.sequence[col-data.start]
             const left=Math.round(r.x+(col-f.start)*r.scale),right=Math.round(r.x+(col+1-f.start)*r.scale)
             const width=Math.max(.5,right-left),top=y+1,height=24
-            ctx.fillStyle=base==='-'?colors.background:getBaseColor(base,baseColors)
+            while(motifIndex<motifSpans.length&&motifSpans[motifIndex][1]<=col)motifIndex++
+            const motifColor=motifSpans[motifIndex]?.[0]<=col?motifSpans[motifIndex][2]:neutral
+            ctx.fillStyle=base==='-'?colors.background:motifMode?motifColor:getBaseColor(base,baseColors)
             ctx.fillRect(left,top,width,height)
             if(onScreen>=6&&width>=2){
               ctx.strokeStyle=light?'rgba(0,0,0,0.35)':'rgba(255,255,255,0.25)';ctx.lineWidth=1
@@ -288,11 +299,15 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             // out - visible only on a dimmed row, where the paint over it is
             // translucent enough to let it through.
             if(onScreen>=NUCLEOTIDE_LETTER_THRESHOLD&&base!=='-'){
-              ctx.fillStyle=NUCLEOTIDE_TEXT_COLOR;ctx.font=monoFont(12);ctx.textAlign='center';ctx.textBaseline='middle'
+              if(motifMode&&!motifTextColors.has(motifColor))motifTextColors.set(motifColor,readableTextOn(motifColor))
+              ctx.fillStyle=motifMode?motifTextColors.get(motifColor):NUCLEOTIDE_TEXT_COLOR;ctx.font=monoFont(12);ctx.textAlign='center';ctx.textBaseline='middle'
               ctx.fillText(base.toUpperCase(),left+width/2,top+height/2)
               ctx.textAlign='left';ctx.textBaseline='alphabetic'
             }
           }
+        } else if(motifMode){
+          paintUniformSpan(ctx,{start,end,row,data,colour:neutral,x:r.x,scale:r.scale,fragmentStart:f.start,y,colors,counter:paintCount})
+          paintMotifSpan(ctx,{spans:motifSpans,start,end,x:r.x,scale:r.scale,fragmentStart:f.start,y:y+3,height:ROW_HEIGHT-6})
         } else {
           row.bins?.forEach((bin,i)=>{
             const ba=data.start+i*data.bin_size,bz=Math.min(data.end,ba+data.bin_size),a=Math.max(start,ba),z=Math.min(end,bz)

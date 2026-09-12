@@ -17,6 +17,7 @@ export const defaultCamera = () => ({ x: 0, y: 0, scale: 2, plane: 1 })
 export function validPalettes(value) {
   const picked = {}
   for (const scheme of COLOUR_SCHEMES) {
+    if (!scheme.palettes) continue
     const chosen = value?.[scheme.id]
     if (typeof chosen === 'string') picked[scheme.id] = paletteById(scheme.palettes, chosen).id
   }

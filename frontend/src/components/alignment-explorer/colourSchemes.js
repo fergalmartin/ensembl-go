@@ -30,6 +30,9 @@ export const COLOUR_SCHEMES = [
   { id: 'representation', label: 'Presence', cohort: true, ramp: buildRepresentationRamp, index: representationIndex, legend: representationLegend, palettes: 'ramp',
     hint: 'How much of the cohort each column actually holds, with agreement left out of it.',
     status: 'Cohort presence' },
+  { id: 'motif', label: 'Motif', cohort: false,
+    hint: 'Highlight sequence strings or regular expressions using your own ordered colours.',
+    status: 'Motif matches' },
 ]
 
 /** What `bases` does once a column is too narrow to be a base.

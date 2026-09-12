@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Literal, Optional
 from .store import AlignmentStore, detect_format, fingerprint, parse_metadata
 
 
@@ -45,6 +45,23 @@ class ConservationRequest(BaseModel):
 
 class ExportRequest(RegionRequest):
     format: str = 'fasta'
+
+
+class MotifDefinition(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    pattern: str = Field(min_length=1, max_length=500)
+    kind: Literal['literal', 'regex'] = 'literal'
+
+
+class MotifRequest(BaseModel):
+    block: int = Field(ge=1)
+    row: str = Field(min_length=1, max_length=500)
+    motifs: list[MotifDefinition] = Field(max_length=100)
+
+
+class MotifBlocksRequest(BaseModel):
+    motifs: list[MotifDefinition] = Field(min_length=1, max_length=100)
+    after: int = Field(default=0, ge=0)
 
 
 class MetadataRequest(BaseModel):
@@ -243,6 +260,22 @@ def create_router(cache_root=None, annotation_provider=None):
             rows = [dict(r) for r in db.execute('SELECT r.*,s.source,s.label,s.metadata FROM rows r JOIN sequences s ON s.id=r.id WHERE block=? ORDER BY s.rowid',(block_id,))]
         for row in rows: row['metadata'] = json.loads(row['metadata'])
         return {'block':block_id,'length':block['length'],'rows':rows,**store.layout_info(block_id)}
+
+    @router.post('/datasets/{dataset_id}/motifs')
+    def motifs(dataset_id: str, payload: MotifRequest):
+        from .motifs import search_row
+        try:
+            return search_row(store_for(dataset_id), payload.block, payload.row, payload.motifs)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @router.post('/datasets/{dataset_id}/motif-blocks')
+    def motif_blocks(dataset_id: str, payload: MotifBlocksRequest):
+        from .motifs import matching_blocks_page
+        try:
+            return matching_blocks_page(store_for(dataset_id), payload.motifs, payload.after)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @router.post('/datasets/{dataset_id}/connections')
     def connections(dataset_id: str, payload: dict):

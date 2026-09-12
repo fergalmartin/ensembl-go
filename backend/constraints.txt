@@ -6,3 +6,4 @@ biopython==1.85
 requests==2.32.5
 pyBigWig==0.3.18
 PyInstaller==6.18.0
+regex==2026.1.15

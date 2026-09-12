@@ -110,10 +110,10 @@ test('a workspace carries the palettes and whether the key is overlaid',async()=
   assert.equal(validateLayerWorkspace({...emptyWorkspace(),legendOverlay:undefined},[]).legendOverlay,false)
 })
 
-test('every scheme offers a palette kind and a legend in the shape the key draws',async()=>{
+test('preset schemes offer a palette kind and a legend in the shape the key draws',async()=>{
   const {COLOUR_SCHEMES}=await schemes()
   const {palettesOfKind}=await palettes()
-  for(const scheme of COLOUR_SCHEMES){
+  for(const scheme of COLOUR_SCHEMES.filter(s=>s.id!=='motif')){
     assert.ok(['base','ramp','flat'].includes(scheme.palettes),`${scheme.id} says which palettes it takes`)
     assert.ok(palettesOfKind(scheme.palettes).length,`${scheme.id} has some`)
     // Every tab in the Colour menu shows a key, including the one that never
@@ -160,9 +160,8 @@ test('a menu is pinned to its button and pulled back from the window edge',async
 test('uniform is a shading of the bases scheme, not a scheme of its own',async()=>{
   const {COLOUR_SCHEMES,SHADING_MODES,shadingById}=await schemes()
   const {presenceColour}=await palettes()
-  // Three schemes. A fourth for uniform would have meant two places to go for
-  // the same sequence, and one of them unable to show the bases at all.
-  assert.deepEqual(COLOUR_SCHEMES.map(s=>s.id),['bases','conservation','representation'])
+  // Motifs have their own user-defined colours; uniform remains base shading.
+  assert.deepEqual(COLOUR_SCHEMES.map(s=>s.id),['bases','conservation','representation','motif'])
   const bases=COLOUR_SCHEMES.find(s=>s.id==='bases')
   assert.ok(bases.shading,'only bases has anything to shade')
   assert.ok(!COLOUR_SCHEMES.filter(s=>s.id!=='bases').some(s=>s.shading))
