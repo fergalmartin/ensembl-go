@@ -2,18 +2,22 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, us
 import * as THREE from 'three'
 import { sampleBase } from './tileCoverage'
 import { recordPerformance } from './performance'
-import { hitCanvasItem } from './originalLayout'
+import { hitAtPoint } from './originalLayout'
 import { paintLayer, panelRect } from './paintLayer'
 import { MARGIN_X, HEADER_HEIGHT, MARGIN_Y, ROW_HEIGHT } from './data'
-import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, togglePicks, blockPick, rowPicks, removeRowPicks, planeOf, planeViewport, panelZoom, blockFitScale, blockAtLayoutX } from './layers'
+import { originalRowDropTarget } from './rowDrop.js'
+import { isSelectMode } from './selectKinds'
+import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, pickAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, rowListScrolls, togglePicks, blockPick, rowPicks, rowIsLit, namesInRect, rectEntersCells, planeOf, planeViewport, panelZoom, panelZoomBlocked, blockFitScale, blockAtLayoutX } from './layers'
 import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWheelAction } from '../../utils/browsingControls'
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
  * coordinates and renderer drive the complete non-WebGL fallback. */
-const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navigationCamera, inventory, tiles, annotations, connections, offWindow, counts, gaps, light, config, onCamera, onCopyChunk, onBlockToLayer, onAggregate, onToggleRows, onSelection, onSelectionDrag, onSelectionDrop, onMove, onHighlight, onInspect, onSize, onFallback, onSourceBlock, onReorderRow }, ref) {
+/** How far a press on the picked cells may travel and still be a click. */
+const TRANSFER_SLOP=2
+const LayerCanvas = forwardRef(function LayerCanvas({ layer, state, navigationCamera, inventory, tiles, annotations, connections, offWindow, counts, gaps, conservation, light, config, onCamera, onCopyChunk, onBlockToLayer, onRemoveBlock, onRemoveRow, onDeselect, onAggregate, onToggleRows, onSelection, onSelectionDrag, onSelectionDrop, onMove, onHighlight, onUnlight, onInspect, onSize, onFallback, onSourceBlock, onReorderRow, onZoomLimit }, ref) {
   const host = useRef(null), engine = useRef(null), latest = useRef(null), interaction = useRef(null), hits = useRef([]), space = useRef(false)
-  const [size, setSize] = useState({width:800,height:500}), [drag,setDrag] = useState(null), [rectangle,setRectangle] = useState(null), [reorder,setReorder] = useState(null), [overSelection,setOverSelection] = useState(false), [hover,setHover] = useState(null)
-  useLayoutEffect(()=>{ latest.current = {layer,layers,state,navigationCamera,inventory,tiles,annotations,connections,counts,light,config,onCamera:navigate,onSelection,onSelectionDrag,onSelectionDrop,onMove,onHighlight,onInspect,onSize,onFallback,size,drag,rectangle} })
+  const [size, setSize] = useState({width:800,height:500}), [drag,setDrag] = useState(null), [rectangle,setRectangle] = useState(null), [reorder,setReorder] = useState(null), [overSelection,setOverSelection] = useState(false), [hoverPick,setHoverPick] = useState(null), [hover,setHover] = useState(null)
+  useLayoutEffect(()=>{ latest.current = {layer,state,navigationCamera,inventory,tiles,annotations,connections,counts,light,config,onCamera:navigate,onSelection,onSelectionDrag,onSelectionDrop,onMove,onHighlight,onUnlight,onInspect,onSize,onFallback,onZoomLimit,size,drag,rectangle} })
   // Plane units, the coordinates the painter drew in and every hit region, drag
   // and drop target is expressed in. Dividing here once is the whole of what
   // plane zoom costs the gestures below: nothing downstream knows about it.
@@ -52,7 +56,10 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       // Scrolling the name list scrolls the rows, carrying the alignment with it.
       // Left of the gutter edge the horizontal controls would otherwise take the
       // wheel and there would be no way to move down a long list of sequences.
-      if(wheelScrollsRowList(canvasPoint(event,camera).x,descriptor,MARGIN_X)){
+      // Only where there is a list to scroll, though: only the original draws a
+      // gutter, and only a list taller than the window has anywhere to go.
+      const gutter=p.state.original&&rowListScrolls(p.layer,camera,p.size)
+      if(wheelScrollsRowList(canvasPoint(event,camera).x,descriptor,MARGIN_X,gutter)){
         event.preventDefault();event.stopPropagation()
         p.onCamera({...camera,y:camera.y+descriptor.dy/plane});return
       }
@@ -66,8 +73,15 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
         const point=canvasPoint(event,camera),x=intent.anchor==='center'?p.size.width/plane/2:point.x
         // The same gesture, walking the panel ladder instead of the columns.
         if(p.state.planeZoom){
-          p.onCamera(panelZoom(camera,1/intent.factor,{blockScale:blockFitScale(p.layer,camera,p.size),size:p.size}));return
+          const factor=1/intent.factor
+          // Counted per gesture, not per event: one flick of a wheel or one
+          // pinch delivers dozens of events, and counting those would make two
+          // "attempts" out of a single movement of the hand.
+          if(panelZoomBlocked(camera,factor)){if(!gesture.continues)p.onZoomLimit?.(true);return}
+          p.onZoomLimit?.(false)
+          p.onCamera(panelZoom(camera,factor,{blockScale:blockFitScale(p.layer,camera,p.size),size:p.size}));return
         }
+        p.onZoomLimit?.(false)
         const scale=clamp(camera.scale/intent.factor,Number.EPSILON,24),anchor=camera.x+(x-MARGIN_X)/camera.scale
         p.onCamera({...camera,scale,x:anchor-(x-MARGIN_X)/scale})
       }
@@ -87,42 +101,30 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     // the viewport it opens up, so one drawing serves both zooms unchanged.
     const plane=planeOf(state.camera),view=planeViewport(size,state.camera)
     const ctx=canvas.getContext('2d');ctx.setTransform(dpr*plane,0,0,dpr*plane,0,0)
-    hits.current=paintLayer(ctx,{layer,camera:state.camera,size:view,inventory,tiles,annotations,connections,offWindow,counts,state,drag,hover,gaps,reorder,selectionRect:rectangle,light})
+    hits.current=paintLayer(ctx,{layer,camera:state.camera,size:view,inventory,tiles,annotations,connections,offWindow,counts,state,drag,hover,gaps,reorder,selectionRect:rectangle,conservation,hoverPick,light})
     if(e.failed){if(e.fallback.width!==canvas.width||e.fallback.height!==canvas.height){e.fallback.width=canvas.width;e.fallback.height=canvas.height}e.fallback.getContext('2d').drawImage(canvas,0,0);return}
     if(e.width!==size.width||e.height!==size.height||e.dpr!==dpr){e.renderer.setPixelRatio(dpr);e.renderer.setSize(size.width,size.height,false);e.width=size.width;e.height=size.height;e.dpr=dpr}
     e.camera.left=-size.width/2;e.camera.right=size.width/2;e.camera.top=size.height/2;e.camera.bottom=-size.height/2;e.camera.updateProjectionMatrix()
     e.mesh.scale.set(size.width,size.height,1);e.texture.needsUpdate=true
-    e.group.rotation.set(state.tilted?-.28:0,state.tilted?.12:0,0);e.group.scale.setScalar(state.tilted?.82:1)
-    // Backplates give named layers depth, while the active plane retains exact data.
-    const backplates=JSON.stringify([size.width,size.height,state.tilted,layer.id,layers.map(l=>[l.id,l.color])])
-    if(e.backplates!==backplates){
-    e.backplates=backplates
-    while(e.group.children.length>1){const m=e.group.children.at(-1);e.group.remove(m);m.geometry.dispose();m.material.dispose()}
-    if(state.tilted)layers.filter(l=>l.id!==layer.id).slice(0,8).forEach((l,i)=>{
-      const m=new THREE.Mesh(new THREE.PlaneGeometry(size.width,size.height),new THREE.MeshBasicMaterial({color:l.color,transparent:true,opacity:.16,side:THREE.DoubleSide,depthWrite:false}))
-      m.position.set((i+1)*9,-(i+1)*14,-(i+1)*65);e.group.add(m)
-    })
-    }
     e.camera.updateMatrixWorld(true);e.scene.updateMatrixWorld(true);e.renderer.render(e.scene,e.camera)
     recordPerformance('paint',{ms:performance.now()-started,textureBytes:canvas.width*canvas.height*4})
-  },[layer,layers,state,inventory,tiles,annotations,connections,offWindow,counts,gaps,light,size,drag,hover,reorder,rectangle])
+  },[layer,state,inventory,tiles,annotations,connections,offWindow,counts,gaps,conservation,light,size,drag,hover,hoverPick,reorder,rectangle])
   // Where a drop lands, read off the layout as drawn rather than worked out from
   // a row height. The indicator and the move both come from this, so what is
   // shown and what happens cannot disagree.
-  function reorderTarget(current,y){
+  function reorderTarget(current,point){
     if(state.original){
-      // The gutter publishes every row it draws, in both aligned and compact
-      // rows and through a filter, so it is the layout rather than a model of it.
-      const rows=(hits.current||[]).filter(h=>h.kind==='label').sort((a,b)=>a.y-b.y)
-      if(!rows.length)return {beforeId:null,lineY:y}
-      const at=rows.findIndex(h=>y<h.y+h.height/2)
-      const last=rows[rows.length-1]
-      return at<0?{beforeId:null,lineY:last.y+last.height}:{beforeId:rows[at].rowId,lineY:rows[at].y}
+      // The gutter publishes the rows it draws and whose they are; which list a
+      // drop should be read against is `originalRowDropTarget`'s to decide.
+      const gutterRows=(hits.current||[]).filter(h=>h.kind==='label')
+      return originalRowDropTarget({point,fragments:layer.fragments,camera:state.camera,
+        gutterRows,gutterAnchor:gutterRows[0]?.anchor??null,order:inventory.map(r=>r.id),
+        jumpBlock:current.jumpBlock??null,fragmentId:current.fragmentId??null,rowId:current.rowId})
     }
     const f=layer.fragments.find(x=>x.id===current.fragmentId)
-    if(!f)return {slot:0,lineY:y}
+    if(!f)return {slot:0,lineY:point.y}
     const top=panelRect(f,state.camera).y
-    const slot=clamp(Math.round((y-top)/ROW_HEIGHT),0,Math.max(0,rowCount(f)-1))
+    const slot=clamp(Math.round((point.y-top)/ROW_HEIGHT),0,Math.max(0,rowCount(f)-1))
     return {slot,lineY:top+slot*ROW_HEIGHT}
   }
   function pointerHover(point){
@@ -137,10 +139,15 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     return null
   }
   function layoutPoint(p,camera){return {x:camera.x+(p.x-MARGIN_X)/camera.scale,y:(p.y-MARGIN_Y+camera.y)/ROW_HEIGHT}}
+  // What the press found, and whether it is allowed to take hold of it. Only
+  // Pan grabs content: with Select or Columns armed, a press that would have
+  // picked up a row, a block or a connector starts the rectangle instead, which
+  // is the whole of what those modes are for.
+  const hitHere=(point,filter)=>hitAtPoint(hits.current,point,{original:!!state.original,marginX:MARGIN_X,filter})
   function pointerDown(event){
     if(event.button!==0&&event.button!==1)return
     host.current.focus();const point=canvasPoint(event),p=latest.current
-    const hit=[...hits.current].reverse().find(h=>hitCanvasItem(h,point))
+    const hit=hitHere(point),grabs=!isSelectMode(state.mode)
     if(hit?.kind==='aggregate'){
       // The block under the cursor, which is the one the header names and the
       // one highlighted below it, rather than the whole merged group.
@@ -150,16 +157,24 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     }
     if(hit?.kind==='rows'){onToggleRows?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='copy'){onCopyChunk?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
+    if(hit?.kind==='removeBlock'){onRemoveBlock?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
+    // Before the name's own handler, or taking a row out would first pick it.
+    if(hit?.kind==='removeRow'){onRemoveRow?.(hit.rowId);return}
+    if(hit?.kind==='deselect'){setHoverPick(null);onDeselect?.(hit.pick);return}
     if(hit?.kind==='layer'){onBlockToLayer?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
-    if(hit?.kind==='label'){
+    if(hit?.kind==='label'&&grabs){
       // Highlight on the press, so the row is picked out before it is dragged
-      // anywhere. A click that goes nowhere toggles it back off on release.
-      const already=state.selection.some(pick=>pick.kind==='row'&&pick.rowIds.includes(hit.rowId))
-      if(!already)onSelection(togglePicks(state.selection,rowPicks(layer,hit.rowId)))
+      // anywhere. A click that goes nowhere puts it back out on release - and
+      // what counts as already lit is the whole of it, a pick or a click on a
+      // cell, so a name click always answers what the reader can see.
+      const already=rowIsLit(state,hit.rowId)
+      // Same for one name at a time: a click on a name off the sheet used to do
+      // nothing at all, which read as the name not being a control.
+      if(!already){const picks=rowPicks(layer,hit.rowId);onSelection(togglePicks(state.selection,picks),picks.length?null:[hit.rowId])}
       interaction.current={kind:'reorder',point,rowId:hit.rowId,fragmentId:hit.fragmentId,wasPicked:already,fromLabel:true,camera:{...p.state.camera}}
       event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
     }
-    if(hit?.kind==='blockjump'){
+    if(hit?.kind==='blockjump'&&grabs){
       onHighlight(hit.rowId)
       interaction.current={kind:'reorder',point,rowId:hit.rowId,fragmentId:hit.fragmentId,
         jumpBlock:hit.block,fromConnector:true,camera:{...p.state.camera}}
@@ -169,7 +184,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     // Either end of a connector is a handle on the row in the block at that end.
     // A row whose name sits beside an earlier chunk has no other handle in the
     // chunk the path runs into, which is where it most needs one.
-    if(hit?.kind==='connection'&&hit.points){
+    if(hit?.kind==='connection'&&hit.points&&grabs){
       const head=hit.points[0],tail=hit.points[hit.points.length-1]
       const intoTail=Math.hypot(point.x-tail.x,point.y-tail.y)<=Math.hypot(point.x-head.x,point.y-head.y)
       interaction.current={kind:'reorder',point,rowId:hit.connection.rowId,
@@ -178,7 +193,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
     }
     const selected=state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera),state.camera)
-    const kind=space.current||event.button===1?'pan':selected?'transfer':hit?.kind==='header'?(state.original?'header':'move'):state.mode==='pan'?'pan':'select'
+    const kind=space.current||event.button===1?'pan':selected?'transfer':hit?.kind==='header'&&grabs?(state.original?'header':'move'):grabs?'pan':'select'
     const fragment=kind==='move'?layer.fragments.find(f=>f.id===hit.fragmentId):null
     const cell=hit?.connection?.rowId||layer.fragments.map(f=>{const r=panelRect(f,state.camera),index=f.rowIds.findIndex((_,i)=>point.y>=r.y+rowSlot(f,i)*ROW_HEIGHT&&point.y<r.y+(rowSlot(f,i)+1)*ROW_HEIGHT);return point.x>=r.x&&point.x<r.x+r.width&&index>=0?f.rowIds[index]:null}).find(Boolean)
     interaction.current={kind,point,cell,clientX:event.clientX,clientY:event.clientY,camera:{...p.state.camera},fragment,headerId:hit?.fragmentId};event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault()
@@ -186,18 +201,26 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
   function pointerMove(event){
     const point=canvasPoint(event),current=interaction.current
     if(!current){
-      setOverSelection(state.mode==='pan'&&selectedCellAt(layer,state.selection,layoutPoint(point,state.camera),state.camera))
+      const inside=pickAt(layer,state.selection,layoutPoint(point,state.camera),state.camera)
+      setOverSelection(state.mode==='pan'&&!!inside)
+      // The cross counts as part of its own region. On a narrow selection it
+      // reaches past the edge, and without this, moving onto it would decide
+      // the region was no longer hovered and take the cross away mid-reach.
+      const onCross=hitHere(point,h=>h.kind==='deselect')
+      // By reference, and only on a change: the canvas repaints whole, so
+      // setting this on every pixel of travel would repaint on every pixel.
+      setHoverPick(prev=>{const next=inside||onCross?.pick||null;return prev===next?prev:next})
       const next=pointerHover(point)
       setHover(prev=>prev?.fragmentId===next?.fragmentId&&prev?.layoutX===next?.layoutX?prev:next)
-      const hit=[...hits.current].reverse().find(h=>hitCanvasItem(h,point))
-      host.current.title=hit?.kind==='blockjump'?`Open source block ${hit.block}`:hit?.kind==='aggregate'?(next&&blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX)?`Open source block ${blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX).block}`:`Zoom into source blocks ${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.first}–${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.last}`):hit?.kind==='rows'?'Collapse or align absent rows for this block':hit?.kind==='copy'?'Copy chunk as aligned FASTA':hit?.kind==='layer'?'Create a layer from this source block':''
+      const hit=hitHere(point)
+      host.current.title=hit?.kind==='blockjump'?`Open source block ${hit.block}`:hit?.kind==='aggregate'?(next&&blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX)?`Open source block ${blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX).block}`:`Zoom into source blocks ${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.first}–${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.last}`):hit?.kind==='rows'?'Collapse or align absent rows for this block':hit?.kind==='copy'?'Copy chunk as aligned FASTA':hit?.kind==='layer'?'Create a layer from this source block':hit?.kind==='removeBlock'?'Remove this chunk from the layer':hit?.kind==='removeRow'?'Remove this sequence from every chunk in the layer':hit?.kind==='deselect'?'Drop this selected region':''
       if(hit?.kind==='connection'){onInspect(hit);return}
       for(const f of layer.fragments){const r=panelRect(f,state.camera),index=f.rowIds.findIndex((_,i)=>point.y>=r.y+rowSlot(f,i)*ROW_HEIGHT&&point.y<r.y+(rowSlot(f,i)+1)*ROW_HEIGHT)
         if(point.x>=r.x&&point.x<r.x+r.width&&index>=0){if(f.aggregate){onInspect({kind:'aggregate',rowId:f.rowIds[index],aggregate:f.aggregate});return}const column=f.start+Math.floor((point.x-r.x)/r.scale),base=sampleBase(tiles[f.id],f.rowIds[index],column);onInspect({kind:'cell',rowId:f.rowIds[index],fragment:f,column,base:hasCell(f,f.rowIds[index],column)?base:'Unselected cell',placed:(state.placedOverlay||[]).filter(p=>p.sourceBlock===f.sourceBlock&&hasCell(p,f.rowIds[index],column)).map(p=>p.name),features:(annotations[f.id]?.[f.rowIds[index]]||[]).filter(a=>column>=a.start&&column<=a.end)});return}}
       return
     }
     if(current.kind==='transfer'){
-      if(current.started||Math.hypot(event.clientX-current.clientX,event.clientY-current.clientY)>4){
+      if(current.started||Math.hypot(event.clientX-current.clientX,event.clientY-current.clientY)>TRANSFER_SLOP){
         current.started=true;onSelectionDrag({x:event.clientX,y:event.clientY})
       }
       return
@@ -209,11 +232,17 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       // Both thresholds are half a row or a few real pixels, whichever is larger:
       // zoomed out, half a row is less than the hand can hold still for.
       const plane=planeOf(state.camera)
-      if(current.fromConnector&&!current.dragging&&Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>4/plane){
+      // A press on a jump marker that moves at all is a drag of that row. The
+      // marker names a block to put it in, so there is nothing else the gesture
+      // could mean: taking a sideways one for a pan, or waiting for half a row
+      // of vertical travel, left the reader holding something that did nothing.
+      const marker=current.jumpBlock!=null
+      if(!marker&&current.fromConnector&&!current.dragging&&Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>4/plane){
         current.kind='pan';onCamera({...current.camera,x:current.camera.x-dx/current.camera.scale,y:current.camera.y-dy});return
       }
-      if(Math.abs(dy)>Math.max(ROW_HEIGHT/2,6/plane)||current.dragging){current.dragging=true
-        setReorder({rowId:current.rowId,...reorderTarget(current,point.y),y:point.y})}
+      const moved=marker?Math.hypot(dx,dy)>Math.max(3,4/plane):Math.abs(dy)>Math.max(ROW_HEIGHT/2,6/plane)
+      if(moved||current.dragging){current.dragging=true
+        setReorder({rowId:current.rowId,...reorderTarget(current,point),y:point.y})}
       return
     }
     if(current.kind==='select')setRectangle({x:Math.min(current.point.x,point.x),y:state.mode==='columns'?0:Math.min(current.point.y,point.y),width:Math.abs(dx),height:state.mode==='columns'?size.height:Math.abs(dy)})
@@ -221,7 +250,15 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
   function pointerUp(event){
     const current=interaction.current;if(!current)return
     const point=canvasPoint(event)
-    if(['pan','transfer'].includes(current.kind)&&current.cell&&Math.hypot(event.clientX-current.clientX,event.clientY-current.clientY)<4)onHighlight(state.highlighted===current.cell?'':current.cell)
+    // A press on the picked cells is the handle for dragging them into a layer,
+    // and a press on any other cell is a click on that row. Both end as a click
+    // when they go nowhere, but the drag handle gives up its slack sooner: a
+    // click there puts the row out, picks and all, and losing a file's worth of
+    // picks to a pixel of tremor while reaching for the sidebar is not a trade
+    // worth making. Past this the gesture is a drag, and a drag that lands on
+    // nothing changes nothing.
+    const slop=current.kind==='transfer'?TRANSFER_SLOP:4
+    if(['pan','transfer'].includes(current.kind)&&current.cell&&Math.hypot(event.clientX-current.clientX,event.clientY-current.clientY)<=slop)rowIsLit(state,current.cell)?onUnlight(current.cell):onHighlight(current.cell)
     if(current.kind==='transfer'){
       if(current.started)onSelectionDrop({x:event.clientX,y:event.clientY})
       onSelectionDrag(null)
@@ -229,9 +266,11 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
     if(current.kind==='reorder'){
       // A press that never travelled is still a click on the name; one that did
       // drops the row where it was let go.
-      if(current.dragging)onReorderRow?.(current.rowId,reorderTarget(current,point.y),current.fragmentId)
-      else if(current.jumpBlock!=null)onSourceBlock?.(current.jumpBlock)
-      else if(current.fromLabel&&current.wasPicked)onSelection(removeRowPicks(state.selection,current.rowId))
+      if(current.dragging)onReorderRow?.(current.rowId,reorderTarget(current,point),current.fragmentId)
+      // Clicking a marker opens the block it names, on the sequence it belongs
+      // to: the point of following a path is to see where that row continues.
+      else if(current.jumpBlock!=null)onSourceBlock?.(current.jumpBlock,current.rowId)
+      else if(current.fromLabel&&current.wasPicked)onUnlight(current.rowId)
       setReorder(null)
     }
     if(current.kind==='move'){
@@ -244,17 +283,38 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, layers, state, navi
       if(f&&Math.hypot(point.x-current.point.x,point.y-current.point.y)<4)onSelection(togglePicks(state.selection,[blockPick(f)]))
     }
     if(current.kind==='select'){
+      const columnsOnly=state.mode==='columns'
+      // Screen space, because the names are drawn there and nowhere else: they
+      // have no column of their own to express this in.
+      const box={x1:Math.min(current.point.x,point.x),x2:Math.max(current.point.x,point.x),
+        y1:Math.min(current.point.y,point.y),y2:Math.max(current.point.y,point.y)}
+      const names=namesInRect((hits.current||[]).filter(h=>h.kind==='label'),box,columnsOnly)
+      const reached=rectEntersCells(layer.fragments.filter(f=>!f.aggregate).map(f=>panelRect(f,state.camera)),
+        box,state.original?MARGIN_X:0)
+      // Names alone pick those sequences, exactly as clicking each of them
+      // would - so they toggle the same way and light the same gold. Carry the
+      // drag on into the alignment and it is an ordinary region again.
+      if(names.length&&!reached){
+        // A name whose sequence is nowhere on the sheet has no cells to pick, so
+        // it is lit instead. The reader dragged the box over that name and means
+        // that sequence; which block happens to be open is not part of what they
+        // said, and leaving those names out selected some of a rectangle.
+        const picks=[],bare=[]
+        for(const id of names){const own=rowPicks(layer,id);own.length?picks.push(...own):bare.push(id)}
+        onSelection(togglePicks(state.selection,picks),bare)
+      } else {
       const a=layoutPoint(current.point,current.camera),b=layoutPoint(point,current.camera)
-      const drawn=selectRectangle(layer,{x1:Math.min(a.x,b.x),x2:Math.max(a.x,b.x)+.001,y1:Math.min(a.y,b.y),y2:Math.max(a.y,b.y)+.001},state.mode==='columns',current.camera)
+      const drawn=selectRectangle(layer,{x1:Math.min(a.x,b.x),x2:Math.max(a.x,b.x)+.001,y1:Math.min(a.y,b.y),y2:Math.max(a.y,b.y)+.001},columnsOnly,current.camera)
       // Regions accumulate, so several can be picked out before moving them.
       onSelection(togglePicks(state.selection,drawn.map(r=>({...r,kind:'region'}))))
+      }
     }
     interaction.current=null;setDrag(null);setRectangle(null);setReorder(null);setOverSelection(false)
   }
   function cancelGesture(){interaction.current=null;setDrag(null);setRectangle(null);setReorder(null);onSelectionDrag(null)}
   useEffect(()=>{const cancel=()=>{interaction.current=null;setDrag(null);setRectangle(null);latest.current.onSelectionDrag(null)};window.addEventListener('blur',cancel);return()=>window.removeEventListener('blur',cancel)},[])
   return <div className={`al-canvas ${state.mode==='pan'?'is-pan':'is-select'} ${state.selection.length?'has-selection':''} ${overSelection?'over-selection':''}`} ref={host} tabIndex={0} role="application" aria-label="Alignment panel. Use arrow keys to pan, plus and minus to zoom. Choose rectangle or columns to select. Drag highlighted cells to a sidebar layer or New layer. Drag chunk headers to arrange. Each header has a clipboard to copy FASTA; original source blocks also have a plus to create a layer."
-    onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerLeave={()=>setHover(null)} onPointerCancel={cancelGesture} onLostPointerCapture={()=>{if(interaction.current)cancelGesture()}}
-    onKeyDown={e=>{if(interaction.current?.kind==='transfer'){if(e.key==='Escape'){e.preventDefault();cancelGesture()}return}if(e.key===' '){space.current=true;e.preventDefault()}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const plane=planeOf(state.camera);onCamera({...state.camera,x:state.camera.x+(e.key==='ArrowLeft'?-80:e.key==='ArrowRight'?80:0)/plane/state.camera.scale,y:state.camera.y+(e.key==='ArrowUp'?-80:e.key==='ArrowDown'?80:0)/plane})}if(['+','=','-'].includes(e.key)){e.preventDefault();const current=latest.current?.navigationCamera||navigationCamera||state.camera,factor=e.key==='-'?1/1.4:1.4,plane=planeOf(current);if(state.planeZoom){navigate(panelZoom(current,factor,{blockScale:blockFitScale(layer,current,size),size}))}else{const scale=clamp(current.scale*factor,Number.EPSILON,24);navigate({...current,scale,x:current.x+(size.width/plane/2-MARGIN_X)*(1/current.scale-1/scale)})}}if(e.key==='Escape')onSelection([])}} onKeyUp={e=>{if(e.key===' ')space.current=false}} onBlur={()=>{space.current=false}} />
+    onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerLeave={()=>{setHover(null);setHoverPick(null)}} onPointerCancel={cancelGesture} onLostPointerCapture={()=>{if(interaction.current)cancelGesture()}}
+    onKeyDown={e=>{if(interaction.current?.kind==='transfer'){if(e.key==='Escape'){e.preventDefault();cancelGesture()}return}if(e.key===' '){space.current=true;e.preventDefault()}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const plane=planeOf(state.camera);onCamera({...state.camera,x:state.camera.x+(e.key==='ArrowLeft'?-80:e.key==='ArrowRight'?80:0)/plane/state.camera.scale,y:state.camera.y+(e.key==='ArrowUp'?-80:e.key==='ArrowDown'?80:0)/plane})}if(['+','=','-'].includes(e.key)){e.preventDefault();const current=latest.current?.navigationCamera||navigationCamera||state.camera,factor=e.key==='-'?1/1.4:1.4,plane=planeOf(current);if(state.planeZoom){if(panelZoomBlocked(current,factor)){onZoomLimit?.(true);return}onZoomLimit?.(false);navigate(panelZoom(current,factor,{blockScale:blockFitScale(layer,current,size),size}))}else{onZoomLimit?.(false);const scale=clamp(current.scale*factor,Number.EPSILON,24);navigate({...current,scale,x:current.x+(size.width/plane/2-MARGIN_X)*(1/current.scale-1/scale)})}}if(e.key==='Escape')onSelection([])}} onKeyUp={e=>{if(e.key===' ')space.current=false}} onBlur={()=>{space.current=false}} />
 })
 export default LayerCanvas

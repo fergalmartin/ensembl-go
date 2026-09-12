@@ -4,12 +4,14 @@ import { layerConnections, offWindowLinks } from './layers'
 import { TileScheduler } from './tileScheduler'
 import { datasetTiles } from './tileService'
 import { planTiles, resolutionLevel } from './tilePlan'
+import { planConservationTiles } from './conservationPlan'
+import { conservationScale, DEFAULT_SCALE } from './conservation'
 import { planeOf } from './layers'
 import { recordPerformance } from './performance'
 
 /** Independent, persistent tile requests. A slow block never prevents another
  * block rendering and camera movement never waits for the data pipeline. */
-export default function useLayerData(dataset,layer,camera,size,showAnnotations,revision,onError,preview=false) {
+export default function useLayerData(dataset,layer,camera,size,showAnnotations,revision,onError,preview=false,cohort=null) {
   const [tick,repaint]=useState(0),error=useRef(onError),owner=useRef(Symbol('alignment')),level=useRef(null),motion=useRef(null)
   error.current=onError
   const service=useMemo(()=>datasetTiles(dataset?.id||'empty'),[dataset?.id])
@@ -64,6 +66,30 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   if(!extras.current)extras.current=new TileScheduler({concurrency:2,maxEntries:64,onChange:()=>repaint(n=>n+1),onError:message=>error.current(message)})
   const extraCache=extras.current
   useEffect(()=>{extraCache.clear();return()=>extraCache.clear()},[extraCache,dataset?.id,revision])
+  // A third budget, beside annotations and distances. Cohort statistics must
+  // never queue ahead of the sequence tiles the alignment itself is made of.
+  const cohortRef=useRef(null)
+  if(!cohortRef.current)cohortRef.current=new TileScheduler({concurrency:2,maxEntries:256,onChange:()=>repaint(n=>n+1),onError:message=>error.current(message)})
+  const cohortCache=cohortRef.current
+  useEffect(()=>{cohortCache.clear();return()=>cohortCache.clear()},[cohortCache,dataset?.id,revision])
+  const cohortPlans=useMemo(()=>cohort?(layer?.fragments||[]).flatMap(f=>planConservationTiles(f,camera,size,selectedLevel,cohort)):[],[layer,camera,size,selectedLevel,cohort])
+  const conservation={cohort:cohort?.ids.length||0,sources:{},scale:DEFAULT_SCALE}
+  const cohortTasks=[]
+  for(const {request,cohortKey,priority} of cohortPlans){
+    const key=`conservation:${dataset?.id}:${request.block}:${request.start}:${request.end}:${request.bins}:${cohortKey}`
+    const value=cohortCache.get(key)
+    if(value)for(const f of layer.fragments)if(f.sourceBlock===request.block)(conservation.sources[f.id]??=[]).push(value)
+    cohortTasks.push({key,priority,run:signal=>api(`/datasets/${dataset.id}/conservation`,request,signal)})
+  }
+  // Fitted once per tile set, never per paint. Over every loaded tile rather
+  // than the viewport alone, so panning within a block does not restate the
+  // scale and repaint what was already read.
+  const cohortTiles=Object.values(conservation.sources).flat()
+  conservation.scale=useMemo(()=>cohort?conservationScale(cohortTiles):DEFAULT_SCALE,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cohort,cohortTiles.length,cohortTiles[0]])
+  const cohortSignature=JSON.stringify(cohortTasks.map(t=>t.key))
+  useEffect(()=>{cohortCache.setWanted(dataset&&cohort?cohortTasks:[])},[cohortCache,dataset?.id,cohortSignature]) // eslint-disable-line react-hooks/exhaustive-deps
   const connections=useMemo(()=>layer?layerConnections({...layer,fragments:layer.fragments.filter(f=>!f.aggregate)}):[],[layer])
   const extraTasks=[]
   // Where the loaded window ends, the path does not. Ask only for the nearest
@@ -72,7 +98,9 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   // Only Original. A working layer holds the chunks someone chose, so the blocks
   // beyond its edges are not part of it and pointing at them says nothing about
   // the layer; the markers only crowded the chunk labels sharing that space.
-  const solid=layer?.id==='original'?layer.fragments.filter(f=>!f.aggregate):[]
+  // Nor for a packed sheet: the blocks beyond its edges are the ones just
+  // hidden, and pointing the reader back at them is no help at all.
+  const solid=layer?.id==='original'&&!layer.packed?layer.fragments.filter(f=>!f.aggregate):[]
   const loaded=solid.length?{lo:Math.min(...solid.map(f=>f.sourceBlock)),hi:Math.max(...solid.map(f=>f.sourceBlock)),
     ids:[...new Set(solid.flatMap(f=>f.rowIds))].sort()}:null
   let neighbours=null
@@ -102,5 +130,5 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   useEffect(()=>{extraCache.setWanted(dataset?extraTasks:[])},[extraCache,dataset?.id,extraSignature]) // eslint-disable-line react-hooks/exhaustive-deps
   // Hover-only parent updates do not invalidate the canvas texture.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(()=>({tiles,annotations,connections,offWindow,counts,pending,warnings,gaps:service.gaps,displayCamera:camera}),[tick,signature,extraSignature,camera,layer,showAnnotations,dataset?.id,revision])
+  return useMemo(()=>({tiles,annotations,connections,offWindow,counts,pending,warnings,conservation,gaps:service.gaps,displayCamera:camera}),[tick,signature,extraSignature,cohortSignature,camera,layer,showAnnotations,dataset?.id,revision])
 }

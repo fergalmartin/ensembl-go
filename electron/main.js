@@ -1225,6 +1225,14 @@ app.whenReady().then(async () => {
       filters: [
         { name: 'All Files', extensions: ['*'] },
         { name: 'FASTA', extensions: ['fa', 'fasta', 'fna', 'fa.gz'] },
+        {
+          name: 'Alignments',
+          extensions: [
+            'maf', 'aln', 'clw', 'sto', 'stk', 'stockholm', 'phy', 'phylip',
+            'nex', 'nexus', 'nxs', 'msf', 'xmfa', 'mfa', 'afa', 'fsa',
+            'hal', 'taf', 'gfa', 'bb', 'gz',
+          ],
+        },
         { name: 'GFF3', extensions: ['gff3', 'gff', 'gff3.gz'] },
         { name: 'TSV/CSV', extensions: ['tsv', 'csv', 'txt'] },
       ],

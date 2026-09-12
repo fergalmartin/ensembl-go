@@ -43,13 +43,16 @@ function Range({label,unit,from,to,onFrom,onTo}) {
  * through two hundred blocks. Block criteria still apply on top, so the reader
  * can say "those sequences, but only in blocks over 100kb".
  */
-export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyToOriginal,filterApplied,onClearFilter,onError}) {
+export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyToOriginal,filterApplied,applied,onClearFilter,onError}) {
   const [tab,setTab]=useState('sequences')
   const [summary,setSummary]=useState(null)
   const [sequenceFilter,setSequenceFilter]=useState(SEQUENCE_FILTER)
   const [blockFilter,setBlockFilter]=useState(BLOCK_FILTER)
-  const [chosenSequences,setChosenSequences]=useState(new Set())
-  const [chosenBlocks,setChosenBlocks]=useState(new Set())
+  // A filter that is set but switched off is still the reader's filter: the
+  // panel opens on what they chose rather than on a blank slate, so turning it
+  // back on does not mean building it again.
+  const [chosenSequences,setChosenSequences]=useState(()=>new Set(applied?.sequences||[]))
+  const [chosenBlocks,setChosenBlocks]=useState(()=>new Set(applied?.blocks||[]))
   const [membership,setMembership]=useState(null)
   const [range,setRange]=useState({start:'',end:''})
   const [ranged,setRanged]=useState(null)

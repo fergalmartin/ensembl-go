@@ -1,4 +1,5 @@
 import { rowCount } from './layers.js'
+import { MARGIN_X, MARGIN_Y, ROW_HEIGHT } from './layout.js'
 
 /** Stable rows use sequence identity, never active-genome identity. Per-block
  * compaction preserves the first shared row as its vertical anchor. */
@@ -25,6 +26,36 @@ export function layoutOriginal(fragments,ids,mode='aligned',overrides={},_maxRow
   })
 }
 
+/** Which line a sequence will occupy in a block once Original has laid it out.
+ *
+ * The same reading `layoutOriginal` takes: aligned rows sit on their file-wide
+ * slot, compact rows pack the sequences the block actually holds, and a block
+ * compacted on its own in an otherwise aligned view packs from its first slot
+ * rather than from the top. Returns null for a sequence the block does not hold.
+ */
+export function blockRowLines(rowIds,ids,{compact=false,wholeView=true}={}) {
+  const rank=new Map(ids.map((id,i)=>[id,i]))
+  const present=rowIds.filter(id=>rank.has(id))
+  if(!compact)return new Map(present.map(id=>[id,rank.get(id)]))
+  const ordered=[...present].sort((a,b)=>rank.get(a)-rank.get(b))
+  const top=wholeView||!ordered.length?0:rank.get(ordered[0])
+  return new Map(ordered.map((id,i)=>[id,top+i]))
+}
+export function rowLineInBlock(rowIds,ids,rowId,options){return blockRowLines(rowIds,ids,options).get(rowId)??null}
+
+/** Where to put the camera so a sequence sits in the middle of the window.
+ *
+ * As far as the block's own rows allow: a block that fits on screen is never
+ * scrolled half off the top to centre one of its rows, which reads as a broken
+ * jump rather than a considered one. Deep blocks, where the row really could be
+ * anywhere, get the middle of the window.
+ */
+export function centreOnRow(line,lastLine,height) {
+  const wanted=MARGIN_Y+line*ROW_HEIGHT+ROW_HEIGHT/2-height/2
+  const lowest=MARGIN_Y+(lastLine+1)*ROW_HEIGHT-height
+  return Math.max(0,Math.min(wanted,Math.max(0,lowest)))
+}
+
 export function hitCanvasItem(hit,point) {
   if(hit.points){
     for(let i=1;i<hit.points.length;i++){
@@ -48,3 +79,26 @@ export function denseOriginal(layer,camera,size,plane=1) {
   return visible.length>12||visible.length>2&&visible.filter(f=>(f.end-f.start)*camera.scale*plane<90).length>visible.length/2
 }
 export const originalHeight=layer=>Math.max(1,...layer.fragments.map(rowCount))
+
+/** The topmost hit region at a point, as the reader could actually reach it.
+ *
+ * Original paints its name gutter *over* the blocks, so every hit region behind
+ * that gutter - block headers, connectors, jump markers - is a target nobody
+ * can see. A press there used to find whichever of them lay underneath: above
+ * the first name, that was the header of a block whose drawn header is far off
+ * to the right, and the press was taken as a click on it. Under the gutter only
+ * the gutter's own names answer.
+ *
+ * Last-published wins, which is what the reverse walk is for: the painter draws
+ * in order, so the region pushed last is the one on top.
+ */
+export function hitAtPoint(hits, point, { original = false, marginX = MARGIN_X, filter = null } = {}) {
+  const buried = original && point.x < marginX
+  for (let i = (hits?.length || 0) - 1; i >= 0; i--) {
+    const hit = hits[i]
+    if (buried && hit.kind !== 'label') continue
+    if (filter && !filter(hit)) continue
+    if (hitCanvasItem(hit, point)) return hit
+  }
+  return null
+}

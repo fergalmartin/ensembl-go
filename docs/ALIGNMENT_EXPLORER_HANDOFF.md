@@ -35,11 +35,11 @@ The toolbar provides Pan, Select, Columns, Auto arrange, Original block navigati
 
 Wheel behaviour follows the configured Genome Browser scheme. Arrow keys pan and plus/minus zoom. Space-drag pans. The panel starts front-facing; the 3D setting tilts it and exposes the layer stack. Canvas fallback preserves editing without WebGL.
 
-Select cells, release, then drag the highlight into the sidebar. A coordinate-selection dialog is also present. Chunk headers can be dragged to manually position chunks. New chunks are inserted in source order; obstructing successors move horizontally while existing vertical positions are retained. Auto arrange aligns shared identities and provides space for connection labels.
+Select cells, release, then drag the highlight into the sidebar. A coordinate-selection dialog is also present. Chunk headers can be dragged to manually position chunks. New chunks are inserted in source order; obstructing successors move horizontally while existing vertical positions are retained. Three rules keep a large move readable, all learned from one that was not — three sequences of a 200-block file arriving as 480 chunks in a staircase of hairlines. A row keeps one slot for the whole layer (chunks used to inherit their neighbour's rows and put the rest below them, so the same sequences stepped a row lower at every block); `chunkGap` stops bidding 110px per connection label once there are too many chunks for them all to fit, rather than clamping the divisor and returning a gap hundreds of times wider than the chunks; and `moveSelection` combines the pieces cut from one source fragment, so a block arrives as one chunk carrying the rows taken from it rather than one chunk per pick. That last one matters more than it looks: picking sequences by name puts a pick on every block holding each of them, and a chunk per pick meant a stack of one-row panels at the same place, each painting its panel background over the rows above it, so every block showed one row and the rest went blank while the strings still ran through them. Two fragments must never share a column for that reason — a fragment's panel spans from its top to its lowest slot, and whichever is painted last wins. Auto arrange aligns shared identities and provides space for connection labels.
 
 Dragging one working layer onto another opens a choice when intervals overlap: combine overlapping chunks, keep them separate, or cancel. Combining unions selected membership masks; it must not invent cells in the holes between selections. Undo/redo covers layer edits. Removing a working layer is undoable.
 
-Strings connect occurrences of the same sequence ID. Click a cell, name or string to highlight the identity's path. Same-source-block strings can report omitted alignment columns; an overlap uses `↔`. Across discontinuous source blocks the alignment-column distance is unknown, not zero. Original suppresses unknown-distance labels and hides unselected strings in dense views to avoid a tangle. Connections are membership continuity, not inferred ancestry or recombination.
+Strings connect occurrences of the same sequence ID, and only for rows a fragment actually holds sequence in: `presentRows` narrows `rowIds` by `availableRows`, because a source block also lists rows it has nothing in (MAF `e` lines) and a string out of one of those claims a path that is not there.  Click a cell, name or string to highlight the identity's path. `highlighted` is a list of row ids, not one: a name pick and a cell click light a row in the same gold, so holding only the last row clicked meant lighting a third sequence silently put out the second. A row is lit by a pick, by a click on one of its cells, or by both, in the same gold either way — `litRows` is the single answer to what is gold, and every gesture that puts a row out goes through `unlightRow`, which drops the picks *and* the highlight. Clearing only one half was the bug: a name click dropped the picks and left the row gold, and a cell click toggled a highlight that was not what was lighting it, so a row lit both ways could not be put out at all. `addHighlight` answers a jump marker, which moves along a row rather than voting on whether it should be lit. A workspace saved when this was a single id still reads: `highlightedRows` takes a string as the one row it lit. Same-source-block strings can report omitted alignment columns; an overlap uses `↔`. Across discontinuous source blocks the alignment-column distance is unknown, not zero. Original suppresses unknown-distance labels and hides unselected strings in dense views to avoid a tangle. Connections are membership continuity, not inferred ancestry or recombination.
 
 Readable headers expose clipboard FASTA export. Original headers additionally expose a plus action to create a layer from the source block and a row-layout override. Header actions are suppressed when too narrow to be useful. Clipboard export is capped at two million cells and uses `N` for unselected/unavailable cells while preserving source `-` gaps.
 
@@ -55,6 +55,86 @@ There are two different overview meanings:
 
 1. **Within a source block:** binned agreement against the fragment's comparison row. Only canonical comparable bases enter mismatch fractions. Gaps and unknown/unavailable data are separate. This is not an evolutionary constraint score.
 2. **Across many source blocks:** grouped sequence-presence bars. Filled width represents the fraction of blocks containing the sequence. This is explicitly labelled as presence, not conservation. Sparse headers identify block ranges; clicking a header resolves that range into individual blocks.
+
+**Colour schemes** live in `colourSchemes.js` as a list, read once per paint. A scheme carries a ramp, an index function and a legend; `bases` carries none of those, which is precisely what keeps it on the original path - `paintLayer` tests for a ramp and otherwise does not know another scheme exists. The test sits between the loading check and the flat-row check, once per span rather than once per cell, so the base and bin branches under it are byte-for-byte what they were.
+
+Cohort statistics are computed on the server, not the client. Sequence tiles are batched sixteen rows at a time and arrive independently; a column statistic assembled from those would be a different statistic each time a batch landed, and the view would reshade behind the reader. `summary_cache.py` keeps a second prefix table beside the per-row one, keyed by a hash of the sorted cohort, holding five running totals per 64-column leaf: majority, canonical, comparable columns, occupied and columns. It is one entry per block chunk rather than per row, so it costs a fraction of what its members already cost individually, and it shares the sidecar's locks, LRU and fail-soft disable. `POST /conservation` answers arbitrary bins from it.
+
+Three properties are easy to get wrong and are pinned by tests.
+
+A column carrying one canonical base agrees with itself by definition; counting it lifts every sparse region toward perfect conservation, so it enters neither side of identity while still counting toward representation.
+
+The ramp is fitted to the data, not to the range a ratio theoretically has. Measured over a 44-mammal EPO block, per-bin identity sits between .86 and 1.00; stretched over 0..1 the entire alignment lands in the top eighth of any ramp and every region comes out the same colour. `conservationScale` therefore takes a column-weighted 2nd and 98th percentile over the loaded tiles, bucketed so it moves in steps rather than jittering on every pan, and the legend prints the range it fitted. An adaptive scale that did not say what it had done would be worse than a fixed one.
+
+The two axes are colour and bar height, not colour and saturation. Saturation was tried and failed in the same way: with a cohort of any size most bins sit near a tenth of it, which washed every colour out to the same grey and hid agreement entirely. Relatedly, the cohort is the sequences the laid-out blocks hold, never the whole inventory - a 200-block MAF names a distinct identity per sequence per block, 3,881 of them for 44 mammals, against which a block holding 45 reads as holding about one per cent.
+
+The ramp goes blue to red through purple, not through green and yellow. The usual sweep is close to unreadable with red-green colour blindness, and its yellow shoulder also collided with the gold reserved for a lit row. Tests assert that green never wins a channel and that luminance moves monotonically across the ramp, so it still carries its order in greyscale - upward on the dark theme and downward on the light one, since either way more agreement should mean more contrast against the ground.
+
+Rendering is cheaper than `bases`, not dearer: a colour belongs to a column, so neighbouring columns in the same bucket merge into one rectangle, and a quantised lookup table replaces the per-bin `hsl()` string and two `reduce` calls. Measured on the live canvas at `?alignmentPerf` over the 44-mammal alignment, median paint was 2.4ms against 4.6ms for `bases` on the same camera.
+
+**Import progress.** `open_tracked` in `store.py` returns the text handle alongside the position of the raw file beneath it, which works for both plain and gzipped sources because the gzip reader pulls from that same handle. Row and block counts cannot say how much is left; compressed bytes consumed is a denominator that exists before anything is parsed and holds whether the file has one block or a hundred thousand. It is reported on a 200ms schedule, so a file of small blocks does not spend its time writing progress. `ImportProgress.jsx` shows it, and falls back to an indeterminate bar for pasted content and MAFFT results, which have no file behind them. Starting an import closes the file chooser: left open beside a line of status text it read as the file never having been accepted, and the obvious response - choosing it again - is the one thing that does not help.
+
+**Selecting names.** `namesInRect` and `rectEntersCells` in `layers.js` decide this, and `LayerCanvas.pointerUp` applies it: a rectangle that covered names and never reached the sequence picks those rows with `rowPicks`, which is the same thing clicking each name produces, so they toggle the same way and light the same gold. Anything else falls through to `selectRectangle` unchanged.
+
+A name whose sequence is not in any block on the sheet has no cells to pick - `rowPicks` returns nothing for it, and `togglePicks` of an empty list is a no-op - so a rectangle over the gutter used to take some of the names it covered and silently drop the rest. Those names go to `highlighted` instead, through `toggleHighlights`, which adds them or takes them all out the way picks toggle. `onSelection` carries them as a second argument so both land in one patch. A click on a single name does the same thing, and for the same reason: before this it did nothing at all, which read as the name not being a control.
+
+Three details matter. The test is done in screen space, because the names are drawn there and have no column of their own to express it in. It is inclusive on every edge, so a press that never travelled still covers the name under it - in Select mode a click on a name has to go on meaning that name, and a click is a rectangle of no width. And `rectEntersCells` takes a left bound: the Original paints an opaque name gutter over the blocks behind it, so a block scrolled under that gutter is not something the reader can see or mean, and without the bound a drag over the names would always count as having reached the sequence and would never pick a name at all.
+
+Only Pan takes hold of content. `pointerDown` computes `grabs = !isSelectMode(state.mode)` and gates every branch that would carry something off - a name into a reorder, a header into a block pick or a panel move, a connector or jump marker into a row drag. Without it, dragging from any of those in Select drew nothing, which is the one thing those modes are not for. The icon hits (the crosses, the copy and layer buttons, the aggregate band) are deliberately not gated: they are buttons, and a button is a button in every mode.
+
+`hitAtPoint` in `originalLayout.js` is the other half, and the cause of the bug that surfaced it. Original paints its name gutter *over* the blocks, so every hit region behind the gutter - headers, connectors, jump markers - is a target nobody can see. A block header's region spans the whole block, so for a block scrolled left, a press in the gutter above the first name found that header and was taken as a click on it. The rule is one line and covers every kind, present and future: **under the gutter only the gutter's own names answer**. Three call sites in `LayerCanvas` go through it, so the hover title and the deselect cross obey it too.
+
+**The wheel near the left edge.** `wheelScrollsRowList` gives a vertically dominant wheel left of the gutter edge to the row list, so a long list of sequences can be scrolled where the horizontal controls would otherwise take every notch. It now asks first whether there is a list there at all: `LayerCanvas` passes `state.original && rowListScrolls(layer, camera, size)`, and `rowListScrolls` measures the sheet against the same window height `constrainCamera` clamps `camera.y` by. A working layer draws no gutter and has sequence under the cursor there, and a list wholly on screen is pinned by that clamp, so the wheel moved nothing. Under the default controls a plain vertical wheel is the zoom, which is how the whole left edge of the canvas came to scroll - or sit dead - instead of zooming. A wheel carrying Ctrl, Shift or Alt is never the list's either: those mean over the names what they mean over the sequence.
+
+The gutter claims the whole band rather than only the rows with names in them, which is deliberate. Keying it on the label hits looks more precise and is worse: scrolling a long list until its names have passed the top of the window leaves the cursor over empty gutter, the wheel silently becomes a zoom, and there is no way to scroll back.
+
+**A note on testing gestures here.** Drags cannot be driven end to end in headless Chrome: `pointerDown` calls `setPointerCapture`, and a release synthesised through `Input.dispatchMouseEvent` never reaches the handler afterwards, so the gesture hangs half-finished and the marquee stays on screen. Clicks on hit regions are unaffected, because those branches return before capture. To exercise a release, drive the press and moves with real input and then dispatch `pointerup` at the element with canvas-relative coordinates. Note also that completing a selection sets the mode back to Pan, so a second drag needs the mode re-armed or it pans instead - and re-arming it only works if the *browser's* capture was released too. A synthetic `pointerup` satisfies the handler but not the browser, which goes on retargeting every later press to the canvas: the toolbar click that should re-arm Select lands on the sheet instead, and the second drag looks like a broken toggle. Follow the synthetic release with `releasePointerCapture` and a real `Input.dispatchMouseEvent` mouseReleased.
+
+**The control bar's split buttons.** `SelectTool`, `ZoomTool` and `ColourTool` are the same shape: a `.al-split` pair sharing one border, the main half doing the obvious thing and the arrow opening a menu. Each is titled with its decision and keeps that title whatever the mode - labels that rewrote themselves (`Free select` becoming `Columns`, `Zoom` becoming `Zoom Panel`) changed the bar's width and read as a control appearing rather than one changing. The consequence is that Zoom and Colour have no visible mode, so both flash the mode they land on above the button: `ToolToast`, positioned by `toastPosition` and cleared by its own `animationend` rather than a timer, so there is no timer to cancel when the next press arrives. Colour's main half cycles the schemes, because comparing two of them means going back and forth and doing that through a menu is three actions each way. The menu is a portal into `explorerRoot`, not a child of the bar - the bar scrolls sideways and would clip it - and `menuAnchor.js` holds the two pieces that entails. `menuPosition` is called when the menu opens rather than measured in an effect: the bar does not move while a menu is open, and measuring in an effect would cost a second render on every open. `useMenuDismiss` watches `pointerdown` in the capture phase so a press that lands on the canvas closes the menu instead of starting a gesture with it.
+
+Select is split rather than plain for a specific reason: completing a selection sets `mode` back to `pan`, so without a remembered kind the reader would have to say which of the two they wanted before every drag. `selectKind` in the component's own state is that memory; it is UI, not workspace, and deliberately does not survive a reload.
+
+**Palettes.** `palettes.js` holds what a scheme can be drawn in, apart from what a scheme means. Two kinds: `bases` takes four unordered colours, the column schemes take one ordered ramp, and `COLOUR_SCHEMES[].palettes` says which. They are offered unnamed - a swatch is the thing itself, where a name is a word about it, and four names across a row read as things to understand before one can be picked. Both are chosen once per paint - `basePalette(...)` for the base table, `scheme.ramp(light, palette)` for the ramp LUT - so the inner loops are unchanged and still read one table by key. `buildRamp` memoises on palette *and* theme; keying it on theme alone would have served one palette's ramp for all of them, which a test now pins.
+
+Every palette carries both themes explicitly rather than deriving one from the other, because a ramp has to gain contrast against its own page as the quantity rises: darkening toward the high end on a light ground and brightening on a dark one. That is a property worth testing rather than trusting, and `alignmentPalettes.test.js` measures the luminance of both ends of every ramp in both themes. It also checks every ramp stays clear of the gold reserved for what is picked.
+
+**Uniform shading.** Not a scheme of its own - it was one for an afternoon, and a scheme that could not show the bases at all meant two places to go for the same sequence. It is what `bases` does where a column is too narrow to be a base: `SHADING_MODES` in `colourSchemes.js`, `state.shading` in the workspace, and `scheme.shading` marking the one scheme the choice belongs to. Relative is the agreement-with-the-comparison-row colouring this view has always had; uniform fills the block flat instead.
+
+The painter branch is guarded `if (uniform && !data.detail)` and sits *after* the thin-row case and *before* the detail branch, so the sequence is painted exactly as it always was as soon as the bases are big enough to draw. It is the cheapest branch there is: a span with no gaps is one rectangle.
+
+Gaps are the one thing it still draws. Without them a sequence missing half a block would be indistinguishable from one running the whole way through, which is the shape this shading exists to show. `uniformRuns` is that decision, pulled out of the painter so it can be tested without a canvas: at bin resolution only a bin every sequence was absent from is a gap - half a bin of bases is still sequence, and calling it one would invent an absence.
+
+The colour is `presenceColour`, which is what this view already meant by bare presence: the fill a row too thin to read gets, and the fallback for a bin with no comparison to make. Both of those now read the same constant, so the three cannot drift apart. A palette of flat colours was tried and dropped - it was a fifth thing to choose in a menu whose point was to have fewer.
+
+**The Colour menu's tabs are the choice.** Moving to a tab recolours the sheet. A tab strip that only previewed a scheme, with a separate control to apply it, would be two ways of saying one thing and a state where the two disagree. The saved palette is per scheme (`state.palette[schemeId]`), since the two kinds are not interchangeable; `validPalettes` sanitises each against its own scheme's kind, so a ramp id saved under `bases` falls back rather than painting nothing.
+
+**The key, in two places.** `ColourLegend` draws whatever `scheme.legend(light, scale, palette)` returns, told apart by `kind`: a `ramp` is one ordered bar with labelled ends, `swatches` is an unordered set that labels each one. `bases` had no legend at all before and now has the second kind, which is what let the menu open on a tab that says something for every scheme. `inline` is the copy in the menu; without it, it is the overlay on the alignment.
+
+The overlay used to be `pointer-events: none` so the canvas under it stayed draggable. It takes the pointer now, because the cross that dismisses it only exists while it is being reached for and an element that cannot be hovered cannot offer one. The corner it covers is why `legendOverlay` defaults to **off**: the key is always a click away in the menu, and the window is for the alignment. The workspace remembers it either way.
+
+**Gaps are drawn once, by the pass that paints last.** The gap-memory overlay (`visibleGaps`, at the end of each row) exists so a gap resolved at one zoom is not filled back in by a coarser tile. It paints *over* the cells, which is why the dash a gap cell used to draw for itself was never visible: at full opacity the overlay covered it, and on a dimmed row - where that paint is translucent - it showed through. That is exactly the "only when another sequence is highlighted" symptom it was reported with.
+
+So the overlay now owns the whole treatment: the background, the outline around the run, and the dashes. The cell keeps only its background fill, and neither the cell outline nor the cell dash exists any more. That also settles the inconsistency, since one run is one box at every zoom where an outline per cell drew a row of little boxes close up and a single long one further out. The box is placed on `detailRow` - whether the row was actually drawn from a detail tile - because the detail and bin branches use different insets, and a box on the wrong one left a sliver of the cells it was meant to cover showing above and below.
+
+The colour is `colors.gap`, taken from `FEATURE_COLORS.genomic` rather than written out again: the Feature Explorer outlines unannotated genomic sequence in that blue, a gap is the same kind of statement, and one source means the two views cannot drift apart. The conservation and uniform painters take it from the same `colors` object, so all four paths outline a gap identically. A span with no statistic yet keeps the neutral border, because that is not a gap - nothing is known there, rather than nothing being there.
+
+**One gold for everything picked.** `PICKED_EDGE` is the edge of a pick and `WASH_ALPHA` the fill inside it, in `paintLayer.js`. Regions from Select and Columns, the live marquee and the deselect ring were teal; a name, a block header and a lit row were gold. They are one act, so they are now one colour, and the wash rather than the hue is what tells a picked stretch from a lit row.
+
+`armedEdge` draws every one of them: a dark line at half alpha and `hair(3)`, then the colour at `hair(1.5)` over it, dashed for the marquee with the backing left solid so the gold is never on bare bases in a dash gap. The backing is the constant `EDGE_SHADOW`, not `colors.background`, and that is deliberate - it is read against the bases, which are the same saturated colours in either theme, and a pale backing in light mode left the gold with nothing behind it. This is the same arming the gold jump-marker labels have always used, for the same reason.
+
+The provenance overlay on the Original passes `placed.color` to the same function instead. The layer's colour is the whole point of that mark - it says which layer - so only the weight and the backing are shared. None of this is unit-tested: it is canvas, and there is no decision in it that a pure module could hold. It was checked by driving the live canvas and reading the screenshots in both themes.
+
+**Dropping a picked region.** The cross on a region's corner is drawn by `paintLayer` when `hoverPick` is that pick, tracked in `LayerCanvas` by `pickAt` - which returns the pick by reference, since an index would name a different pick if the selection changed between the paint that drew the control and the click that pressed it. The state is set only when the pointer crosses a region's edge, because the canvas repaints whole and setting it per pixel would repaint per pixel. A pick's own hit region counts as part of it, so reaching for a cross that overhangs a narrow region does not decide the region is no longer hovered and take the cross away mid-reach.
+
+Which picks get one is stated by exclusion - anything that is not `kind: 'row'` or `kind: 'block'` - and that is deliberate. Picks reach state in three shapes: `blockPick` and `rowPicks` stamp their kind in `layers.js`, a drag is stamped `'region'` by `LayerCanvas.pointerUp`, and Select by coordinates stamps nothing at all. Two attempts at a rule naming the kinds it wanted each matched one region source and silently missed the other; the test asserts all three shapes so a fourth source cannot quietly lose its control. Row and block picks are excluded because clicking the name or header again already drops them, and a name carries its own cross a few pixels away that removes the sequence from the layer - a different act entirely.
+
+The corner is the region's, not the block's, since several regions can share a block. It is held inside whatever of the region is on screen: a wide selection scrolled past its own corner would otherwise put its only way out somewhere the pointer cannot reach. Getting that clamp wrong is easy - written as a max of the two ends it sat on the bottom corner of any region taller than itself, which looked deliberate and was not.
+
+**Removing from a layer.** `removeFragment` and `removeRowFromLayer` in `layers.js` are the whole of it, and both are pure. Three things have to happen together or the layer is left inconsistent: `slots` runs parallel to `rowIds` so it loses the same position, while `coverage` and `availableRows` are keyed by row and lose the entry; a chunk left with no rows is dropped rather than kept as an empty panel; and `compactSlots` renumbers the lanes, because a row keeps one slot for the whole layer and a slot freed by a removal is freed in every chunk - left alone, each removal would make the layer permanently taller by one blank lane.
+
+Connections need no separate handling, which is worth knowing before someone adds some. `layerConnections` rebuilds from the fragment list every time, grouping by row and joining consecutive occurrences, so taking a chunk out of the middle of a path rejoins its neighbours on its own. Both helpers return a new layer object when they change anything and the same one when they do not, which is what `useLayerData`'s `useMemo(..., [layer])` keys on - returning a fresh object unconditionally would rebuild connections on every no-op, and mutating in place would leave the old ones on screen. Tests in `alignmentLayerRemoval.test.js` pin both directions.
+
+Neither gesture is offered on the Original. It is a derived view of the source, so nothing in it was put there and nothing can be taken back out; Hide is the reversible equivalent and already exists. The block action is guarded on `state.original` in the painter, and the row cross sits in the label loop, which the Original never enters.
 
 **Zoom mode** offers two zooms over the same view. **Alignment** (the default) is the horizontal zoom described above: it changes how many columns a pixel covers and leaves rows 26 pixels tall, which is what reading an alignment wants. **Panel** treats the drawing as one flat sheet and scales all of it, so blocks, names, labels and strings shrink together and whitespace opens around the edges; it is the only way to see a thousand-sequence file end to end, since rows otherwise always outrun the window.
 
@@ -92,6 +172,10 @@ Paths below are relative to the repository root.
 | `renderResolution.js` | WeakMap-cached conversion of detail into coarse summary bins. |
 | `regionTransition.js` | Camera-transition compatibility helper; preserves the requested camera rather than holding an old ready camera. |
 | `data.js` | API helper, coordinate constants, quantized visible-region requests. |
+| `colourSchemes.js`, `palettes.js` | What a cell's colour means, and the colours it can mean it in. |
+| `paintConservation.js`, `paintUniform.js` | The cohort and uniform-shading span painters: siblings of the base path, never changes to it. |
+| `SelectTool.jsx`, `ZoomTool.jsx`, `ColourTool.jsx`, `menuAnchor.js`, `selectKinds.js` | The control bar's split buttons and the menus behind their arrows. |
+| `ColourLegend.jsx` | The key for whichever scheme is active, in the menu and optionally over the alignment. |
 | `LayerCycle.jsx`, `layout.js`, `explorer.css` | Cycle previews, panel geometry helpers, presentation. |
 | `associations.js` | Conservative automatic genome matching. |
 | `frontend/src/utils/nucleotideStyle.js` | Shared nucleotide palette and letter threshold. |
@@ -107,7 +191,7 @@ Application integration:
 
 ## State and coordinate invariants
 
-The current workspace format is **version 2**. Important state includes `layers`, `active`, `original`, `sourceBlock`, `camera`, `selection`, `highlighted`, `tilted`, `annotations`, `originalRows`, `blockRows` and `planeZoom`.
+The current workspace format is **version 2**. Important state includes `layers`, `active`, `original`, `sourceBlock`, `camera`, `selection`, `highlighted` (a list of row ids), `annotations`, `originalRows`, `blockRows`, `planeZoom` and `filterOff`. A filter is two things: `filter` holds the chosen sequences and blocks, and `filterOff` says whether it is being applied. The control bar's flag switches `filterOff`; only Clear discards `filter`, so a reader can take a narrowing off and put it back without rebuilding it, and the panel opens seeded from whatever `filter` holds. `tilted` was dropped with the 3D layer stack; saved workspaces that still carry the key are simply ignored. `annotations` survives with no control to set it — see *Annotations are built but unreachable* below.
 
 A camera is `{x, y, scale, plane}`. `x` is the left edge in layout columns, `y` the vertical offset in plane pixels, `scale` the plane pixels per column and `plane` the uniform factor applied to the whole drawing (1 is full size). `constrainCamera` takes the floor under `scale` from the window at full size whatever `plane` is doing: deriving it from the shrunken viewport would drive the columns back out to the edges and there would never be any whitespace to see.
 
@@ -240,6 +324,204 @@ These are limitations or follow-up checks, not all confirmed user-facing defects
 8. **Path and annotation acceptance.** Exercise duplicate IDs/copies, reverse strands, absent components, compact row remapping, masked chunks, merge/cut/export correspondence and GFF3 overlays together. Cross-block connections have no defined alignment-column gap; never invent one.
 9. **Native formats and packaging.** HAL/TAF optional dependencies, Windows-through-WSL helper packaging, and a complete native regional browsing UI still need separate work. Similarity space, structural lenses and the earlier ribbon/bundle design are not the current product scope.
 10. **Rendering/test coverage.** Model tests cover camera bounds, masks, row layouts, scheduler starvation and curve hit testing; visual interaction checks are manual. There is no comprehensive automated browser/FPS suite.
+
+### Annotations are built but unreachable
+
+**Deliberately parked, not abandoned — the intent is to bring this back.** The
+genomic annotation feature is complete end to end and still wired up; only the
+control that switches it on was taken out of the sidebar, because the Display
+section was too crowded to judge the rest of the UI against. `state.annotations`
+now stays `false` for a session that does not load an older workspace, so nothing
+downstream ever runs.
+
+What is still in place and must not be removed as dead code:
+
+- `useLayerData(..., state.annotations, ...)` requests feature tiles and returns
+  `annotations` and `warnings`; `LayerCanvas` and `paintLayer` draw them
+  (`FEATURE_COLORS` is imported from `FeatureLegend` by `paintLayer`).
+- The annotation warning strip under the canvas, keyed on `warnings.length`.
+- `annotations: false` in `emptyWorkspace()`, so the flag round-trips through
+  saved workspaces.
+- **Link local genomes** (formerly *Genome links & annotations*) still sets
+  `annotations: true` when a link is applied, which is currently the only way to
+  turn the feature on.
+- The whole backend feature-mapping path and its tests.
+
+To restore the control, put this back into the Display section of
+`AlignmentExplorerView.jsx`:
+
+```jsx
+<label className="al-check"><input type="checkbox" checked={state.annotations}
+  onChange={e=>patch({annotations:e.target.checked})}/>Annotations</label>
+```
+
+The feature colour key that used to sit beside it was
+`{state.annotations&&<FeatureLegend theme={theme} horizontal/>}` inside a
+`div.al-legend`; both that import and the `.al-legend` rules in `explorer.css`
+were removed with the base-colour legend, so a restored legend needs them back.
+
+### Block headers are chosen, not laid out
+
+`headerPlan.js` decides what a block header says at the width it has, and
+`paintLayer` draws that decision inside a clip on the block's own header band.
+The rungs run: name with interval and actions, name with actions, name, the
+abbreviation `Blk N`, the bare number, nothing. Two properties matter and are
+tested in `alignmentExplorer.test.js`: a plan never asks for more room than it
+was given, so a header cannot run over its block's edge into its neighbour; and
+the rungs only improve as room grows, so zooming in cannot take away a header a
+narrower block was already showing. The code this replaced reserved a flat
+85–150px per header whatever it drew, which is what made headers blank out at
+some zooms and reappear at others.
+
+`rulerTicks`, in the same module, answers the other half of the header: where
+the column ruler puts its marks and which of them can be named. A tick is inside
+the block by construction, but the number beside it is not, and the clip cuts
+whatever crosses the block's edge — so the last tick of a block was labelled with
+half a number. A number is written only where it fits inside the edge, and the
+mark goes down either way: it still says where the column is, and the interval's
+two ends are already named in the header. The same limit takes the viewport's
+edge when a block runs past it.
+
+Room is the block's own visible span, and `denseOriginal` has no say in it. That
+verdict is about the view as a whole — over twelve blocks on screen, or most of
+them under 90px — and using it to gate a header meant one wide block among
+slivers was cut back to its bare number with several hundred pixels of header
+going spare. `dense` still chooses the coarse row rendering and still suppresses
+the `· compact` suffix; the ruler now follows the header's own verdict, so a
+block too narrow to name its interval does not tick it either.
+
+### Dropping a row is read against the block, not the gutter
+
+`rowDrop.js` decides where a row dragged over Original lands. The rows to aim
+between are the ones on screen under the cursor, and on compact layouts those are
+not the gutter's: the gutter names the file-wide order, or — once a compact block
+claims it — that one block's rows, while every other compact block packs the
+sequences it holds from its own top. Reading the drop off the gutter therefore
+offered as many positions as the *anchor* block had rows and inserted before
+whichever sequence the gutter had at that height, not the one being pointed at.
+
+An aligned block is the one case where the gutter is still right: it draws its
+rows on the file-wide slots the gutter publishes, and the gutter also offers the
+empty slots between them, which belong to sequences that block does not hold. So
+the gutter's label hits carry `anchor` — the block whose rows they are, or null
+for the file-wide list — and the drop uses the block's own rows whenever the
+block is compact or the gutter has been claimed.
+
+A dragged jump marker is the stronger case: the block it points into owns the
+whole drag, and the cursor's column chooses nothing. A marker sits in the channel
+between blocks, so a drag from one is usually over no block at all, and letting
+the cursor's column claim the insertion meant the target — and the marking with
+it — changed under the hand as it crossed a neighbour. `jumpBlock` names the
+block; only the cursor's height is read.
+
+Most markers name a block that is **not loaded**: `blockJumpMarkers` builds them
+from `offWindowLinks` as well as from occluded connections, and an off-window
+link points outside the window by definition. Those have no rows on screen to aim
+between, so the drag falls back to the block the marker is drawn on, which does
+hold the sequence — never to whatever the cursor is over. A block that does not
+carry this row is never a place to put it, and falling through to `under` was how
+the insertion ended up on an unrelated block.
+
+Clicking a marker opens the block it names **on the sequence it belongs to**.
+`blockRowLines` works out which line that sequence will occupy once Original has
+laid the block out — the same reading of aligned slots and compact packing that
+`layoutOriginal` takes — and `centreOnRow` puts the camera there. Both live in
+`originalLayout.js` beside the layout they mirror, and a test asserts they agree
+with it. The centring is best-effort by design: a block that fits on screen is
+not scrolled at all, since sliding a fourteen-row block half off the top to
+centre one of its rows reads as a broken jump. Deep blocks, where the row could
+be anywhere down a thousand rows, get the middle of the window.
+
+A press on a marker that moves at all is a drag of that row: it skips both the
+half-a-row vertical threshold and the sideways-means-pan escape that connection
+strings still use. The marker names a block to put the row in, so there is
+nothing else the gesture could mean, and a release that never moved is still the
+click that opens the block.
+
+The indicator is drawn on the blocks the move shows in and nowhere else: the
+block being dragged into, bold, and the blocks downstream of it that carry the
+same sequence, faint. Each is marked at its own height, because a compact block
+packs only the sequences it holds and one position in the file-wide order is a
+different row in each of them. A line of one weight straight across the window is
+read against the gutter's names, which are a different list again, and promises a
+place the drop will not honour.
+
+### Hiding replaces Original's layout rather than filtering it
+
+The control bar's **Hide** keeps the blocks the reader has picked out, and the
+blocks their picked sequences run through, and packs the survivors shoulder to
+shoulder; **Show** puts the file back on the view it was left at. The state is
+`state.hidden = {blocks, camera}`, saved with the workspace and sanitised by
+`validateLayerWorkspace`.
+
+The button opens a small menu rather than acting on its own. **What** chooses
+between hiding blocks, sequences or both. The row half composes with the filter
+rather than fighting it, by narrowing the same `sequences` list the filter uses,
+so what survives is what both allow.
+
+Every mode hides blocks, including the one that sets out to hide only sequences:
+`hideResult` drops any block left holding none of the surviving rows. Hiding a
+sequence empties the blocks it was the only visible thing in, and an empty block
+is not something to keep — it is the header of a block whose contents were just
+hidden, standing between the blocks that do still hold something and pushing them
+apart. That was the shape of a real bug: hiding one sequence left the emptied
+blocks in place, which both showed bare headers and kept the surviving blocks
+from becoming adjacent, so their links stayed jump markers. **Condition** appears only where blocks are being hidden.
+**Apply** acts; **Previous** repeats the last hide from the picks it used, which
+is why `state.hideMemory` outlives the hide itself — the picks are stored as
+block numbers and sequence ids, so they survive Show, a reload and a saved
+workspace. Once anything is hidden the button is simply **Show**, and the menu
+does not open.
+
+The menu is portalled into the explorer's own root, not the body: the control bar
+scrolls sideways and would clip it, and its colours are custom properties scoped
+to that root, so a portal to the body renders it transparent.
+
+The rule beside the button decides how the picks combine. `or` takes the union —
+the picked blocks, and every block the picked sequences run through — and answers
+"show me everything I marked". `and` reads the picks as conditions on one block:
+picked blocks become the only candidates, and each has to hold every picked
+sequence, so two blocks and three sequences keep whichever of those two blocks
+holds all three. With no sequences picked the blocks stand alone; with no blocks
+picked the whole file is the candidate list. A condition nothing satisfies keeps
+nothing, which is reported rather than acted on, and the rule in force stays the
+one that produced the sheet on screen — the control snaps back.
+
+It is not the filter. A filter drops fragments from a layout whose coordinates
+are still the file's, leaving the survivors where they were with gaps between
+them; hiding rebuilds the layout. `hiding.js` holds the pure parts — which blocks
+a selection keeps, and packing descriptors into fragments — and `blocks-layout`
+on the server answers "where are exactly these blocks", which no range endpoint
+can: the survivors are scattered, and asking for the ranges between them would
+fetch the very blocks being hidden. Each descriptor keeps its true `x`, so the
+client packs and every block still carries the number it has in the file.
+
+Consequences to keep in mind when changing this:
+
+- `useOriginalBlocks` is stood down while hiding (`enabled` goes false). It reads
+  the camera as file coordinates, and on a packed sheet they are not.
+- The Original layer carries `packed: true`, and a packed sheet answers the
+  burial question from what it draws, the way a layer does: `linkIsBuried` drops
+  the "Original holds every block" shortcut, so a gap in the numbering is no
+  longer a buried link by itself. Blocks hidden on purpose are out of the way and
+  their neighbours are joined by ordinary strings — that is what hiding was meant
+  to clear away. A block still standing between the two ends is a different
+  matter and still buries the link: drawn as a line it would run behind that
+  block and read as a sequence passing through one it is not in, which is the bug
+  that "a packed sheet buries nothing" produced. Off-window neighbours are not
+  requested, since the blocks beyond the sheet's edges are the ones just hidden,
+  and `blockJumpMarkers` makes no stubs for them.
+- `linkIsBuried` is one rule for both passes, and must stay that way. The painter
+  draws the lines first and the panels over them, then adds markers for the
+  buried ones. When the two passes asked the question differently — as they did
+  briefly, one reading "Original holds every block" and the other reading what
+  was drawn — a link could be dropped by the first as buried and by the second
+  as not, and disappear from the picture altogether.
+- `sourceBlock()` fits the camera to the fragment already laid out, and the block
+  stepper walks the kept list. A block that is not on the sheet says so.
+- The camera is fitted to the whole packed sheet when a hide is *made*, never
+  when one is loaded: a saved workspace already carries a camera in these
+  coordinates.
 
 ## Suggested next-session workflow
 

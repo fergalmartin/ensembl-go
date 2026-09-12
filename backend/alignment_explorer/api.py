@@ -35,6 +35,14 @@ class RegionRequest(BaseModel):
     summary: bool = False
 
 
+class ConservationRequest(BaseModel):
+    block: int = Field(default=1, ge=1)
+    start: int = Field(default=0, ge=0)
+    end: Optional[int] = Field(default=None, ge=1)
+    ids: list[str] = Field(max_length=5000)
+    bins: int = Field(default=256, ge=16, le=2048)
+
+
 class ExportRequest(RegionRequest):
     format: str = 'fasta'
 
@@ -75,7 +83,9 @@ def create_router(cache_root=None, annotation_provider=None):
     @router.get('/capabilities')
     def capabilities():
         from .adapters import native_capabilities
-        return {'formats': ['maf', 'fasta', 'xmfa', 'stockholm', 'clustal', 'phylip', 'phylip-relaxed'], **native_capabilities()}
+        from .store import TEXT_FORMATS, AlignmentStore
+        return {'formats': list(TEXT_FORMATS), 'format_labels': TEXT_FORMATS,
+                'export_formats': AlignmentStore.EXPORT_FORMATS, **native_capabilities()}
 
     @router.post('/datasets')
     def register(payload: ImportRequest):
@@ -119,11 +129,19 @@ def create_router(cache_root=None, annotation_provider=None):
                         rows.append({'source': row.get('genome_key') or row.get('source') or f'row_{i+1}', 'sequence': seq, 'label': row.get('gene_label') or row.get('tag') or row.get('genome_key') or f'Row {i+1}', 'genome_key': row.get('genome_key'), 'chrom': row.get('chrom'), 'start': max(0, int(row.get('genomic_start', 1))-1), 'end': row.get('genomic_end', 0), 'strand': row.get('strand', '+'), 'coordinates': bool(row.get('chrom') and row.get('genomic_start')), 'transcript_id': row.get('transcript_id'), 'features': row.get('display_features') or row.get('features', [])})
                     store.add_block(rows, {'origin': 'MAFFT'})
                     store.set_meta('format', 'fasta')
+                    store.set_meta('format_chosen', True)
                 else:
                     import_path = source
                     if payload.content is not None and source is None:
                         import_path = store.directory / 'input.txt'; import_path.write_text(payload.content)
                     fmt = detect_format(import_path, payload.format)
+                    # Record the reader before using it, so a failed or wrong
+                    # read can say which format was tried and be reopened as
+                    # another one. `chosen` distinguishes a guess from a
+                    # deliberate override.
+                    store.set_meta('format', fmt)
+                    store.set_meta('format_chosen', payload.format != 'auto')
+                    update(job, format=fmt, format_chosen=payload.format != 'auto')
                     if fmt in ('hal', 'taf', 'bigmaf', 'gfa'):
                         from .adapters import import_native
                         import_native(store, import_path, fmt, lambda: jobs[job]['cancel'], lambda **kw: update(job, **kw))
@@ -197,6 +215,25 @@ def create_router(cache_root=None, annotation_provider=None):
             # bounded row/chunk work will observe the event and leave the pool.
             if not worker.done(): worker.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
 
+    @router.post('/datasets/{dataset_id}/conservation')
+    async def conservation(dataset_id: str, payload: ConservationRequest, request: Request):
+        cancelled = threading.Event()
+        def read():
+            return store_for(dataset_id).conservation(payload.block, payload.start, payload.end,
+                payload.ids, bins=payload.bins, cancelled=cancelled.is_set)
+        worker = asyncio.create_task(run_in_threadpool(read))
+        try:
+            while not worker.done():
+                done, _ = await asyncio.wait({worker}, timeout=.05)
+                if done: break
+                if await request.is_disconnected(): cancelled.set()
+            return await worker
+        except InterruptedError as exc: raise HTTPException(499, 'Navigation changed') from exc
+        except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+        finally:
+            cancelled.set()
+            if not worker.done(): worker.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
+
     @router.get('/datasets/{dataset_id}/blocks/{block_id}/rows')
     def block_rows(dataset_id: str, block_id: int):
         store = store_for(dataset_id)
@@ -232,6 +269,13 @@ def create_router(cache_root=None, annotation_provider=None):
     @router.get('/datasets/{dataset_id}/summary')
     def summary(dataset_id: str, limit: int = Query(20000, ge=1, le=200000)):
         return store_for(dataset_id).summary(limit)
+
+    @router.post('/datasets/{dataset_id}/blocks-layout')
+    def blocks_layout(dataset_id: str, payload: dict):
+        blocks = payload.get('blocks', [])
+        if not isinstance(blocks, list) or len(blocks) > 4000: raise HTTPException(400, 'Request at most 4,000 blocks')
+        if not all(isinstance(b, int) and b > 0 for b in blocks): raise HTTPException(400, 'Invalid block number')
+        return store_for(dataset_id).blocks_layout(blocks)
 
     @router.post('/datasets/{dataset_id}/blocks-with')
     def blocks_with(dataset_id: str, payload: dict):
@@ -329,10 +373,13 @@ def create_router(cache_root=None, annotation_provider=None):
 
     @router.post('/datasets/{dataset_id}/export')
     def export(dataset_id: str, payload: ExportRequest):
-        if payload.format not in ('fasta', 'maf'): raise HTTPException(400, 'Choose FASTA or MAF')
+        from .store import AlignmentStore
+        if payload.format not in AlignmentStore.EXPORT_FORMATS:
+            raise HTTPException(400, 'Choose one of: ' + ', '.join(AlignmentStore.EXPORT_FORMATS))
+        suffix = {'fasta': 'fa', 'clustal': 'aln', 'phylip-relaxed': 'phy', 'maf': 'maf'}[payload.format]
         try:
             text = store_for(dataset_id).export(payload.block, payload.start, payload.end, payload.ids, payload.format)
-            return PlainTextResponse(text, headers={'Content-Disposition': f'attachment; filename="alignment.{payload.format}"'})
+            return PlainTextResponse(text, headers={'Content-Disposition': f'attachment; filename="alignment.{suffix}"'})
         except ValueError as exc: raise HTTPException(400, str(exc)) from exc
 
     @router.put('/datasets/{dataset_id}/workspace')

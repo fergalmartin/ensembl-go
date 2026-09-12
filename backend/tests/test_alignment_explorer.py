@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from alignment_explorer.store import AlignmentStore, maf_blocks, stable_id, locate_column, parse_metadata, CHUNK, SOURCE_GAP, LAYOUT_VERSION
+from alignment_explorer.store import AlignmentStore, maf_blocks, stable_id, locate_column, parse_metadata, detect_format, CHUNK, SOURCE_GAP, LAYOUT_VERSION
 from alignment_explorer.api import create_router
 from alignment_explorer.adapters import import_native, graph_preview, project_graph
 from fastapi import FastAPI
@@ -89,12 +89,90 @@ class StoreTests(unittest.TestCase):
     def test_region_lookup_finds_all_mappings(self):
         self.load();self.assertEqual(self.store.blocks(sequence_id=stable_id('human.chr1'),coordinate=31)['total'],1)
         self.assertEqual(self.store.blocks(sequence_id=stable_id('orphan.chr2'))['blocks'][0]['id'],2)
+    TEXT_CASES={'clustal':'CLUSTAL W\n\na   ACTG\nb   A-TG\n',
+                'stockholm':'# STOCKHOLM 1.0\na ACTG\nb A-TG\n//\n',
+                'phylip-relaxed':' 2 4\na ACTG\nb A-TG\n',
+                'xmfa':'>1:1-4 + one\nACTG\n>2:1-3 - two\nA-TG\n=\n',
+                'nexus':'#NEXUS\nbegin data;\ndimensions ntax=2 nchar=4;\nformat datatype=dna gap=-;\nmatrix\na ACTG\nb A-TG\n;\nend;\n',
+                'msf':'!!NA_MULTIPLE_ALIGNMENT 1.0\n\n  t.msf MSF: 4  Type: N  Check: 1  ..\n\n Name: a  Len: 4  Check: 1  Weight: 1.00\n Name: b  Len: 4  Check: 2  Weight: 1.00\n\n//\n\na  ACTG\nb  A.TG\n'}
+
     def test_standard_text_formats(self):
-        cases={'clustal':'CLUSTAL W\n\na   ACTG\nb   A-TG\n', 'stockholm':'# STOCKHOLM 1.0\na ACTG\nb A-TG\n//\n','phylip-relaxed':' 2 4\na ACTG\nb A-TG\n','xmfa':'>1:1-4 + one\nACTG\n>2:1-3 - two\nA-TG\n=\n'}
-        for fmt,text in cases.items():
+        for fmt,text in self.TEXT_CASES.items():
             with self.subTest(fmt=fmt):
-                store=AlignmentStore(self.root/fmt);store.initialize();path=self.root/(fmt+'.txt');path.write_text(text);store.import_file(path,fmt)
+                store=AlignmentStore(self.root/fmt);store.initialize();path=self.root/(fmt+'.txt');path.write_text(text)
+                store.import_file(path,fmt)
                 self.assertEqual([r['sequence'] for r in store.region(1)['rows']],['ACTG','A-TG'])
+
+    def test_detection_is_not_shadowed_by_a_sequence_named_a(self):
+        """Every fixture above names its first sequence `a`, which is also how a
+        MAF alignment block line begins. The file's own signature must win."""
+        for fmt,text in self.TEXT_CASES.items():
+            with self.subTest(fmt=fmt):
+                path=self.root/('detect_'+fmt+'.txt');path.write_text(text)
+                self.assertEqual(detect_format(path),fmt)
+
+    def test_detects_maf_with_and_without_its_header(self):
+        headed=self.root/'headed.txt';headed.write_text(MAF)
+        self.assertEqual(detect_format(headed),'maf')
+        bare=self.root/'bare.txt';bare.write_text('track name=test\n\n'+MAF.split('\n',2)[2])
+        self.assertEqual(detect_format(bare),'maf')
+
+    def test_requested_format_overrides_detection_and_rejects_unknown_readers(self):
+        path=self.root/'named_a.aln';path.write_text(self.TEXT_CASES['clustal'])
+        self.assertEqual(detect_format(path,'stockholm'),'stockholm')
+        self.assertEqual(detect_format(path,'phy'),'phylip-relaxed')
+        # A reader's name is not a file suffix: `phylip` is the strict reader.
+        self.assertEqual(detect_format(path,'phylip'),'phylip')
+        self.assertEqual(detect_format(path,'fa'),'fasta')
+        with self.assertRaises(ValueError): detect_format(path,'nonsense')
+
+    def test_unreadable_file_asks_for_an_explicit_format(self):
+        path=self.root/'mystery.txt';path.write_text('some notes about an alignment\n')
+        with self.assertRaisesRegex(ValueError,'explicitly'): detect_format(path)
+
+    def test_fasta_identifier_is_the_first_token_and_the_header_is_the_label(self):
+        self.load('>ENSG001 BRCA2 [Homo sapiens]\nAC-GT\n>ENSG002 Brca2\nACGGT\n','fasta')
+        rows=self.store.region(1)['rows']
+        self.assertEqual([r['source'] for r in rows],['ENSG001','ENSG002'])
+        self.assertEqual(rows[0]['label'],'ENSG001 BRCA2 [Homo sapiens]')
+        self.assertEqual(rows[0]['id'],stable_id('ENSG001'))
+
+    def test_rows_without_coordinates_still_carry_their_ungapped_length(self):
+        """FASTA and the Bio.AlignIO readers agree on `end`, while `coordinates`
+        stays false so nothing reads it as a placement on a source sequence."""
+        for fmt,text in (('fasta','>a\nAC-GT\n>b\nACGGT\n'),('clustal','CLUSTAL W\n\na   AC-GT\nb   ACGGT\n')):
+            with self.subTest(fmt=fmt):
+                store=AlignmentStore(self.root/('len_'+fmt));store.initialize()
+                path=self.root/('len_'+fmt+'.txt');path.write_text(text);store.import_file(path,fmt)
+                row=store.region(1)['rows'][0]
+                self.assertEqual((row['end'],bool(row['coordinates'])),(4,False))
+        self.assertEqual([s['bases'] for s in store.summary()['sequences']],[0,0])
+        self.assertEqual([s['placed'] for s in store.summary()['sequences']],[0,0])
+
+    def test_export_writes_source_names_that_read_back_in(self):
+        self.load('>human_HBB desc\nAC-GTACGT\n>mouse_Hbb\nACGGTACGT\n','fasta')
+        for fmt in ('fasta','clustal','phylip-relaxed'):
+            with self.subTest(fmt=fmt):
+                text=self.store.export(1,0,9,None,fmt)
+                self.assertIn('human_HBB',text)
+                self.assertNotIn(stable_id('human_HBB'),text)
+                path=self.root/('out_'+fmt);path.write_text(text)
+                self.assertEqual(detect_format(path),fmt)
+                store=AlignmentStore(self.root/('back_'+fmt));store.initialize();store.import_file(path,fmt)
+                rows=store.region(1)['rows']
+                self.assertEqual([r['source'] for r in rows],['human_HBB','mouse_Hbb'])
+                self.assertEqual([r['sequence'] for r in rows],['AC-GTACGT','ACGGTACGT'])
+
+    def test_export_keeps_copies_of_one_source_distinguishable(self):
+        self.load();text=self.store.export(1,0,8,None,'clustal')
+        names=[line.split()[0] for line in text.split('\n') if line[:1] not in ('',' ') and not line.startswith('CLUSTAL')]
+        self.assertEqual(len(names),len(set(names)))
+        self.assertIn('mouse.chr1/copy2',names)
+
+    def test_export_rejects_an_unknown_format(self):
+        self.load()
+        with self.assertRaises(ValueError): self.store.export(1,0,8,None,'nexus')
+
     def test_graph_projection_preserves_alternative_path_inventory(self):
         path=self.root/'graph.gfa';path.write_text('H\tVN:Z:1.0\nS\t1\tAC\nS\t2\tTG\nS\t3\tGG\nL\t1\t+\t2\t+\t0M\nL\t1\t+\t3\t+\t0M\nP\tref\t1+,2+\t*\nP\talt\t1+,3+\t*\n')
         import_native(self.store,path,'gfa',lambda:False,lambda **kw:None)
@@ -363,6 +441,33 @@ class LayoutPerformanceTests(unittest.TestCase):
         self.assertTrue(limited['truncated']['blocks'])
         self.assertEqual(limited['total']['blocks'],5)
         self.assertFalse(self.store.summary()['truncated']['blocks'])
+
+    def test_blocks_layout_answers_for_scattered_blocks(self):
+        for letters in ('ab', 'a', 'bc', 'abc', 'c'):
+            self.store.add_block([{'source': x, 'sequence': 'ACGT' * 3} for x in letters])
+        a, b, c = (stable_id(x) for x in 'abc')
+        found = self.store.blocks_layout([4, 1])
+        # Asked for out of order, answered in block order, and each descriptor
+        # keeps the position it has in the whole file rather than a packed one:
+        # the caller packs, and the true numbering has to survive that.
+        self.assertEqual([e['block'] for e in found['blocks']], [1, 4])
+        self.assertEqual(found['blocks'][0]['x'], 0)
+        self.assertEqual(found['blocks'][1]['x'], 3 * (12 + SOURCE_GAP))
+        self.assertEqual(sorted(found['blocks'][1]['row_ids']), sorted([a, b, c]))
+        self.assertEqual(sorted(found['blocks'][0]['row_ids']), sorted([a, b]))
+        # Nothing asked for, nothing returned, and the file's own extent still
+        # reported so a caller can tell an empty answer from a broken one.
+        self.assertEqual(self.store.blocks_layout([])['blocks'], [])
+        self.assertEqual(self.store.blocks_layout([])['layout_end'], found['layout_end'])
+        # A block number that is not in the file is simply not in the answer.
+        self.assertEqual([e['block'] for e in self.store.blocks_layout([2, 99])['blocks']], [2])
+        # Empty components are named as members but not as available rows, the
+        # same reading the range endpoints take.
+        self.store.add_block([{'source': 'a', 'sequence': 'ACGT'},
+                              {'source': 'q', 'sequence': None, 'empty_status': 'C', 'start': 0, 'end': 0}])
+        last = self.store.blocks_layout([6])['blocks'][0]
+        self.assertEqual(len(last['row_ids']), 2)
+        self.assertEqual(last['available_row_ids'], [a])
 
     def test_blocks_with_reports_which_sequences_each_block_holds(self):
         self.store.add_block([{'source':'a','sequence':'ACGT'},{'source':'b','sequence':'ACGT'}])

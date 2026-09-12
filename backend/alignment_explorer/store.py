@@ -8,9 +8,10 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from collections import Counter
-from .summary_cache import SummaryCache, summarize
+from .summary_cache import SummaryCache, summarize, cohort_summarize
 from contextlib import contextmanager
 
 DNA = set('ACGTRYSWKMBDHVN-?.')
@@ -50,30 +51,105 @@ def clean_sequence(seq):
     return seq
 
 
+# Every format a reader can be asked for by name, with the label the chooser
+# shows. Detection may pick any of these; a reader may also be named explicitly
+# when a file's own signature is missing or misleading.
+TEXT_FORMATS = {
+    'maf': 'MAF',
+    'fasta': 'Aligned FASTA',
+    'clustal': 'Clustal',
+    'stockholm': 'Stockholm',
+    'phylip-relaxed': 'PHYLIP (relaxed names)',
+    'phylip': 'PHYLIP (strict 10-character names)',
+    'nexus': 'NEXUS',
+    'msf': 'GCG MSF',
+    'xmfa': 'XMFA / Mauve',
+}
+NATIVE_FORMATS = {'hal': 'HAL', 'taf': 'TAF', 'bigmaf': 'bigMaf', 'gfa': 'GFA graph'}
+# Suffixes that name a reader on their own. Only consulted once no signature in
+# the file itself matched, so a misnamed file still reads by its content.
+SUFFIX_FORMATS = {'fa': 'fasta', 'fas': 'fasta', 'fna': 'fasta', 'mfa': 'fasta', 'afa': 'fasta', 'fsa': 'fasta',
+                  'aln': 'clustal', 'clw': 'clustal', 'phy': 'phylip-relaxed', 'phylip': 'phylip-relaxed',
+                  'sto': 'stockholm', 'stk': 'stockholm', 'stockholm': 'stockholm',
+                  'nex': 'nexus', 'nexus': 'nexus', 'nxs': 'nexus', 'msf': 'msf',
+                  'maf': 'maf', 'xmfa': 'xmfa', 'fasta': 'fasta'}
+
+
+def format_label(fmt):
+    return TEXT_FORMATS.get(fmt) or NATIVE_FORMATS.get(fmt) or fmt
+
+
 def detect_format(path, requested='auto'):
-    aliases = {'fa': 'fasta', 'fas': 'fasta', 'aln': 'clustal', 'phy': 'phylip', 'sto': 'stockholm', 'bigmaf': 'bigmaf', 'taf': 'taf', 'hal': 'hal'}
+    """Name the reader for a file, by explicit request or by its own content.
+
+    An explicit request always wins: detection reads signatures, and a signature
+    can be absent (a bare FASTA) or shadowed by another format's (a Clustal
+    alignment whose first sequence is named `a` looks like a MAF `a` line). The
+    caller is told which reader was chosen so a wrong guess is visible and can
+    be overridden rather than silently mis-parsing the file.
+    """
     if requested != 'auto':
-        return aliases.get(requested.lower(), requested.lower())
+        # A reader's own name always wins over the suffix map, which shares
+        # spellings with it: `phylip` names the strict reader, while a file
+        # *named* `.phylip` is read by the relaxed one.
+        name = requested.lower()
+        fmt = name if name in TEXT_FORMATS or name in NATIVE_FORMATS else SUFFIX_FORMATS.get(name, name)
+        if fmt not in TEXT_FORMATS and fmt not in NATIVE_FORMATS:
+            raise ValueError('Unknown alignment format: ' + requested)
+        return fmt
     name = str(path).lower().removesuffix('.gz').removesuffix('.bgz')
     suffix = name.rsplit('.', 1)[-1]
     if suffix in ('hal', 'taf', 'bigmaf', 'bb', 'gfa'):
         return 'bigmaf' if suffix == 'bb' else suffix
     with open_text(path) as handle:
         head = handle.read(8192).lstrip()
-    if head.startswith('##maf') or re.search(r'^a(?:\s|$)', head, re.M): return 'maf'
+    # Unambiguous signatures first. The MAF `a` line is a weak signal that any
+    # format can produce from a sequence named `a`, so it is tried last of all.
+    if head.startswith('##maf'): return 'maf'
     if head.startswith('# STOCKHOLM'): return 'stockholm'
     if head.upper().startswith(('CLUSTAL', 'MUSCLE')): return 'clustal'
+    if head.upper().startswith('#NEXUS'): return 'nexus'
+    if head.startswith('!!') and 'MULTIPLE_ALIGNMENT' in head[:64].upper(): return 'msf'
+    if re.search(r'^\s*MSF:\s*\d+', head, re.M) and re.search(r'^\s*Name:\s', head, re.M): return 'msf'
     if head.startswith('#FormatVersion Mauve') or re.search(r'^>\s*\d+:\d+-\d+\s+[+-]', head, re.M): return 'xmfa'
     if head.startswith('>'): return 'fasta'
-    if re.match(r'\d+\s+\d+', head): return 'phylip-relaxed'
-    if suffix in aliases: return aliases[suffix]
-    raise ValueError('Unrecognised alignment format. Choose its format explicitly.')
+    # A PHYLIP header is a line holding exactly the taxon and column counts.
+    if re.match(r'\d+\s+\d+$', head.split('\n', 1)[0].strip()): return 'phylip-relaxed'
+    # A MAF without its header line: an `a` line must be followed by an `s`
+    # record for this to be a MAF rather than a sequence that happens to be
+    # named `a`.
+    if re.search(r'^a(?:\s|$)', head, re.M) and re.search(r'^s\s+\S+\s+\d+\s+\d+\s+[+-]\s+\d+\s+\S', head, re.M): return 'maf'
+    if suffix in SUFFIX_FORMATS: return SUFFIX_FORMATS[suffix]
+    raise ValueError('Unrecognised alignment format. Choose the format explicitly when reopening this file.')
 
 
 def open_text(path):
     with open(path, 'rb') as handle:
         gz = handle.read(2) == b'\x1f\x8b'
     return gzip.open(path, 'rt', encoding='utf-8-sig') if gz else open(path, encoding='utf-8-sig')
+
+
+def open_tracked(path):
+    """The text handle, plus how far through the file on disk it has read.
+
+    Row and block counts alone cannot say how much is left, so an import can
+    only be reported as a spinner. Compressed bytes consumed is a denominator
+    that exists before anything is parsed, and it is the same denominator
+    whether the file holds one block or a hundred thousand.
+    """
+    raw = open(path, 'rb')
+    try:
+        gz = raw.read(2) == b'\x1f\x8b'
+        raw.seek(0)
+        total = os.fstat(raw.fileno()).st_size
+        handle = io.TextIOWrapper(gzip.GzipFile(fileobj=raw), encoding='utf-8-sig') if gz \
+            else io.TextIOWrapper(raw, encoding='utf-8-sig')
+    except Exception:
+        raw.close(); raise
+    # Reading the raw handle's own position works for both: the gzip reader
+    # pulls from it, and the text wrapper buffers ahead of it. Either way it
+    # moves monotonically from 0 to the size on disk.
+    return handle, (lambda: min(total, raw.tell())), total
 
 
 def maf_blocks(handle):
@@ -214,9 +290,15 @@ class AlignmentStore:
                 if cancelled(): raise InterruptedError('Import cancelled')
                 if line.startswith('>'):
                     finish()
-                    source = line[1:].strip()
-                    if not source: raise ValueError('Empty FASTA identifier')
-                    row_id = self._add_row(db, 1, {'source': source, 'sequence': None}, seen[source]); seen[source] += 1
+                    header = line[1:].strip()
+                    if not header: raise ValueError('Empty FASTA identifier')
+                    # Conventionally the identifier is the first whitespace-delimited
+                    # token and the remainder is free-text description, which is how
+                    # every other reader here splits a record. Keeping the whole line
+                    # as the identifier would make `>ENSG001 BRCA2 [Homo sapiens]`
+                    # unmatchable against any metadata keyed by accession.
+                    source = header.split(None, 1)[0]
+                    row_id = self._add_row(db, 1, {'source': source, 'label': header, 'sequence': None}, seen[source]); seen[source] += 1
                     buffer, offset, ungapped = '', 0, 0
                     progress(rows=sum(seen.values()))
                 elif line.strip():
@@ -231,8 +313,18 @@ class AlignmentStore:
             db.execute('UPDATE blocks SET length=? WHERE id=1', (length,))
 
     def import_file(self, path, fmt, cancelled=lambda: False, progress=lambda **kw: None):
-        with open_text(path) as handle:
-            if fmt == 'fasta': self.import_fasta(handle, cancelled, progress)
+        handle, position, total = open_tracked(path)
+        # Reported on a bounded schedule rather than per block: a file of small
+        # blocks would otherwise spend its time writing progress.
+        last = [0.0]
+        def report(**values):
+            now = time.monotonic()
+            if now - last[0] >= 0.2 or 'rows' not in values and 'blocks' not in values:
+                last[0] = now
+                values['bytes'], values['total_bytes'] = position(), total
+            progress(**values)
+        with handle:
+            if fmt == 'fasta': self.import_fasta(handle, cancelled, report)
             else:
                 if fmt == 'maf': blocks = maf_blocks(handle)
                 elif fmt == 'xmfa': blocks = xmfa_blocks(handle)
@@ -240,12 +332,20 @@ class AlignmentStore:
                     from Bio import AlignIO
                     def text_blocks():
                         for alignment in AlignIO.parse(handle, fmt):
-                            yield [{'source': record.id, 'label': record.description, 'sequence': clean_sequence(str(record.seq))} for record in alignment], {}
+                            rows = []
+                            for record in alignment:
+                                sequence = clean_sequence(str(record.seq))
+                                # `end` is the row's ungapped length, as the FASTA reader
+                                # records. `coordinates` stays false: these formats carry
+                                # no source placement, so nothing may read it as one.
+                                rows.append({'source': record.id, 'label': record.description or record.id,
+                                             'sequence': sequence, 'end': len(sequence.replace('-', ''))})
+                            yield rows, {}
                     blocks = text_blocks()
                 count = 0
                 for rows, metadata in blocks:
                     if cancelled(): raise InterruptedError('Import cancelled')
-                    self.add_block(rows, metadata); count += 1; progress(blocks=count)
+                    self.add_block(rows, metadata); count += 1; report(blocks=count)
                 if not count: raise ValueError('No alignment blocks found')
         self.set_meta('format', fmt)
 
@@ -338,6 +438,35 @@ class AlignmentStore:
         return {'sequences': sequences, 'blocks': blocks,
                 'truncated': {'sequences': total_sequences > len(sequences), 'blocks': total_blocks > len(blocks)},
                 'total': {'sequences': total_sequences, 'blocks': total_blocks}}
+
+    def blocks_layout(self, blocks, limit=4000):
+        """Descriptors for a named set of blocks, in block order.
+
+        The layout endpoints answer "what is in this stretch of the file". Hiding
+        asks the other question — "where are exactly these blocks" — and the
+        answer cannot be a range: the blocks that survive a selection are
+        scattered through the file, and asking for the ranges between them would
+        fetch the very blocks being hidden. Each descriptor keeps its true `x`
+        and `end_x`, so the caller can pack them and still name every block by
+        the number it has in the file.
+        """
+        self.ensure_layout()
+        wanted = sorted({int(b) for b in blocks})[:limit]
+        if not wanted: return {'blocks': [], **self.layout_info()}
+        marks = ','.join('?' * len(wanted))
+        with self.connect() as db:
+            records = [dict(r) for r in db.execute(
+                f'SELECT * FROM source_layout WHERE block IN ({marks}) ORDER BY block', wanted)]
+            by_block = {r['block']: r for r in records}
+            for item in records: item.update(row_ids=[], available_row_ids=[])
+            for row in db.execute(
+                    f'SELECT r.block,r.id,r.empty_status FROM rows r JOIN sequences s ON s.id=r.id'
+                    f' WHERE r.block IN ({marks}) ORDER BY r.block,s.rowid', wanted):
+                entry = by_block.get(row['block'])
+                if entry is None: continue
+                entry['row_ids'].append(row['id'])
+                if not row['empty_status']: entry['available_row_ids'].append(row['id'])
+        return {'blocks': records, **self.layout_info()}
 
     def blocks_with(self, ids, limit=200000):
         """Blocks holding any of these sequences, and which of them each holds.
@@ -533,6 +662,24 @@ class AlignmentStore:
                 row['bins'] = None
             return {'block': block, 'start': start, 'end': end, 'length': b['length'], 'rows': rows, 'detail': detail, 'bin_size': step, 'metadata': json.loads(b['metadata']), 'focus':focus_id}
 
+    def conservation(self, block, start=0, end=None, ids=(), bins=256, cancelled=lambda: False):
+        """Column identity among a cohort of sequences, binned.
+
+        Observed agreement between the sequences asked for. It is not an
+        evolutionary constraint score, and the block's own membership never
+        becomes the denominator: that is the whole point of asking.
+        """
+        with self.connect() as db, SummaryCache(self, cancelled) as summary_cache:
+            b = db.execute('SELECT * FROM blocks WHERE id=?', (block,)).fetchone()
+            if b is None: raise ValueError('Alignment block not found')
+            start, end = max(0, int(start)), min(b['length'], int(end if end is not None else b['length']))
+            if end <= start: raise ValueError('Empty alignment interval')
+            cohort = sorted(set(ids))
+            step = max(1, (end - start + bins - 1) // bins)
+            counts = cohort_summarize(db, block, cohort, start, end, step, summary_cache)
+            return {'block': block, 'start': start, 'end': end, 'length': b['length'],
+                    'bin_size': step, 'cohort': len(cohort), 'bins': counts}
+
     def update_metadata(self, entries):
         with self.connect() as db:
             for entry in entries:
@@ -560,21 +707,51 @@ class AlignmentStore:
                                 raise ValueError('FASTA genomic coordinates must match the ungapped sequence length and use + or - strand')
                             db.execute('UPDATE rows SET start=?,end=?,strand=?,coordinates=1 WHERE block=? AND id=?',(start,end,strand,occurrence['block'],row['id']))
 
+    EXPORT_FORMATS = {'fasta': 'Aligned FASTA', 'clustal': 'Clustal', 'phylip-relaxed': 'PHYLIP (relaxed names)', 'maf': 'MAF'}
+
     def export(self, block, start, end, ids, fmt):
+        if fmt not in self.EXPORT_FORMATS: raise ValueError('Unknown export format: ' + str(fmt))
         data = self.region(block, start, end, ids, max_cells=20_000_000)
         if not data['detail']: raise ValueError('Export at most 20 million alignment cells per region')
-        output = ['##maf version=1\n\na\n'] if fmt == 'maf' else []
-        for row in data['rows']:
-            seq = row['sequence']
-            if seq is None: continue
-            if fmt == 'maf':
+        rows = [row for row in data['rows'] if row['sequence'] is not None]
+        if not rows: raise ValueError('No aligned sequence in this region to export')
+        if fmt == 'maf':
+            output = ['##maf version=1\n\na\n']
+            for row in rows:
+                seq = row['sequence']
                 if not row['coordinates'] or row['source_length'] is None: raise ValueError('MAF export needs known source coordinates and lengths for every selected row')
                 size = len(seq.replace('-', ''))
                 maf_start = row['start'] + row['offset_bases'] if row['strand'] == '+' else row['source_length'] - row['end'] + row['offset_bases']
                 output.append(f"s {row['source']} {maf_start} {size} {row['strand']} {row['source_length']} {seq}\n")
-            else:
-                output.append(f">{row['id']} source={row['source']} block={block} columns={start+1}-{end}\n")
-                output.extend(seq[i:i+80] + '\n' for i in range(0, len(seq), 80))
+            return ''.join(output)
+        # Names are what another tool reads the file by, so each row is written
+        # under its own source name, not the internal row identifier. Copies of
+        # one source within a block are suffixed to keep names unique, which
+        # Clustal and PHYLIP both require.
+        names, seen = [], Counter()
+        for row in rows:
+            name = row['source']
+            if seen[name]: name = f"{name}/copy{seen[name] + 1}"
+            seen[row['source']] += 1
+            names.append(name)
+        if fmt == 'fasta':
+            output = []
+            for name, row in zip(names, rows):
+                seq = row['sequence']
+                output.append(f">{name} block={block} columns={start + 1}-{end}\n")
+                output.extend(seq[i:i + 80] + '\n' for i in range(0, len(seq), 80))
+            return ''.join(output)
+        width = end - start
+        if fmt == 'phylip-relaxed':
+            pad = max(len(n) for n in names) + 2
+            return f' {len(rows)} {width}\n' + ''.join(f'{n.ljust(pad)}{row["sequence"]}\n' for n, row in zip(names, rows))
+        pad = max(max(len(n) for n in names) + 6, 16)
+        output = ['CLUSTAL W (1.81) multiple sequence alignment\n\n\n']
+        for offset in range(0, width, 60):
+            for name, row in zip(names, rows):
+                output.append(f'{name.ljust(pad)}{row["sequence"][offset:offset + 60]}\n')
+            column = [''.join(row['sequence'][offset + i] for row in rows) for i in range(min(60, width - offset))]
+            output.append(''.ljust(pad) + ''.join('*' if len(set(c)) == 1 and c[0] != '-' else ' ' for c in column) + '\n\n')
         return ''.join(output)
 
 

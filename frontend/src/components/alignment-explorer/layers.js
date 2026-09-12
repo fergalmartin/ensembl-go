@@ -1,5 +1,7 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './layout.js'
 import { BUILTIN_GENOME_COLOR_PALETTE } from '../../genomeColorSchemes.js'
+import { schemeById, shadingById, COLOUR_SCHEMES } from './colourSchemes.js'
+import { paletteById } from './palettes.js'
 /** Alignment fragments reference immutable source columns. Layout never changes biology. */
 /** Layers take the genome palette, so a colour means the same thing wherever it
  * is seen in the app and the picker offers exactly what is already on screen
@@ -9,7 +11,18 @@ export const PALETTE = BUILTIN_GENOME_COLOR_PALETTE
 export const clamp = (v, min, max) => Math.max(min, Math.min(max, v))
 export const newId = () => crypto.randomUUID()
 export const defaultCamera = () => ({ x: 0, y: 0, scale: 2, plane: 1 })
-export const emptyWorkspace = () => ({ version: 2, filter: null, rowOrder: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', tilted: false, annotations: false, connectionUnit: 'columns', highlighted: '', selection: [], planeZoom: false, camera: defaultCamera() })
+/** A saved palette choice per scheme, each sanitised to a palette that exists
+ * for that scheme's kind. A workspace saved before palettes existed, or one
+ * naming a palette since removed, falls back rather than painting nothing. */
+export function validPalettes(value) {
+  const picked = {}
+  for (const scheme of COLOUR_SCHEMES) {
+    const chosen = value?.[scheme.id]
+    if (typeof chosen === 'string') picked[scheme.id] = paletteById(scheme.palettes, chosen).id
+  }
+  return picked
+}
+export const emptyWorkspace = () => ({ version: 2, filter: null, filterOff: false, hidden: null, hideWhat: 'blocks', hideMode: 'or', hideMemory: null, rowOrder: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', annotations: false, colourScheme: 'bases', palette: {}, shading: 'relative', legendOverlay: false, connectionUnit: 'columns', highlighted: [], selection: [], planeZoom: false, camera: defaultCamera() })
 export function createFragment(sourceBlock, start, end, rowIds, options = {}) {
   return { id: newId(), sourceBlock, start, end, rowIds: [...new Set(rowIds)], x: 0, y: 0, slots: null, ...options }
 }
@@ -72,17 +85,24 @@ export function moveSelection(workspace,targetId,{copy=false,targetLayer=null,vi
     const fragment=fragments.find(f=>f.id===fragmentId)
     if(!fragment)continue
     let remaining=[fragment]
+    const cuts=[]
     for(const pick of picks){
-      const next=[],taken=[]
+      const next=[]
       for(const part of remaining){
         const cut=cutFragment(part,pick)
-        if(cut.extracted)taken.push(cut.extracted)
+        if(cut.extracted)cuts.push(cut.extracted)
         next.push(...cut.remaining)
       }
-      // One pick is one chunk wherever its pieces sit side by side again.
-      if(taken.length)extracted.push(...combineOverlaps(taken))
       remaining=next
     }
+    // One pick is one chunk wherever its pieces sit side by side again - and so
+    // are several picks over one block, which is what picking sequences by name
+    // makes: one pick per row. Cutting a chunk per pick gave a block as many
+    // one-row panels as rows picked, stacked at the same place, each painting
+    // its own background over the ones above it, so all but one row of every
+    // block went blank. A block is one chunk carrying the rows taken from it,
+    // the shape it has in the alignment itself.
+    if(cuts.length)extracted.push(...combineOverlaps(cuts,workspace.rowOrder||[]))
     if(!copy)fragments=fragments.flatMap(f=>f.id===fragmentId?remaining:[f])
   }
   if(!extracted.length)return workspace
@@ -92,7 +112,7 @@ export function moveSelection(workspace,targetId,{copy=false,targetLayer=null,vi
   if(!target)return workspace
   const placed=insertChunks(target.fragments,extracted,chunkGap([...target.fragments,...extracted],viewportWidth))
   layers=layers.map(l=>l.id===targetId?{...l,fragments:placed}:l)
-  return {...workspace,layers,active:targetId,original:false,selection:[],highlighted:'',camera:{...target.camera}}
+  return {...workspace,layers,active:targetId,original:false,selection:[],highlighted:[],camera:{...target.camera}}
 }
 /** Coalesce overlap in the same source block, retaining row-specific masks.
  * A row not selected at a column stays blank after merging; never reveal discarded cells. */
@@ -149,6 +169,61 @@ export const removeRowPicks = (selection,rowId) =>
 
 export const pickedRowIds = selection =>
   new Set(selection.filter(p=>p.kind==='row').flatMap(p=>p.rowIds))
+
+/** The rows lit by clicking a cell, a string or a jump marker.
+ *
+ * One row at a time was the original idea - "follow this path" - and it held
+ * only the last row clicked. But a row picked by name lights up in exactly the
+ * same gold, so nothing on screen says which of the lit rows is the one slot.
+ * Lighting a third row put out the second and read as a plain bug: picks add
+ * up, as the sidebar promises, and there was no way to tell that these did not.
+ * They accumulate now, and clicking a lit row again puts it out.
+ *
+ * A workspace saved before this held a single id, so a string still reads as the
+ * one row it lit. */
+export const highlightedRows = value =>
+  Array.isArray(value)?value.filter(id=>typeof id==='string'&&id):typeof value==='string'&&value?[value]:[]
+/** Light a row. Pressing a jump marker, or landing in the block it names, is a
+ * move along that row rather than a verdict on whether it should be lit, so
+ * this never puts one out. */
+export const addHighlight = (value,rowId) => {
+  const rows=highlightedRows(value)
+  return rows.includes(rowId)?rows:[...rows,rowId]
+}
+export const removeHighlight = (value,rowId) => highlightedRows(value).filter(id=>id!==rowId)
+/** Light a set of rows, or put them all out when every one is already lit, so a
+ * second pass over the same names takes them back out - the same way picks
+ * toggle, because to the reader these are the same act as picking a name whose
+ * sequence happens to be on the sheet. */
+export function toggleHighlights(value,ids) {
+  const rows=highlightedRows(value)
+  if(!ids?.length)return rows
+  const wanted=new Set(ids)
+  if(ids.every(id=>rows.includes(id)))return rows.filter(id=>!wanted.has(id))
+  return [...rows,...ids.filter(id=>!rows.includes(id))]
+}
+
+/** Every row drawn in the picked gold, from both of the things that light one.
+ *
+ * Picking a name lights a row, and so does clicking one of its cells, and on
+ * screen the two are the same gold. Nothing tells a reader which of them is
+ * holding a row up, so both have to answer to a click on it: while a click on a
+ * name only dropped the picks, a row lit by both kept its colour and could not
+ * be put out at all - and a click on a cell of a picked row appeared to do
+ * nothing, because it was toggling a highlight that was not what was lighting
+ * the row.
+ */
+export function litRows(state) {
+  const rows=pickedRowIds(state.selection||[])
+  for(const id of highlightedRows(state.highlighted))rows.add(id)
+  return rows
+}
+export const rowIsLit = (state,rowId) => litRows(state).has(rowId)
+/** Put a row out, whichever of the two is lighting it: clicking something gold
+ * means all of it, not the half this gesture happens to own. */
+export const unlightRow = (state,rowId) => ({
+  selection:removeRowPicks(state.selection||[],rowId),
+  highlighted:removeHighlight(state.highlighted,rowId)})
 
 /** Reduce picks to the chunks to extract.
  *
@@ -278,9 +353,23 @@ export function reorderFragmentRow(fragment,rowId,targetSlot) {
   return {...fragment,slots:fragment.rowIds.map(id=>slotFor.get(id))}
 }
 
+/** The rows a fragment actually carries sequence for.
+ *
+ * A source block lists rows it holds no sequence in - the MAF `e` lines, saying
+ * the sequence exists in that genome but has nothing in this block - and those
+ * are drawn as an empty band on an aligned sheet. They are not part of the path:
+ * a string out of one says this sequence continues from here, when there is
+ * nothing here for it to continue from. A chunk cut into a layer inherits the
+ * list, so the answer is always narrowed by the rows the fragment has. */
+export function presentRows(fragment) {
+  if(!fragment.availableRows)return fragment.rowIds
+  const has=new Set(fragment.availableRows)
+  return fragment.rowIds.filter(id=>has.has(id))
+}
+
 export function layerConnections(layer) {
   const byRow=new Map(), result=[]
-  for(const f of layer.fragments)for(const id of f.rowIds){if(!byRow.has(id))byRow.set(id,[]);byRow.get(id).push(f)}
+  for(const f of layer.fragments)for(const id of presentRows(f)){if(!byRow.has(id))byRow.set(id,[]);byRow.get(id).push(f)}
   byRow.forEach((fragments,rowId)=>{
     const sorted=[...fragments].sort(sourceOrder)
     for(let i=1;i<sorted.length;i++) {
@@ -307,7 +396,7 @@ export function offWindowLinks(layer,neighbours) {
   const outermost=new Map()
   for(const f of layer.fragments){
     if(f.aggregate)continue
-    for(const id of f.rowIds){
+    for(const id of presentRows(f)){
       const seen=outermost.get(id)
       if(!seen)outermost.set(id,{first:f,last:f})
       else{
@@ -387,9 +476,21 @@ export function blockAtLayoutX(fragment,layoutX) {
  * list has to carry the tracks with it; a wheel there driving the horizontal
  * controls instead leaves the reader unable to move down a long row list at all.
  * Only a vertically dominant wheel counts, so a sideways trackpad swipe over the
- * gutter still pans the alignment as it does everywhere else. */
-export function wheelScrollsRowList(pointX,descriptor,marginX) {
+ * gutter still pans the alignment as it does everywhere else.
+ *
+ * `scrollable` is what stops the gutter taking a wheel it has no use for. Left
+ * of the gutter edge is not by itself a row list: a layer that draws no gutter
+ * has sequence there, and a list wholly on screen has nowhere to scroll to, so
+ * in both cases the notch was a zoom near the left edge and swallowing it turned
+ * that zoom into a scroll — or into nothing at all.
+ *
+ * A modified wheel is never the list's either. Ctrl is an explicit zoom or pinch
+ * and Shift a deliberate second axis; both mean over the names what they mean
+ * over the sequence. */
+export function wheelScrollsRowList(pointX,descriptor,marginX,scrollable) {
+  if(!scrollable)return false
   if(!(pointX<marginX))return false
+  if(descriptor?.ctrl||descriptor?.shift||descriptor?.alt)return false
   const dy=descriptor?.dy||0,dx=descriptor?.dx||0
   return dy!==0&&Math.abs(dy)>Math.abs(dx)
 }
@@ -418,15 +519,17 @@ export function columnScale(f,camera) {
  * back to where it came from - so the chevron drawn along it points at whatever
  * clicking the marker would open. A link whose far end is outside the loaded
  * window contributes only the end that exists. */
-export function blockJumpMarkers(connections,offWindow,rects,everyBlockExists=false) {
+export function blockJumpMarkers(connections,offWindow,rects,buried={}) {
   const markers=[]
   for(const c of connections){
-    if(!pathIsOccluded(c,rects,everyBlockExists))continue
+    if(!linkIsBuried(c,rects,buried))continue
     const flow=c.to.sourceBlock>c.from.sourceBlock?1:-1
     markers.push({id:`${c.id}:out`,fragmentId:c.from.id,rowId:c.rowId,edge:flow,block:c.to.sourceBlock})
     markers.push({id:`${c.id}:in`,fragmentId:c.to.id,rowId:c.rowId,edge:-flow,block:c.from.sourceBlock})
   }
-  for(const link of offWindow)
+  // Off-window stubs stand for blocks outside the loaded window, which a packed
+  // sheet does not have: everything it holds is on it.
+  if(!buried.packed)for(const link of offWindow)
     markers.push({id:link.id,fragmentId:link.fragment.id,rowId:link.rowId,edge:link.direction,block:link.block})
   return markers
 }
@@ -444,6 +547,24 @@ export function pathIsOccluded(connection,rects,everyBlockExists=false) {
   if(everyBlockExists)return high-low>1
   return rects.some(r=>r.sourceBlock>low&&r.sourceBlock<high)
 }
+/** Whether a link is buried by what is drawn over it, and so has to be carried
+ * by edge markers instead of a line.
+ *
+ * One rule for both passes. The painter draws the lines first and the panels
+ * over them, then adds markers for the buried ones; when the two passes asked
+ * this question differently, a link could be dropped from the first as buried
+ * and from the second as not, and vanish from the picture altogether.
+ *
+ * A packed sheet answers from what it draws, the way a layer does. Hiding is
+ * what put the gaps in its numbering, so a path from 7 to 9 over a hidden 8 is
+ * an ordinary line: the reader asked for the blocks that are left to sit
+ * together. A block still standing between the ends is a different matter and
+ * still buries the link - drawn as a line it would run behind that block and
+ * read as a sequence passing through one it is not in.
+ */
+export const linkIsBuried=(connection,rects,{original=false,packed=false}={})=>
+  pathIsOccluded(connection,rects,original&&!packed)
+
 export function panelGeometry(f,camera,marginX) {
   const scale=columnScale(f,camera)
   return {x:marginX+(f.x-camera.x)*camera.scale,width:(f.end-f.start)*scale,scale}
@@ -547,6 +668,27 @@ export function panelZoom(camera,factor,{size,floor=PLANE_MIN}) {
   const plane=planeOf(camera)
   return zoomPlane(camera,factor,{x:size.width/plane/2,y:size.height/plane/2},floor)
 }
+/** A zoom-in that panel mode cannot answer: the sheet is already full size, and
+ * closer than that is what Alignment mode is for.
+ *
+ * Panel mode stops here on purpose, but a stop is silent - the gesture simply
+ * does nothing, which reads as a broken control rather than a boundary. Naming
+ * the attempt lets the view say where the rest of the zoom lives. Only zoom-in
+ * counts: stopping at the far end is the overview limit, a different boundary
+ * with nowhere else to send the reader. */
+export function panelZoomBlocked(camera,factor) {
+  return factor>1&&planeOf(camera)>=1
+}
+/** Blocked gestures before the hint appears. One is an ordinary overshoot at the
+ * end of a zoom and saying anything about it would be nagging; repeating the
+ * gesture is someone expecting more zoom than this mode has. */
+export const PANEL_ZOOM_HINT_ATTEMPTS=2
+/** How long the hint stays over the panel before it fades out on its own.
+ *
+ * Long enough to read a sentence and reach the button, short enough that it is
+ * gone before it becomes part of the furniture. The fade itself is the tail of
+ * this same span, so the element is removed exactly as it finishes. */
+export const ZOOM_HINT_MS=5000
 /** Entering panel mode lands on blocks.
  *
  * A merged overview is not something to shrink: those bars are already a summary
@@ -582,6 +724,17 @@ export function zoomPlane(camera,factor,point,floor=PLANE_MIN) {
  * plane is doing. Carrying on past it is plane zoom's job, and taking the floor
  * from the shrunken window instead would drive the columns straight back out to
  * the edges, so there would never be any whitespace to see. */
+/** The vertical room the sheet is given inside the window. */
+const windowRows=view=>Math.max(26,view.height-MARGIN_Y-12)
+/** Whether there is a row list to scroll at all.
+ *
+ * A sheet shorter than the window is pinned by `constrainCamera`, so a wheel
+ * spent on it moves nothing at all — and a dead wheel over the names is worse
+ * than the zoom the reader was asking for. */
+export function rowListScrolls(layer,camera,size) {
+  const b=viewBounds(layer)
+  return !!b&&b.bottom-b.top>windowRows(planeViewport(size,{plane:planeOf(camera)}))
+}
 export function constrainCamera(layer,camera,size) {
   const b=viewBounds(layer)
   if(!b)return defaultCamera()
@@ -589,7 +742,7 @@ export function constrainCamera(layer,camera,size) {
   const scale=clamp(Number(camera.scale)||minScale,minScale,24)
   const plane=planeOf(camera)
   const view=planeViewport(size,{plane})
-  const width=Math.max(40,view.width-MARGIN_X-24),height=Math.max(26,view.height-MARGIN_Y-12),span=width/scale
+  const width=Math.max(40,view.width-MARGIN_X-24),height=windowRows(view),span=width/scale
   const x=span>=b.right-b.left?b.left-(span-(b.right-b.left))/2:clamp(Number(camera.x)||0,b.left-span*.1,b.right-span*.9)
   // Shrunken, the sheet is held in the middle of the window: it may sit up to
   // half a window down, which is what lets whitespace open above it. At full
@@ -600,6 +753,26 @@ export function constrainCamera(layer,camera,size) {
   const y=b.bottom-b.top<=height?b.top-(plane<1?(height-(b.bottom-b.top))/2:0):clamp(Number(camera.y)||0,b.top-height*room,b.bottom-height*tail)
   return {x,y,scale,plane}
 }
+/** What a hide was asked for: the picks, and the settings that read them. */
+function hideSettings(value) {
+  const picks=value?.choice
+  if(!picks||!Array.isArray(picks.blocks)||!Array.isArray(picks.rows))return null
+  return {choice:{blocks:picks.blocks.filter(b=>Number.isInteger(b)&&b>0).slice(0,4000),
+    rows:picks.rows.filter(id=>typeof id==='string').slice(0,5000)},
+    what:['blocks','sequences','both'].includes(value.what)?value.what:'blocks',
+    mode:value.mode==='and'?'and':'or'}
+}
+/** What a hide did: the blocks and rows left standing, and the view to return to. */
+function hiddenState(value) {
+  if(!value)return null
+  const blocks=Array.isArray(value.blocks)&&value.blocks.every(b=>Number.isInteger(b)&&b>0)?value.blocks.slice(0,4000):null
+  const rows=Array.isArray(value.rows)&&value.rows.every(id=>typeof id==='string')?value.rows.slice(0,5000):null
+  if(!blocks?.length&&!rows?.length)return null
+  const settings=hideSettings(value)
+  return {blocks,rows,camera:value.camera?{...defaultCamera(),...value.camera}:null,
+    what:settings?.what||(blocks?.length?'blocks':'sequences'),mode:settings?.mode||'or',choice:settings?.choice||null}
+}
+
 export function validateLayerWorkspace(value,ids) {
   if(!value||value.version!==2||!Array.isArray(value.layers)||value.layers.length>100)throw new Error('This is not a layer workspace. Open an alignment to start a new one.')
   const known=new Set(ids),seen=new Set(),fragmentsSeen=new Set()
@@ -616,43 +789,175 @@ export function validateLayerWorkspace(value,ids) {
     })
     return {...l,camera:{x:Number(l.camera?.x)||0,y:Number(l.camera?.y)||0,scale:clamp(Number(l.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(l.camera)},name:String(l.name||`Layer ${i+1}`).slice(0,120),color:/^#[\da-f]{6}$/i.test(l.color)?l.color:PALETTE[i%PALETTE.length],fragments}
   })
-  return {...emptyWorkspace(),...value,layers,rowOrder:Array.isArray(value.rowOrder)&&value.rowOrder.every(id=>typeof id==='string')?value.rowOrder:null,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(value.camera)}}
+  // A hidden set is a list of block numbers and the view to come back to.
+  const hidden=hiddenState(value.hidden),hideMemory=hideSettings(value.hideMemory)
+  return {...emptyWorkspace(),...value,hidden,hideMemory,layers,colourScheme:schemeById(value.colourScheme).id,palette:validPalettes(value.palette),shading:shadingById(value.shading).id,legendOverlay:!!value.legendOverlay,highlighted:highlightedRows(value.highlighted).filter(id=>known.has(id)),rowOrder:Array.isArray(value.rowOrder)&&value.rowOrder.every(id=>typeof id==='string')?value.rowOrder:null,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(value.camera)}}
+}
+
+/** The names a selection rectangle covers.
+ *
+ * Inclusive on every edge, so a press that never travelled still covers the
+ * name under it: in Select mode a click on a name has to go on meaning that
+ * name, and a rectangle of no width is what a click looks like here.
+ *
+ * Columns mode ignores the vertical extent, exactly as it does over sequence:
+ * the names are one column, so touching it takes all of them.
+ */
+export function namesInRect(labels, rect, columnsOnly = false) {
+  const covers = box => rect.x1 <= box.x + box.width && rect.x2 >= box.x
+    && (columnsOnly || (rect.y1 <= box.y + box.height && rect.y2 >= box.y))
+  return [...new Set(labels.filter(covers).map(label => label.rowId))]
+}
+
+/** Whether a rectangle reached past the names into the sequence itself.
+ *
+ * A drag that starts on the names and carries on into the alignment is an
+ * ordinary region selection; only one that stays among the names is about the
+ * names. `left` is where sequence actually becomes visible - the Original keeps
+ * an opaque name gutter drawn over the blocks behind it, so a block scrolled
+ * under that gutter is not something the reader can see or mean.
+ */
+export function rectEntersCells(panels, rect, left = 0) {
+  return panels.some(panel => {
+    const x = Math.max(panel.x, left)
+    return rect.x2 > x && rect.x1 < panel.x + panel.width
+      && rect.y2 > panel.y && rect.y1 < panel.y + panel.height
+  })
+}
+
+/** Drop a chunk from a working layer.
+ *
+ * Only ever a working layer. The Original alignment is a derived view of the
+ * source, so there is nothing there to take away: removing a block from it
+ * would have to mean either hiding it, which the Hide control already does and
+ * remembers, or editing the file, which this app never does.
+ */
+export function removeFragment(layer, fragmentId) {
+  const fragments = layer.fragments.filter(f => f.id !== fragmentId)
+  return fragments.length === layer.fragments.length ? layer : { ...layer, fragments: compactSlots(fragments) }
+}
+
+/** Drop a sequence from every chunk in a working layer.
+ *
+ * A chunk left holding no sequences is removed rather than kept as an empty
+ * panel: it has no rows to show and nothing to drag anywhere.
+ */
+export function removeRowFromLayer(layer, rowId) {
+  const fragments = []
+  let changed = false
+  for (const fragment of layer.fragments) {
+    const index = fragment.rowIds.indexOf(rowId)
+    if (index < 0) { fragments.push(fragment); continue }
+    changed = true
+    const rowIds = fragment.rowIds.filter(id => id !== rowId)
+    if (!rowIds.length) continue
+    const next = { ...fragment, rowIds }
+    // slots runs parallel to rowIds, so it loses the same position; coverage and
+    // availableRows are keyed by row and lose the entry.
+    if (fragment.slots) next.slots = fragment.slots.filter((_, i) => i !== index)
+    if (fragment.coverage) { const coverage = { ...fragment.coverage }; delete coverage[rowId]; next.coverage = coverage }
+    if (fragment.availableRows) next.availableRows = fragment.availableRows.filter(id => id !== rowId)
+    fragments.push(next)
+  }
+  return changed ? { ...layer, fragments: compactSlots(fragments) } : layer
+}
+
+/** Close the lanes nothing is left in.
+ *
+ * A row keeps one slot for the whole layer, so a slot freed by a removal is
+ * freed everywhere. Left as it was, every remaining chunk would carry a blank
+ * lane where the sequence used to be, and the layer would keep growing taller
+ * the more was taken out of it. Renumbering preserves the shared slots that
+ * make rows line up across chunks: only the empty lanes close.
+ */
+function compactSlots(fragments) {
+  const used = new Set()
+  for (const fragment of fragments) fragment.rowIds.forEach((_, i) => used.add(rowSlot(fragment, i)))
+  const mapping = new Map([...used].sort((a, b) => a - b).map((slot, i) => [slot, i]))
+  if ([...mapping].every(([from, to]) => from === to)) return fragments
+  return fragments.map(fragment => {
+    const slots = fragment.rowIds.map((_, i) => mapping.get(rowSlot(fragment, i)))
+    const next = { ...fragment, slots }
+    if (fragment.layoutRows != null) next.layoutRows = slots.length ? Math.max(...slots) + 1 : 0
+    return next
+  })
 }
 
 /** Hit-test highlighted cells in layout coordinates, including sparse merged rows. */
 export function selectedCellAt(layer, selections, point, camera = null) {
-  return selections.some(selection => {
+  return !!pickAt(layer, selections, point, camera)
+}
+
+/** Which pick the pointer is inside, rather than merely whether it is inside one.
+ *
+ * Returned by reference, so a caller can hold on to it across a repaint and know
+ * it is still the same pick. Indices cannot do that: the selection can change
+ * between the paint that drew a control and the click that presses it, and an
+ * index would then name whichever pick had moved into that position.
+ */
+export function pickAt(layer, selections, point, camera = null) {
+  for (const selection of selections) {
     const fragment = layer.fragments.find(f => f.id === selection.fragmentId)
-    if (!fragment) return false
+    if (!fragment) continue
     const column = Math.floor(layerXToColumn(fragment, camera, point.x))
-    if (column < selection.start || column >= selection.end) return false
-    return selection.rowIds.some(id => {
+    if (column < selection.start || column >= selection.end) continue
+    const inside = selection.rowIds.some(id => {
       const index = fragment.rowIds.indexOf(id)
       if (index < 0) return false
       const y = fragment.y + rowSlot(fragment, index)
       return point.y >= y && point.y < y + 1 && hasCell(fragment, id, column)
     })
-  })
+    if (inside) return selection
+  }
+  return null
+}
+
+/** The rows a pick actually covers in this fragment, topmost slot first, so a
+ * control can be put on the corner of the region rather than of the block. */
+export function pickSlots(fragment, selection) {
+  const slots = selection.rowIds.map(id => fragment.rowIds.indexOf(id)).filter(i => i >= 0).map(i => rowSlot(fragment, i))
+  return slots.length ? { top: Math.min(...slots), bottom: Math.max(...slots) } : null
 }
 
 /** Leave approximately 110 screen pixels for distance labels after fitting. */
 export function chunkGap(fragments,width=1000) {
+  if(!fragments.length)return 6
   const bases=fragments.reduce((n,f)=>n+f.end-f.start,0)
-  return Math.max(6,110*bases/Math.max(240,width-MARGIN_X-24-110*Math.max(0,fragments.length-1)))
+  // Room for one label per gap runs out quickly: past a dozen or so chunks the
+  // subtraction goes negative, and clamping the divisor rather than giving up
+  // turned the answer into a void hundreds of times wider than the chunks it
+  // separates. Moving three sequences of a whole file - 480 chunks - asked for
+  // 220,000 columns between 1,000-column chunks, and fitting that put the whole
+  // layer on a single hairline. Where the labels cannot all fit anyway, this
+  // stops bidding for them and just spaces the chunks apart.
+  const room=width-MARGIN_X-24-110*Math.max(0,fragments.length-1)
+  return Math.max(6,room>=240?110*bases/room:bases/fragments.length/4)
 }
 /** Insert by source order, moving only obstructing successors horizontally.
- * Existing vertical placements and row slots are deliberately preserved. */
+ * Existing vertical placements and row slots are deliberately preserved.
+ *
+ * A row keeps one slot across the whole layer. Each chunk used to take its rows
+ * from the neighbour it was placed beside and put anything the neighbour did not
+ * hold on a fresh slot below it, which is right for one chunk and ruinous for a
+ * batch: chained down a run of blocks whose membership varies - most files - the
+ * same three sequences stepped one row lower at every chunk, and moving them out
+ * of a 200-block alignment drew a staircase hundreds of rows deep instead of
+ * three straight lines. */
 export function insertChunks(existing,incoming,gap=64) {
   let result=existing.map(f=>({...f}))
+  // Rows already placed keep the slot they have; rows arriving with the batch
+  // take the next ones, in the order the blocks introduce them.
+  const slotOf=new Map()
+  for(const f of existing)f.rowIds.forEach((id,i)=>{if(!slotOf.has(id))slotOf.set(id,rowSlot(f,i))})
+  let free=slotOf.size?Math.max(...slotOf.values())+1:0
+  for(const f of [...incoming].sort(sourceOrder))for(const id of f.rowIds)if(!slotOf.has(id))slotOf.set(id,free++)
   for(const f of [...incoming].sort(sourceOrder)) {
     const ordered=[...result].sort(sourceOrder),at=ordered.findIndex(other=>sourceOrder(f,other)<0)
     const next=at<0?null:ordered[at],prev=at<0?ordered.at(-1):ordered[at-1]
     const neighbour=[prev,next].find(n=>n&&n.rowIds.some(id=>f.rowIds.includes(id)))||prev||next
     const width=f.end-f.start,x=prev?prev.x+prev.end-prev.start+gap:next?next.x-width-gap:0
     if(next){let edge=x+width+gap;for(const successor of ordered.slice(at)){if(successor.x<edge)successor.x=edge;edge=successor.x+successor.end-successor.start+gap}}
-    let slot=neighbour?rowCount(neighbour):0
-    const slots=f.rowIds.map(id=>{const i=neighbour?.rowIds.indexOf(id)??-1;return i>=0?rowSlot(neighbour,i):slot++})
-    result.push({...f,x,y:neighbour?.y||0,slots:neighbour?slots:null})
+    result.push({...f,x,y:neighbour?.y||0,slots:f.rowIds.map(id=>slotOf.get(id))})
   }
   return result
 }
@@ -661,10 +966,17 @@ export function insertChunks(existing,incoming,gap=64) {
  * are N, distinct from observed alignment gaps; source identities remain intact. */
 export function chunkFasta(fragment,rows) {
   const byId=new Map(rows.map(r=>[r.id,r]))
+  // Each row is written under its own source name, because the file is read by
+  // whatever tool it is pasted into. Copies of one source within a block are
+  // suffixed so the names stay unique, matching the server's export.
+  const seen=new Map()
   return fragment.rowIds.map(id=>{
     const row=byId.get(id),sequence=Array.from({length:fragment.end-fragment.start},(_,i)=>hasCell(fragment,id,fragment.start+i)?row?.sequence?.[i]||'N':'N').join('')
-    const source=String(row?.source||id).replace(/[\r\n]/g,' ')
-    return `>${id} source=${source} block=${fragment.sourceBlock} columns=${fragment.start+1}-${fragment.end}\n${sequence.match(/.{1,80}/g)?.join('\n')||''}\n`
+    const source=String(row?.source||id).replace(/\s+/g,'_')
+    const count=seen.get(source)||0
+    seen.set(source,count+1)
+    const name=count?`${source}/copy${count+1}`:source
+    return `>${name} block=${fragment.sourceBlock} columns=${fragment.start+1}-${fragment.end}\n${sequence.match(/.{1,80}/g)?.join('\n')||''}\n`
   }).join('')
 }
 

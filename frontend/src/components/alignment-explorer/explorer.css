@@ -15,15 +15,42 @@
 .al-actions,.al-tools { display:flex; gap:5px; align-items:center; flex-wrap:wrap; }
 .al-notice { display:flex; justify-content:space-between; align-items:center; padding:7px 14px; color:var(--al-accent); background:var(--al-panel); border-bottom:1px solid var(--al-border); }
 .al-notice.error { color:#f19baa; }
+/* The reader a file was read by, and the way to change it. Both sit inside
+   existing rows, so they borrow the surrounding type rather than setting their own. */
+.al-notice-fix { display:flex; align-items:center; gap:6px; margin-left:auto; padding-left:14px; color:var(--al-text); font-size:12px; }
+.al-notice-fix select { max-width:210px; }
+/* The canvas area, as a positioning context for what is laid over it. The
+   canvas itself keeps every box it had: this only adds an origin to measure an
+   overlay from. */
+.al-stage { position:relative; flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
+/* Over the panel the message is about, centred at its top edge. The box lets the
+   pointer through so a drag begun under it still reaches the canvas; only its
+   buttons take the click. */
+.al-zoom-hint { position:absolute; z-index:25; top:14px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:8px; padding:5px 7px 5px 12px; border:1px solid var(--al-accent); border-radius:7px; background:var(--al-panel); color:var(--al-text); white-space:nowrap; box-shadow:0 8px 26px #0006; pointer-events:none; animation:al-zoom-hint-life 5s ease-in-out forwards; }
+.al-zoom-hint strong { color:var(--al-accent); font-weight:600; }
+.al-zoom-hint button { padding:3px 8px; pointer-events:auto; }
+/* Visible almost at once, held while it is read, then faded out so the element
+   is already invisible when the timer removes it. */
+@keyframes al-zoom-hint-life { 0% { opacity:0; transform:translate(-50%,-6px); } 6% { opacity:1; transform:translate(-50%,0); } 72% { opacity:1; transform:translate(-50%,0); } 100% { opacity:0; transform:translate(-50%,-6px); } }
+@media (prefers-reduced-motion:reduce) { .al-zoom-hint { animation:al-zoom-hint-fade 5s steps(1,end) forwards; } @keyframes al-zoom-hint-fade { 0%,92% { opacity:1; } 100% { opacity:0; } } }
+.al-reader { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px; color:var(--al-muted); }
+.al-reader strong { color:var(--al-text); font-weight:600; }
+/* Scoped past `.alignment-layers button`, which would otherwise give this its
+   border and panel background back. */
+.alignment-layers .al-link { padding:0; border:0; border-radius:0; background:none; color:var(--al-accent); font:inherit; text-decoration:underline; cursor:pointer; }
+.alignment-layers .al-link:hover { color:var(--al-text); }
 .al-workspace { display:flex; flex:1; min-height:0; overflow:hidden; }
 .al-sidebar { width:240px; flex:0 0 240px; overflow:auto; background:var(--al-panel); border-right:1px solid var(--al-border); padding:12px; display:flex; flex-direction:column; gap:9px; }
-.al-sidebar-title { display:flex; align-items:center; justify-content:space-between; padding:0 3px 4px; font-size:13px; }
-.al-sidebar-title button { border:none; padding:1px 7px; font-size:20px; }
 .al-original { display:flex; align-items:center; gap:8px; text-align:left; padding:10px 8px!important; }
 .al-original small,.al-layer small { display:block; font-size:10px; padding-top:2px; }
+/* What the view is holding back. It wraps: buttons do not, and this line is a
+   sentence about two counts rather than a label. */
+.al-original .al-narrowed { color:var(--al-accent); white-space:normal; line-height:1.35; }
 .al-original i { width:10px; height:10px; border:1px solid #b9c5d9; border-radius:2px; flex-shrink:0; }
-.al-original b { margin-left:auto; color:var(--al-muted); }
 .al-check { display:flex; align-items:center; gap:6px; font-size:10px; margin-bottom:5px; }
+/* Lined up with the block count inside the button above: its border, padding,
+   colour swatch and the gap after it. */
+.al-overlay-check { padding-left:27px; }
 .al-layer-list { display:flex; flex-direction:column; gap:7px; }
 .al-layer { display:flex; border:1px solid var(--al-border); border-radius:6px; }
 .al-layer>button:first-child { display:flex; align-items:center; gap:10px; text-align:left; flex:1; border:0; background:transparent; overflow:hidden; }
@@ -49,9 +76,6 @@
 .al-canvas.is-select { cursor:crosshair; }
 .al-status { display:flex; justify-content:space-between; gap:12px; padding:7px 12px; border-top:1px solid var(--al-border); color:var(--al-muted); font-size:10px; min-height:30px; }
 .al-status>span:last-child { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.al-legend { display:flex; gap:14px; flex-wrap:wrap; align-items:center; padding:5px 12px 9px; color:var(--al-muted); font-size:9px; }
-.al-legend>span { display:flex; gap:4px; align-items:center; }
-.al-legend i { width:7px; height:7px; display:inline-block; margin-left:3px; border-radius:1px; }
 .al-annotation-warning { color:#d9b37a; padding:5px 12px; font-size:10px; }
 .al-cycle { position:relative; }
 .al-cycle-menu { position:absolute; top:calc(100% + 8px); right:0; z-index:20; background:var(--al-panel); border:1px solid var(--al-border); border-radius:7px; box-shadow:0 10px 35px #0005; padding:6px; min-width:245px; max-height:350px; overflow:auto; }
@@ -96,7 +120,19 @@
 /* Compact explorer: one toolbar, with secondary controls in the drawer. */
 .al-sidebar { width:226px; flex-basis:226px; padding:0; display:block; position:relative; }
 .al-sidebar.collapsed { width:30px; flex-basis:30px; overflow:hidden; }
-.al-sidebar-toggle { position:sticky; top:0; display:flex; justify-content:flex-end; align-items:center; width:100%; height:37px; border:0!important; border-radius:0!important; z-index:2; padding:5px!important; }
+.al-sidebar-bar { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:4px; height:37px; padding-left:10px; background:var(--al-panel); }
+.al-sidebar-bar.closed { border-bottom:1px solid var(--al-border); }
+/* The section headings are <summary> elements; this one is a button on the
+   header row, so it borrows their weight and the marker they draw from the
+   list-style the UA gives a summary. Matching the marker's own advance rather
+   than spacing it by hand puts the two headings on the same left edge. */
+.al-sidebar-bar .al-layers-toggle { display:flex; align-items:center; border:0; background:none; padding:0; font-weight:600; color:inherit; }
+.al-layers-toggle>i { display:list-item; list-style-position:inside; list-style-type:disclosure-closed; font-style:normal; }
+.al-layers-toggle[aria-expanded="true"]>i { list-style-type:disclosure-open; }
+.al-sidebar-bar .al-new-layer { border:none; background:none; padding:0 6px; font-size:19px; line-height:1; color:var(--al-muted); }
+.al-sidebar-bar .al-new-layer:hover { color:var(--al-text); }
+.al-sidebar-toggle { display:flex; align-items:center; margin-left:auto; border:0!important; border-radius:0!important; padding:5px!important; }
+.al-sidebar.collapsed .al-layers-toggle,.al-sidebar.collapsed .al-sidebar-bar .al-new-layer { display:none; }
 .al-sidebar.collapsed .al-sidebar-content { display:none; }
 .al-sidebar-content { padding:0 10px 12px; }
 .al-section { border-bottom:1px solid var(--al-border); padding:8px 0; }
@@ -104,8 +140,6 @@
 .al-section>button,.al-section>label,.al-section>.al-actions,.al-section>strong { display:flex; margin:6px 0; }
 .al-section>button { width:100%; }
 .al-dataset-name { overflow-wrap:anywhere; }
-.al-sidebar-title strong { display:none; }
-.al-sidebar-title { justify-content:flex-end; height:18px; }
 .al-source { border:0; padding-top:8px; }
 .al-source>strong { font-size:11px; }
 .al-toolbar { flex-wrap:nowrap; padding:4px 8px; min-height:37px; gap:8px; flex-shrink:0; box-sizing:border-box; }
@@ -116,24 +150,22 @@
    name gives way first, since it already ellipses. */
 .al-toolbar { overflow-x:auto; }
 .al-toolbar > * { flex-shrink:0; }
-.al-toolbar > .al-active-name { flex-shrink:1; min-width:54px; }
 .al-tools { flex-wrap:nowrap; }
-.al-active-name { margin-left:auto; border-left:3px solid; padding-left:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.al-toolbar > :last-child { margin-left:auto; }
 .al-status { min-height:22px; padding:3px 9px; box-sizing:border-box; }
 .al-status>span:first-child { white-space:nowrap; }
 .al-selection-bar { flex-direction:column; align-items:stretch; padding:8px 0 0; border:0; background:none; gap:6px; }
 .al-selection-bar input,.al-selection-bar select { width:100%; max-width:100%; box-sizing:border-box; }
-.al-legend { padding:7px 0; flex-direction:column; align-items:flex-start; gap:7px; }
-.al-legend>span { flex-wrap:wrap; }
 .al-wheel .genome-wheel-drum { transition:transform 80ms linear; }
 .al-wheel .genome-wheel-status { bottom:35px; }
-@media(max-width:700px) { .al-sidebar { width:180px; flex-basis:180px; } .al-active-name { max-width:90px; } }
-.al-zoom-mode { display:flex; align-items:center; gap:5px; font-size:11px; white-space:nowrap; color:var(--al-muted); }
-.al-zoom-mode select { padding:3px 4px!important; font-size:11px; }
-.al-zoom-mode b { font-variant-numeric:tabular-nums; color:var(--al-text,#e3eaf4); }
+@media(max-width:700px) { .al-sidebar { width:180px; flex-basis:180px; } }
 .al-source-nav { display:flex; align-items:center; gap:3px; }
 .al-source-nav label { display:flex; align-items:center; gap:4px; font-size:11px; white-space:nowrap; }
-.al-source-nav input { width:58px; padding:3px!important; }
+/* The box takes a number typed or stepped with the arrows beside it; the
+   browser's own spinners inside it were a third pair of arrows saying the same
+   thing, in a control that has to stay narrow. */
+.al-source-nav input { width:58px; padding:3px!important; appearance:textfield; -moz-appearance:textfield; }
+.al-source-nav input::-webkit-outer-spin-button,.al-source-nav input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
 .al-section>.al-row-mode { display:flex; flex-direction:column; align-items:stretch; gap:6px; }
 .al-row-mode select { width:100%; }
 .al-row-mode small { line-height:1.5; }
@@ -218,6 +250,23 @@ label.al-filter-range input { width:100%; padding:3px!important; }
    itself rather than only from inside the filter panel. */
 .al-filter-flag { font-size:11px; white-space:nowrap; }
 .al-filter-flag.selected { border-color:#edc263; color:#edc263; background:#edc2631a; }
+.al-filter-flag:not(.selected):not(:disabled) { color:var(--al-muted); }
+.al-hide-flag { font-size:11px; white-space:nowrap; }
+/* Anchored to the button and drawn over the page: the control bar scrolls
+   sideways, and a menu inside it would be cut off at the first edge. */
+.al-hide-menu { position:fixed; z-index:40; display:flex; flex-direction:column; gap:9px; padding:11px;
+  min-width:214px; max-width:270px; background:var(--al-panel); color:var(--al-text);
+  border:1px solid var(--al-border); border-radius:7px; box-shadow:0 12px 32px #0007;
+  animation:al-hide-open 110ms ease-out; }
+@keyframes al-hide-open { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:none; } }
+.al-hide-menu label { display:flex; flex-direction:column; gap:4px; font-size:11px; font-weight:600; }
+.al-hide-menu select { font-size:11px; }
+.al-hide-menu small { font-weight:400; font-size:10px; color:var(--al-muted); line-height:1.5; }
+.al-hide-actions { display:flex; gap:6px; }
+.al-hide-actions button { flex:1; font-size:11px; }
+.al-hide-flag.selected { border-color:#edc263; color:#edc263; background:#edc2631a; }
+.al-hide-flag:not(.selected):not(:disabled) { color:var(--al-muted); }
+.al-hide-flag:disabled { opacity:.35; }
 .al-filter-flag:disabled { opacity:.35; }
 
 .al-layer-colour { display:flex; align-items:center; gap:8px; }
@@ -225,3 +274,104 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 
 .al-colour-preview { display:flex; flex-direction:column; gap:6px; padding:14px; border-radius:8px; background:#0f1826; }
 .al-colour-preview span { height:12px; border-radius:3px; display:block; }
+
+/* The colour key travels with the scheme: each one describes its own, so this
+   is a frame rather than a diagram of any particular encoding. */
+/* The overlay used to be inert so the canvas under it stayed draggable. It has
+   to take the pointer now to offer its own cross - that is the whole point of
+   the cross - so the corner it covers is the price, and turning it off is one
+   click either here or in the Colour menu. */
+.al-legend { position:relative; display:flex; flex-direction:column; gap:3px; padding:7px 9px; border:1px solid var(--al-border); border-radius:7px; background:var(--al-panel); color:var(--al-muted); font-size:10px; }
+.al-legend-bar { display:flex; height:9px; border-radius:2px; overflow:hidden; }
+.al-legend-bar span { flex:1; }
+.al-legend-ends { display:flex; justify-content:space-between; gap:8px; font-variant-numeric:tabular-nums; }
+.al-legend-ends small:nth-child(2) { color:var(--al-muted); opacity:.9; }
+.al-legend-heights { display:flex; align-items:center; gap:6px; margin-top:2px; }
+.al-legend-heights div { display:flex; align-items:center; gap:2px; height:11px; }
+.al-legend-heights span { display:flex; align-items:center; justify-content:center; width:8px; height:100%; }
+.al-legend-heights i { display:block; width:100%; background:var(--al-muted); border-radius:1px; }
+.al-legend-note { color:var(--al-muted); opacity:.85; white-space:normal; line-height:1.35; }
+
+/* Import progress. The bar is only shown as a proportion where the reader
+   actually knows the size of what it is reading. */
+.al-import { min-width:340px; max-width:420px; }
+.al-import h3 { overflow-wrap:anywhere; }
+.al-progress { height:8px; border-radius:5px; background:var(--al-head); overflow:hidden; margin:2px 0 4px; }
+.al-progress i { display:block; height:100%; background:var(--al-accent,#7bd4bd); border-radius:5px; transition:width .25s ease; }
+.al-progress.unknown i { width:34%; animation:al-progress-slide 1.3s ease-in-out infinite; }
+@keyframes al-progress-slide { 0% { margin-left:-34%; } 100% { margin-left:100%; } }
+@media (prefers-reduced-motion:reduce) { .al-progress.unknown i { animation:none; width:100%; opacity:.45; } }
+.al-progress-note { font-variant-numeric:tabular-nums; color:var(--al-text,#e3eaf4); }
+
+/* A control and the settings behind it, as one object in the bar: the halves
+   share a border so they read as one button that happens to open. */
+.al-split { display:inline-flex; align-items:stretch; border:1px solid var(--al-border); border-radius:5px;
+  background:var(--al-panel); overflow:hidden; }
+.al-split button { border:0!important; border-radius:0!important; background:transparent!important; padding:4px 8px!important; }
+.al-split button:hover:not(:disabled) { background:color-mix(in srgb,var(--al-accent) 12%,transparent)!important; }
+/* The arrow is the part that says there is more here, so it is drawn at a size
+   that can be aimed at rather than as a mark beside the label. */
+.al-split-arrow { padding:4px 7px!important; font-size:14px; line-height:1; color:var(--al-text); border-left:1px solid var(--al-border)!important; }
+.al-split.selected { border-color:var(--al-accent); background:color-mix(in srgb,var(--al-accent) 12%,var(--al-panel)); }
+.al-zoom-button { display:inline-flex; align-items:center; gap:6px; }
+.al-zoom-button b { font-variant-numeric:tabular-nums; font-size:11px; }
+
+/* A word above the button that caused it, gone before it is in the way. */
+.al-toast { position:fixed; z-index:45; padding:3px 8px; border-radius:11px; pointer-events:none;
+  background:var(--al-panel); color:var(--al-text); border:1px solid var(--al-accent);
+  font-size:11px; font-weight:600; white-space:nowrap; box-shadow:0 6px 18px #0006;
+  animation:al-toast 1400ms ease-out forwards; }
+@keyframes al-toast {
+  0% { opacity:0; transform:translateY(5px); }
+  12% { opacity:1; transform:none; }
+  70% { opacity:1; transform:none; }
+  100% { opacity:0; transform:translateY(-4px); }
+}
+
+/* Menus hung off the bar. Same treatment as the Hide menu, which came first. */
+.al-tool-menu { position:fixed; z-index:40; display:flex; flex-direction:column; gap:9px; padding:11px;
+  min-width:236px; max-width:360px; background:var(--al-panel); color:var(--al-text);
+  border:1px solid var(--al-border); border-radius:7px; box-shadow:0 12px 32px #0007;
+  animation:al-hide-open 110ms ease-out; }
+.al-menu-options { display:flex; flex-direction:column; gap:5px; }
+.al-menu-option { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left;
+  white-space:normal!important; padding:7px 9px!important; }
+.al-menu-option strong { font-size:12px; }
+.al-menu-option small { line-height:1.45; }
+.al-menu-foot { display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding-top:8px; border-top:1px solid var(--al-border); }
+.al-menu-foot button { font-size:11px; }
+
+/* Four tabs in one strip: the longest name wraps rather than being cut off,
+   and flex makes every tab as tall as the tallest. */
+.al-menu-tabs { display:flex; gap:3px; }
+.al-menu-tabs button { flex:1; font-size:10.5px; line-height:1.25; padding:5px 4px!important; white-space:normal; }
+.al-colour-menu { min-width:340px; max-width:400px; }
+.al-menu-tab { display:flex; flex-direction:column; gap:9px; }
+.al-menu-hint { line-height:1.5; }
+/* Unnamed, so they fit in one row and are compared rather than read. */
+.al-palette-row { display:grid; grid-template-columns:repeat(4,1fr); gap:5px; }
+.al-palette { padding:5px!important; }
+.al-shading-row { display:grid; grid-template-columns:repeat(2,1fr); gap:5px; }
+.al-shading { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left;
+  white-space:normal!important; padding:6px 8px!important; }
+.al-shading strong { font-size:11.5px; }
+.al-shading small { line-height:1.4; }
+/* The swatch is the palette itself, at bar size and at menu size. */
+.al-swatch { display:flex; height:14px; border-radius:2px; overflow:hidden; border:1px solid var(--al-border); }
+.al-colour-button .al-swatch { width:26px; height:9px; }
+.al-swatch i { flex:1; display:block; }
+.al-menu-check { display:flex; align-items:center; gap:6px; font-size:11px; }
+
+/* The key, in the menu and optionally over the alignment as well. */
+.al-legend-inline { position:static; max-width:none; box-shadow:none; pointer-events:auto; }
+.al-legend-overlay { position:absolute; z-index:20; right:12px; bottom:12px; box-shadow:0 6px 20px #0004; max-width:260px; }
+.al-legend-swatches { display:flex; gap:8px; }
+.al-legend-swatches span { display:flex; align-items:center; gap:3px; font-variant-numeric:tabular-nums; }
+.al-legend-swatches i { display:block; width:9px; height:9px; border-radius:2px; }
+/* The cross only exists while it is being reached for: an overlay that carried
+   a permanent button would be a control sitting on top of the alignment. */
+.al-legend-close { position:absolute; top:-7px; right:-7px; width:19px; height:19px; padding:0!important;
+  display:flex; align-items:center; justify-content:center; border-radius:50%!important; font-size:12px;
+  line-height:1; opacity:0; transition:opacity 90ms ease-out; }
+.al-legend-overlay:hover .al-legend-close,.al-legend-close:focus-visible { opacity:1; }

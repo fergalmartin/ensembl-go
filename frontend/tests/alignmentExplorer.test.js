@@ -121,6 +121,41 @@ test('panel zoom moves the panel and nothing else',async()=>{
   assert.equal(camera.plane,1)
   assert.equal(camera.scale,12,'never magnifying the columns on the way back')
 })
+test('the sequence-zoom hint waits for a repeated attempt at the panel limit',async()=>{
+  const {panelZoom,panelZoomBlocked,PLANE_MIN,PANEL_ZOOM_HINT_ATTEMPTS}=await import('../src/components/alignment-explorer/layers.js')
+  const size={width:1000,height:600}
+  const full={x:0,y:0,scale:12,plane:1}
+  assert.equal(panelZoomBlocked(full,1.4),true,'zooming in at full size has nowhere to go')
+  // Zooming out always has somewhere to go until the overview limit, and that
+  // limit is a different boundary: there is no other mode to send the reader to.
+  assert.equal(panelZoomBlocked(full,1/1.4),false)
+  let camera=full
+  for(let i=0;i<40;i++)camera=panelZoom(camera,1/1.4,{size})
+  assert.equal(camera.plane,PLANE_MIN)
+  assert.equal(panelZoomBlocked(camera,1/1.4),false,'the far end never asks anyone to change mode')
+  assert.equal(panelZoomBlocked(camera,1.4),false,'and zooming back in is ordinary travel')
+  // The count the view keeps: one blocked gesture is an overshoot at the end of
+  // a zoom, so the hint only appears when the gesture is repeated.
+  let attempts=0
+  const note=blocked=>{if(!blocked){attempts=0;return false}attempts+=1;return attempts>=PANEL_ZOOM_HINT_ATTEMPTS}
+  assert.equal(note(panelZoomBlocked(full,1.4)),false,'one attempt says nothing')
+  assert.equal(note(panelZoomBlocked(full,1.4)),true,'the repeat is what asks for more zoom')
+  // A zoom that moves means they were not stuck after all.
+  note(panelZoomBlocked(camera,1.4))
+  assert.equal(attempts,0)
+  assert.equal(note(panelZoomBlocked(full,1.4)),false,'so the next overshoot starts over')
+})
+test('the hint is removed exactly as its fade finishes',async()=>{
+  const {ZOOM_HINT_MS}=await import('../src/components/alignment-explorer/layers.js')
+  const {readFileSync}=await import('node:fs')
+  // The timer that unmounts the notice and the animation that fades it are two
+  // separate clocks. Drift either way is visible: a shorter animation leaves a
+  // blank gap holding the pointer, a longer one pops the notice away mid-fade.
+  const css=readFileSync(new URL('../src/components/alignment-explorer/explorer.css',import.meta.url),'utf8')
+  const durations=[...css.matchAll(/\.al-zoom-hint\s*\{[^}]*animation:[^;]*?(\d+(?:\.\d+)?)s/g)].map(m=>Number(m[1])*1000)
+  assert.ok(durations.length,'the notice carries a fade')
+  for(const duration of durations)assert.equal(duration,ZOOM_HINT_MS,'fade and timer run the same length')
+})
 test('panel mode never widens the columns to where blocks would be merged',async()=>{
   const {panelZoom,enterPanelZoom,mergeWidth,BLOCK_DETAIL_SPAN,PLANE_MIN}=await import('../src/components/alignment-explorer/layers.js')
   const size={width:1000,height:600}
@@ -177,6 +212,95 @@ test('inserting between chunks preserves vertical positions and makes horizontal
   assert.equal(b.x,50);assert.equal(b.y,4);assert.deepEqual(b.slots,[2]);assert.equal(c.x,110)
   assert.equal(last.x,30,'input remains unchanged for undo')
 })
+test('a run of blocks moved into a layer lands on its own rows, at its own scale',async()=>{
+  const {insertChunks,chunkGap,rowSlot}=await import('../src/components/alignment-explorer/layers.js')
+  // Three sequences down a file, each block holding two of them: membership
+  // varies block to block, which is the ordinary case and was the bad one.
+  const rows=['pongo','gorilla','macaca']
+  const chunks=Array.from({length:12},(_,i)=>{
+    const block=i+1
+    return createFragment(block,0,1000,rows.filter((_,r)=>(block+r)%3!==0),{id:`c${block}`})
+  })
+  const gap=chunkGap(chunks,1106)
+  // Bidding 110px per label is hopeless at this many chunks, and the clamped
+  // divisor used to answer 220,000 columns between 1,000-column chunks.
+  assert.ok(gap<=1000,`a gap of ${Math.round(gap)} is wider than the chunks it separates`)
+  const placed=insertChunks([],chunks,gap)
+  const slotOf=new Map()
+  for(const f of placed)f.rowIds.forEach((id,i)=>{
+    const slot=rowSlot(f,i)
+    if(slotOf.has(id))assert.equal(slot,slotOf.get(id),`${id} moved between blocks`)
+    slotOf.set(id,slot)
+  })
+  assert.deepEqual([...slotOf.values()].sort(),[0,1,2],'three sequences, three rows')
+  // The staircase: each chunk took the neighbour's rows and put the rest below
+  // them, so the same three sequences stepped one row lower at every block.
+  assert.deepEqual(placed.map(f=>Math.max(...f.rowIds.map((_,i)=>rowSlot(f,i)))).filter(slot=>slot>2),[])
+  // Chunks still go left to right in source order, one after another.
+  assert.deepEqual(placed.map(f=>f.x),placed.map((_,i)=>i*(1000+gap)))
+
+  // Rows already in the layer keep the slots they were given; a sequence the
+  // layer has not seen goes below them rather than on top of one.
+  const standing=[createFragment(1,0,10,['gorilla'],{id:'s1',slots:[3]})]
+  const added=insertChunks(standing,[createFragment(2,0,10,['gorilla','ibex'],{id:'s2'})],40)
+  assert.deepEqual(added.find(f=>f.id==='s2').slots,[3,4])
+})
+
+test('picking sequences by name moves one chunk per block, not one per row',async()=>{
+  const {moveSelection,createLayer,emptyWorkspace,rowPicks,cellRanges}=await import('../src/components/alignment-explorer/layers.js')
+  // Picking three names puts a pick on every block holding each of them, so a
+  // block carrying all three collects three picks over the same columns.
+  const blocks=[createFragment(1,0,100,['pongo','gorilla','macaca'],{id:'b1'}),
+    createFragment(2,0,100,['pongo','macaca'],{id:'b2'})]
+  const layer=createLayer('Original',0,blocks)
+  const selection=['pongo','gorilla','macaca'].flatMap(id=>rowPicks(layer,id))
+  assert.equal(selection.length,5,'five picks: three in the first block, two in the second')
+  const target=createLayer('Moved')
+  const next=moveSelection({...emptyWorkspace(),layers:[layer],active:layer.id,selection},target.id,{targetLayer:target})
+  const moved=next.layers.find(l=>l.id===target.id).fragments
+  // A block arrives as one chunk carrying the rows taken from it - the shape it
+  // has in the alignment. Cutting one chunk per pick stacked a one-row panel
+  // per row at the same place, and each painted its background over the rows
+  // above it, so every block but its last row went blank.
+  assert.equal(moved.length,2,'one chunk per block')
+  assert.deepEqual(moved.map(f=>[f.sourceBlock,[...f.rowIds].sort()]),
+    [[1,['gorilla','macaca','pongo']],[2,['macaca','pongo']]])
+  // Each row still carries only the cells it was picked with.
+  for(const f of moved)for(const id of f.rowIds)assert.deepEqual(cellRanges(f,id),[[0,100]])
+  // And they sit one after another, each block on the same three rows.
+  assert.ok(moved[1].x>=moved[0].x+100,'blocks keep their order and their gap')
+  const slotOf=new Map()
+  for(const f of moved)f.rowIds.forEach((id,i)=>{
+    const slot=f.slots?.[i]??i
+    if(slotOf.has(id))assert.equal(slot,slotOf.get(id),`${id} moved between blocks`)
+    slotOf.set(id,slot)
+  })
+
+})
+
+test('a ruler names only the ticks whose numbers fit inside the block',async()=>{
+  const {rulerTicks}=await import('../src/components/alignment-explorer/headerPlan.js')
+  // Monospace at 10px: near enough for a rule that is about fitting.
+  const measure=text=>text.length*6
+  // A block drawn from x=100, 500px wide, ticked every 120 columns at 1px each,
+  // so its last tick lands 20px short of the edge with a 18px number to write.
+  const ticks=rulerTicks({from:0,end:500,x:100,start:0,scale:1,step:120,limit:600-6,measure})
+  assert.deepEqual(ticks.map(t=>t.x),[100,220,340,460,580],'a tick for every step inside the block')
+  assert.deepEqual(ticks.map(t=>t.label),['1','121','241','361',null],
+    'the last number would cross the block edge, so the mark goes down unnamed')
+  // The clip is the block's edge, so what crossed it used to be drawn as half a
+  // number rather than left out.
+  assert.ok(580+3+measure('481')>594,'and it really would not have fitted')
+  // One more pixel of block and it would have been named.
+  assert.equal(rulerTicks({from:0,end:500,x:100,start:0,scale:1,step:120,limit:601,measure}).at(-1).label,'481')
+  // A block running past the viewport stops at the viewport, not at its own end.
+  const cut=rulerTicks({from:0,end:5000,x:0,start:0,scale:1,step:100,limit:194,viewport:250,measure})
+  assert.deepEqual(cut.map(t=>t.x),[0,100,200],'no tick is measured beyond the screen')
+  assert.deepEqual(cut.map(t=>t.label),['1','101',null])
+  // Degenerate steps do not spin.
+  assert.deepEqual(rulerTicks({from:0,end:100,x:0,start:0,scale:1,step:0,limit:100,measure}),[])
+})
+
 test('fit-aware chunk spacing leaves room for connection labels',async()=>{
   const {chunkGap,insertChunks,fitCamera}=await import('../src/components/alignment-explorer/layers.js')
   const fragments=[createFragment(1,0,100,['a']),createFragment(1,500,600,['a'])]
@@ -186,7 +310,7 @@ test('fit-aware chunk spacing leaves room for connection labels',async()=>{
 test('chunk FASTA includes every selected row and masks unselected cells without inventing gaps',async()=>{
   const {chunkFasta}=await import('../src/components/alignment-explorer/layers.js')
   const f=createFragment(2,10,15,['a','b'],{coverage:{a:[[10,12],[14,15]],b:[[10,15]]}})
-  assert.equal(chunkFasta(f,[{id:'a',source:'chr1',sequence:'A-CGT'}]),'>a source=chr1 block=2 columns=11-15\nA-NNT\n>b source=b block=2 columns=11-15\nNNNNN\n')
+  assert.equal(chunkFasta(f,[{id:'a',source:'chr1',sequence:'A-CGT'}]),'>chr1 block=2 columns=11-15\nA-NNT\n>b block=2 columns=11-15\nNNNNN\n')
 })
 
 test('zoom-out never restores an earlier camera while wider tiles arrive',async()=>{
@@ -510,20 +634,45 @@ test('every finer view of a remembered gap is still a gap',async()=>{
 test('a wheel over the name list scrolls the rows, not the track',async()=>{
   const {wheelScrollsRowList}=await import('../src/components/alignment-explorer/layers.js')
   const MARGIN_X=156
-  // Over the gutter, a vertical wheel belongs to the row list.
-  assert.equal(wheelScrollsRowList(20,{dx:0,dy:40},MARGIN_X),true)
-  assert.equal(wheelScrollsRowList(155,{dx:3,dy:-40},MARGIN_X),true)
+  // Over the gutter of a list long enough to scroll, a vertical wheel belongs
+  // to the row list.
+  assert.equal(wheelScrollsRowList(20,{dx:0,dy:40},MARGIN_X,true),true)
+  assert.equal(wheelScrollsRowList(155,{dx:3,dy:-40},MARGIN_X,true),true)
   // Over the alignment it never does, however vertical: the track keeps its
   // wheel behaviour everywhere the reader is actually looking at sequence.
-  assert.equal(wheelScrollsRowList(156,{dx:0,dy:40},MARGIN_X),false)
-  assert.equal(wheelScrollsRowList(900,{dx:0,dy:40},MARGIN_X),false)
+  assert.equal(wheelScrollsRowList(156,{dx:0,dy:40},MARGIN_X,true),false)
+  assert.equal(wheelScrollsRowList(900,{dx:0,dy:40},MARGIN_X,true),false)
+  // Left of the gutter edge is not by itself a row list. A layer that draws no
+  // gutter has sequence under the cursor there, and a list that is wholly on
+  // screen has nowhere to scroll to: in both the wheel is a zoom near the left
+  // edge and must be left to the view.
+  assert.equal(wheelScrollsRowList(20,{dx:0,dy:40},MARGIN_X,false),false)
+  // A modified wheel is the scheme's, over the names as anywhere else, so a
+  // pinch near the left edge zooms instead of being swallowed by the list.
+  assert.equal(wheelScrollsRowList(20,{dx:0,dy:40,ctrl:true},MARGIN_X,true),false)
+  assert.equal(wheelScrollsRowList(20,{dx:0,dy:40,shift:true},MARGIN_X,true),false)
+  assert.equal(wheelScrollsRowList(20,{dx:0,dy:40,alt:true},MARGIN_X,true),false)
   // A sideways swipe over the gutter still pans the alignment, as it does
   // everywhere else, rather than being swallowed by the list.
-  assert.equal(wheelScrollsRowList(20,{dx:-40,dy:0},MARGIN_X),false)
-  assert.equal(wheelScrollsRowList(20,{dx:40,dy:12},MARGIN_X),false)
+  assert.equal(wheelScrollsRowList(20,{dx:-40,dy:0},MARGIN_X,true),false)
+  assert.equal(wheelScrollsRowList(20,{dx:40,dy:12},MARGIN_X,true),false)
   // Nothing to do is not a scroll.
-  assert.equal(wheelScrollsRowList(20,{dx:0,dy:0},MARGIN_X),false)
-  assert.equal(wheelScrollsRowList(20,undefined,MARGIN_X),false)
+  assert.equal(wheelScrollsRowList(20,{dx:0,dy:0},MARGIN_X,true),false)
+  assert.equal(wheelScrollsRowList(20,undefined,MARGIN_X,true),false)
+})
+
+test('the name list only claims the wheel when it has somewhere to scroll',async()=>{
+  const {rowListScrolls}=await import('../src/components/alignment-explorer/layers.js')
+  const camera={x:0,y:0,scale:1,plane:1},size={width:1000,height:400}
+  // MARGIN_Y and the bottom margin come off the window: 400 leaves 322 for rows.
+  const sheet=rows=>({id:'original',extent:1000,rowExtent:rows,fragments:[]})
+  assert.equal(rowListScrolls(sheet(4),camera,size),false)
+  assert.equal(rowListScrolls(sheet(40),camera,size),true)
+  // Shrinking the sheet fits more of it in the window, and a list that is
+  // wholly on screen has nowhere to scroll to.
+  assert.equal(rowListScrolls(sheet(40),{...camera,plane:0.25},size),false)
+  // Nothing laid out is nothing to scroll.
+  assert.equal(rowListScrolls({id:'x',fragments:[]},camera,size),false)
 })
 
 test('names, blocks and regions are picked into one list and toggle off',async()=>{
@@ -844,6 +993,52 @@ test('moving a row inside a chunk redeals that chunk only',async()=>{
   assert.deepEqual(order(reorderFragmentRow(plain,'a',2)),['b','c','a'])
 })
 
+test('lit rows add up, and a click on a lit row puts out all of it',async()=>{
+  const {highlightedRows,addHighlight,removeHighlight,litRows,rowIsLit,unlightRow,rowPicks,togglePicks,
+    validateLayerWorkspace,emptyWorkspace}=await import('../src/components/alignment-explorer/layers.js')
+  const {hiddenSelection}=await import('../src/components/alignment-explorer/hiding.js')
+  const layer={fragments:[createFragment(4,0,100,['pongo','gorilla','macaca'],{id:'original:4'})]}
+  // Clicking a cell used to hold one row, so lighting a third put out the
+  // second. Lit rows add up, the way picks do.
+  let lit=addHighlight([],'pongo')
+  lit=addHighlight(lit,'gorilla')
+  lit=addHighlight(lit,'macaca')
+  assert.deepEqual(lit,['pongo','gorilla','macaca'],'a third click does not put out the second')
+  assert.deepEqual(addHighlight(lit,'gorilla'),lit,'landing on a lit row leaves it lit')
+  assert.deepEqual(removeHighlight(lit,'gorilla'),['pongo','macaca'])
+
+  // Two things light a row and they are the same gold on screen, so both have
+  // to answer to a click on it. This is the bug: gorilla picked by name *and*
+  // clicked on a cell stayed gold whichever one was clicked, because each
+  // gesture only cleared its own half.
+  const both={selection:togglePicks([],rowPicks(layer,'gorilla')),highlighted:['gorilla']}
+  assert.ok(rowIsLit(both,'gorilla'))
+  const out=unlightRow(both,'gorilla')
+  assert.deepEqual([...litRows({...both,...out})],[],'one click takes the pick and the highlight')
+  // Either half alone is lit, and putting it out is the same one gesture.
+  const picked={selection:togglePicks([],rowPicks(layer,'pongo')),highlighted:[]}
+  assert.ok(rowIsLit(picked,'pongo'),'a pick lights a row')
+  assert.deepEqual([...litRows({...picked,...unlightRow(picked,'pongo')})],[])
+  const clicked={selection:[],highlighted:['macaca']}
+  assert.ok(rowIsLit(clicked,'macaca'),'so does a click on one of its cells')
+  assert.deepEqual([...litRows({...clicked,...unlightRow(clicked,'macaca')})],[])
+  // Other rows are left alone, whichever way they are lit.
+  const many={selection:togglePicks([],rowPicks(layer,'pongo')),highlighted:['gorilla','macaca']}
+  assert.deepEqual([...litRows({...many,...unlightRow(many,'gorilla')})].sort(),['macaca','pongo'])
+
+  // A workspace saved when this was one slot still names the row it lit.
+  assert.deepEqual(highlightedRows('pongo'),['pongo'])
+  assert.deepEqual(highlightedRows(''),[])
+  assert.deepEqual(highlightedRows(null),[])
+  assert.deepEqual(highlightedRows(['pongo',7,'']),['pongo'],'and nothing else gets through')
+  const base={...emptyWorkspace(),layers:[]}
+  assert.deepEqual(validateLayerWorkspace({...base,highlighted:'pongo'},['pongo']).highlighted,['pongo'])
+  assert.deepEqual(validateLayerWorkspace({...base,highlighted:['pongo','ghost']},['pongo']).highlighted,['pongo'],
+    'a row the file no longer holds is not lit')
+  // Every lit row is one of the things a hide keeps, not just the last one.
+  assert.deepEqual(hiddenSelection([],lit,[]).rows,['pongo','gorilla','macaca'])
+})
+
 test('a highlighted row can always be unhighlighted, whatever is loaded',async()=>{
   const {togglePicks,rowPicks,removeRowPicks,pickedRowIds}=await import('../src/components/alignment-explorer/layers.js')
   const f=n=>createFragment(n,0,100,['a','b'],{id:`original:${n}`})
@@ -917,4 +1112,402 @@ test('a row lands where it was dropped, named by the row it was dropped on',asyn
   const wide=['s0','s1','s2','s3','s4','s5','s6','s7','s8','s9']
   const drawn=['s7','s4','s9']            // what a compact block happens to list
   assert.deepEqual(moveRowBefore(wide,'s0',drawn[1]),['s1','s2','s3','s0','s4','s5','s6','s7','s8','s9'])
+})
+
+const headerArgs=room=>({room,actionsWidth:69,sourceBlock:1,interval:'1–4,000',measure:text=>text.length*6})
+
+test('a block header says as much as fits and never asks for more room than it has',async()=>{
+  const {blockHeaderPlan}=await import('../src/components/alignment-explorer/headerPlan.js')
+  for(let room=0;room<=400;room+=1){
+    const plan=blockHeaderPlan(headerArgs(room))
+    if(!plan)continue
+    const measure=text=>text.length*6
+    const used=Math.max(measure(plan.text),plan.interval?measure('1–4,000'):0)+(plan.actions?69:0)
+    assert.ok(used<=room,`"${plan.text}" wants ${used} of ${room}`)
+    assert.equal(plan.width,Math.max(measure(plan.text),plan.interval?measure('1–4,000'):0))
+  }
+})
+
+test('a widening header only ever gains, so zooming in cannot take a name away',async()=>{
+  const {blockHeaderPlan}=await import('../src/components/alignment-explorer/headerPlan.js')
+  // Nothing, the bare number, the abbreviation, the name, the name with its
+  // actions, and finally the interval as well.
+  const rung=plan=>!plan?0:plan.text==='1'?1:plan.text.startsWith('Blk')?2:plan.actions?(plan.interval?5:4):3
+  let previous=0
+  for(let room=0;room<=400;room+=1){
+    const now=rung(blockHeaderPlan(headerArgs(room)))
+    assert.ok(now>=previous,`room ${room} dropped from rung ${previous} to ${now}`)
+    previous=now
+  }
+  assert.equal(rung(blockHeaderPlan(headerArgs(0))),0,'no room says nothing')
+  assert.equal(rung(blockHeaderPlan(headerArgs(400))),5,'all the room says everything')
+})
+
+test('the number survives every other part of a header',async()=>{
+  const {blockHeaderPlan}=await import('../src/components/alignment-explorer/headerPlan.js')
+  const seen=new Set()
+  for(let room=0;room<=400;room+=1){const plan=blockHeaderPlan(headerArgs(room));if(plan)seen.add(plan.text)}
+  assert.deepEqual([...seen].sort(),['1','Blk 1','Block 1'],'the ladder ends at the bare number')
+})
+
+test('a wide block carries a full header however crowded the view around it is',async()=>{
+  const {blockHeaderPlan}=await import('../src/components/alignment-explorer/headerPlan.js')
+  // The bug this replaced: one wide block among slivers sat in a view judged
+  // "dense" as a whole and was cut back to its number, with 700px of header to
+  // spare. Only its own room has a say now.
+  const wide=blockHeaderPlan(headerArgs(720))
+  assert.deepEqual([wide.text,wide.actions,wide.interval],['Block 1',true,true])
+  const sliver=blockHeaderPlan(headerArgs(20))
+  assert.deepEqual([sliver.text,sliver.actions,sliver.interval],['1',false,false])
+  // Compact rows are named in the header while there is room to say so.
+  assert.equal(blockHeaderPlan({...headerArgs(720),compact:true}).text,'Block 1 · compact')
+  assert.equal(blockHeaderPlan({...headerArgs(140),compact:true}).text,'Block 1')
+})
+
+/** Original with two compact blocks side by side, each packing only the
+ *  sequences it holds: the left one three of them, the right one all six. */
+function compactBlocks(){
+  const order=['a','b','c','d','e','f']
+  const left={...createFragment(65,0,100,['a','c','e'],{x:0}),compact:true,slots:null,layoutRows:3,y:0}
+  const right={...createFragment(66,0,100,order,{x:200}),compact:true,slots:null,layoutRows:6,y:0}
+  return {order,left,right,camera:{x:0,y:0,scale:2,plane:1},
+    // What the gutter publishes while the left block is the one the view is over.
+    gutterRows:left.rowIds.map((rowId,i)=>({kind:'label',rowId,anchor:65,y:66+i*26,height:26}))}
+}
+
+test('a row dropped into a compact block lands between that block\'s own rows',async()=>{
+  const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
+  const {order,left,right,camera,gutterRows}=compactBlocks()
+  const into=(x,y)=>originalRowDropTarget({point:{x,y},fragments:[left,right],camera,gutterRows,gutterAnchor:65,order})
+  // The right block draws a, b, c, d, e, f down its own rows. Aiming between
+  // the third and fourth means before d, whatever the gutter says at that height.
+  const rightX=156+200*2+5
+  assert.equal(into(rightX,66+3*26+2).beforeId,'d')
+  assert.equal(into(rightX,66+0).beforeId,'a')
+  assert.equal(into(rightX,66+5*26+2).beforeId,'f')
+  // The bug this replaced: the gutter was showing the left block's three rows,
+  // so the same drop offered a, c or e and inserted before whichever sat at
+  // that height — a sequence the reader was not pointing at.
+  const gutterAnswer=[...gutterRows].sort((p,q)=>p.y-q.y).find(row=>66+3*26+2<row.y+13)
+  assert.equal(gutterAnswer,undefined,'the old list did not even reach that far down')
+})
+
+test('every gap between the rows of the block being dragged into is offered',async()=>{
+  const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
+  const {order,left,right,camera,gutterRows}=compactBlocks()
+  const rightX=156+200*2+5
+  const landings=new Set()
+  for(let y=60;y<66+7*26;y+=2)
+    landings.add(originalRowDropTarget({point:{x:rightX,y},fragments:[left,right],camera,gutterRows,gutterAnchor:65,order}).beforeId)
+  // Six rows, so six places to land before one of them, plus the end.
+  assert.deepEqual([...landings].sort(),['a','b','c','d','e','f',null].sort())
+})
+
+test('a jump marker dropped in the channel aims at the block it names',async()=>{
+  const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
+  const {order,left,right,camera,gutterRows}=compactBlocks()
+  // The marker sits in the gap between the blocks, over neither of them.
+  const channelX=156+150*2
+  const target=originalRowDropTarget({point:{x:channelX,y:66+3*26+2},fragments:[left,right],
+    camera,gutterRows,gutterAnchor:65,order,jumpBlock:66})
+  assert.equal(target.beforeId,'d','the block the marker points into decides')
+  // Below the last row of that block the row follows it, rather than being sent
+  // to the end of a file-wide order the block does not show.
+  const past=originalRowDropTarget({point:{x:channelX,y:66+9*26},fragments:[left,right],
+    camera,gutterRows,gutterAnchor:65,order:[...order,'g'],jumpBlock:66})
+  assert.equal(past.beforeId,'g')
+})
+
+test('an aligned block still reads its drop off the file-wide gutter',async()=>{
+  const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
+  const order=['a','b','c','d']
+  // Aligned blocks sit on the file-wide slots, and the gutter offers the empty
+  // ones too: b and c belong to sequences this block does not hold.
+  const aligned={...createFragment(1,0,100,['a','d'],{x:0}),compact:false,slots:[0,3],layoutRows:4,y:0}
+  const gutterRows=order.map((rowId,i)=>({kind:'label',rowId,anchor:null,y:66+i*26,height:26}))
+  const camera={x:0,y:0,scale:2,plane:1}
+  const at=y=>originalRowDropTarget({point:{x:300,y},fragments:[aligned],camera,gutterRows,gutterAnchor:null,order}).beforeId
+  assert.equal(at(66+26+2),'b','an empty slot is still a place to land')
+  assert.equal(at(66+2),'a')
+  assert.equal(at(66+4*26),null,'past the last row of the file-wide list is the end')
+})
+
+test('the drop indicator marks the blocks the answer was read against',async()=>{
+  const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
+  const {order,left,right,camera,gutterRows}=compactBlocks()
+  const rightX=156+200*2+5
+  const into=originalRowDropTarget({point:{x:rightX,y:66+3*26+2},fragments:[left,right],camera,gutterRows,gutterAnchor:65,order})
+  const primary=into.spans.find(span=>span.primary)
+  assert.ok(primary,'a block-relative drop names the block it was read against')
+  assert.ok(primary.x<=rightX&&rightX<=primary.x+primary.width,'and the span covers the cursor')
+  assert.equal(primary.y,into.lineY,'marked where the row lands')
+  // Read off the file-wide gutter there is no one block to point at, and the
+  // line belongs across the window as before.
+  const aligned={...createFragment(1,0,100,order,{x:0}),compact:false,slots:order.map((_,i)=>i),layoutRows:6,y:0}
+  const wide=order.map((rowId,i)=>({kind:'label',rowId,anchor:null,y:66+i*26,height:26}))
+  const fromGutter=originalRowDropTarget({point:{x:300,y:66+2*26+2},fragments:[aligned],camera,gutterRows:wide,gutterAnchor:null,order})
+  assert.equal(fromGutter.spans,null)
+  assert.equal(fromGutter.beforeId,'c')
+})
+
+test('a dragged marker keeps its own block wherever the cursor goes',async()=>{
+  const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
+  const {order,left,right,camera,gutterRows}=compactBlocks()
+  const aim=x=>originalRowDropTarget({point:{x,y:66+3*26+2},fragments:[left,right],
+    camera,gutterRows,gutterAnchor:65,order,jumpBlock:66,rowId:'a'})
+  // Over the left block, in the channel, over the right block, off to the side:
+  // the height picks the gap and the marker picks the block, every time.
+  for(const x of [156+5,156+150*2,156+200*2+5,1200])
+    assert.equal(aim(x).beforeId,'d',`cursor at ${x}`)
+  for(const x of [156+5,156+150*2,1200])
+    assert.deepEqual(aim(x).spans.filter(s=>s.primary).map(s=>Math.round(s.x)),
+      aim(156+200*2+5).spans.filter(s=>s.primary).map(s=>Math.round(s.x)),
+      'and the block marked never changes either')
+})
+
+test('the blocks a move shows in are marked at their own heights',async()=>{
+  const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
+  const order=['a','b','c','d','e','f']
+  // Three compact blocks holding different subsets of the same six sequences.
+  const one={...createFragment(1,0,100,['a','b','f'],{x:0}),compact:true,slots:null,layoutRows:3,y:0}
+  const two={...createFragment(2,0,100,['b','c','d','e','f'],{x:200}),compact:true,slots:null,layoutRows:5,y:0}
+  const three={...createFragment(3,0,100,['d','f'],{x:400}),compact:true,slots:null,layoutRows:2,y:0}
+  const camera={x:0,y:0,scale:2,plane:1}
+  const gutterRows=one.rowIds.map((rowId,i)=>({kind:'label',rowId,anchor:1,y:66+i*26,height:26}))
+  // Dragging f into block 2, to the gap before d — its third row there.
+  const drop=originalRowDropTarget({point:{x:156+250*2,y:66+2*26+2},fragments:[one,two,three],
+    camera,gutterRows,gutterAnchor:1,order,jumpBlock:2,rowId:'f'})
+  assert.equal(drop.beforeId,'d')
+  // Block 1 is upstream and is left alone; block 3 carries f too and is marked
+  // where f will sit in it, which is not the height block 2 is marked at.
+  assert.deepEqual(drop.spans.map(s=>s.primary),[true,false])
+  assert.equal(drop.spans[0].y,66+2*26,'before d, block 2\'s third row')
+  assert.equal(drop.spans[1].y,66+0,'before d, block 3\'s first row')
+})
+
+test('a marker for a block that is not on screen never lands on a passing block',async()=>{
+  const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
+  const order=['a','b','c','d','e','f']
+  // The window holds blocks 1 and 2. The marker sits on block 1 and points at
+  // block 9, which is outside it — most markers are exactly this.
+  const one={...createFragment(1,0,100,['a','c','f'],{x:0}),compact:true,slots:null,layoutRows:3,y:0}
+  const two={...createFragment(2,0,100,['b','d','e'],{x:200}),compact:true,slots:null,layoutRows:3,y:0}
+  const camera={x:0,y:0,scale:2,plane:1}
+  const gutterRows=one.rowIds.map((rowId,i)=>({kind:'label',rowId,anchor:1,y:66+i*26,height:26}))
+  const drag=x=>originalRowDropTarget({point:{x,y:66+1*26+2},fragments:[one,two],camera,
+    gutterRows,gutterAnchor:1,order,jumpBlock:9,fragmentId:one.id,rowId:'f'})
+  // Block 2 holds none of block 1's sequences. Wandering the cursor over it,
+  // or anywhere else, must not hand it the insertion.
+  const overTwo=drag(156+200*2+5),overOne=drag(156+5),offToTheSide=drag(1200)
+  for(const [name,answer] of [['over block 2',overTwo],['over block 1',overOne],['past both',offToTheSide]]){
+    assert.equal(answer.beforeId,'c',`${name}: read against the marker's own block`)
+    assert.equal(answer.spans.length,1,`${name}: one block marked`)
+    assert.ok(answer.spans[0].primary&&Math.round(answer.spans[0].x)===Math.round(overOne.spans[0].x),
+      `${name}: and always the same one`)
+  }
+})
+
+test('a sequence sits on the line Original will lay it out on',async()=>{
+  const {rowLineInBlock,layoutOriginal}=await import('../src/components/alignment-explorer/originalLayout.js')
+  const ids=['a','b','c','d','e','f']
+  const block=createFragment(7,0,100,['b','e','f'],{x:0})
+  // Aligned: the file-wide slot, whichever sequences the block happens to hold.
+  assert.equal(rowLineInBlock(block.rowIds,ids,'e',{compact:false}),4)
+  // Compact: packed from the top, in file-wide order, counting only its own.
+  assert.equal(rowLineInBlock(block.rowIds,ids,'e',{compact:true}),1)
+  // One block compacted inside an aligned view packs from its own first slot.
+  assert.equal(rowLineInBlock(block.rowIds,ids,'e',{compact:true,wholeView:false}),2)
+  assert.equal(rowLineInBlock(block.rowIds,ids,'a',{compact:true}),null,'a sequence the block does not hold')
+  // The same answer the layout itself arrives at, which is the point of it.
+  for(const [mode,wholeView] of [['aligned',false],['compact',true]]){
+    const [laid]=layoutOriginal([block],ids,mode)
+    for(const id of block.rowIds){
+      const index=laid.rowIds.indexOf(id)
+      assert.equal(rowLineInBlock(block.rowIds,ids,id,{compact:mode==='compact',wholeView}),
+        laid.y+(laid.slots?laid.slots[index]:index),`${id} in ${mode} rows`)
+    }
+  }
+})
+
+test('following a marker centres on its sequence, as far as the block allows',async()=>{
+  const {centreOnRow,blockRowLines}=await import('../src/components/alignment-explorer/originalLayout.js')
+  const {MARGIN_Y,ROW_HEIGHT}=await import('../src/components/alignment-explorer/layout.js')
+  const height=560,middle=height/2
+  const screen=(line,last)=>MARGIN_Y+line*ROW_HEIGHT+ROW_HEIGHT/2-centreOnRow(line,last,height)
+  // A block deeper than the window puts the row in the middle of it.
+  assert.equal(screen(200,400),middle)
+  // One that fits is not scrolled at all: the row is plainly visible where it is.
+  assert.equal(centreOnRow(11,12,height),0)
+  assert.ok(screen(11,12)<height,'and still on screen')
+  // Near the end of a deep block the camera stops at the last row rather than
+  // scrolling past it into empty space.
+  assert.equal(centreOnRow(399,400,height),MARGIN_Y+401*ROW_HEIGHT-height)
+  assert.ok(screen(399,400)<=height)
+  // Row lines come from the same reading of the layout the drop targets use.
+  const ids=['a','b','c','d','e','f']
+  assert.deepEqual([...blockRowLines(['b','e','f'],ids,{compact:true}).entries()],[['b',0],['e',1],['f',2]])
+  assert.deepEqual([...blockRowLines(['b','e','f'],ids,{compact:false}).entries()],[['b',1],['e',4],['f',5]])
+  assert.deepEqual([...blockRowLines(['b','e','f'],ids,{compact:true,wholeView:false}).entries()],[['b',1],['e',2],['f',3]])
+})
+
+test('hiding keeps what is picked out, and the blocks picked sequences run through',async()=>{
+  const {hiddenSelection,canHide,keptBlocks}=await import('../src/components/alignment-explorer/hiding.js')
+  const one=createFragment(4,0,100,['a','b']),two=createFragment(9,0,100,['b','c'])
+  const fragments=[one,two]
+  assert.equal(canHide(hiddenSelection([],'',fragments)),false,'nothing picked, nothing to hide down to')
+  // A block picked by its header keeps that block.
+  const block=hiddenSelection([{kind:'block',fragmentId:one.id,rowIds:['a','b']}],'',fragments)
+  assert.deepEqual(block,{blocks:[4],rows:[]})
+  assert.deepEqual(keptBlocks(block),[4])
+  // A sequence picked by name keeps every block it runs through, which is the
+  // server's answer and not something the loaded blocks could have told us.
+  const row=hiddenSelection([{kind:'row',fragmentId:two.id,rowIds:['c']}],'',fragments)
+  assert.deepEqual(row,{blocks:[9],rows:['c']})
+  assert.deepEqual(keptBlocks(row,[{block:2},{block:9},{block:57}]),[2,9,57])
+  // Both at once, and the sequence being followed counts as picked out too.
+  const both=hiddenSelection([{kind:'block',fragmentId:one.id,rowIds:['a','b']}],'c',fragments)
+  assert.deepEqual(keptBlocks(both,[{block:9},{block:4}]),[4,9],'unioned, in file order, each block once')
+  // An aggregate stands for many blocks and names none of them, so it is not a
+  // pick that can be hidden down to.
+  const grouped=[{...createFragment(1,0,100,['a']),aggregate:{first:1,last:20,count:20}}]
+  assert.equal(canHide(hiddenSelection([{kind:'block',fragmentId:grouped[0].id,rowIds:['a']}],'',grouped)),false)
+})
+
+test('the survivors are packed shoulder to shoulder and keep their own numbers',async()=>{
+  const {packBlocks,packedExtent,layoutGap}=await import('../src/components/alignment-explorer/hiding.js')
+  // Blocks 4, 9 and 57 as the file has them: scattered, with the file's gap
+  // between neighbours and a great deal of nothing in between.
+  const descriptors=[
+    {block:4,x:400,end_x:500,row_ids:['a','b'],available_row_ids:['a','b'],row_count:2},
+    {block:5,x:532,end_x:632,row_ids:['b'],available_row_ids:['b'],row_count:1},
+    {block:57,x:9000,end_x:9300,row_ids:['b','c'],available_row_ids:['b','c'],row_count:2},
+  ]
+  assert.equal(layoutGap(descriptors),32,'the gap is read off consecutive blocks, not assumed')
+  const packed=packBlocks(descriptors)
+  assert.deepEqual(packed.map(f=>f.sourceBlock),[4,5,57],'numbering survives the move')
+  assert.deepEqual(packed.map(f=>f.x),[0,132,264],'and the distance between them does not')
+  assert.deepEqual(packed.map(f=>[f.start,f.end]),[[0,100],[0,100],[0,300]],'each keeps its own columns')
+  assert.deepEqual(packed[2].rowIds,['b','c'])
+  assert.equal(packedExtent(packed),564)
+  assert.equal(packedExtent([]),1,'an empty sheet still has somewhere to put the camera')
+})
+
+test('packed neighbours are linked however far apart they were',async()=>{
+  const {packBlocks}=await import('../src/components/alignment-explorer/hiding.js')
+  const {layerConnections}=await import('../src/components/alignment-explorer/layers.js')
+  const packed=packBlocks([
+    {block:4,x:400,end_x:500,row_ids:['a','b'],available_row_ids:['a','b']},
+    {block:57,x:9000,end_x:9300,row_ids:['b'],available_row_ids:['b']},
+  ],32)
+  const links=layerConnections({fragments:packed})
+  assert.equal(links.length,1,'the one sequence they share is joined')
+  assert.deepEqual([links[0].from.sourceBlock,links[0].to.sourceBlock],[4,57])
+  // Blocks that were never neighbours have no common column count, and the
+  // painter says so rather than inventing a distance across the join.
+  assert.equal(links[0].columns,null)
+})
+
+test('And reads the picks as conditions on one block rather than a union',async()=>{
+  const {keptBlocks}=await import('../src/components/alignment-explorer/hiding.js')
+  // Three sequences picked, and the blocks that hold some or all of them.
+  const membership=[{block:4,ids:['a','b','c']},{block:9,ids:['a','b']},
+                    {block:20,ids:['a','b','c']},{block:31,ids:['c']}]
+  const rows=['a','b','c']
+  // Sequences alone: only the blocks holding all three.
+  assert.deepEqual(keptBlocks({blocks:[],rows},membership,'and'),[4,20])
+  assert.deepEqual(keptBlocks({blocks:[],rows},membership,'or'),[4,9,20,31],'where Or takes any of them')
+  // Blocks alone: just those blocks, whatever they hold.
+  assert.deepEqual(keptBlocks({blocks:[9,4],rows:[]},[],'and'),[4,9])
+  // Both: the picked blocks are the only candidates, and each has to hold every
+  // picked sequence. Block 9 is missing c, so it goes; 20 holds all three but
+  // was not picked, so it is not considered.
+  assert.deepEqual(keptBlocks({blocks:[4,9],rows},membership,'and'),[4])
+  assert.deepEqual(keptBlocks({blocks:[4,9],rows},membership,'or'),[4,9,20,31])
+  // A condition nothing satisfies keeps nothing, which the view reports rather
+  // than hiding everything.
+  assert.deepEqual(keptBlocks({blocks:[31],rows},membership,'and'),[])
+  assert.deepEqual(keptBlocks({blocks:[],rows:['a','b','c','z']},membership,'and'),[])
+  // A block naming the same sequence twice does not thereby satisfy two
+  // conditions, and sequences it holds that were not asked about do not count.
+  assert.deepEqual(keptBlocks({blocks:[],rows:['a','b']},[{block:7,ids:['a','a']},{block:8,ids:['a','b','q']}],'and'),[8])
+})
+
+test('a saved hide is read back as blocks, rows and the settings that made it',async()=>{
+  const {validateLayerWorkspace,emptyWorkspace}=await import('../src/components/alignment-explorer/layers.js')
+  const base={...emptyWorkspace(),layers:[]}
+  const saved=validateLayerWorkspace({...base,
+    hidden:{blocks:[4,9],rows:['a','b'],camera:{x:10,y:20,scale:3},what:'both',mode:'and',choice:{blocks:[4],rows:['a','b']}},
+    hideMemory:{choice:{blocks:[4],rows:['a','b']},what:'both',mode:'and'}},['a','b'])
+  assert.deepEqual(saved.hidden.blocks,[4,9])
+  assert.deepEqual(saved.hidden.rows,['a','b'])
+  assert.equal(saved.hidden.what,'both')
+  assert.equal(saved.hidden.mode,'and')
+  assert.deepEqual(saved.hideMemory.choice.rows,['a','b'])
+  // Nothing left standing is not a hide, and a rule that is not a rule is Or.
+  assert.equal(validateLayerWorkspace({...base,hidden:{blocks:[],rows:[]}},[]).hidden,null)
+  assert.equal(validateLayerWorkspace({...base,hidden:{blocks:[2],mode:'sideways'}},[]).hidden.mode,'or')
+  // Junk in a saved file does not become state: block numbers are numbers and
+  // sequence ids are strings, or the whole hide is dropped.
+  assert.equal(validateLayerWorkspace({...base,hidden:{blocks:['4']}},[]).hidden,null)
+  assert.equal(validateLayerWorkspace({...base,hidden:{blocks:[4],rows:[7]}},[]).hidden.rows,null)
+  assert.equal(validateLayerWorkspace({...base,hideMemory:{choice:{blocks:[1]}}},[]).hideMemory,null)
+})
+
+test('both passes ask one question about a buried link, and a packed sheet asks it of what it draws',async()=>{
+  const {linkIsBuried,blockJumpMarkers}=await import('../src/components/alignment-explorer/layers.js')
+  const from=createFragment(4,0,100,['a']),to=createFragment(9,0,100,['a'])
+  const link={id:'l',rowId:'a',from,to}
+  const between=[{sourceBlock:4},{sourceBlock:7},{sourceBlock:9}]
+  const clear=[{sourceBlock:4},{sourceBlock:9}]
+  // Original holds every block, so a gap in the numbering is a buried link
+  // whether or not the blocks in it have loaded.
+  assert.equal(linkIsBuried(link,clear,{original:true}),true)
+  // A layer holds only what was chosen, so what is drawn is the whole truth.
+  assert.equal(linkIsBuried(link,between,{}),true)
+  assert.equal(linkIsBuried(link,clear,{}),false)
+  // A packed sheet reads its own picture, whatever Original would have said:
+  // the blocks stepped over were hidden on purpose, so 4 to 9 over a hidden 7
+  // is a line...
+  for(const original of [true,false])
+    assert.equal(linkIsBuried(link,clear,{original,packed:true}),false)
+  // ...but a block still standing between the ends buries it all the same, or
+  // the line would pass behind block 7 and read as a sequence that runs
+  // through it. That was the bug: packing dropped every marker, so a row
+  // skipping a block still on screen was drawn straight through it.
+  for(const original of [true,false])
+    assert.equal(linkIsBuried(link,between,{original,packed:true}),true)
+  // The bug this replaced: the line pass and the marker pass asked differently,
+  // so a link could be dropped by one as buried and by the other as not, and
+  // disappear. They take the same answer now, markers included.
+  assert.deepEqual(blockJumpMarkers([link],[],clear,{original:false,packed:true}),[])
+  assert.equal(blockJumpMarkers([link],[],between,{original:false,packed:true}).length,2)
+  assert.equal(blockJumpMarkers([link],[],between,{original:false}).length,2)
+  assert.equal(blockJumpMarkers([link],[],clear,{original:true}).length,2)
+  // Nor do off-window stubs survive packing: everything the sheet holds is on it.
+  const stub=[{id:'s',fragment:from,rowId:'a',direction:1,block:57}]
+  assert.deepEqual(blockJumpMarkers([],stub,clear,{packed:true}),[])
+  assert.equal(blockJumpMarkers([],stub,clear,{}).length,1)
+})
+
+test('hiding sequences takes the blocks they leave empty with them',async()=>{
+  const {hideResult}=await import('../src/components/alignment-explorer/hiding.js')
+  // One sequence kept. It is in blocks 7 and 9; block 8 holds other sequences
+  // only, so once they are hidden its header is all that would be left of it.
+  const membership=[{block:7,ids:['g']},{block:9,ids:['g']}]
+  const sequences=hideResult({blocks:[],rows:['g']},membership,{what:'sequences'})
+  assert.deepEqual(sequences.blocks,[7,9],'block 8 goes with the sequences it held')
+  assert.deepEqual(sequences.rows,['g'])
+  // Hiding blocks alone leaves every sequence in place, so no block is emptied
+  // and none is dropped for being empty.
+  const onlyBlocks=hideResult({blocks:[7,8],rows:[]},[],{what:'blocks',mode:'or'})
+  assert.deepEqual([onlyBlocks.blocks,onlyBlocks.rows],[[7,8],null])
+  // Both: the condition chooses candidates and the emptiness rule prunes them.
+  // Block 8 is picked and passes Or, but holds none of the kept sequences.
+  const both=hideResult({blocks:[7,8],rows:['g']},membership,{what:'both',mode:'or'})
+  assert.deepEqual(both.blocks,[7,9])
+  // Under And it was never a candidate in the first place.
+  assert.deepEqual(hideResult({blocks:[7,8],rows:['g']},membership,{what:'both',mode:'and'}).blocks,[7])
+  // A sequence-only hide ignores which blocks happen to be picked: it is a
+  // statement about sequences, and the blocks follow from where they are.
+  assert.deepEqual(hideResult({blocks:[8],rows:['g']},membership,{what:'sequences'}).blocks,[7,9])
 })
