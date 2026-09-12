@@ -245,11 +245,29 @@ export function arrivalCustomGenome(arrival) {
  *  when the page above it grows — a pill strip appearing, a longer list — and means the
  *  same authored number frames the same picture at a different window height.
  *
+ *  Up to a point: an offset authored in a tall window is *below the bottom edge* of a
+ *  short one, and the runtime dutifully puts the target there, clipped to a sliver with a
+ *  ring drawn around the sliver. So the runtime clamps what it is given to what the window
+ *  can actually show — see `applyPageScrollArrival`. An authored number is a composition,
+ *  not a promise that the window is the size it was authored in.
+ *
  *  The runtime scrolls there smoothly on the way in, so the step reads as the view
  *  travelling to the next thing rather than the page jumping under the reader. */
 export function arrivalScrollOffset(arrival) {
   const offset = Number(arrival?.offset)
   return Number.isFinite(offset) ? offset : 0
+}
+
+/** Whether the step wants its target centred rather than placed at an authored offset.
+ *
+ *  The offset composes a picture, which is the right default. Centring is for the other
+ *  case: a control the reader has to press, where being *comfortably on screen* matters
+ *  more than what sits beside it — and where the author has no way to know how much room
+ *  the reader's window will leave below it. The runtime centres as far as the page will
+ *  scroll and stops there, so the bottom of a page is framed as well as it can be rather
+ *  than not at all. */
+export function arrivalScrollCenter(arrival) {
+  return arrival?.center === true
 }
 
 /** Which of a tutorial's embedded genomes a `genomeSelection` arrival selects.
@@ -1111,6 +1129,12 @@ export function validateTutorial(tutorial, options = {}) {
         }
         if (arrival.offset !== undefined && !Number.isFinite(Number(arrival.offset))) {
           problems.push(`${where} arrive: pageScroll offset must be a number of pixels.`)
+        }
+        if (arrival.center !== undefined && typeof arrival.center !== 'boolean') {
+          problems.push(`${where} arrive: pageScroll center must be true or false.`)
+        }
+        if (arrival.center === true && arrival.offset !== undefined) {
+          problems.push(`${where} arrive: pageScroll is either centred or placed at an offset, not both.`)
         }
       } else if (arrival.type === 'dialog') {
         if (!arrivalDialog(arrival)) {

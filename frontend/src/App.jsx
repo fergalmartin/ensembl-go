@@ -63,7 +63,7 @@ import AppButtonIcon from './components/AppButtonIcon'
 import NoGenomesPillsMessage from './components/NoGenomesPillsMessage'
 import { useTutorialHost } from './hooks/useTutorial'
 import { resetTutorialWorkspace } from './tutorials/demoGenomeApi'
-import { isTutorialSandboxActive } from './tutorials/sandbox'
+import { isTutorialSandboxActive, withoutTutorialSandboxFields } from './tutorials/sandbox'
 import SelectedSpeciesPillsBar from './components/SelectedSpeciesPillsBar'
 import { cycleSelection } from './utils/genomeWheel'
 import WindowsBackendSetupView from './components/WindowsBackendSetupView'
@@ -1542,10 +1542,14 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/api/config`)
       if (res.ok) {
-        const data = await res.json()
+        // Both stores are swept of any tutorial scratch configuration before they are
+        // read. Writing it is shut off at source, but a configuration saved before that
+        // was true still carries the tutorial's own genomes and its scratch output
+        // directory, and nothing else would ever take them out again.
+        const data = withoutTutorialSandboxFields(await res.json())
         // Recover any fields the backend may have lost (e.g. output_dir wiped by a crashed write)
         // by merging in values from the Electron-side durable config store.
-        const electronConfig = window.electronAPI?.getElectronConfig?.() || {}
+        const electronConfig = withoutTutorialSandboxFields(window.electronAPI?.getElectronConfig?.() || {})
         let recovered = {
           ...electronConfig,
           ...data,
@@ -1560,7 +1564,7 @@ function App() {
             const outputConfigRes = await fetch(`${API_BASE}/api/config/output-dir?${configParams.toString()}`)
             if (outputConfigRes.ok) {
               const outputPayload = await outputConfigRes.json()
-              const outputConfig = outputPayload?.config
+              const outputConfig = withoutTutorialSandboxFields(outputPayload?.config)
               if (outputPayload?.found && outputConfig) {
                 recovered = {
                   ...recovered,
@@ -5488,11 +5492,13 @@ function App() {
   // the strip keeps its place in the layout from the moment the scene arrives — present
   // but invisible while nothing is selected — so the first tick fills a space that was
   // already there and nothing below it moves.
-  const reserveTutorialSelectorPills = Boolean(
-    tutorialConfig
-    && tutorialRuntime.selectorListPresentation?.fitAllRows
-    && currentView === 'genome_selector'
-  )
+  //
+  // Reserved for any tutorial standing in the Genome Selector, not only one that asked for
+  // the fixed list scene. A tutorial that walks the reader through registering a genome and
+  // then ticking it has the same two problems — a header that grows under the row being
+  // ticked, and a step that points at a strip which does not exist yet — without ever
+  // framing the list.
+  const reserveTutorialSelectorPills = Boolean(tutorialConfig && currentView === 'genome_selector')
   // With nothing in it the strip used to vanish, which left the emptiest possible app
   // saying nothing about how to fill it, and made the header jump the moment a first
   // genome arrived. Not during a tutorial: its sandbox has its own way in, and telling a

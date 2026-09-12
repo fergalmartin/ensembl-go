@@ -11,6 +11,7 @@ import {
   arrivalDialog,
   arrivalPlaylists,
   arrivalScrollOffset,
+  arrivalScrollCenter,
   arrivalSelectedPlaylist,
   arrivalsFor,
   currentStep,
@@ -467,6 +468,32 @@ test('an authored view position needs a target to be measured against', () => {
   assert.equal(arrivalScrollOffset({ offset: 214 }), 214)
   assert.equal(arrivalScrollOffset({}), 0)
   assert.equal(arrivalScrollOffset({ offset: 'nope' }), 0)
+})
+
+test('a centred view position is a different instruction from an offset one', () => {
+  // Centring is for a control that has to be pressed; an offset composes a picture. A step
+  // asking for both has not decided which it wants, and the runtime would have to pick.
+  const centred = {
+    id: 'x', title: 'X',
+    steps: [{ id: 'a', title: 'A', body: 'B', arrive: { type: 'pageScroll', anchor: 'manual-add-genome', center: true } }],
+  }
+  assert.deepEqual(validateTutorial(centred), [])
+
+  const confused = {
+    id: 'x', title: 'X',
+    steps: [
+      { id: 'a', title: 'A', body: 'B', arrive: { type: 'pageScroll', anchor: 'manual-add-genome', center: true, offset: 620 } },
+      { id: 'b', title: 'B', body: 'B', arrive: { type: 'pageScroll', anchor: 'manual-add-genome', center: 'yes' } },
+    ],
+  }
+  const problems = validateTutorial(confused)
+  assert.ok(problems.some((problem) => problem.includes('centred or placed at an offset')))
+  assert.ok(problems.some((problem) => problem.includes('pageScroll center must be true or false')))
+
+  assert.equal(arrivalScrollCenter({ center: true }), true)
+  assert.equal(arrivalScrollCenter({ center: false }), false)
+  assert.equal(arrivalScrollCenter({ offset: 620 }), false)
+  assert.equal(arrivalScrollCenter({}), false)
 })
 
 test('a dialog arrival names a known dialog, and closing it is one of them', () => {

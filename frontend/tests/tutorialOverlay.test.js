@@ -13,6 +13,7 @@ import {
   stepDwellMs,
 } from '../src/utils/tutorialModel.js'
 import { tutorialDimColor } from '../src/utils/overlayGeometry.js'
+import { withoutTutorialSandboxFields } from '../src/tutorials/sandbox.js'
 import { readFileSync } from 'node:fs'
 
 const overlay = readFileSync(new URL('../src/components/TutorialOverlay.jsx', import.meta.url), 'utf8')
@@ -613,6 +614,46 @@ test('the sandbox hides the user\'s own genomes, not just their output directory
   }
   assert.match(app, /const extras = tutorialConfig\s+\? \(tutorialConfig.tutorial_selected_genomes \|\| \[\]\)/)
   assert.match(app, /if \(!configLoaded \|\| tutorialConfig\) return/)
+})
+
+test('the sandbox stays shut for as long as its configuration is in force', () => {
+  // Not just while the tutorial is *running*. A finished tutorial still shows its
+  // completion card over the override, and the builder's preview has no running state at
+  // all — in both, `config` is still the scratch one and a write would persist it.
+  assert.match(provider, /const sandboxUp = isRunning \|\| Boolean\(configOverride\)/)
+  // And the cleanup is guarded, because React runs a child's effects before its parent's:
+  // an unguarded one lowers the flag on the very commit that starts a tutorial, and App's
+  // autosave then persists the sandbox configuration before this effect raises it again.
+  assert.match(provider, /if \(!sandboxUp\) return undefined\n\s+setTutorialSandboxActive\(true\)/)
+})
+
+test('a stored configuration is swept of tutorial fields on the way in', () => {
+  // Second line behind the write guards: a configuration saved before they were in place
+  // still carries the tutorial's genomes and its scratch output directory, and read back
+  // they behave as if a tutorial were running — demo genomes as pills, in the next
+  // tutorial. The Electron store has no equivalent of the backend's own refusal.
+  assert.match(app, /const data = withoutTutorialSandboxFields\(await res\.json\(\)\)/)
+  assert.match(app, /const electronConfig = withoutTutorialSandboxFields\(window\.electronAPI\?\.getElectronConfig/)
+  assert.match(app, /const outputConfig = withoutTutorialSandboxFields\(outputPayload\?\.config\)/)
+
+  const poisoned = {
+    output_dir: '/Users/someone/genomes/.ensembl_go_tutorial',
+    working_dir: '',
+    active_species: [],
+    tutorial_selected_genomes: [{ species_key: 'tutorial_slice_abc' }],
+    tutorial_color_palette: ['#3366cc'],
+    genome_default_color: '#3366cc',
+  }
+  const cleaned = withoutTutorialSandboxFields(poisoned)
+  assert.ok(!('tutorial_selected_genomes' in cleaned))
+  assert.ok(!('tutorial_color_palette' in cleaned))
+  // Recovered rather than blanked: the workspace always sits inside the real directory.
+  assert.equal(cleaned.output_dir, '/Users/someone/genomes')
+  assert.equal(cleaned.genome_default_color, '#3366cc')
+  assert.equal(cleaned.working_dir, '')
+  // A configuration with nothing of the tutorial's in it is passed through untouched.
+  const clean = { output_dir: '/Users/someone/genomes', active_species: [] }
+  assert.equal(withoutTutorialSandboxFields(clean), clean)
 })
 
 test('tutorial-only top bar changes never reach either persistent config store', () => {

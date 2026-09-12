@@ -50,6 +50,7 @@ import {
   arrivalDialogFields,
   arrivalPlaylists,
   arrivalScrollOffset,
+  arrivalScrollCenter,
   arrivalSelectedPlaylist,
   arrivalsFor,
   currentStep as stepOf,
@@ -150,6 +151,10 @@ const SCROLL_ATTEMPTS = 5
 // How many passes an authored view position gets to establish itself and stay put. More
 // than the rescue scroll's, because it is waiting out a page that is still loading.
 const PAGE_SCROLL_ATTEMPTS = 12
+// How close to the edge of the scrolling region a step's target may be framed. A control
+// flush against the bottom edge is not "on screen": its ring has nowhere to go, and the
+// reader cannot see what it sits next to.
+const SCROLL_EDGE_MARGIN = 28
 // How long a field has to hold the value a step is waiting for before it counts. Long
 // enough not to fire mid-word, short enough that typing the right thing and stopping does
 // not leave the user wondering what else is wanted.
@@ -609,16 +614,28 @@ export function TutorialProvider({ children }) {
   const tutorial = useMemo(() => getTutorial(tutorialId), [tutorialId])
   const isRunning = Boolean(tutorial && state?.status === TUTORIAL_STATUS.running)
 
-  // Closes the door on configuration writes for as long as the tutorial is up.
+  // Closes the door on configuration writes for as long as the sandbox configuration is
+  // in force — which is longer than the tutorial is *running*. A finished tutorial still
+  // shows its completion card over the override, and the builder's preview scene has no
+  // running state at all; `teardown` and `stopBuilderPreview` are what actually end it.
   //
-  // The flag is raised synchronously in `start` rather than only here, because React runs
-  // a child's effects before its parent's: App's autosave would otherwise see the sandbox
-  // configuration and persist it in the same commit, before this effect had run. This
-  // stays as the backstop that lowers it again however the tutorial ends.
+  // Keyed on the override as well as on playback, and its cleanup guarded, because React
+  // runs a child's effects before its parent's: an unguarded cleanup lowers the flag on
+  // the very commit that starts a tutorial, and App's autosave — a child effect — then
+  // sees the sandbox configuration with the door open and persists it to the backend and
+  // to the Electron store. That is how a tutorial's scratch output directory and its
+  // demo genomes ended up in the user's saved configuration, to reappear as pills in the
+  // next tutorial. The guard means the flip that raises the flag cannot also lower it:
+  // the stale closure being cleaned up has `sandboxUp` false and does nothing.
+  //
+  // `start` raises the flag itself as well, so the window between publishing the override
+  // and this effect running is closed too.
+  const sandboxUp = isRunning || Boolean(configOverride)
   useEffect(() => {
-    if (isRunning) setTutorialSandboxActive(true)
+    if (!sandboxUp) return undefined
+    setTutorialSandboxActive(true)
     return () => setTutorialSandboxActive(false)
-  }, [isRunning])
+  }, [sandboxUp])
   const rawStep = useMemo(() => (tutorial && state ? stepOf(tutorial, state) : null), [tutorial, state])
   // The step as the card should show it: the definition, with any wording edited during
   // this session laid over it.
@@ -702,20 +719,14 @@ export function TutorialProvider({ children }) {
     const guard = (event) => {
       if (selfActingRef.current) return
       if (typeof event.target?.closest === 'function' && event.target.closest('[data-tutorial-card]')) return
-      // The Genome Selector deliberately scrolls at the full-width app level. Tutorial
-      // blocker bands cover the otherwise-empty side margins, so wheel input there would
-      // never reach that scroller naturally. Forward it explicitly while leaving wheel
-      // input over the highlighted rows locked to their authored interaction policy.
-      if (event.type === 'wheel' && typeof event.target?.closest === 'function' && event.target.closest('[data-tutorial-blocker]')) {
-        const pageScroller = document.querySelector('[data-tutorial-page-scroll="true"]')
-        if (typeof pageScroller?.scrollBy === 'function') {
-          event.preventDefault()
-          event.stopPropagation()
-          event.stopImmediatePropagation?.()
-          pageScroller.scrollBy({ left: event.deltaX, top: event.deltaY, behavior: 'auto' })
-          return
-        }
-      }
+      // Wheel input over a blocker band used to be forwarded to the app's own scroller, so
+      // that the Genome Selector — which scrolls at the full-width app level, under the
+      // bands covering its side margins — could still be scrolled by hand. It should not
+      // be: every step composes its own view, and a reader who scrolls the page takes that
+      // composition apart while the card goes on describing something now off screen.
+      // Nothing is forwarded, so the band swallows the wheel and the page stays where the
+      // step put it. Panes that own a scrollbar of their own — the file browser's listing,
+      // a drawer — are unaffected: they are inside the cutout, not under a band.
       if (allowed.some((entry) => permits(entry, event))) return
       if (event.type === 'click' && step.blockedControlMessage) {
         // A locked bar can sit beneath a dimming blocker. Hit-test through that
@@ -1418,7 +1429,8 @@ export function TutorialProvider({ children }) {
    * instant in the builder, where the author is jumping between steps and an animation
    * each time is only a delay. */
   const applyPageScrollArrival = useCallback(async (arrival, { smooth = true } = {}) => {
-    const offset = arrivalScrollOffset(arrival)
+    const authoredOffset = arrivalScrollOffset(arrival)
+    const centred = arrivalScrollCenter(arrival)
     let moved = false
     let held = 0
     // Held rather than set once. Getting there is easy; staying there is the problem. The
@@ -1437,10 +1449,23 @@ export function TutorialProvider({ children }) {
       }
       const scroller = pageScrollerFor(node)
       if (!scroller) return
-      const scrollerTop = scroller === document.scrollingElement
-        ? 0
-        : scroller.getBoundingClientRect().top
-      const delta = node.getBoundingClientRect().top - (scrollerTop + offset)
+      const scrollerBox = scroller === document.scrollingElement ? null : scroller.getBoundingClientRect()
+      const scrollerTop = scrollerBox ? scrollerBox.top : 0
+      const viewport = scrollerBox ? scroller.clientHeight : window.innerHeight
+      const box = node.getBoundingClientRect()
+      // What the window can actually show, which is not what the author saw.
+      //
+      // An offset is authored by scrolling until the step looks right, and it is recorded
+      // against a window of whatever height the author had. Replayed in a shorter one it
+      // puts the target past the bottom edge: `visibleElementRect` clips it, and the step
+      // draws its ring around the fourteen visible pixels of a control the card is asking
+      // the reader to press. So the authored number is treated as a preference and the
+      // window's own limits as the rule. A target taller than the viewport pins to the top
+      // — there is no framing that shows all of it, and the top is where it starts.
+      const room = Math.max(SCROLL_EDGE_MARGIN, viewport - box.height - SCROLL_EDGE_MARGIN)
+      const wanted = centred ? (viewport - box.height) / 2 : authoredOffset
+      const offset = Math.min(Math.max(wanted, SCROLL_EDGE_MARGIN), room)
+      const delta = box.top - (scrollerTop + offset)
       if (Math.abs(delta) < 2) {
         held += 1
         if (held < 2) await sleep(SETTLE_MS)

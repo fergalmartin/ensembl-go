@@ -2112,22 +2112,44 @@ export default function TutorialBuilderOverlay() {
                     </p>
                   )}
                   {pageScrollArrival && (
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-[11px] leading-relaxed text-gray-400">
-                        {targetInstanceLabel(viewPositionTarget)} sits {Math.round(Number(pageScrollArrival.offset) || 0)} px
-                        below the top of the page area.
-                      </p>
-                      <BuilderButton onClick={() => {
-                        const offset = sceneViewOffset()
-                        if (offset === null) {
-                          setBuilder((current) => ({ ...current, status: 'That target is not on screen to measure.' }))
-                          return
-                        }
-                        updateArrival('pageScroll', { target: viewPositionTarget, offset })
-                      }}>
-                        Use current position
-                      </BuilderButton>
-                    </div>
+                    <>
+                      <label className="flex cursor-pointer items-start gap-2 rounded-md border border-gray-700 px-2.5 py-2 text-xs text-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={pageScrollArrival.center === true}
+                          onChange={(event) => updateArrival('pageScroll', event.target.checked
+                            ? { target: viewPositionTarget, center: true, offset: undefined }
+                            : { target: viewPositionTarget, center: undefined, offset: sceneViewOffset() ?? 0 })}
+                          className="mt-0.5 h-4 w-4 accent-sky-500"
+                        />
+                        <span>
+                          <span className="block font-semibold">Centre it instead of framing it</span>
+                          <span className="mt-0.5 block text-[11px] leading-relaxed text-gray-400">
+                            For a control the reader has to press. The page centres it as far as it
+                            will scroll, so it cannot end up against the bottom edge of a window
+                            shorter than this one.
+                          </span>
+                        </span>
+                      </label>
+                      {pageScrollArrival.center !== true && (
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-[11px] leading-relaxed text-gray-400">
+                            {targetInstanceLabel(viewPositionTarget)} sits {Math.round(Number(pageScrollArrival.offset) || 0)} px
+                            below the top of the page area.
+                          </p>
+                          <BuilderButton onClick={() => {
+                            const offset = sceneViewOffset()
+                            if (offset === null) {
+                              setBuilder((current) => ({ ...current, status: 'That target is not on screen to measure.' }))
+                              return
+                            }
+                            updateArrival('pageScroll', { target: viewPositionTarget, offset })
+                          }}>
+                            Use current position
+                          </BuilderButton>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </details>

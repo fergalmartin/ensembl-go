@@ -73,6 +73,16 @@ the tutorial is still a draft — the Tutorials view lists drafts too.
   tutorial whose steps wait on real backend work — an analysis, an annotation conversion, an
   index build. Those need 30s or more, and the symptom of too little is a sweep that reports
   failures at step ids that do not match what actually happened.
+- **Sweep at the smallest window a reader might use, not the one you authored in.** Card
+  placement and every authored `pageScroll` offset are height-dependent, and the failure is
+  invisible at the authoring size: the custom-genome tutorial was clean at `1600x1100` and, at
+  `1512x900` — a MacBook — drew the ring for its **Add genome** step around the fourteen
+  visible pixels of a button hanging off the bottom edge. Run the sweeps at both.
+- **Nobody else may be using the app while a sweep runs.** `resetTutorialWorkspace` deletes
+  and reinstalls `<output_dir>/.ensembl_go_tutorial`, and the author's own window shares that
+  directory — so a sweep pulls the files out from under a tutorial they are watching, which
+  surfaces as *"the registered target … did not render after preparation"* on whichever step
+  needed a file that is no longer there. Say when you start driving and when you stop.
 
 ### DOM hooks worth reading
 

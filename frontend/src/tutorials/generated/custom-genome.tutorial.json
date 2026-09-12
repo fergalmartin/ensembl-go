@@ -1695,7 +1695,7 @@
       "id": "add-genome",
       "section": "Registering it",
       "view": "genome_selector",
-      "placement": "top",
+      "placement": "left",
       "deferUntilReady": true,
       "title": "Add the genome",
       "body": "This is the step that commits it. The GTF is converted to the form the indexer reads, the index is built beside it, and the genome joins the list above. Click Add genome — it takes a few seconds.",
@@ -1728,7 +1728,7 @@
             "id": "custom.addGenome",
             "version": 1
           },
-          "offset": 620
+          "center": true
         }
       ],
       "advanceOn": {
@@ -1770,10 +1770,7 @@
           }
         ]
       },
-      "cardPosition": {
-        "x": 0.5948,
-        "y": 0.6166
-      }
+      "align": "end"
     },
     {
       "id": "added",
@@ -1941,14 +1938,6 @@
           }
         }
       },
-      "reveals": [
-        {
-          "target": {
-            "id": "app.genomePills",
-            "version": 1
-          }
-        }
-      ],
       "interactionPolicy": {
         "targets": [
           {

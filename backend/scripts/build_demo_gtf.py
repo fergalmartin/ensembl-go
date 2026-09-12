@@ -15,8 +15,9 @@ the way a real gene-prediction tool writes them.
   * **No gene rows** — only transcript, exon and CDS, with the gene level implied by the
     `gene_id` attribute, which is what StringTie and BRAKER actually emit. The gene level
     is then reconstructed on import.
-  * **Bare, tool-shaped identifiers** rather than `gene:Welcome`, so the identifier
-    section has an opinion.
+  * **Bare identifiers** — `Welcome`, not `gene:Welcome` — the way a tool writes them,
+    so the identifier section has an opinion. The names themselves are the demo genome's
+    own, because they are what the reader reads off the track at the end of the tutorial.
 
 The sequence is untouched: this is a different *spelling* of `demo.gff3`, over the same
 coordinates of the same `demo.fa`, so the genome the reader ends up browsing holds the
@@ -36,9 +37,11 @@ DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "demo_genome"
 SOURCE = DATA_DIR / "demo.gff3"
 OUT = DATA_DIR / "demo_genes.gtf"
 
-# The source column a predictor stamps on its output. Deliberately not "ensembl": the
-# file is meant to look like something a tool produced, not like something we published.
-TOOL = "DemoScan"
+# The source column. Deliberately not the name of a real tool and not "ensembl" either:
+# the producer sniffer reads this column, and the tutorial's card says it comes back blank
+# because nothing in the file names a tool the app knows. Matching `demo.gff3` keeps the
+# two spellings of the same genes saying the same thing about where they came from.
+SOURCE_COLUMN = "demo"
 
 
 def parse_attributes(blob: str) -> dict:
@@ -117,11 +120,14 @@ def main() -> None:
     lines = []
 
     for transcript_id, record in model:
-        # A predictor's identifiers: a tool-shaped gene id and a numbered transcript
-        # under it, with none of Ensembl's `gene:` / `transcript:` prefixing.
-        gene_id = f"{TOOL.upper()}_{record['gene_id'].upper()}"
+        # A predictor's identifiers: a bare gene id and a numbered transcript under it,
+        # with none of Ensembl's `gene:` / `transcript:` prefixing. The gene keeps its own
+        # name rather than gaining a tool-shaped prefix — these six spell a sentence, the
+        # reader sees them in the browser at the end of the tutorial, and a prefix on each
+        # one buries it.
+        gene_id = record["gene_id"]
         tool_transcript_id = f"{gene_id}.t1"
-        common = (record["seqid"], TOOL)
+        common = (record["seqid"], SOURCE_COLUMN)
 
         lines.append("\t".join([
             *common, "transcript", str(record["start"]), str(record["end"]),

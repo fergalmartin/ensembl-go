@@ -454,6 +454,50 @@ export default function TutorialOverlay() {
       .filter(Boolean)
   ), [step])
   const scrollInteractionRects = useSelectorRects(scrollInteractionSelectors, isRunning)
+  // The page belongs to the step while the step is running.
+  //
+  // Every step composes its own view: the arrival scrolls the page until the control it is
+  // about is where the card was written to sit beside it. A reader who then scrolls takes
+  // that composition apart — the ring follows its element off the bottom of the window and
+  // the card stays where it was, describing something no longer on screen. Worse, it is a
+  // silent invitation to go looking for a control that the tutorial was about to bring to
+  // them anyway.
+  //
+  // So the *page* scroller is held still, and only the page scroller: a list, a drawer or
+  // the file browser inside the cutout scrolls exactly as it did, because the first
+  // scrollable ancestor of the pointer is what gets the event. Held by refusing the input
+  // rather than by setting `overflow: hidden`, which would reclaim the scrollbar's ten
+  // pixels and shift the whole layout sideways at the moment the tutorial starts.
+  useEffect(() => {
+    if (!isRunning) return undefined
+    const page = () => document.querySelector('[data-tutorial-page-scroll="true"]')
+    const scrollableBefore = (target) => {
+      const pageScroller = page()
+      if (!pageScroller) return true
+      for (let node = target; node instanceof Element; node = node.parentElement) {
+        if (node === pageScroller) return false
+        const style = window.getComputedStyle(node)
+        const scrolls = /(auto|scroll)/.test(`${style.overflowY}${style.overflowX}`)
+        if (scrolls && (node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth)) return true
+      }
+      return false
+    }
+    const hold = (event) => {
+      if (event.ctrlKey) return
+      if (scrollableBefore(event.target)) return
+      event.preventDefault()
+    }
+    // Non-passive, or preventing the default does nothing: both of these default to
+    // passive on a document-level listener.
+    const options = { passive: false, capture: true }
+    document.addEventListener('wheel', hold, options)
+    document.addEventListener('touchmove', hold, options)
+    return () => {
+      document.removeEventListener('wheel', hold, options)
+      document.removeEventListener('touchmove', hold, options)
+    }
+  }, [isRunning])
+
   const pulseRect = useAnchorRect(useMemo(() => anchorSelector(pulseAnchor), [pulseAnchor]), Boolean(pulseAnchor))
   // Something to place the card against that is not the thing being spotlit. A step that
   // lights up the whole track has nowhere for its card to go that is not over the genes

@@ -59,6 +59,19 @@ the spotlit control has nothing on top of it and stays genuinely clickable. Geom
 shared with the screenshot overlay in
 [`utils/overlayGeometry.js`](../frontend/src/utils/overlayGeometry.js).
 
+**The page does not scroll while a tutorial is running.** Every step composes its own view:
+the arrival scrolls until the control it is about sits where the card was written to sit
+beside it. A reader who then scrolls takes that composition apart — the ring follows its
+element off the bottom of the window while the card stays where it was, describing
+something no longer on screen — and it is an invitation to go hunting for a control the
+next step was about to bring to them. So the overlay holds the *page* scroller
+(`[data-tutorial-page-scroll]`) still, and only that one: a list, a drawer or the file
+browser inside the cutout scrolls exactly as it did, because the first scrollable ancestor
+of the pointer is what gets the event. It holds it by refusing the input rather than by
+setting `overflow: hidden`, which would reclaim the scrollbar's ten pixels and shift the
+whole layout sideways the moment a tutorial started. Anything the step needs to bring into
+view, it scrolls to itself — see `pageScroll`.
+
 ## Writing a tutorial
 
 Definitions live in [`frontend/src/tutorials/`](../frontend/src/tutorials/) and are plain
@@ -331,9 +344,9 @@ about:
 | --- | --- |
 | `browserView` | Where the browser is looking: `locus`, or `pan` / `zoom`. |
 | `browserControls` | `detail`, `flatten`, `expanded` (booleans), `biotypes` (`'all'`, `'protein-coding'`, or a list of the classes left showing — `['proteinCoding', 'pseudogene', 'smallNonCoding']`), `drawerTranscripts` (`'collapsed'` or `'expanded'`), `geneTranscripts` (`{ gene, expanded }` — one named gene's own rows, which is a different control from `expanded`), `hiddenTranscript` (`{ transcript, hidden }`). Only the keys given are enforced. |
-| `selectorList` | A stable Genome Selector teaching scene. A semantic list `target` can be centred without highlighting it; `fitAllRows`, `preserveOrder`, and `lockScroll` keep a small complete list visible and stationary while selections change. It also reserves the selected-genomes strip's place in the header from the moment the scene arrives — invisible while empty — so the first genome ticked fills a space that was already there rather than pushing every row down the page. |
+| `selectorList` | A stable Genome Selector teaching scene. A semantic list `target` can be centred without highlighting it; `fitAllRows`, `preserveOrder`, and `lockScroll` keep a small complete list visible and stationary while selections change. |
 | `genomeSelection` | Which of the tutorial's embedded genomes are selected, named by their `recipeId`s. The resulting set, not a list of clicks, so re-entering the step selects the same genomes rather than toggling them. `genomes: []` is a real instruction: arrive with nothing selected. |
-| `pageScroll` | Where the page is scrolled: a `target`, and the `offset` in pixels between the top of the scrolling region and the top of that target. Applied last, after everything else that changes the page's height, and smoothly during playback. |
+| `pageScroll` | Where the page is scrolled: a `target`, and either the `offset` in pixels between the top of the scrolling region and the top of that target, or `center: true` for a target that should simply be well clear of both edges. Applied last, after everything else that changes the page's height, and smoothly during playback. |
 | `dialog` | Which dialog or popover is open: `'playlistMembership'`, `'playlistPopover'`, or `'none'` for closed. `fields` states what the dialog's own inputs hold. |
 | `playlists` | Which playlists exist, named and described as the tutorial asks the user to name them, with members as embedded dataset recipe ids. `selected` names the one being shown. `playlists: []` is a real instruction: none created yet. |
 | `customGenome` | The state of the Genome Selector's add-a-genome form: `panel`, the six `fields`, which analysis `reports` are showing, whether the file `browser` is open and where it is pointed, and whether the genome has been `registered` and made `active`. |
@@ -355,6 +368,14 @@ installer returned it. The two disagree about which dataset release the annotati
 to and therefore about the genome's identity, and selecting the installer's record leaves
 a pill in the top bar whose own row, in the list below, still reads as unselected.
 
+The selected-genomes strip keeps its place in the header for **any** tutorial standing in
+the Genome Selector, present but invisible while nothing is selected. Two problems, one
+reservation: a header that grows at the moment a row is ticked pushes every row below it
+down the page, and a step whose card points at the strip has nothing to point at until
+something is in it. This used to belong to the fixed `selectorList` scene, which meant a
+tutorial that registers a genome and then ticks it — never framing the list at all — had
+both problems back.
+
 `pageScroll` is how a step is *framed*. A step is not only a highlight; it is a view of
 the app, and a control near the bottom of a long page arrives half off the screen with its
 card cut off beside it if the page is left where the previous step happened to leave it.
@@ -366,6 +387,20 @@ looks right and presses **Use current position**; what is stored is a registered
 how far below the top of the scrolling region it was sitting. Expressing it against a target
 rather than as a raw `scrollTop` keeps it meaningful when the page above it grows — a pill
 strip appearing, a longer list — and frames the same picture at a different window height.
+
+An authored offset is a preference, not a promise about the window. Recorded in a tall
+window it can be *below the bottom edge* of a short one, and the runtime used to put the
+target there — clipped by `visibleElementRect` to a sliver, with the ring drawn around the
+sliver and the card beside it describing a control the reader cannot see. So the runtime
+clamps what it is given to what the window can show, keeping the target at least
+`SCROLL_EDGE_MARGIN` clear of both edges.
+
+`center: true` is the other case, and it is for a control the reader has to *press* rather
+than a picture to be read: being comfortably on screen matters more than what sits beside
+it, and the author has no way to know how much room the reader's window leaves below it.
+The **Add genome** button at the foot of the add-a-genome form is the example. Centring is
+best-effort — the page stops where it stops, and the bottom of a page is then framed as
+well as it can be rather than not at all.
 
 A step with a `pageScroll` arrival does not also get the runtime's scroll-into-view repair.
 That repair exists to rescue a target something has scrolled out of sight and it centres,
@@ -1893,6 +1928,12 @@ to detect, no gene level to rebuild, no biotypes to infer. With the GTF, every s
 answer — including one `info` issue reading *"Transcripts had no gene feature; a gene was
 created to hold them"*, which is the lesson in the app's own words.
 
+Its identifiers are the demo genome's own — `Welcome`, `To`, `Ensembl`, `Go`, `Have`, `Fun`,
+bare rather than Ensembl's `gene:Welcome`. They are what the reader reads off the track in
+the last steps of the tutorial, and a tool-shaped prefix on each of them buried the sentence
+they spell. The source column stays `demo`: the producer sniffer reads that column, and the
+card explains why Producer comes back blank.
+
 ### Things this tutorial found, which are not about tutorials
 
 - **A bare index filename put a genome outside the tutorial workspace.** `manualIndexFilename`
@@ -1921,4 +1962,7 @@ created to hold them"*, which is the lesson in the app's own words.
   completed the instant it arrived.
 - **An authored `pageScroll` offset the page cannot reach is abandoned.** The **Add genome**
   button sits near the foot of a long page; asking for it 150px from the top left it 231px
-  below the bottom of the window, clipped to nothing, with no ring. 620 is reachable.
+  below the bottom of the window, clipped to nothing, with no ring. It now declares
+  `center: true` instead, and the runtime clamps every authored offset to what the window
+  can actually show — an offset that framed the step in a 1100px-tall window put the same
+  button's ring around fourteen visible pixels in a 900px one.

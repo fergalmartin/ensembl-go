@@ -213,8 +213,10 @@ test('Genome Selector steps can frame a complete fixed list without granting scr
   assert.doesNotMatch(selectorView, /tutorial-fixed-genome-list/)
   assert.match(selectorView, /const centerFixedTutorialList = useCallback/)
   assert.match(selectorView, /genomeListRef\.current\?\.scrollIntoView/)
-  assert.match(provider, /event\.target\.closest\('\[data-tutorial-blocker\]'\)/)
-  assert.match(provider, /pageScroller\.scrollBy\(\{ left: event\.deltaX, top: event\.deltaY, behavior: 'auto' \}\)/)
+  // The page belongs to the step: wheel input over a blocker band is swallowed rather
+  // than forwarded to the app's own scroller, so a framed list cannot be scrolled out
+  // from under the card that is describing it.
+  assert.doesNotMatch(provider, /pageScroller\.scrollBy/)
   assert.match(provider, /event\.target\.closest\(entry\.selector\)/)
   assert.doesNotMatch(provider, /return \{ node, capabilities: entry\.capabilities/)
 })

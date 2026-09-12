@@ -32,6 +32,7 @@ import {
   stepIsInteractive,
   stepPreconditions,
   arrivalsFor,
+  arrivalScrollCenter,
   stepArrivals,
   stepCopyValue,
   stepUndo,
@@ -829,4 +830,18 @@ test('the custom-genome tutorial declares the form state every step describes', 
   const adding = tutorial.steps.find((step) => step.id === 'add-genome')
   const before = arrivalsFor(tutorial, adding).find((arrival) => arrival.type === 'customGenome')
   assert.equal(before.registered, false, 'the add step must arrive with the genome not yet added')
+})
+
+test('the custom-genome tutorial centres the button that registers the genome', () => {
+  // Add genome sits at the foot of a long page, and an offset authored in one window is
+  // below the bottom edge of a shorter one: the step then draws its ring around the few
+  // visible pixels of the control its card is telling the reader to press. Centring asks
+  // for the button to be on screen rather than for a composition, which is what this step
+  // actually needs.
+  const tutorial = getTutorial('custom-genome')
+  const adding = tutorial.steps.find((step) => step.id === 'add-genome')
+  const scroll = arrivalsFor(tutorial, adding).find((arrival) => arrival.type === 'pageScroll')
+  assert.ok(scroll, 'the add step should frame its own view')
+  assert.equal(arrivalScrollCenter(scroll), true, 'the add step should centre its button')
+  assert.equal(scroll.offset, undefined, 'centred and placed at an offset are different instructions')
 })
