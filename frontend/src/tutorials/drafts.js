@@ -103,6 +103,20 @@ export async function generateTutorialFixture(request) {
   return payload(response, 'Could not generate the example tutorial dataset')
 }
 
+/** Lay the demo genome's raw files out in the tutorial workspace, unregistered.
+ *
+ *  For a tutorial that teaches importing files you already have: it needs some files the
+ *  reader can browse to and pick. Nothing is registered or indexed — that is what the
+ *  tutorial asks the reader to do. */
+export async function installDemoSourceFiles(request) {
+  const response = await fetch(`${API_BASE}/api/tutorial/demo-source`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  return payload(response, 'Could not lay out the tutorial\u2019s demo files')
+}
+
 export async function installTutorialDataset(request) {
   const response = await fetch(`${API_BASE}/api/tutorial/datasets/install`, {
     method: 'POST',

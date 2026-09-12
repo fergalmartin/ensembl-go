@@ -57,8 +57,9 @@ const allSource = sources.join('\n')
  *
  *  Two forms count. The attribute itself, where a template literal is reduced to its
  *  prefix so `app-button-${buttonId}` is understood as covering the whole family; and a
- *  `tourId` prop, which is how an anchor is threaded into a shared subcomponent that
- *  several callers anchor differently (PathInput, CollapsibleSection). */
+ *  `tourId` prop — or a qualified one such as `browseTourId` — which is how an anchor is
+ *  threaded into a shared subcomponent that several callers anchor differently
+ *  (PathInput, CollapsibleSection, ManualPathRow). */
 function declaredAnchors() {
   const literals = new Set()
   const prefixes = []
@@ -76,7 +77,12 @@ function declaredAnchors() {
       literals.add(quoted[1] || quoted[2])
     }
   }
-  for (const match of allSource.matchAll(/\btourId="([^"]+)"/g)) literals.add(match[1])
+  // `tourId`, and the qualified spellings a subcomponent needs when it anchors more than
+  // one of its own elements — `analyseTourId`, `browseTourId` on the manual-add path rows,
+  // where one component is rendered three times and each copy needs three distinct ids.
+  // The property that matters is unchanged: every id is still a literal written at the
+  // call site, which is what makes it visible here at all.
+  for (const match of allSource.matchAll(/\b\w*[Tt]ourId="([^"]+)"/g)) literals.add(match[1])
   return { literals, prefixes }
 }
 
@@ -223,8 +229,13 @@ test('every browser step names the genome it needs', () => {
   for (const tutorial of TUTORIALS) {
     for (const step of tutorial.steps) {
       if (step.view !== 'genome_browser') continue
+      // Three ways to say it, and a `customGenome` arrival is the third: a tutorial whose
+      // genome the reader builds from files on disk has no precondition to name and no
+      // recipe to list, so it says "this genome is registered and active" instead.
       assert.ok(
-        stepPreconditions(step).length > 0 || arrivalsFor(tutorial, step).some((a) => a.type === 'browserScene' && a.active?.length),
+        stepPreconditions(step).length > 0
+          || arrivalsFor(tutorial, step).some((a) => a.type === 'browserScene' && a.active?.length)
+          || arrivalsFor(tutorial, step).some((a) => a.type === 'customGenome' && a.registered),
         `${tutorial.id}/${step.id} browses without saying which genome it needs`
       )
     }
@@ -766,4 +777,56 @@ test("hiding a transcript is followed by the label that says so", () => {
   const order = browserInDepth.steps.map((entry) => entry.id)
   assert.equal(order.indexOf('hidden-transcript'), order.indexOf('hide-transcript') + 1)
   assert.equal(order.indexOf('highlight-transcript'), order.indexOf('hidden-transcript') + 1)
+})
+
+test('the custom-genome tutorial types labels the backend will accept', () => {
+  // The genome the reader builds is made browsable by `set_tutorial_session_genome`, which
+  // only accepts a bundled species key. That key is derived from the *genome label the
+  // reader types* — so the value the tutorial fills in is load-bearing, and a friendlier
+  // label would leave the last four steps drawing an empty track. If this has to change,
+  // change `BUNDLED_SPECIES_KEYS` in backend/demo_genome.py with it.
+  const tutorial = getTutorial('custom-genome')
+  assert.ok(tutorial, 'the custom-genome tutorial should be registered')
+
+  const toSpeciesKey = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  const labels = new Set()
+  for (const step of tutorial.steps) {
+    for (const arrival of arrivalsFor(tutorial, step)) {
+      if (arrival.type === 'customGenome' && arrival.fields?.genomeLabel) labels.add(arrival.fields.genomeLabel)
+    }
+  }
+  assert.equal(labels.size, 1, 'every step should name the same genome')
+  assert.equal(toSpeciesKey([...labels][0]), DEMO_SPECIES_KEY)
+
+  // Only one value works, so the step that types it must overwrite whatever is there and
+  // must hand it over rather than asking the reader to retype it.
+  const typing = tutorial.steps.find((step) => step.id === 'type-labels')
+  assert.equal(stepCopyValue(typing), [...labels][0])
+  const action = stepAction(typing)
+  assert.equal(action.type, 'type')
+  assert.equal(action.value, [...labels][0])
+  assert.equal(action.overwrite, true, 'only this value works, so Next must replace what is there')
+})
+
+test('the custom-genome tutorial declares the form state every step describes', () => {
+  // The whole tutorial is a form being filled in, and a step that inherits the form from
+  // the step before it is a step that shows the wrong thing when reached with Back. The
+  // sweeps prove this by driving the app; this keeps it true between sweeps.
+  const tutorial = getTutorial('custom-genome')
+  // The step that opens the app is about the app button, not the form.
+  const selectorSteps = tutorial.steps.filter(
+    (step) => step.view === 'genome_selector' && step.id !== 'open-selector'
+  )
+  for (const step of selectorSteps) {
+    assert.ok(
+      arrivalsFor(tutorial, step).some((arrival) => arrival.type === 'customGenome'),
+      `${step.id} describes the form without declaring it`
+    )
+  }
+
+  // The step that presses Add genome has to arrive with it not yet added, or coming back
+  // to it finds the job done and the button does nothing its card describes.
+  const adding = tutorial.steps.find((step) => step.id === 'add-genome')
+  const before = arrivalsFor(tutorial, adding).find((arrival) => arrival.type === 'customGenome')
+  assert.equal(before.registered, false, 'the add step must arrive with the genome not yet added')
 })

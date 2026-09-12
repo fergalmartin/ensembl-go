@@ -74,6 +74,7 @@ from demo_genome import (
     demo_install_status,
     demo_install_statuses,
     install_demo_genome,
+    install_demo_source_files,
     reset_tutorial_workspace,
     set_tutorial_session_genome,
     tutorial_session_species,
@@ -8447,6 +8448,32 @@ async def post_tutorial_dataset_install(request: TutorialDatasetInstallRequest):
             request.workspace,
         )
     except (ValueError, OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class TutorialDemoSourceRequest(BaseModel):
+    output_dir: str
+    workspace: str
+
+
+@app.post("/api/tutorial/demo-source")
+async def post_tutorial_demo_source(request: TutorialDemoSourceRequest):
+    """Lay the demo genome's raw files out in the workspace for a reader to pick by hand.
+
+    The custom-genome tutorial teaches importing files you already have, so it has to put
+    some files somewhere the reader can browse to. Nothing is registered or indexed here —
+    that is the reader's job, through the form the tutorial is about.
+
+    Guarded the same way dataset installation is: the workspace must be the one belonging
+    to the output directory given, so this cannot be used to write into anything else.
+    """
+    expected_workspace = tutorial_workspace(request.output_dir).resolve()
+    supplied_workspace = Path(request.workspace).expanduser().resolve()
+    if supplied_workspace != expected_workspace:
+        raise HTTPException(status_code=400, detail="Demo files may only be written in the active tutorial workspace.")
+    try:
+        return await run_in_threadpool(install_demo_source_files, request.workspace)
+    except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 

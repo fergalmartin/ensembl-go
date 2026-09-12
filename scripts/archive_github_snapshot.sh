@@ -163,6 +163,12 @@ sync_subtree "docs"
 
 sync_subtree "scripts"
 
+# Shared tooling under .claude/ is tracked (the tutorial-building skill and anything
+# added beside it); personal settings next to it are not. Only the tracked half is
+# copied, or the completeness check below fails on files .gitignore deliberately keeps
+# out of the repository.
+sync_subtree ".claude/skills"
+
 # --- Completeness check ------------------------------------------------------
 # A recovery archive is only as good as its worst omission, and every omission this
 # script has ever had was silent: an exclusion written for one purpose quietly swallowed

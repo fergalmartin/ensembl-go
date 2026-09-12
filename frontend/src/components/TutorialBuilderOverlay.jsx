@@ -81,6 +81,14 @@ const SIGNAL_COMPLETIONS = Object.freeze([
     views: ['genome_browser'],
     holdMs: 2000,
   },
+  {
+    // Analysis is a real backend call. A step advancing on the press would have its card
+    // read over an empty panel, and the report is the whole point of pressing it.
+    name: 'custom.analysed',
+    label: 'When a genome or annotation has been analysed',
+    views: ['genome_selector'],
+    holdMs: 2500,
+  },
 ])
 
 const emptyBuilder = {
@@ -1300,6 +1308,7 @@ export default function TutorialBuilderOverlay() {
   const pageScrollArrival = arrivalOf(selectedStep, 'pageScroll')
   const dialogArrival = arrivalOf(selectedStep, 'dialog')
   const playlistsArrival = arrivalOf(selectedStep, 'playlists')
+  const customGenomeArrival = arrivalOf(selectedStep, 'customGenome')
   const arrivalPlaylistNames = arrivalPlaylists(playlistsArrival).map((playlist) => playlist.name)
   // The step's own highlighted target is what an authored view position is measured
   // against: the author scrolls until this step looks right, and what "right" means is
@@ -2141,6 +2150,130 @@ export default function TutorialBuilderOverlay() {
                     &ldquo;make sure they are closed&rdquo;, so coming Back to it does not leave the dialog
                     covering the control the reader is being asked to press.
                   </p>
+                </div>
+              </details>
+              <details className={`${wideField} rounded-md border border-gray-700 p-2.5`} open={Boolean(customGenomeArrival)}>
+                <summary className="cursor-pointer text-xs font-semibold text-gray-200">Add-a-genome form on arrival</summary>
+                <div className="mt-2 space-y-2">
+                  <label className="flex cursor-pointer items-start gap-2 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-100">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(customGenomeArrival)}
+                      onChange={(event) => updateArrival('customGenome', event.target.checked ? {
+                        panel: 'open',
+                        fields: { genomeLabel: '', assemblyLabel: '', accession: '', fasta: '', annotation: '', homology: '' },
+                        reports: { genome: 'none', annotation: 'none' },
+                        browser: { state: 'closed', directory: 'demo' },
+                        registered: false,
+                        active: false,
+                      } : null)}
+                      className="mt-0.5"
+                    />
+                    <span>State the add-a-genome form on arrival</span>
+                  </label>
+                  {customGenomeArrival && (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className={label}>Genome label</label>
+                          <input
+                            className={textInput}
+                            placeholder="Ensemblus welcomus"
+                            value={customGenomeArrival.fields?.genomeLabel || ''}
+                            onChange={(event) => updateArrival('customGenome', {
+                              fields: { ...customGenomeArrival.fields, genomeLabel: event.target.value },
+                            })}
+                          />
+                        </div>
+                        <div>
+                          <label className={label}>Assembly label</label>
+                          <input
+                            className={textInput}
+                            placeholder="EnsWel1.0"
+                            value={customGenomeArrival.fields?.assemblyLabel || ''}
+                            onChange={(event) => updateArrival('customGenome', {
+                              fields: { ...customGenomeArrival.fields, assemblyLabel: event.target.value },
+                            })}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[['fasta', 'Sequence file'], ['annotation', 'Annotation file']].map(([field, name]) => (
+                          <div key={field}>
+                            <label className={label}>{name}</label>
+                            <select
+                              className={textInput}
+                              value={customGenomeArrival.fields?.[field] || ''}
+                              onChange={(event) => updateArrival('customGenome', {
+                                fields: { ...customGenomeArrival.fields, [field]: event.target.value },
+                              })}
+                            >
+                              <option value="">Empty</option>
+                              <option value={`demo:${field === 'fasta' ? 'fasta' : 'annotation'}`}>The demo {field === 'fasta' ? 'FASTA' : 'GTF'}</option>
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[['genome', 'Sequence report'], ['annotation', 'Annotation report']].map(([kind, name]) => (
+                          <div key={kind}>
+                            <label className={label}>{name}</label>
+                            <select
+                              className={textInput}
+                              value={customGenomeArrival.reports?.[kind] || 'none'}
+                              onChange={(event) => updateArrival('customGenome', {
+                                reports: { ...customGenomeArrival.reports, [kind]: event.target.value },
+                              })}
+                            >
+                              <option value="none">Not analysed</option>
+                              <option value="ready">Analysed, report showing</option>
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className={label}>File browser</label>
+                          <select
+                            className={textInput}
+                            value={customGenomeArrival.browser?.state === 'open' ? (customGenomeArrival.browser.target || 'manual_fasta') : ''}
+                            onChange={(event) => updateArrival('customGenome', {
+                              browser: event.target.value
+                                ? { state: 'open', target: event.target.value, directory: 'demo' }
+                                : { state: 'closed', directory: 'demo' },
+                            })}
+                          >
+                            <option value="">Closed</option>
+                            <option value="manual_fasta">Open, choosing a sequence file</option>
+                            <option value="manual_gff3">Open, choosing an annotation</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className={label}>The genome itself</label>
+                          <select
+                            className={textInput}
+                            value={customGenomeArrival.registered ? (customGenomeArrival.active ? 'active' : 'registered') : ''}
+                            onChange={(event) => updateArrival('customGenome', {
+                              registered: event.target.value !== '',
+                              active: event.target.value === 'active',
+                            })}
+                          >
+                            <option value="">Not added yet</option>
+                            <option value="registered">Added, not activated</option>
+                            <option value="active">Added and activated</option>
+                          </select>
+                        </div>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-gray-400">
+                        The files are named symbolically, never as paths: the tutorial lays its own copy
+                        of the demo genome inside the sandbox and the runtime fills in where it landed.
+                        &ldquo;Not added yet&rdquo; is a real instruction &mdash; give it to the step that presses
+                        <strong> Add genome</strong>, or coming Back to that step finds the job already done.
+                        Adding the genome converts and indexes its annotation, so a step declaring it added
+                        waits for that rather than assuming.
+                      </p>
+                    </>
+                  )}
                 </div>
               </details>
               <details className={`${wideField} rounded-md border border-gray-700 p-2.5`} open={Boolean(playlistsArrival)}>

@@ -1,0 +1,46 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "tmnt-bebop-v1",
+  "datasetRef": "embedded:tmnt-bebop-v1@1",
+  "fixtureId": "turtles-and-friends",
+  "character": "Bebop",
+  "synthetic": true,
+  "speciesKey": "tutorial_common_warthog_bebop",
+  "assembly": "Bebop_v1",
+  "assemblyName": "Bebop_v1",
+  "displayName": "Common warthog (Bebop)",
+  "scientificName": "Phacochoerus africanus",
+  "commonName": "Common warthog",
+  "provider": "demo",
+  "browsableRange": {
+    "1": [
+      1,
+      36000
+    ]
+  },
+  "source": {
+    "type": "synthetic-fixture",
+    "fixture": "turtles-and-friends",
+    "character": "Bebop",
+    "containsRealSequence": false
+  },
+  "genes": [
+    "gene:bebop_1",
+    "gene:bebop_2",
+    "gene:bebop_3",
+    "gene:bebop_4"
+  ],
+  "files": {
+    "fasta": "genome.fa",
+    "fasta_index": "genome.fa.fai",
+    "gff3": "annotation.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "631487070079294ce11cc9414d16ef5f0a536c569771136cc00432d3301d1998",
+    "fasta_index": "eac66c7109f685b7ae0f582d747adafa8753d62f439aa166f0aea0f93e51e905",
+    "gff3": "7deeda970530be8b0c6f7e03023384dead91b3e71cd9a6f7bb727f00a9b20416",
+    "metadata": "59e35e6ce32a7eb1cfe1fc29c558ec71e4813136e7916ecc47127ebe8e874650"
+  }
+}

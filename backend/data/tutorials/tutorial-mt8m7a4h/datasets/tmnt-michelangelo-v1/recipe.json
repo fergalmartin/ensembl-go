@@ -1,0 +1,46 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "tmnt-michelangelo-v1",
+  "datasetRef": "embedded:tmnt-michelangelo-v1@1",
+  "fixtureId": "turtles-and-friends",
+  "character": "Michelangelo",
+  "synthetic": true,
+  "speciesKey": "tutorial_hawksbill_turtle_michelangelo",
+  "assembly": "Michelangelo_v1",
+  "assemblyName": "Michelangelo_v1",
+  "displayName": "Hawksbill turtle (Michelangelo)",
+  "scientificName": "Eretmochelys imbricata",
+  "commonName": "Hawksbill turtle",
+  "provider": "demo",
+  "browsableRange": {
+    "1": [
+      1,
+      36000
+    ]
+  },
+  "source": {
+    "type": "synthetic-fixture",
+    "fixture": "turtles-and-friends",
+    "character": "Michelangelo",
+    "containsRealSequence": false
+  },
+  "genes": [
+    "gene:michelangelo_1",
+    "gene:michelangelo_2",
+    "gene:michelangelo_3",
+    "gene:michelangelo_4"
+  ],
+  "files": {
+    "fasta": "genome.fa",
+    "fasta_index": "genome.fa.fai",
+    "gff3": "annotation.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "caefff3a118c2af7b5533287a8289b0405b3d4b75dde48df241edd92c9fb3efc",
+    "fasta_index": "2a9dced008fa73069f797229cd6d5a0d7decb8753cf7a108852b9600b137e69e",
+    "gff3": "a8ba20f53f45ff076ec77a13f2d6a60a89dcfebd0817066ac4b49167c0e899c4",
+    "metadata": "ecc265b48461ebc00541311c79c1cbfdabf8fe5b31fab0ecefb37fbf4bed650c"
+  }
+}

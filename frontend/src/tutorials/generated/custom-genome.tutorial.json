@@ -1,0 +1,2188 @@
+{
+  "format": "ensembl-go-tutorial",
+  "schemaVersion": 1,
+  "id": "custom-genome",
+  "revision": 1,
+  "title": "Adding your own genome",
+  "blurb": "Register a genome and annotation from files on disk: name it, check both files with Analyse, import it, and browse the result. Runs on a small demo genome and leaves your own setup untouched.",
+  "estimatedMinutes": 9,
+  "usesDemoGenome": true,
+  "completionBody": "You can now bring your own genome into Ensembl Go and know what is in it before you commit. Real genomes work the same way; they just take longer to read. Nothing of yours was changed, and the tutorial's temporary data has been cleared away.",
+  "author": "",
+  "createdAt": "2026-09-12T00:00:00Z",
+  "updatedAt": "2026-09-12T00:00:00Z",
+  "datasets": [],
+  "steps": [
+    {
+      "id": "welcome",
+      "section": "Getting started",
+      "placement": "center",
+      "title": "Bringing your own genome",
+      "body": "Ensembl Go can open a genome you already have on disk, with or without annotation. This tutorial adds one from a small demo genome, checks both files before importing them, and ends up browsing the result. Next advances each step if you would rather read than do.",
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-selector",
+      "section": "Getting started",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "title": "Open the Genome Selector",
+      "body": "Adding a genome starts in the Genome Selector. Click the highlighted icon in the apps list to open it.",
+      "advanceOn": {
+        "type": "view",
+        "view": "genome_selector"
+      },
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_selector"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_selector"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "local-genomes",
+      "section": "Getting started",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "interactive": false,
+      "title": "Every genome you have locally",
+      "body": "This list is everything this copy of Ensembl Go can open, whether it was downloaded through the Download app or added by hand from your own files. Both kinds sit here together and behave the same way.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "closed",
+          "fields": {
+            "genomeLabel": "",
+            "assemblyLabel": "",
+            "accession": "",
+            "fasta": "",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.genomeList",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "manual-panel",
+      "section": "Where your own files go",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "Adding your own",
+      "body": "Below the list is where you point Ensembl Go at files you already have. Nothing is copied or moved: the genome is registered where it sits, and the app reads it from there.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "",
+            "assemblyLabel": "",
+            "accession": "",
+            "fasta": "",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.panel",
+            "version": 1
+          },
+          "offset": 120
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.panel",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "form-labels",
+      "section": "Where your own files go",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "What to call it",
+      "body": "The two labels are how the genome appears everywhere else in the app, and together they identify it. The accession is optional — give one and it becomes the assembly's identity, which matters if you later download the same assembly.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "",
+            "assemblyLabel": "",
+            "accession": "",
+            "fasta": "",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.panel",
+            "version": 1
+          },
+          "offset": 120
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.labels",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "form-paths",
+      "section": "Where your own files go",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "The files themselves",
+      "body": "Three files can be named, and only the FASTA is required. Each row has a Browse button to find the file and an Analyse button to check it before you commit to it.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "",
+            "assemblyLabel": "",
+            "accession": "",
+            "fasta": "",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.fastaRow",
+            "version": 1
+          },
+          "offset": 90
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.fastaRow",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "custom.annotationRow",
+            "version": 1
+          }
+        },
+        {
+          "target": {
+            "id": "custom.homologyRow",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "type-labels",
+      "section": "Naming the genome",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "deferUntilReady": true,
+      "title": "Name the genome",
+      "body": "Enter ‘Ensemblus welcomus’ as the genome label and ‘EnsWel1.0’ as the assembly, or press Next and the tutorial will fill both in. The rest of the tutorial depends on these exact values, so they are offered below.",
+      "copy": "Ensemblus welcomus",
+      "copyTarget": {
+        "id": "custom.genomeLabel",
+        "version": 1
+      },
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "",
+            "assemblyLabel": "",
+            "accession": "",
+            "fasta": "",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.labels",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "advanceOn": {
+        "type": "input",
+        "target": {
+          "id": "custom.assemblyLabel",
+          "version": 1
+        },
+        "value": "EnsWel1.0"
+      },
+      "spotlight": {
+        "target": {
+          "id": "custom.labels",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "custom.genomeLabel",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          },
+          {
+            "target": {
+              "id": "custom.assemblyLabel",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "custom.genomeLabel",
+              "version": 1
+            },
+            "capability": "input",
+            "value": "Ensemblus welcomus",
+            "overwrite": true,
+            "submit": false
+          },
+          {
+            "target": {
+              "id": "custom.assemblyLabel",
+              "version": 1
+            },
+            "capability": "input",
+            "value": "EnsWel1.0",
+            "overwrite": true,
+            "submit": false
+          }
+        ],
+        "options": {
+          "pauseMs": 700
+        }
+      },
+      "holdMs": 900
+    },
+    {
+      "id": "browse-fasta",
+      "section": "Adding the sequence",
+      "view": "genome_selector",
+      "placement": "top",
+      "deferUntilReady": true,
+      "title": "Find the sequence file",
+      "body": "The FASTA holds the sequence itself, and it is the one file a genome cannot do without. Click Browse to find it.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.fastaRow",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "custom.fastaBrowse",
+          "version": 1
+        }
+      },
+      "spotlight": {
+        "target": {
+          "id": "custom.fastaRow",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "custom.fastaBrowse",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "custom.fastaBrowse",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "file-browser",
+      "section": "Adding the sequence",
+      "view": "genome_selector",
+      "placement": "left",
+      "interactive": false,
+      "title": "The file browser",
+      "body": "The app has its own file browser rather than the operating system's. It has opened in a folder of demo files the tutorial has put aside for you; normally it would open wherever you were last working.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "open",
+            "target": "manual_fasta",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "files.dialog",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "pick-fasta",
+      "section": "Adding the sequence",
+      "view": "genome_selector",
+      "placement": "left",
+      "title": "Choose demo.fa",
+      "body": "Click ‘demo.fa’ to select it. A single click is enough: the browser takes the file and closes.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "open",
+            "target": "manual_fasta",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        }
+      ],
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "demo.fa"
+          }
+        }
+      },
+      "spotlight": {
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "demo.fa"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "files.path",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "demo.fa"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "demo.fa"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "holdMs": 1200
+    },
+    {
+      "id": "fasta-chosen",
+      "section": "Adding the sequence",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "The path has landed",
+      "body": "The full path is in the field, and the Analyse button beside it is now live — it needs a file before it can do anything. The genome could be added as it stands; everything from here is about knowing what is in the file first.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.fastaRow",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.fastaRow",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "analyse-fasta",
+      "section": "Adding the sequence",
+      "view": "genome_selector",
+      "placement": "top",
+      "deferUntilReady": true,
+      "title": "Check it before you import it",
+      "body": "Analyse reads the whole file and reports what is actually in it. It is worth doing on anything you did not produce yourself. Click Analyse — it takes a moment.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "none",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.fastaRow",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "advanceOn": {
+        "type": "signal",
+        "name": "custom.analysed",
+        "match": {
+          "kind": "genome"
+        }
+      },
+      "settleMs": 12000,
+      "holdMs": 2000,
+      "spotlight": {
+        "target": {
+          "id": "custom.fastaAnalyse",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "custom.fastaAnalyse",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "custom.fastaAnalyse",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "cardPosition": {
+        "x": 0.6684,
+        "y": 0.0155
+      }
+    },
+    {
+      "id": "genome-report",
+      "section": "Adding the sequence",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "The genome report",
+      "body": "The report opens under the row it belongs to, in four sections. It is a description of the file, not a verdict on it — there is no pass or fail here, only what the sequence turned out to contain.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.report",
+            "version": 1,
+            "params": {
+              "kind": "genome"
+            }
+          },
+          "offset": 90
+        }
+      ],
+      "cardPosition": {
+        "x": 0.6667,
+        "y": 0.0155
+      },
+      "spotlight": {
+        "target": {
+          "id": "custom.report",
+          "version": 1,
+          "params": {
+            "kind": "genome"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "genome-sequences",
+      "section": "What the sequence report says",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "How much sequence there is",
+      "body": "Two sequences, twenty-two kilobases between them. On a real assembly the N50 and L50 beside them say how fragmented it is: a few long scaffolds or thousands of short ones. Below, the base composition shows what the letters actually are.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "genome-sequences"
+            }
+          },
+          "offset": 100
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.reportSection",
+          "version": 1,
+          "params": {
+            "section": "genome-sequences"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "genome-base-composition"
+            }
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "genome-issues",
+      "section": "What the sequence report says",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "Anything wrong with it",
+      "body": "The longest sequences are drawn as a bar so one dominant scaffold is obvious at a glance. Issues is empty here, which is the answer you want: no invalid characters, no empty records, nothing that would stop the file being read.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "genome-longest-sequences"
+            }
+          },
+          "offset": 100
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.reportSection",
+          "version": 1,
+          "params": {
+            "section": "genome-issues"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "genome-longest-sequences"
+            }
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "annotation-optional",
+      "section": "Adding the annotation",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "Annotation is optional",
+      "body": "A genome with no annotation still opens and browses; the gene track is simply empty, and you can add other kinds of track to it through the Track Manager. We have one here, so let's use it.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.annotationRow",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.annotationRow",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "cardPosition": {
+        "x": 0.0744,
+        "y": 0.0399
+      }
+    },
+    {
+      "id": "browse-annotation",
+      "section": "Adding the annotation",
+      "view": "genome_selector",
+      "placement": "top",
+      "deferUntilReady": true,
+      "title": "Find the annotation file",
+      "body": "Click Browse on the annotation row to find it.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.annotationRow",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "custom.annotationBrowse",
+          "version": 1
+        }
+      },
+      "spotlight": {
+        "target": {
+          "id": "custom.annotationRow",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "custom.annotationBrowse",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "custom.annotationBrowse",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pick-annotation",
+      "section": "Adding the annotation",
+      "view": "genome_selector",
+      "placement": "left",
+      "title": "Choose demo_genes.gtf",
+      "body": "Click ‘demo_genes.gtf’. GFF3, GFF and GTF are all accepted — this one is a GTF, which is what a gene-prediction tool typically writes.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "open",
+            "target": "manual_gff3",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        }
+      ],
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "demo_genes.gtf"
+          }
+        }
+      },
+      "spotlight": {
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "demo_genes.gtf"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "demo_genes.gtf"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "demo_genes.gtf"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "holdMs": 1200
+    },
+    {
+      "id": "annotation-chosen",
+      "section": "Adding the annotation",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "Both files named",
+      "body": "The annotation is in place beside the sequence. Analysing it does something the genome report could not: with a FASTA already chosen, it can check the two files against each other.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.annotationRow",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.annotationRow",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "analyse-annotation",
+      "section": "Adding the annotation",
+      "view": "genome_selector",
+      "placement": "top",
+      "deferUntilReady": true,
+      "title": "Analyse the annotation",
+      "body": "Click Analyse on the annotation row.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "none"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.annotationRow",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "advanceOn": {
+        "type": "signal",
+        "name": "custom.analysed",
+        "match": {
+          "kind": "annotation"
+        }
+      },
+      "settleMs": 12000,
+      "holdMs": 2000,
+      "spotlight": {
+        "target": {
+          "id": "custom.annotationAnalyse",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "custom.annotationAnalyse",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "custom.annotationAnalyse",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "annotation-report",
+      "section": "Adding the annotation",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "The annotation report",
+      "body": "Six sections this time. Between them they answer the question worth asking before importing an annotation: what is in this file, and will it mean what I expect once it is loaded?",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.report",
+            "version": 1,
+            "params": {
+              "kind": "annotation"
+            }
+          },
+          "offset": 90
+        }
+      ],
+      "cardPosition": {
+        "x": 0.0882,
+        "y": 0.0359
+      },
+      "spotlight": {
+        "target": {
+          "id": "custom.report",
+          "version": 1,
+          "params": {
+            "kind": "annotation"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "detected-model",
+      "section": "What the annotation report says",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "What it is, and what is in it",
+      "body": "The format was detected as GTF. Producer is blank because nothing in this file names a tool the app knows; output from StringTie or BRAKER would say so. Model counts what was found: six genes, six transcripts, fifteen exons.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "annotation-detected"
+            }
+          },
+          "offset": 100
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.reportSection",
+          "version": 1,
+          "params": {
+            "section": "annotation-detected"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "annotation-model"
+            }
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "gene-classes",
+      "section": "What the annotation report says",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "What kind of genes they are",
+      "body": "All six are protein-coding — but the file never says so. Open ‘every biotype’ and the biotypes as provided are empty: the class was worked out from the coding sequence. This is what the browser's gene-class filter will work with.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "annotation-gene-classes"
+            }
+          },
+          "offset": 100
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.reportSection",
+          "version": 1,
+          "params": {
+            "section": "annotation-gene-classes"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "sequence-regions",
+      "section": "What the annotation report says",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "Do the two files agree",
+      "body": "Both sequence names in the annotation were found in the FASTA, so nothing is missing. A mismatch here — ‘chr1’ against ‘1’ — is the most common reason a custom genome loads and then draws nothing at all.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "annotation-sequence-regions"
+            }
+          },
+          "offset": 100
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.reportSection",
+          "version": 1,
+          "params": {
+            "section": "annotation-sequence-regions"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "identifiers-issues",
+      "section": "What the annotation report says",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "Identifiers, and one note",
+      "body": "No duplicate or unresolved identifiers, so these can be used as they are; where they cannot, the app offers to generate its own. Issues carries one note: the file had no gene rows, so genes were built from the transcripts.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "annotation-identifiers"
+            }
+          },
+          "offset": 100
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.reportSection",
+          "version": 1,
+          "params": {
+            "section": "annotation-issues"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "custom.reportSection",
+            "version": 1,
+            "params": {
+              "section": "annotation-identifiers"
+            }
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "homology",
+      "section": "The optional extras",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "Homology",
+      "body": "A homology TSV lists which genes correspond to which in another genome. Supply one and the comparison views can carry a gene across species; leave it out and everything else still works. We have none here.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.homologyRow",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.homologyRow",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "cardPosition": {
+        "x": 0.089,
+        "y": 0.1688
+      }
+    },
+    {
+      "id": "index-path",
+      "section": "The optional extras",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "The index",
+      "body": "Browsing needs an index of the annotation, and it is built for you when the genome is added. The suggested path appeared as soon as the annotation was chosen; Browse puts it somewhere else if that directory is not writable.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.indexRow",
+            "version": 1
+          },
+          "offset": 110
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.indexRow",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "cardPosition": {
+        "x": 0.0892,
+        "y": 0.243
+      }
+    },
+    {
+      "id": "add-genome",
+      "section": "Registering it",
+      "view": "genome_selector",
+      "placement": "top",
+      "deferUntilReady": true,
+      "title": "Add the genome",
+      "body": "This is the step that commits it. The GTF is converted to the form the indexer reads, the index is built beside it, and the genome joins the list above. Click Add genome — it takes a few seconds.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": false,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.addGenome",
+            "version": 1
+          },
+          "offset": 620
+        }
+      ],
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "custom.addGenome",
+          "version": 1
+        }
+      },
+      "settleMs": 20000,
+      "holdMs": 2500,
+      "spotlight": {
+        "target": {
+          "id": "custom.addGenome",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "custom.addGenome",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "custom.addGenome",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "cardPosition": {
+        "x": 0.5948,
+        "y": 0.6166
+      }
+    },
+    {
+      "id": "added",
+      "section": "Registering it",
+      "view": "genome_selector",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "Converted and indexed",
+      "body": "Two things happened while that ran. The annotation was rewritten into canonical GFF3 beside the file you chose, since a GTF cannot be indexed directly, and the index was built from it. Your own files were not modified.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": true,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "custom.annotationRow",
+            "version": 1
+          },
+          "offset": 400
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "custom.annotationRow",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "in-the-list",
+      "section": "Registering it",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "It is in the list",
+      "body": "There it is with the rest, marked as added manually so you can tell it from a downloaded one. From here it behaves like any other genome in the list.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": true,
+          "active": false
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "offset": 80
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "selector.genomeList",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "select-genome",
+      "section": "Using it",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "deferUntilReady": true,
+      "title": "Activate it",
+      "body": "Adding a genome makes it available; ticking it makes the other apps work on it. Tick the box to activate it, or press Next and the tutorial will tick it for you.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": true,
+          "active": false
+        },
+        {
+          "type": "genomeSelection",
+          "genomes": []
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "selector.genomeList",
+            "version": 1
+          },
+          "offset": 80
+        }
+      ],
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "selector.checkbox",
+          "version": 1,
+          "params": {
+            "speciesKey": "ensemblus_welcomus"
+          }
+        }
+      },
+      "holdMs": 1500,
+      "spotlight": {
+        "target": {
+          "id": "selector.checkbox",
+          "version": 1,
+          "params": {
+            "speciesKey": "ensemblus_welcomus"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "app.genomePills",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "ensemblus_welcomus"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "selector.checkbox",
+              "version": 1,
+              "params": {
+                "speciesKey": "ensemblus_welcomus"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "genome-pill",
+      "section": "Using it",
+      "view": "genome_selector",
+      "placement": "bottom",
+      "align": "end",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "Active, and visible everywhere",
+      "body": "It has appeared as a pill in the bar at the top. That bar is the same in every app, so it is always visible which genomes you are working on.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": true,
+          "active": true
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.genomePills",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-browser",
+      "section": "Using it",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "title": "Open the Genome Browser",
+      "body": "Click the Genome Browser icon. Opening a genome for the first time reads its index, so there may be a brief pause before anything is drawn.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": true,
+          "active": true
+        }
+      ],
+      "advanceOn": {
+        "type": "view",
+        "view": "genome_browser"
+      },
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_browser"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_browser"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "browser-pill",
+      "section": "Using it",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "interactive": false,
+      "title": "Your genome, in the browser",
+      "body": "The pill names the genome this panel is showing and carries the colour used for it throughout the app. A genome added from your own files is indistinguishable from a downloaded one here, which is the point.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": true,
+          "active": true
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.genomePills",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "browser-track",
+      "section": "Using it",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "title": "The genes are drawn",
+      "body": "The track is drawn from the annotation you imported, through the index built when the genome was added. Four of the six genes are on this contig, in the positions the GTF gave them; the other two are on welcome2.",
+      "arrive": [
+        {
+          "type": "customGenome",
+          "panel": "open",
+          "fields": {
+            "genomeLabel": "Ensemblus welcomus",
+            "assemblyLabel": "EnsWel1.0",
+            "accession": "",
+            "fasta": "demo:fasta",
+            "annotation": "demo:annotation",
+            "homology": ""
+          },
+          "reports": {
+            "genome": "ready",
+            "annotation": "ready"
+          },
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "registered": true,
+          "active": true
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "review",
+      "section": "Wrapping up",
+      "placement": "center",
+      "title": "What we've covered",
+      "body": "We've named a genome, chosen a FASTA and a GTF from disk, and read what the app found in each before importing anything. We've seen the annotation converted and indexed on the way in, activated the genome, and browsed its genes. Your own files are untouched, and so is your configuration.",
+      "interactionPolicy": {
+        "targets": []
+      }
+    }
+  ]
+}

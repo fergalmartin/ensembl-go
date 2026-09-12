@@ -1,6 +1,7 @@
 import configuration from './configuration.js'
 import download from './download.js'
 import genomeSelector from './genomeSelector.js'
+import customGenome from './customGenome.js'
 import genomeBrowser from './genomeBrowser.js'
 import app from './app.js'
 
@@ -9,6 +10,7 @@ export const TUTORIAL_TARGET_VIEWS = Object.freeze([
   configuration,
   download,
   genomeSelector,
+  customGenome,
   genomeBrowser,
 ])
 

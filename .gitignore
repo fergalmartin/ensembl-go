@@ -98,8 +98,12 @@ ensembl_local_github_*/
 test-data/
 
 # --- Local tooling config ---
-# Personal settings. A shared .claude/settings.json, if added, should be tracked.
-.claude/
+# Personal settings stay out; shared tooling under .claude/ is tracked. The pattern has
+# to exclude the *contents* rather than the directory, or git never descends far enough
+# to see the exception below.
+# A shared .claude/settings.json, if added, should be tracked.
+.claude/*
+!.claude/skills/
 #
 # These two are the deliberate asymmetry with the snapshot: untracked here, but
 # included there. They are working documents that exist in no other copy, so a

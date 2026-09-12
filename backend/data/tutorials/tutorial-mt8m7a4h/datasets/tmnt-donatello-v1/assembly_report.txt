@@ -1,0 +1,4 @@
+# Assembly name:  Donatello_v1
+# Organism name:  Dermochelys coriacea
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+1	assembled-molecule	1	Chromosome	na	=	1	Primary Assembly	36000	chr1

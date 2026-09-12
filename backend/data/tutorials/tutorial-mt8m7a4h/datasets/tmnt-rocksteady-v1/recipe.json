@@ -1,0 +1,46 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "tmnt-rocksteady-v1",
+  "datasetRef": "embedded:tmnt-rocksteady-v1@1",
+  "fixtureId": "turtles-and-friends",
+  "character": "Rocksteady",
+  "synthetic": true,
+  "speciesKey": "tutorial_black_rhinoceros_rocksteady",
+  "assembly": "Rocksteady_v1",
+  "assemblyName": "Rocksteady_v1",
+  "displayName": "Black rhinoceros (Rocksteady)",
+  "scientificName": "Diceros bicornis",
+  "commonName": "Black rhinoceros",
+  "provider": "demo",
+  "browsableRange": {
+    "1": [
+      1,
+      36000
+    ]
+  },
+  "source": {
+    "type": "synthetic-fixture",
+    "fixture": "turtles-and-friends",
+    "character": "Rocksteady",
+    "containsRealSequence": false
+  },
+  "genes": [
+    "gene:rocksteady_1",
+    "gene:rocksteady_2",
+    "gene:rocksteady_3",
+    "gene:rocksteady_4"
+  ],
+  "files": {
+    "fasta": "genome.fa",
+    "fasta_index": "genome.fa.fai",
+    "gff3": "annotation.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "611534b9b4b8623c9a8da8cc8c86202454f8c1e2eb86bdd70087f07c4873ce3a",
+    "fasta_index": "ddd2ea9071ee3f1984c77f6c786a2db23000cc00982b4f935bee7c6be9316bab",
+    "gff3": "704c98b26d2e16079bd7b105a7e38c6467d1c5916940e428bed7387d2828905e",
+    "metadata": "79596667ed6a8d34280112e2489f44a02c225ecbe7a5b042c615f48aed5fb4f1"
+  }
+}

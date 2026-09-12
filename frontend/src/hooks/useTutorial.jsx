@@ -21,6 +21,7 @@ import {
   fetchDemoGenomeStatus,
   fetchTutorialGenomeRecords,
   installDemoGenome,
+  installDemoSourceFiles,
   installTutorialDataset,
   registerTutorialGenome,
   resetTutorialWorkspace,
@@ -44,6 +45,8 @@ import {
   anchorSelector,
   arrivalGenomeRecipeIds,
   arrivalDialog,
+  arrivalCustomGenome,
+  tutorialNeedsDemoSource,
   arrivalDialogFields,
   arrivalPlaylists,
   arrivalScrollOffset,
@@ -70,6 +73,7 @@ import {
   speedFactor,
   tutorialProgressLabel,
 } from '../utils/tutorialModel'
+import { importLocalGenome } from '../utils/customGenomeImport'
 import { visibleElementRect, viewportRect } from '../utils/overlayGeometry'
 import { targetRefSelector } from '../tutorialTargets/index.js'
 import { materializeTutorialDocument, tutorialDatasetStartsActive } from '../utils/tutorialDocument.js'
@@ -130,6 +134,15 @@ const ACTION_PAUSE_MS = 1200
 // How long a pan or a zoom the tutorial performs takes. Matched to the browser's own
 // animated moves, so a tutorial's pan and a user's Home key travel at the same rate.
 const BROWSER_MOVE_MS = 700
+// How long an arrival waits for a genome the reader is adding to be registered. This is
+// real work — converting an annotation and building its index — rather than a state that
+// can be set, so the wait is generous. It is a deadline, not a delay: it returns the
+// moment the genome appears. Deliberately not `paced()`: the conversion takes as long as
+// it takes, and the autoplay speed has no bearing on it.
+const REGISTER_TIMEOUT_MS = 30000
+// And how long it waits for one to go again. Removing is only a config change, so this is
+// short — but it is not instant, and the page's height depends on it.
+const REMOVE_TIMEOUT_MS = 3000
 // How many times a step's arrival re-checks that its target is on screen. More than one
 // because the app may still be scrolling when the step lands; few enough that a target
 // which simply cannot be shown does not hold the step up.
@@ -312,6 +325,10 @@ export function TutorialProvider({ children }) {
   // Which Genome Selector dialog the current step wants open. Null means "whatever is
   // open is the user's business"; the selector only acts when a step has an opinion.
   const [dialogRequest, setDialogRequest] = useState(null)
+  // What the "add your own genome" form should hold for the current step. Same contract as
+  // `dialogRequest`: null means the form is the reader's business, and the Genome Selector
+  // reconciles a request against its own state rather than the tutorial reaching into it.
+  const [customGenomeRequest, setCustomGenomeRequest] = useState(null)
   // The step whose arrival work, including scrolling its anchor into view, has settled.
   // Kept separately from `busy`: most steps deliberately show their card while busy,
   // while a small number defer their whole presentation until this id matches.
@@ -363,6 +380,10 @@ export function TutorialProvider({ children }) {
   // order. A `genomeSelection` arrival names recipe ids because that is what the portable
   // document knows; only the runtime knows what they became once installed.
   const datasetGenomesRef = useRef(new Map())
+  // Where this run's copy of the demo data actually landed. A `customGenome` arrival names
+  // files symbolically — `demo:fasta` — because the document cannot carry a path that only
+  // exists on the author's machine; this is what turns the symbol into the real thing.
+  const demoDataFilesRef = useRef(null)
   const rememberDatasetGenomes = useCallback((datasets, genomes) => {
     const remembered = new Map()
     for (const [index, dataset] of (datasets || []).entries()) {
@@ -541,6 +562,50 @@ export function TutorialProvider({ children }) {
   const overrideRef = useRef(null)
   overrideRef.current = configOverride
 
+  // A genome the reader adds by hand during a tutorial has to be registered with the
+  // backend, or the browser draws nothing for it.
+  //
+  // The override is a frontend fact and the browser resolves genomes server-side, from the
+  // configuration on disk — where a tutorial's genome never appears. That is the wall every
+  // bundled dataset already goes through `registerTutorialGenome` to get over; a genome the
+  // *reader* creates is no different, it just arrives later and from the form rather than
+  // from the document.
+  //
+  // Watched here rather than wired into the form, because there are three ways it can
+  // appear — the reader presses Add genome, an arrival restores the record, or a step
+  // declares it registered — and all three end in the same place.
+  const registeredManualKeysRef = useRef(new Set())
+  /** Register a genome the reader has just created, and remember that we did.
+   *
+   *  Exposed because the Genome Selector has to do this *before* it publishes the genome
+   *  to the app. The genome browser stays mounted even when another app is on screen, so
+   *  it starts resolving a newly active genome immediately — and a refusal is cached as
+   *  "Index Not Ready" rather than retried. */
+  const registerLocalGenome = useCallback(async (record) => {
+    const key = `${record?.species_key || ''}::${record?.assembly || ''}`
+    if (!record?.files?.fasta) return
+    try {
+      await registerTutorialGenome(record)
+      registeredManualKeysRef.current.add(key)
+    } catch { /* the step will report having nothing to point at */ }
+  }, [])
+  useEffect(() => {
+    if (!configOverride) {
+      registeredManualKeysRef.current = new Set()
+      return
+    }
+    for (const record of configOverride.manual_species || []) {
+      const key = `${record?.species_key || ''}::${record?.assembly || ''}`
+      if (!record?.files?.fasta || registeredManualKeysRef.current.has(key)) continue
+      registeredManualKeysRef.current.add(key)
+      // Refused by the backend unless every file sits inside the tutorial workspace, which
+      // is exactly the guarantee that makes this safe to do at all.
+      void registerTutorialGenome(record).catch(() => {
+        registeredManualKeysRef.current.delete(key)
+      })
+    }
+  }, [configOverride])
+
   const tutorial = useMemo(() => getTutorial(tutorialId), [tutorialId])
   const isRunning = Boolean(tutorial && state?.status === TUTORIAL_STATUS.running)
 
@@ -699,8 +764,19 @@ export function TutorialProvider({ children }) {
     setBusy('Preparing the tutorial…')
     try {
       // Anything left by an interrupted run goes before this one starts.
+      // `clearTutorialGenome` has just emptied the backend's session, so what this run
+      // registers has to be registered again — a memo held over from the previous run
+      // would skip it and leave the browser unable to resolve the genome.
+      registeredManualKeysRef.current = new Set()
       await resetTutorialWorkspace(root)
       const workspace = await createTutorialWorkspace(root)
+      // A tutorial about importing your own files needs some files to import. Inferred
+      // from the steps, so every other tutorial copies nothing.
+      demoDataFilesRef.current = tutorialNeedsDemoSource(next)
+        ? await installDemoSourceFiles({ output_dir: root, workspace })
+          .then((result) => ({ directory: result?.directory || '', ...(result?.files || {}) }))
+          .catch(() => null)
+        : null
       const datasets = (next.datasets || []).filter((dataset) => dataset?.embedded && dataset?.recipeId)
       const installedGenomes = []
       for (const dataset of datasets) {
@@ -745,7 +821,11 @@ export function TutorialProvider({ children }) {
     setRuntimeProblem('')
     setSelectorListPresentation(null)
     setDialogRequest({ dialog: 'none', requestedAt: Date.now() })
+    // Released rather than blanked: the form belongs to the reader again, and a request
+    // left standing would keep reconciling their own typing away after the tutorial ended.
+    setCustomGenomeRequest(null)
     datasetGenomesRef.current = new Map()
+    demoDataFilesRef.current = null
     cursorRef.current = null
     holdUntilRef.current = 0
     setSettledStepId('')
@@ -825,6 +905,11 @@ export function TutorialProvider({ children }) {
       if (previous.root && previous.root !== root) await resetTutorialWorkspace(previous.root)
       await resetTutorialWorkspace(root)
       const workspace = await createTutorialWorkspace(root)
+      demoDataFilesRef.current = tutorialNeedsDemoSource(document)
+        ? await installDemoSourceFiles({ output_dir: root, workspace })
+          .then((result) => ({ directory: result?.directory || '', ...(result?.files || {}) }))
+          .catch(() => null)
+        : null
       const genomes = []
       for (const dataset of datasets) {
         const installed = await installTutorialDataset({
@@ -880,6 +965,8 @@ export function TutorialProvider({ children }) {
     setConfigOverride(null)
     setSelectorListPresentation(null)
     setDialogRequest({ dialog: 'none', requestedAt: Date.now() })
+    setCustomGenomeRequest(null)
+    demoDataFilesRef.current = null
     setTutorialSandboxActive(false)
     setBrowserInteraction('all')
     datasetGenomesRef.current = new Map()
@@ -1390,6 +1477,124 @@ export function TutorialProvider({ children }) {
     setDialogRequest({ dialog, fields: arrivalDialogFields(arrival), requestedAt: Date.now() })
     await nextFrame()
     await nextFrame()
+  }, [])
+
+  /** Establish the state of the "add your own genome" form that a step's card describes.
+   *
+   *  The form is filled in over a dozen steps, and every one of them says something about
+   *  it: a path in one field and not the other, one analysis report open, the genome not
+   *  yet added. Inheriting that from the previous step is what makes a tutorial break when
+   *  it is walked backwards — so each step declares the whole form, and this sets it.
+   *
+   *  The symbolic file names are resolved here rather than in the document, which cannot
+   *  carry an absolute path. `demo:fasta` becomes whatever the tutorial's own copy of the
+   *  demo data is called in *this* workspace, on this machine, this run.
+   *
+   *  Like the dialog request, this is a *request* the Genome Selector reconciles against
+   *  its own state. The tutorial does not reach into the view: the view owns the form, and
+   *  a reader who has typed something of their own is not overwritten by a field the step
+   *  does not have an opinion about. `requestedAt` makes re-entering the same step a fresh
+   *  request, so "empty" has to be re-established on the way back even though nothing
+   *  about the step changed. */
+  const applyCustomGenomeArrival = useCallback(async (arrival) => {
+    const wanted = arrivalCustomGenome(arrival)
+    if (!wanted) return
+    const files = demoDataFilesRef.current || {}
+    // `demo:fasta` names the file the install laid down under the key `fasta`. The prefix
+    // is there to say, in the document, that this is a file the tutorial provides rather
+    // than a path — which is the distinction the document format cares about.
+    const resolve = (symbol) => {
+      const key = String(symbol || '').replace(/^demo:/, '')
+      return key ? String(files[key] || '') : ''
+    }
+    setCustomGenomeRequest({
+      panel: wanted.panel,
+      fields: {
+        ...wanted.fields,
+        fasta: resolve(wanted.fields.fasta),
+        annotation: resolve(wanted.fields.annotation),
+        homology: resolve(wanted.fields.homology),
+      },
+      reports: wanted.reports,
+      browser: {
+        ...wanted.browser,
+        directory: wanted.browser.directory === 'demo' ? String(files.directory || '') : '',
+      },
+      registered: wanted.registered,
+      active: wanted.active,
+      requestedAt: Date.now(),
+    })
+    await nextFrame()
+    await nextFrame()
+
+    // Wait for the genome to actually be there before the step is shown.
+    //
+    // Registering it is not a state that can be set: the annotation has to be converted
+    // and indexed first, which is real work taking seconds. Two frames is nowhere near
+    // enough, and a step whose card describes a genome in the list was drawing its
+    // spotlight around a row that did not exist yet — every time it was reached cold,
+    // never when walked forward, which is the signature of state that is waited for
+    // somewhere else.
+    // Removing the genome is waited for too, not only adding it.
+    //
+    // `pageScroll` is applied after every other arrival precisely because they change the
+    // page's height, and this one changes it by a whole row of the genome list. Returning
+    // before the view has actually dropped the genome means the position is measured
+    // against a page that is about to move — which put the button this step points at 231
+    // pixels below the bottom of the window, clipped to nothing, with no ring.
+    if (!wanted.registered) {
+      const removalDeadline = Date.now() + REMOVE_TIMEOUT_MS
+      while ((overrideRef.current?.manual_species || []).length > 0 && Date.now() < removalDeadline) {
+        await sleep(100)
+      }
+      return
+    }
+
+    // The Genome Selector reconciles the form and, while it is on screen, does the adding.
+    // It is not always on screen: a step in the genome browser that expects this genome to
+    // exist has no selector to reach, because views unmount when they are not active. So
+    // when nothing has appeared, do it here instead — from the same files, with the same
+    // labels, through the same shared import path.
+    const deadline = Date.now() + REGISTER_TIMEOUT_MS
+    let addedHere = false
+    for (;;) {
+      const override = overrideRef.current
+      const manual = override?.manual_species || []
+      const active = override?.active_species || []
+      if (manual.length > 0) {
+        if (!wanted.active || active.length > 0) return
+        // Registered but not active, and nothing is going to tick it from here.
+        setConfigOverride((previous) => (previous ? { ...previous, active_species: [manual[0]] } : previous))
+        return
+      }
+      if (Date.now() > deadline) return
+      if (!addedHere && files.fasta && wanted.fields.genomeLabel && wanted.fields.assemblyLabel) {
+        addedHere = true
+        try {
+          const record = await importLocalGenome({
+            species: wanted.fields.genomeLabel,
+            assembly: wanted.fields.assemblyLabel,
+            accession: wanted.fields.accession,
+            files: { fasta: files.fasta, gff3: resolve(wanted.fields.annotation) },
+          })
+          // Registered with the backend *before* it is published to the app, not after.
+          // The browser resolves genomes server-side, and the panel asks as soon as one
+          // becomes active — so publishing first is a race the panel loses, and it does
+          // not lose it quietly: it caches the refusal as "Index Not Ready" and waits for
+          // someone to press a button.
+          await registerTutorialGenome(record).catch(() => {})
+          setConfigOverride((previous) => (previous ? {
+            ...previous,
+            manual_species: [record],
+            ...(wanted.active ? { active_species: [record] } : {}),
+          } : previous))
+        } catch {
+          // The step will report having nothing to point at, which is the honest outcome.
+          return
+        }
+      }
+      await sleep(150)
+    }
   }, [])
 
   /** Establish the playlists a step expects to find, in the sandbox configuration.
@@ -1918,6 +2123,7 @@ export function TutorialProvider({ children }) {
         if (arrival.type === 'playlists') await applyPlaylistsArrival(arrival)
         if (arrival.type === 'selectorList') await applySelectorListArrival(arrival, { center: !positionsThePage })
         if (arrival.type === 'genomeSelection') await applyGenomeSelectionArrival(arrival)
+        if (arrival.type === 'customGenome') await applyCustomGenomeArrival(arrival)
       }
       // After the selection, which is the set the dialog opens for.
       for (const arrival of arrivals) {
@@ -1943,7 +2149,7 @@ export function TutorialProvider({ children }) {
     const targetFound = !forStep.anchor || Boolean(findAnchor(forStep.anchor))
     return { prepared: true, targetFound, step: forStep }
   }, [
-    applyGenomeSelectionArrival, applyPageScrollArrival, applyDialogArrival, applyPlaylistsArrival,
+    applyCustomGenomeArrival, applyGenomeSelectionArrival, applyPageScrollArrival, applyDialogArrival, applyPlaylistsArrival,
     applySelectorListArrival, bringAnchorIntoView, clickAsTutorial, navigateToView,
     paced, runBrowserView, satisfyPreconditions, setBrowserControls,
   ])
@@ -2018,6 +2224,7 @@ export function TutorialProvider({ children }) {
             if (arrival.type === 'playlists') await applyPlaylistsArrival(arrival)
             if (arrival.type === 'selectorList') await applySelectorListArrival(arrival, { center: !positionsThePage })
             if (arrival.type === 'genomeSelection') await applyGenomeSelectionArrival(arrival)
+            if (arrival.type === 'customGenome') await applyCustomGenomeArrival(arrival)
           }
           // After the selection: the dialog opens for the selected genomes, so a step
           // that establishes both has to establish them in that order.
@@ -2091,7 +2298,7 @@ export function TutorialProvider({ children }) {
     // every time the user wanders between apps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    applyGenomeSelectionArrival, applyPageScrollArrival, applyDialogArrival, applyPlaylistsArrival,
+    applyCustomGenomeArrival, applyGenomeSelectionArrival, applyPageScrollArrival, applyDialogArrival, applyPlaylistsArrival,
     applySelectorListArrival, bringAnchorIntoView, isRunning, step,
     navigateToView, runBrowserView, satisfyPreconditions, setBrowserControls, tutorial,
     preparationRetry,
@@ -2394,6 +2601,8 @@ export function TutorialProvider({ children }) {
     configOverride,
     selectorListPresentation,
     dialogRequest,
+    customGenomeRequest,
+    registerLocalGenome,
     pulseAnchor,
     cursor,
     cursorTravelMs: paced(CURSOR_TRAVEL_MS),
@@ -2438,7 +2647,7 @@ export function TutorialProvider({ children }) {
     authoringEnabled, builderAuthoringEnabled, autoplay, autoplayRun, back, busy, configOverride, cursor,
     currentView, dismiss, editStepPosition, editStepSize, editStepText, emitSignal, exit, isRunning, navigateToView, next,
     fillCopyValue, notifyTheme, notifyView, paced, prepareBuilderPreview, prepareBuilderStep, pulseAnchor, registerHost, skip, speedIndex, start,
-    readyStepId, runtimeProblem, dialogRequest, settledStepId, selectorListPresentation, state, step, stored,
+    readyStepId, runtimeProblem, dialogRequest, customGenomeRequest, registerLocalGenome, settledStepId, selectorListPresentation, state, step, stored,
     theme, toggleTutorialGenome, tutorial,
     selectedDatasetRecipeIds, scenePlaylists, stopBuilderPreview, updateSandboxConfig,
   ])

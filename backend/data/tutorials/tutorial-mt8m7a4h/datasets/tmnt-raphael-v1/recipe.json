@@ -1,0 +1,46 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "tmnt-raphael-v1",
+  "datasetRef": "embedded:tmnt-raphael-v1@1",
+  "fixtureId": "turtles-and-friends",
+  "character": "Raphael",
+  "synthetic": true,
+  "speciesKey": "tutorial_loggerhead_turtle_raphael",
+  "assembly": "Raphael_v1",
+  "assemblyName": "Raphael_v1",
+  "displayName": "Loggerhead turtle (Raphael)",
+  "scientificName": "Caretta caretta",
+  "commonName": "Loggerhead turtle",
+  "provider": "demo",
+  "browsableRange": {
+    "1": [
+      1,
+      36000
+    ]
+  },
+  "source": {
+    "type": "synthetic-fixture",
+    "fixture": "turtles-and-friends",
+    "character": "Raphael",
+    "containsRealSequence": false
+  },
+  "genes": [
+    "gene:raphael_1",
+    "gene:raphael_2",
+    "gene:raphael_3",
+    "gene:raphael_4"
+  ],
+  "files": {
+    "fasta": "genome.fa",
+    "fasta_index": "genome.fa.fai",
+    "gff3": "annotation.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "e1f66943ff19560a9eda4aa57572dbe3d8fc372797f36824eab25d38d027e3c5",
+    "fasta_index": "ee3020c153d44ae05360a10233a181e965b7a64109f2406292798d0f86543570",
+    "gff3": "b7ecf335de73c4984b0f3eff4f61422394b7c805a1d36a060e48ef0e2675e3ba",
+    "metadata": "6bbf53c6680dac32e1976f19cd47d52fef8e64a8d1060952470070769f9b1238"
+  }
+}

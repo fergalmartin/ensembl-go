@@ -1,0 +1,46 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "tmnt-april-v1",
+  "datasetRef": "embedded:tmnt-april-v1@1",
+  "fixtureId": "turtles-and-friends",
+  "character": "April",
+  "synthetic": true,
+  "speciesKey": "tutorial_human_april",
+  "assembly": "April_v1",
+  "assemblyName": "April_v1",
+  "displayName": "Human (April)",
+  "scientificName": "Homo sapiens",
+  "commonName": "Human",
+  "provider": "demo",
+  "browsableRange": {
+    "1": [
+      1,
+      36000
+    ]
+  },
+  "source": {
+    "type": "synthetic-fixture",
+    "fixture": "turtles-and-friends",
+    "character": "April",
+    "containsRealSequence": false
+  },
+  "genes": [
+    "gene:april_1",
+    "gene:april_2",
+    "gene:april_3",
+    "gene:april_4"
+  ],
+  "files": {
+    "fasta": "genome.fa",
+    "fasta_index": "genome.fa.fai",
+    "gff3": "annotation.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "86f9c5fbbd9936513c1da361cfb642abc2095d5fcd6f1532e3f8d637b16ece01",
+    "fasta_index": "6057a0f316ed5280094549a6e0594adedbd9ee5a6b4035b3371c9151bcb4bc49",
+    "gff3": "21afa7e2cf1d8256d26a8dc0d452dfb992667dbc78f0b567a62b565a499894f4",
+    "metadata": "190bffdc19f1622a9bbeb05e3cc03c717b80d5dd18c545cb54a963b4de7daad3"
+  }
+}

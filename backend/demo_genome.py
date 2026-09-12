@@ -218,6 +218,61 @@ def demo_source_dir(genome_id: Any = None) -> Path:
     return Path(__file__).resolve().parent / "data" / bundled_genome(genome_id).source_dir_name
 
 
+# The files the custom-genome tutorial puts in front of the reader to pick by hand.
+#
+# Deliberately *not* an install: nothing is registered, nothing is indexed and no manifest
+# is written. They are laid out as a plain folder of files, because the thing being taught
+# is what someone does with a folder of files they already have. Everything that makes them
+# into a genome is the reader's own work, through the form.
+#
+# The annotation is the GTF rather than `demo.gff3` so the Analyse report has something to
+# say — a dialect to detect, a gene level to rebuild, biotypes to infer. See
+# `backend/scripts/build_demo_gtf.py`.
+DEMO_SOURCE_BUNDLE = (
+    ("fasta", "demo.fa", "demo.fa"),
+    ("fastaIndex", "demo.fa.fai", "demo.fa.fai"),
+    ("annotation", "demo_genes.gtf", "demo_genes.gtf"),
+    ("assemblyReport", "demo_assembly_report.txt", "demo_assembly_report.txt"),
+)
+
+DEMO_SOURCE_SUBDIR = "demo_data"
+
+
+def install_demo_source_files(workspace: str) -> Dict[str, Any]:
+    """Copy the demo genome's raw files into a tutorial workspace, unregistered.
+
+    The reader browses to these and picks them, exactly as they would their own data. They
+    go inside the workspace for two reasons: it is swept at the start and end of every run,
+    so a tutorial cannot leave files in the user's directories; and everything the import
+    then writes beside them — the converted annotation, its index, any ``id_map.tsv`` — is
+    swept with them rather than accumulating somewhere the user owns.
+
+    That second reason is also what makes the resulting genome browsable at all:
+    ``set_tutorial_session_genome`` refuses any record naming a file outside a workspace.
+    """
+    root = str(workspace or "").strip()
+    if not root:
+        raise ValueError("A tutorial workspace is needed.")
+    target = Path(root).expanduser().resolve()
+    if not _is_inside_tutorial_workspace(target):
+        raise ValueError("Demo source files may only be written inside a tutorial workspace.")
+
+    source = demo_source_dir()
+    directory = target / DEMO_SOURCE_SUBDIR
+    directory.mkdir(parents=True, exist_ok=True)
+
+    written: Dict[str, str] = {}
+    for key, source_name, target_name in DEMO_SOURCE_BUNDLE:
+        origin = source / source_name
+        if not origin.is_file():
+            raise ValueError(f"The bundled demo genome is missing {source_name}.")
+        destination = directory / target_name
+        shutil.copyfile(origin, destination)
+        written[key] = str(destination)
+
+    return {"directory": str(directory), "files": written}
+
+
 def demo_assembly_dir(output_dir: str, genome_id: Any = None) -> Path:
     genome = bundled_genome(genome_id)
     return (

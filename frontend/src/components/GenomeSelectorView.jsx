@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { IconTrash } from './ConfigurationView'
 import FileBrowserModal from './FileBrowserModal'
+import useTutorial from '../hooks/useTutorial'
 import AppButtonIcon from './AppButtonIcon'
 import ScreenshotExportModal from './ScreenshotExportModal'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
@@ -59,6 +60,16 @@ import {
     localFileTypeLabel,
     orderBundleFileTypes,
 } from '../utils/genomeFileTypes'
+import {
+    basenameFromPath,
+    buildManualGenomeRecord,
+    deriveIndexPathFromGff,
+    dirnameFromPath,
+    joinPath,
+    prepareAnnotation,
+    stripGffSuffix,
+    toSpeciesKey,
+} from '../utils/customGenomeImport'
 import {
     bundleMissingFileReport,
     bundlePreviewModel,
@@ -408,44 +419,14 @@ function GenomeFileEditor({
     )
 }
 
-const basenameFromPath = (value = '') => {
-    const normalized = String(value || '').replace(/\\/g, '/')
-    const trimmed = normalized.endsWith('/') ? normalized.slice(0, -1) : normalized
-    if (!trimmed) return ''
-    const parts = trimmed.split('/')
-    return parts[parts.length - 1] || ''
-}
 
-const dirnameFromPath = (value = '') => {
-    const normalized = String(value || '').replace(/\\/g, '/')
-    const trimmed = normalized.endsWith('/') ? normalized.slice(0, -1) : normalized
-    const idx = trimmed.lastIndexOf('/')
-    if (idx < 0) return '.'
-    if (idx === 0) return '/'
-    return trimmed.slice(0, idx)
-}
 
 const DEFAULT_BUNDLE_FILENAME = 'ensembl-go-genomes.json'
 
-const joinPath = (base, child) => {
-    if (!base) return child
-    if (!child) return base
-    if (base === '/') return `/${child}`
-    return `${base.replace(/\/+$/, '')}/${child}`
-}
 
 // Strips any annotation extension, so a GTF does not derive an index named
 // `<name>.gtf.gz.gff3.index.db`.
-const stripGffSuffix = (filename = '') =>
-    filename.replace(/\.(?:ensembl\.)?(?:gff3|gff|gtf|gff2)(\.(?:gz|bgz))?$/i, '')
 
-const deriveIndexPathFromGff = (gffPath = '', fallbackDir = '') => {
-    if (!gffPath) return ''
-    const file = basenameFromPath(gffPath)
-    const prefix = stripGffSuffix(file) || 'genome'
-    const dir = dirnameFromPath(gffPath) || fallbackDir || '.'
-    return joinPath(dir, `${prefix}.gff3.index.db`)
-}
 
 const manualIndexFilename = (genomeLabel = '', assemblyLabel = '', annotationPath = '') => {
     const labelStem = [genomeLabel, assemblyLabel]
@@ -459,11 +440,6 @@ const manualIndexFilename = (genomeLabel = '', assemblyLabel = '', annotationPat
     return `${labelStem || annotationStem}.gff3.index.db`
 }
 
-const toSpeciesKey = (value = '') =>
-    value
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
 
 const itemKey = (item) => {
     return getGenomeKey(item)
@@ -1157,9 +1133,15 @@ function PlaylistEditorModal({ isOpen, theme, playlist, availableAssembliesByKey
     )
 }
 
-function ManualPathRow({ label, value, onBrowse, placeholder, isLight, onValidate, validating, hint }) {
+// The three ids are passed in rather than derived from one, because the anchor check in
+// tutorials.test.js reads this source as text: an id assembled at runtime from a prop is
+// invisible to it. Each call site writes its own three out in full.
+function ManualPathRow({
+    label, value, onBrowse, placeholder, isLight, onValidate, validating, hint,
+    tourId, analyseTourId, browseTourId,
+}) {
     return (
-        <div>
+        <div data-tour-id={tourId}>
             <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
                 {label}
             </label>
@@ -1177,6 +1159,7 @@ function ManualPathRow({ label, value, onBrowse, placeholder, isLight, onValidat
                 {onValidate ? (
                     <button
                         type="button"
+                        data-tour-id={analyseTourId}
                         onClick={onValidate}
                         disabled={!value || validating}
                         className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${isLight
@@ -1189,6 +1172,7 @@ function ManualPathRow({ label, value, onBrowse, placeholder, isLight, onValidat
                 ) : null}
                 <button
                     type="button"
+                    data-tour-id={browseTourId}
                     onClick={onBrowse}
                     className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${isLight
                         ? 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300'
@@ -1446,6 +1430,7 @@ export default function GenomeSelectorView({
     selectedSpeciesList = null,
     tutorialListPresentation = null,
     tutorialDialogRequest = null,
+    tutorialCustomGenomeRequest = null,
     theme,
     screenshotMode = false,
     onScreenshotModeChange = null,
@@ -1502,6 +1487,9 @@ export default function GenomeSelectorView({
     const [selectorPlaylistId, setSelectorPlaylistId] = useState(PLAYLIST_ALL_ID)
     const [downloadingMissingKeys, setDownloadingMissingKeys] = useState(new Set())
 
+    // A running tutorial listens for the analysis finishing; outside one this is inert.
+    const { emitSignal: emitTutorialSignal, isRunning: tutorialRunning, registerLocalGenome } = useTutorial()
+
     // Expanded by default: the add form and the JSON controls are the panel's
     // whole point, and hiding them behind a chevron made them hard to find.
     const [manualOpen, setManualOpen] = useState(true)
@@ -1531,6 +1519,12 @@ export default function GenomeSelectorView({
         summary: null,
     })
     const manualSuccessTimerRef = useRef(null)
+    // The genome a running tutorial added, kept so a step that declares it registered
+    // can restore it rather than convert and index the annotation all over again.
+    const tutorialAddedGenomeRef = useRef(null)
+    // Set when a step has asked for a genome that does not exist yet, and cleared once the
+    // form holds the values needed to build it.
+    const pendingTutorialAddRef = useRef(null)
     const [customAnnotationTarget, setCustomAnnotationTarget] = useState(null)
     const [customAnnotationLabel, setCustomAnnotationLabel] = useState(defaultCustomAnnotationLabel())
     const [customAnnotationPath, setCustomAnnotationPath] = useState('')
@@ -1578,6 +1572,11 @@ export default function GenomeSelectorView({
                 kind,
                 body,
                 onUpdate: (payload) => {
+                    // The report appears well after the button was pressed, and a step that
+                    // advanced on the click would read its card over an empty panel.
+                    if (payload.status === 'success' && payload.report) {
+                        emitTutorialSignal('custom.analysed', { kind })
+                    }
                     setValidation((prev) => ({
                         ...prev,
                         [slot]: {
@@ -1609,40 +1608,10 @@ export default function GenomeSelectorView({
             }))
             return null
         }
-    }, [])
+    }, [emitTutorialSignal])
 
     // Converts an annotation into canonical GFF3 when the indexer cannot read it
     // as-is, and returns the path that should actually be indexed.
-    const prepareAnnotation = useCallback(async (annotationPath, fastaPath, onProgress = null) => {
-        const res = await fetch(`${API_BASE}/api/custom/prepare-annotation`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                annotation_path: annotationPath,
-                fasta_path: fastaPath || null,
-            }),
-        })
-        const started = await res.json()
-        if (!res.ok) throw new Error(started?.detail || 'Failed to prepare the annotation')
-
-        for (;;) {
-            await new Promise((resolve) => setTimeout(resolve, 300))
-            const poll = await fetch(`${API_BASE}/api/custom/conversion/${started.task_id}`)
-            const payload = await poll.json()
-            if (!poll.ok) throw new Error(payload?.detail || 'Preparation lookup failed')
-            onProgress?.({
-                status: payload.status,
-                progress: Number(payload.progress || 0),
-                stage: payload.stage || '',
-                message: payload.message || '',
-                counters: payload.counters || {},
-            })
-            if (payload.status === 'failed') {
-                throw new Error(payload.error || 'Failed to prepare the annotation')
-            }
-            if (payload.status === 'success') return payload.report || {}
-        }
-    }, [])
 
     const resetManualForm = useCallback(() => {
         setManualSpeciesLabel('')
@@ -3264,6 +3233,152 @@ export default function GenomeSelectorView({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tutorialDialogRequest])
 
+    // What the "add your own genome" form holds for the current tutorial step.
+    //
+    // The same contract as the dialog request above: a step says what the form should look
+    // like when its card is read, and this reconciles that against the form's own state.
+    // It is what makes the custom-genome tutorial survive Back and a jump straight into the
+    // middle of it — every step there describes a form in a particular condition, and a
+    // step that inherited that from the one before it would show the wrong picture.
+    //
+    // The analyses are *run*, not faked, through the same call the Analyse button makes.
+    // A stubbed report would drift from the real one the first time the analysis changed,
+    // and the cards quote what the report says.
+    useEffect(() => {
+        const request = tutorialCustomGenomeRequest
+        if (!request) return
+
+        setManualOpen(request.panel !== 'closed')
+        setManualSpeciesLabel(request.fields.genomeLabel || '')
+        setManualAssemblyLabel(request.fields.assemblyLabel || '')
+        setManualGca(request.fields.accession || '')
+        setManualFasta(request.fields.fasta || '')
+        setManualGff3(request.fields.annotation || '')
+        setManualHomology(request.fields.homology || '')
+        // Derived rather than declared: the form computes it from the annotation, and a
+        // step that named it separately could disagree with what the app would produce.
+        // A full path, not just the filename. `manualIndexFilename` returns a bare name —
+        // the browse handler joins it to a directory — and an index path with no directory
+        // puts the genome record outside the tutorial workspace, which is what the backend
+        // checks before it will let the browser resolve the genome at all. The symptom is
+        // three apps away: "Index Not Ready · Invalid genome" on the browser's track.
+        setManualIndexPath(request.fields.annotation
+            ? joinPath(
+                dirnameFromPath(request.fields.annotation),
+                manualIndexFilename(request.fields.genomeLabel, request.fields.assemblyLabel, request.fields.annotation),
+            )
+            : '')
+
+        // The file browser, pointed at the tutorial's own copy of the demo data. Without
+        // the directory the reader would have to navigate a filesystem the tutorial cannot
+        // predict, which is not a step anyone could follow.
+        if (request.browser.state === 'open' && request.browser.directory) {
+            setManualBrowseDirectory(request.browser.directory)
+            setModalTarget(request.browser.target || 'manual_fasta')
+            setModalMode('file')
+            setModalOpen(true)
+        } else {
+            setModalOpen(false)
+            if (request.browser.directory) setManualBrowseDirectory(request.browser.directory)
+        }
+
+        const wanted = request.reports || {}
+        setValidation((prev) => ({
+            ...prev,
+            ...(wanted.genome === 'ready' ? {} : { genome: null }),
+            ...(wanted.annotation === 'ready' ? {} : { annotation: null }),
+        }))
+
+        // Only analyse what is not already analysed. Re-running an analysis the panel is
+        // currently showing takes the panel away and puts it back — which is a step's
+        // spotlight measured against an element that is briefly not there, and a needless
+        // trip to the backend for an answer already on screen.
+        const showing = (slot, path) => (
+            validation[slot]?.status === 'success' && validation[slot]?.path === path
+        )
+        const analyses = []
+        if (wanted.genome === 'ready' && request.fields.fasta && !showing('genome', request.fields.fasta)) {
+            analyses.push(runValidation('genome', 'genome', { fasta_path: request.fields.fasta }))
+        }
+        if (wanted.annotation === 'ready' && request.fields.annotation && !showing('annotation', request.fields.annotation)) {
+            analyses.push(runValidation('annotation', 'annotation', {
+                annotation_path: request.fields.annotation,
+                fasta_path: request.fields.fasta || null,
+            }))
+        }
+        void Promise.all(analyses).catch(() => { /* the panel reports its own failure */ })
+
+        // Whether the genome has been added yet.
+        //
+        // `false` is the state the step that presses **Add genome** has to arrive in, or
+        // walking back to it finds the job already done and the button does nothing its
+        // card describes. `true` is what every step after it needs, so that jumping
+        // straight into the last section shows a genome in the list rather than an empty
+        // one.
+        //
+        // Adding it for real is expensive — the annotation is converted and indexed — so
+        // it happens once and is restored from the record afterwards. The files it built
+        // are still in the workspace, so the restored record is not a copy of the genome
+        // but the same one.
+        const manual = config.manual_species || []
+        if (request.registered) {
+            if (manual.length === 0) {
+                if (tutorialAddedGenomeRef.current) {
+                    mergeManualGenomeRecords([tutorialAddedGenomeRef.current], { selectRecords: request.active })
+                } else if (request.fields.fasta) {
+                    // Not called here: `addManualGenome` reads the form out of React state,
+                    // and the setters above have only been queued — it would run against
+                    // empty labels and refuse. Flagged instead, and performed by the effect
+                    // below once the values it needs are actually on the form.
+                    pendingTutorialAddRef.current = { active: request.active }
+                }
+            } else {
+                // Registered already; only its activation may need changing. Adding a genome
+                // makes it available and ticking it makes the other apps use it, which is a
+                // distinction the tutorial teaches, so the two are set independently.
+                const record = manual[0]
+                const active = config.active_species || []
+                const isActive = active.some((entry) => itemKey(entry) === itemKey(record))
+                if (request.active && !isActive) {
+                    onConfigChange({ ...config, active_species: [...active, record] })
+                } else if (!request.active && isActive) {
+                    onConfigChange({
+                        ...config,
+                        active_species: active.filter((entry) => itemKey(entry) !== itemKey(record)),
+                    })
+                }
+            }
+        } else if (manual.length > 0) {
+            // Remembered before it goes, so returning to a later step does not pay for the
+            // conversion a second time.
+            tutorialAddedGenomeRef.current = manual[0]
+            onConfigChange({ ...config, manual_species: [], active_species: [] })
+        }
+
+        // Keyed on the request alone. It carries a timestamp, so re-entering the same step
+        // is a fresh request — "the form is empty" has to be re-established on the way back
+        // even though nothing about the step changed.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tutorialCustomGenomeRequest])
+
+    // Perform a tutorial-requested add once the form actually holds what it needs.
+    //
+    // A step that declares the genome registered may be the first thing a reader sees —
+    // jumped to straight from the tutorial card — in which case nothing has added it yet
+    // and it has to be built here. That means converting the annotation and building its
+    // index, which is why the arrival waits rather than assuming two frames is enough.
+    useEffect(() => {
+        const pending = pendingTutorialAddRef.current
+        if (!pending) return
+        if (!manualFasta || !manualSpeciesLabel.trim() || !manualAssemblyLabel.trim()) return
+        if ((config.manual_species || []).length > 0) { pendingTutorialAddRef.current = null; return }
+        pendingTutorialAddRef.current = null
+        void addManualGenome()
+        // Watching the form's own values: this fires on the render after the reconciliation
+        // above has set them, which is the earliest point the add can succeed.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [manualFasta, manualGff3, manualSpeciesLabel, manualAssemblyLabel])
+
     const handleRemovalFillToggle = useCallback((action) => {
         if (removalFillMode === action) {
             setRemovalKeys(new Set())
@@ -3420,62 +3535,6 @@ export default function GenomeSelectorView({
     // Recording what it converted, and from what, is the only way a later removal
     // can tell our converted GFF3 from the file the user pointed us at — the
     // record keeps only the converted path in files.gff3.
-    const buildManualGenomeRecord = (entry, annotationPath = '', prepared = null) => {
-        const speciesLabel = String(entry?.species || '').trim()
-        const assemblyLabel = String(entry?.assembly || '').trim()
-        const assemblyName = String(entry?.assembly_name || '').trim() || assemblyLabel
-        const accession = String(entry?.accession || '').trim()
-        const provider = String(entry?.provider || '').trim() || 'manual'
-        const isHandAdded = provider.toLowerCase() === 'manual'
-        const files = canonicalBundleFiles(entry?.files)
-        const preparedAnnotation = annotationPath || files.gff3 || ''
-        const artifacts = prepared?.converted
-            ? {
-                converted_annotation: String(prepared.annotation_path || preparedAnnotation || ''),
-                source_annotation: String(prepared.source_path || files.gff3 || ''),
-                id_map: String(prepared.id_map_path || ''),
-                generated_at: new Date().toISOString(),
-            }
-            : (entry?.artifacts && typeof entry.artifacts === 'object' ? entry.artifacts : null)
-
-        const resolvedFiles = { ...files }
-        if (preparedAnnotation) {
-            resolvedFiles.gff3 = preparedAnnotation
-            if (!resolvedFiles.index) resolvedFiles.index = deriveIndexPathFromGff(preparedAnnotation)
-        } else {
-            delete resolvedFiles.gff3
-            delete resolvedFiles.index
-        }
-        const release = entry?.dataset_release || {}
-
-        return normalizeGenomeRecord({
-            species_key: String(entry?.species_key || '').trim() || toSpeciesKey(speciesLabel) || 'manual_species',
-            // Accession first, as before: it is what the genome key is built
-            // from, so changing the precedence would rekey existing genomes.
-            assembly: accession || assemblyLabel,
-            assembly_name: assemblyName,
-            scientific_name: speciesLabel,
-            common_name: String(entry?.common_name || '').trim(),
-            display_name: String(entry?.display_name || '').trim(),
-            display_name_reason: String(entry?.display_name_reason || '').trim(),
-            provider,
-            source_database: String(entry?.source_database || '').trim() || (isHandAdded ? 'Manual' : provider),
-            gca: accession,
-            equivalent_accessions: Array.isArray(entry?.equivalent_accessions) ? entry.equivalent_accessions : [],
-            dataset_release_key: String(release.key || '').trim(),
-            dataset_release_source: String(release.source || '').trim(),
-            dataset_release_date: String(release.date || '').trim(),
-            dataset_release_label: String(release.label || '').trim(),
-            dataset_release_short_label: String(release.short_label || '').trim(),
-            // Registered from local files rather than managed by the downloader.
-            is_manual: true,
-            types: Object.keys(resolvedFiles).filter((type) => resolvedFiles[type]),
-            has_annotation: Boolean(preparedAnnotation),
-            files: resolvedFiles,
-            missing_files: Array.isArray(entry?.missing_files) ? entry.missing_files : [],
-            ...(artifacts ? { artifacts } : {}),
-        })
-    }
 
     const mergeManualGenomeRecords = (
         records,
@@ -3956,9 +4015,25 @@ export default function GenomeSelectorView({
                     index: manualIndexPath,
                 },
             }, annotationPath, preparedResult)
+            // While a tutorial is running the genome lives only in its config override, so
+            // the backend has to be told about it separately — and told *first*. The genome
+            // browser stays mounted behind whatever app is on screen and starts resolving a
+            // newly active genome straight away; if it asks before this lands it caches the
+            // refusal as "Index Not Ready" and waits to be prodded.
+            if (tutorialRunning) await registerLocalGenome(record)
             mergeManualGenomeRecords(
                 [record],
-                { retainFormAnalyses: true, sourceAnnotation: manualGff3 },
+                {
+                    retainFormAnalyses: true,
+                    sourceAnnotation: manualGff3,
+                    // Adding a genome normally selects it, which is the helpful thing when
+                    // someone has just gone to the trouble. During a tutorial it is wrong
+                    // twice over: activating it is the *next* thing the reader is asked to
+                    // do, and it is what makes the genome browser — which stays mounted
+                    // behind whatever app is on screen — reach for an index that is still
+                    // being built, whereupon it caches "Index Not Ready" and stops trying.
+                    selectRecords: !tutorialRunning,
+                },
             )
 
             const annotationNote = record.files?.gff3
@@ -3974,6 +4049,12 @@ export default function GenomeSelectorView({
                 counters: {},
                 summary: null,
             })
+            // Two seconds after a successful add the form tidies itself away, which is the
+            // right thing when someone has just finished with it. During a tutorial it is
+            // not: the step after the add still describes the form, and going Back to the
+            // add step lands on a panel this timer has since collapsed — taking the button
+            // the step points at out of the DOM entirely.
+            if (tutorialRunning) return
             manualSuccessTimerRef.current = window.setTimeout(() => {
                 resetManualForm()
                 setManualOpen(false)
@@ -4493,10 +4574,14 @@ export default function GenomeSelectorView({
                 </div>
             </div>
 
-            <div className={`order-3 flex-none mt-6 rounded-xl border overflow-hidden ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}>
+            <div
+                data-tour-id="manual-add-panel"
+                className={`order-3 flex-none mt-6 rounded-xl border overflow-hidden ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}
+            >
                 <div className={`flex flex-wrap items-center gap-2 px-3 sm:px-6 py-3 ${isLight ? 'bg-white' : 'bg-gray-800'}`}>
                     <button
                         type="button"
+                        data-tour-id="manual-add-toggle"
                         onClick={() => setManualOpen((prev) => !prev)}
                         disabled={manualLocked}
                         className={`min-w-0 flex-1 flex items-center justify-between py-1 text-left transition-colors disabled:cursor-not-allowed ${manualLocked ? 'opacity-60' : ''}`}
@@ -4620,13 +4705,14 @@ export default function GenomeSelectorView({
                             disabled={manualLocked}
                             className={`pt-5 space-y-4 transition-opacity ${manualLocked ? 'opacity-55' : ''}`}
                         >
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div data-tour-id="manual-labels" className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <div>
                                     <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
                                         Genome label *
                                     </label>
                                     <input
                                         type="text"
+                                        data-tour-id="manual-genome-label"
                                         value={manualSpeciesLabel}
                                         onChange={(e) => setManualSpeciesLabel(e.target.value)}
                                         placeholder="e.g. Human reference"
@@ -4642,6 +4728,7 @@ export default function GenomeSelectorView({
                                     </label>
                                     <input
                                         type="text"
+                                        data-tour-id="manual-assembly-label"
                                         value={manualAssemblyLabel}
                                         onChange={(e) => setManualAssemblyLabel(e.target.value)}
                                         placeholder="e.g. GRCh38.p14"
@@ -4657,6 +4744,7 @@ export default function GenomeSelectorView({
                                     </label>
                                     <input
                                         type="text"
+                                        data-tour-id="manual-accession"
                                         value={manualGca}
                                         onChange={(e) => setManualGca(e.target.value)}
                                         placeholder="e.g. GCA_000001405.29 or GCF_000001405.40"
@@ -4670,6 +4758,9 @@ export default function GenomeSelectorView({
 
                             <ManualPathRow
                                 label="FASTA file *"
+                                tourId="manual-fasta"
+                                analyseTourId="manual-fasta-analyse"
+                                browseTourId="manual-fasta-browse"
                                 value={manualFasta}
                                 onBrowse={() => openManualBrowser('manual_fasta', 'file')}
                                 placeholder="/path/to/genome.fa.gz"
@@ -4696,6 +4787,9 @@ export default function GenomeSelectorView({
 
                             <ManualPathRow
                                 label="Annotation file (optional)"
+                                tourId="manual-annotation"
+                                analyseTourId="manual-annotation-analyse"
+                                browseTourId="manual-annotation-browse"
                                 value={manualGff3}
                                 onBrowse={() => openManualBrowser('manual_gff3', 'file')}
                                 placeholder="/path/to/genes.gff3.gz"
@@ -4726,19 +4820,22 @@ export default function GenomeSelectorView({
 
                             <ManualPathRow
                                 label="Homology TSV file (optional)"
+                                tourId="manual-homology"
+                                browseTourId="manual-homology-browse"
                                 value={manualHomology}
                                 onBrowse={() => openManualBrowser('manual_homology', 'file')}
                                 placeholder="/path/to/homology.tsv.gz"
                                 isLight={isLight}
                             />
 
-                            <div>
+                            <div data-tour-id="manual-index">
                                 <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
                                     Suggested index path
                                 </label>
                                 <div className="flex items-center gap-2">
                                     <input
                                         type="text"
+                                        data-tour-id="manual-index-path"
                                         value={manualIndexPath || ''}
                                         readOnly
                                         disabled={!manualGff3}
@@ -4754,6 +4851,7 @@ export default function GenomeSelectorView({
                                     />
                                     <button
                                         type="button"
+                                        data-tour-id="manual-index-browse"
                                         onClick={() => openManualBrowser('manual_index', 'file-or-directory')}
                                         disabled={!manualGff3}
                                         className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors disabled:cursor-not-allowed ${isLight
@@ -4782,6 +4880,7 @@ export default function GenomeSelectorView({
                                 </div>
                                 <button
                                     type="button"
+                                    data-tour-id="manual-add-genome"
                                     onClick={addManualGenome}
                                     disabled={
                                         !manualSpeciesLabel.trim()

@@ -19,8 +19,11 @@ import { analyseTutorialCompatibility, legacyTutorialToDocument } from '../src/u
 test('the target catalogue has unique stable ids and complete contracts', () => {
   const ids = TUTORIAL_TARGETS.map((target) => target.id)
   assert.equal(new Set(ids).size, ids.length)
+  // Which views are authorable, not how many modules describe each: the Genome Selector
+  // is covered by two, because the add-a-genome form, the file browser and the analysis
+  // reports are one exercise spanning three components and belong in their own module.
   assert.deepEqual(
-    TUTORIAL_TARGET_VIEWS.filter((view) => view.viewId !== 'app').map((view) => view.viewId),
+    [...new Set(TUTORIAL_TARGET_VIEWS.filter((view) => view.viewId !== 'app').map((view) => view.viewId))],
     ['configuration', 'download', 'genome_selector', 'genome_browser'],
   )
   for (const target of TUTORIAL_TARGETS) {

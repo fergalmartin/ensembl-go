@@ -1,0 +1,46 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "tmnt-splinter-v1",
+  "datasetRef": "embedded:tmnt-splinter-v1@1",
+  "fixtureId": "turtles-and-friends",
+  "character": "Splinter",
+  "synthetic": true,
+  "speciesKey": "tutorial_brown_rat_splinter",
+  "assembly": "Splinter_v1",
+  "assemblyName": "Splinter_v1",
+  "displayName": "Brown rat (Splinter)",
+  "scientificName": "Rattus norvegicus",
+  "commonName": "Brown rat",
+  "provider": "demo",
+  "browsableRange": {
+    "1": [
+      1,
+      36000
+    ]
+  },
+  "source": {
+    "type": "synthetic-fixture",
+    "fixture": "turtles-and-friends",
+    "character": "Splinter",
+    "containsRealSequence": false
+  },
+  "genes": [
+    "gene:splinter_1",
+    "gene:splinter_2",
+    "gene:splinter_3",
+    "gene:splinter_4"
+  ],
+  "files": {
+    "fasta": "genome.fa",
+    "fasta_index": "genome.fa.fai",
+    "gff3": "annotation.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "c80cf17747b7064666ea120a5355ce0ca239c7093c2c1bc6edc2bc003d14d82a",
+    "fasta_index": "8a2a9aa6bd4b059665957b8378608d16da7f0866f74639e30b36cf0c26947252",
+    "gff3": "0cfa982147c6210f87f49548c0d8de8998e9e47078f05adaf1f9476785988edf",
+    "metadata": "ec05a76cdd3d7b0ad6ffa03e14a2636487d38b008b38f604fcfac250470db7f1"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "tmnt-donatello-v1",
+  "datasetRef": "embedded:tmnt-donatello-v1@1",
+  "fixtureId": "turtles-and-friends",
+  "character": "Donatello",
+  "synthetic": true,
+  "speciesKey": "tutorial_leatherback_turtle_donatello",
+  "assembly": "Donatello_v1",
+  "assemblyName": "Donatello_v1",
+  "displayName": "Leatherback turtle (Donatello)",
+  "scientificName": "Dermochelys coriacea",
+  "commonName": "Leatherback turtle",
+  "provider": "demo",
+  "browsableRange": {
+    "1": [
+      1,
+      36000
+    ]
+  },
+  "source": {
+    "type": "synthetic-fixture",
+    "fixture": "turtles-and-friends",
+    "character": "Donatello",
+    "containsRealSequence": false
+  },
+  "genes": [
+    "gene:donatello_1",
+    "gene:donatello_2",
+    "gene:donatello_3",
+    "gene:donatello_4"
+  ],
+  "files": {
+    "fasta": "genome.fa",
+    "fasta_index": "genome.fa.fai",
+    "gff3": "annotation.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "05a22de122e9650be97b0e947665817ce7f7c6e8f421e179ac36341384ad29c7",
+    "fasta_index": "a6617354387c90e3062870bb2cbec67cf51db3586ccf3c15fab2730c8f29c83e",
+    "gff3": "bf66a8fec3114f7255d3fddcfdf0a7548fcfd8e69017fc6f9ce440b6f63552f7",
+    "metadata": "edca42cd239eb11af1de342eeae02dbb9b3cec296200d5b0d79c48bd3b10d272"
+  }
+}

@@ -1258,7 +1258,10 @@ export default function TutorialOverlay() {
             </p>
           )}
           {runtimeProblem && (
-            <div className={`mt-2 rounded-md border px-2.5 py-2 text-xs ${isLight ? 'border-red-200 bg-red-50 text-red-800' : 'border-red-500/30 bg-red-500/10 text-red-200'}`}>
+            /* Named for probes: a runtime problem used to be findable only by matching the
+               wording of this paragraph, which meant a card whose own body happened to say
+               "could not" was reported as broken. */
+            <div data-tutorial-problem={runtimeProblem} className={`mt-2 rounded-md border px-2.5 py-2 text-xs ${isLight ? 'border-red-200 bg-red-50 text-red-800' : 'border-red-500/30 bg-red-500/10 text-red-200'}`}>
               <p>{runtimeProblem}</p>
               <div className="mt-2 flex gap-2">
                 <button type="button" onClick={retryPreparation} className="font-semibold underline">Retry</button>

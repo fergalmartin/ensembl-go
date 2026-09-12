@@ -336,6 +336,7 @@ about:
 | `pageScroll` | Where the page is scrolled: a `target`, and the `offset` in pixels between the top of the scrolling region and the top of that target. Applied last, after everything else that changes the page's height, and smoothly during playback. |
 | `dialog` | Which dialog or popover is open: `'playlistMembership'`, `'playlistPopover'`, or `'none'` for closed. `fields` states what the dialog's own inputs hold. |
 | `playlists` | Which playlists exist, named and described as the tutorial asks the user to name them, with members as embedded dataset recipe ids. `selected` names the one being shown. `playlists: []` is a real instruction: none created yet. |
+| `customGenome` | The state of the Genome Selector's add-a-genome form: `panel`, the six `fields`, which analysis `reports` are showing, whether the file `browser` is open and where it is pointed, and whether the genome has been `registered` and made `active`. |
 
 `genomeSelection` is what lets a step talk about the *result* of a selection the user made
 one step earlier. Selecting four genomes is the previous step's task, so a step whose card
@@ -401,6 +402,36 @@ describes a row that is not there. Worse than the pills case, because redoing th
 step then fails outright: the app refuses a second playlist with the same name. Declaring
 the whole set — replaced, not merged — makes each step self-contained and the creation step
 repeatable, and gives the step before it something true to say with `playlists: []`.
+
+`customGenome` is the same argument again, for a form filled in over a dozen steps rather
+than three. Almost every step of the custom-genome tutorial describes the add-a-genome form
+in a particular condition — a path in one field and not the other, one analysis report open,
+the genome not yet added — and a step inheriting that from the step before it shows the wrong
+picture the moment anyone presses Back or jumps into the middle.
+
+Three things about it are worth knowing before writing one:
+
+**Files are named symbolically, never as paths.** `demo:fasta` and `demo:annotation` are
+resolved by the runtime against the tutorial's own workspace. A portable document may not
+carry an absolute path — `validateTutorialDocument` rejects one outright — and a path from
+the author's machine would be wrong on every other machine anyway. The tutorial lays its own
+copy of the demo genome's raw files into `<workspace>/demo_data/` at `start()`, which
+`tutorialNeedsDemoSource` decides by looking for this arrival, so no other tutorial pays for
+it and no author has to remember to ask.
+
+**`registered` and `active` are different states**, and the tutorial teaches the difference:
+adding a genome makes it available, ticking it makes the other apps work on it. The step that
+presses **Add genome** declares `registered: false`, exactly as the step before a selection
+declares `genomes: []` — without it, coming Back finds the job already done and the button
+does nothing the card describes.
+
+**Registering is not a state that can simply be set.** The annotation is converted and its
+index built, which is real work taking seconds, so the arrival *waits* rather than assuming
+two frames is enough — and it does the work itself when the Genome Selector is not mounted,
+which is the case for any step in another app. That last part is why the record-building was
+lifted out of `GenomeSelectorView` into
+[`utils/customGenomeImport.js`](../frontend/src/utils/customGenomeImport.js): two callers
+need it and only one of them is a view.
 
 `selectorList` is presentation state, not permission. Its `target` must not be copied into
 `spotlight`, `reveals`, or `interactionPolicy` unless the step independently needs one of
@@ -1217,6 +1248,10 @@ Two other forms:
 | `app-genome-pills` | [App.jsx](../frontend/src/App.jsx) — the complete selected-genomes strip |
 | `genome-pill-${species_key}` | [SelectedSpeciesPillsBar.jsx](../frontend/src/components/SelectedSpeciesPillsBar.jsx) — the top-bar pills |
 | `tutorial-card-${tutorial.id}` | [TutorialsView.jsx](../frontend/src/components/TutorialsView.jsx) |
+| `manual-add-panel`, `manual-add-toggle`, `manual-labels`, `manual-genome-label`, `manual-assembly-label`, `manual-accession`, `manual-index`, `manual-index-path`, `manual-index-browse`, `manual-add-genome` | [GenomeSelectorView.jsx](../frontend/src/components/GenomeSelectorView.jsx) — the add-a-genome form |
+| `manual-fasta`, `manual-annotation`, `manual-homology` and their `-browse` / `-analyse` buttons | `ManualPathRow`, through `tourId` / `analyseTourId` / `browseTourId` props |
+| `file-browser`, `file-browser-path`, `file-browser-list`, `file-browser-entry-${name}`, `file-browser-close` | [FileBrowserModal.jsx](../frontend/src/components/FileBrowserModal.jsx) |
+| `validation-report-${kind}`, `validation-genome-*`, `validation-annotation-*` | [ValidationReportPanel.jsx](../frontend/src/components/ValidationReportPanel.jsx) |
 
 Browser steps mostly reuse attributes that were already there, through the `{ selector }`
 form: `[data-browser-canvas-surface]` for the drawing surface, `[data-browser-toolbar]`
@@ -1227,8 +1262,10 @@ for one genome's own control bar, `[data-focus-bar]` for the focused gene, and
 actually render, so a renamed anchor fails the suite rather than a new user's first run.
 
 That check is **plain text matching over the source**, not parsing. It sees
-`data-tour-id="literal"`, `` data-tour-id={`prefix-${expr}`} `` and `tourId="literal"`, and
-nothing else — an id that arrives in a variable is invisible to it. The three track-gutter
+`data-tour-id="literal"`, `` data-tour-id={`prefix-${expr}`} ``, `tourId="literal"` and the
+qualified spellings a subcomponent needs when it anchors more than one of its own elements
+(`analyseTourId="…"`, `browseTourId="…"` on the manual-add path rows, where one component is
+rendered three times and each copy needs three distinct ids), and nothing else — an id that arrives in a variable is invisible to it. The three track-gutter
 markers are written out one by one for exactly this reason; mapping over a list of
 `[id, …]` tuples passed the eye and failed a user.
 
@@ -1270,6 +1307,7 @@ searched region* and *When a gene has been found and focused*; `SIGNAL_COMPLETIO
 `TutorialBuilderOverlay.jsx` is the list, and adding another is one entry plus the emit at
 the state transition it names. `config.saved` is still emitted and never waited on.
 | `demoGenome.installed` | `handleDemoGenomeInstall` in DownloadView.jsx | — |
+| `custom.analysed` | `runValidation` in GenomeSelectorView.jsx, once a report lands | `{ kind: 'genome' \| 'annotation' }` |
 
 Signals do not always advance a step the instant they arrive: if the tutorial itself
 caused the thing, the advance waits out `ACTION_PAUSE_MS` first, so the result is on
@@ -1710,6 +1748,19 @@ left open can autosave over a change made elsewhere.
 
 ## Checklist for a new tutorial
 
+There is a skill that drives the whole of this — `.claude/skills/build_ensembl_go_tutorial/`.
+It carries the procedure (read in, read the brief, plan the steps, author the document,
+verify, promote, document), the distilled info-box voice with worked examples, a field-by-field
+step-schema reference, notes on extending the builder and the target catalogue, and
+`scripts/tutorial_probe.mjs`, which drives playback over CDP and reports the forward,
+backward and jump-in sweeps along with each card's overlap with its own highlight. It also
+carries the demo-data rules — reuse an existing recipe before generating one, keep a new
+one small enough to ship, and store it with the rest under `backend/data/` — the sandbox
+lifecycle contract for starting self-contained and handing the session back, and the rules
+for moving the app smoothly: one journey rather than a move plus a correction, every browser
+move through `animateToView`, and the highlight struck around a target at rest. Invoke it with
+`/build_ensembl_go_tutorial`. This checklist is the short form of the same thing.
+
 1. Write the definition in `frontend/src/tutorials/<name>.js` and register it in
    `tutorials/index.js`. That alone gets it a card in the Tutorials view and full
    validation from the existing tests.
@@ -1768,6 +1819,11 @@ manual JSON editing:
   already in that state when a reader has partly completed an exercise.
 - **Locked-bar message:** choose the brief message shown when a reader tries a genome
   toolbar held inactive by that step's interaction policy.
+- **Add-a-genome form on arrival:** state the Genome Selector's import form for a step —
+  the labels, which files are chosen, which analysis reports are open, whether the file
+  browser is up and what it is choosing, and whether the genome has been added and activated.
+  Files are offered as the tutorial's own demo copies rather than as paths, because a
+  portable document may not carry one.
 
 The portable scene vocabulary is `browserScene` in `arrive` or `action`. It contains
 `active` (ordered recipe IDs), `pan`, `zoom`, `link` (`none`, `region`, `gene`), and a
@@ -1814,3 +1870,55 @@ Backward navigation restores both power settings and inactive-track visibility.
 Focused arrivals omit a fixed locus when they want the browser's normal gene-centred
 view. Gene-link synchronisation now uses the same drawer-aware window as gene navigation,
 so enabling linked Pan/Zoom does not replace that window with unadjusted coordinates.
+
+## Importing a genome from local files (September 2026)
+
+**Adding your own genome** is the fifth shipped tutorial: 36 steps, in
+`frontend/src/tutorials/generated/custom-genome.tutorial.json`. It teaches the add-a-genome
+form at the foot of the Genome Selector — naming a genome, choosing a FASTA and an
+annotation through the app's own file browser, reading what **Analyse** reports about each,
+importing, activating and finally browsing the result.
+
+It ships no dataset recipes. Instead it lays the bundled demo genome's **raw files** into
+`<workspace>/demo_data/` (`install_demo_source_files`, `POST /api/tutorial/demo-source`) for
+the reader to browse to and pick, because the thing being taught is what someone does with a
+folder of files they already have. Nothing is registered or indexed by that call — that is
+the reader's job, through the form.
+
+The annotation is a **GTF**, `backend/data/demo_genome/demo_genes.gtf`, generated from
+`demo.gff3` by `backend/scripts/build_demo_gtf.py` so the two cannot drift. A GTF rather than
+the canonical GFF3 beside it because the tutorial's middle section is *reading the analysis
+report*, and a file the indexer already handles gives that report nothing to say: no dialect
+to detect, no gene level to rebuild, no biotypes to infer. With the GTF, every section has an
+answer — including one `info` issue reading *"Transcripts had no gene feature; a gene was
+created to hold them"*, which is the lesson in the app's own words.
+
+### Things this tutorial found, which are not about tutorials
+
+- **A bare index filename put a genome outside the tutorial workspace.** `manualIndexFilename`
+  returns a *filename*; the browse handler joins it to a directory. An index path with no
+  directory fails `_is_inside_tutorial_workspace`, so `set_tutorial_session_genome` refuses
+  the whole record, so the browser cannot resolve the genome — and the symptom appears three
+  apps away as **Index Not Ready · Invalid genome** on the track. Always join it to a directory.
+  It also wrote the index into whatever the backend's working directory happened to be, which
+  `docs/CUSTOM_GENOMES.md` says explicitly must never happen: two `.index.db` files turned up
+  in `backend/` and were the thing that confirmed the diagnosis.
+- **Registration has to happen before the genome is published to the app.** The genome
+  browser stays mounted behind whatever app is on screen and starts resolving a newly active
+  genome immediately; if it asks before the backend has been told, it caches the refusal and
+  waits for someone to press *Build the index again*. Both paths now register first —
+  `registerLocalGenome` from the runtime, and the same call from the form while a tutorial runs.
+- **Adding a genome no longer activates it during a tutorial.** Normally it does, which is
+  helpful. During a tutorial it is wrong twice over: activating is the *next* thing the reader
+  is asked to do, and it makes the browser reach for an index that is still being built.
+- **The file browser ignored a directory set while it was open.** It read `initialPath` only
+  when `isOpen` flipped, so anything that opened it and then said where to look left it in the
+  previous directory. It now re-points when the requested directory changes, while leaving
+  wherever the user has since navigated alone.
+- **A `signal` advance needs `match` when more than one thing emits it.** `custom.analysed`
+  fires for the genome and for the annotation, and the annotation step's own arrival
+  re-establishes the genome report — so without `match: { kind: 'annotation' }` the step
+  completed the instant it arrived.
+- **An authored `pageScroll` offset the page cannot reach is abandoned.** The **Add genome**
+  button sits near the foot of a long page; asking for it 150px from the top left it 231px
+  below the bottom of the window, clipped to nothing, with no ring. 620 is reachable.

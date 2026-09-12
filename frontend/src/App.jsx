@@ -6567,6 +6567,7 @@ function App() {
                 selectedSpeciesList={selectorSelectedSpecies}
                 tutorialListPresentation={tutorialRuntime.selectorListPresentation}
                 tutorialDialogRequest={tutorialRuntime.dialogRequest}
+                tutorialCustomGenomeRequest={tutorialRuntime.customGenomeRequest}
                 theme={theme}
                 screenshotMode={currentView === 'genome_selector' ? screenshotMode : false}
                 onScreenshotModeChange={setScreenshotMode}

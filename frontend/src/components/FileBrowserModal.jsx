@@ -36,6 +36,13 @@ export default function FileBrowserModal({
 
     const isLight = theme === 'light'
 
+    // Re-point an open browser when the directory it was asked for changes.
+    //
+    // Keying only on `isOpen` meant the path was read once, when it opened, and a later
+    // change was ignored — so anything that opened the browser and *then* said where it
+    // should be looking left it in the previous directory with no sign anything was wrong.
+    // A tutorial framing a step around one folder is the case that found this; the same
+    // would happen to any caller that sets a directory while the browser is already up.
     useEffect(() => {
         if (isOpen) {
             const startPath = initialPath || '.'
@@ -54,7 +61,11 @@ export default function FileBrowserModal({
                 setShowAll(true)
             }
         }
-    }, [isOpen])
+        // `initialPath` included deliberately: see above. It is the directory the caller
+        // asked for, not where the user has since navigated to — that is `currentPath`,
+        // which this does not watch, so browsing around is never interrupted.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, initialPath])
 
     const fetchItems = async (path) => {
         setLoading(true)
@@ -157,7 +168,10 @@ export default function FileBrowserModal({
 
     return (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className={`${modalBg} w-full max-w-3xl rounded-xl shadow-2xl flex flex-col max-h-[80vh] overflow-hidden`}>
+            <div
+                data-tour-id="file-browser"
+                className={`${modalBg} w-full max-w-3xl rounded-xl shadow-2xl flex flex-col max-h-[80vh] overflow-hidden`}
+            >
                 {/* Header */}
                 <div className={`p-4 border-b ${borderColor} flex justify-between items-center`}>
                     <h3 className={`text-lg font-semibold ${textColor}`}>
@@ -169,7 +183,7 @@ export default function FileBrowserModal({
                                     ? 'Save File'
                                     : 'Select File'}
                     </h3>
-                    <button onClick={onClose} className={`p-1 rounded-md ${hoverBg} transition-colors`}>
+                    <button data-tour-id="file-browser-close" onClick={onClose} className={`p-1 rounded-md ${hoverBg} transition-colors`}>
                         <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
                             <path d="M15 5L5 15M5 5l10 10" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
@@ -179,6 +193,7 @@ export default function FileBrowserModal({
                 {/* Path Bar */}
                 <div
                     ref={pathRef}
+                    data-tour-id="file-browser-path"
                     className={`px-4 py-2 ${isLight ? 'bg-white' : 'bg-gray-900/50'} border-b ${borderColor} flex items-center gap-2 overflow-x-auto whitespace-nowrap`}
                 >
                     <span className="text-gray-500 text-sm font-mono">path:</span>
@@ -202,7 +217,7 @@ export default function FileBrowserModal({
                             </button>
                         </div>
                     ) : (
-                        <div className="space-y-0.5">
+                        <div data-tour-id="file-browser-list" className="space-y-0.5">
                             {items
                                 .filter(item => {
                                     // Always show directories
@@ -224,6 +239,7 @@ export default function FileBrowserModal({
                                     return (
                                         <div
                                             key={item.path}
+                                            data-tour-id={`file-browser-entry-${item.name}`}
                                             onClick={() => handleItemClick(item)}
                                             className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${isSelected ? activeBg : hoverBg
                                                 }`}

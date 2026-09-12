@@ -1,0 +1,46 @@
+{
+  "format": "ensembl-go-tutorial-dataset",
+  "schemaVersion": 1,
+  "id": "tmnt-leonardo-v1",
+  "datasetRef": "embedded:tmnt-leonardo-v1@1",
+  "fixtureId": "turtles-and-friends",
+  "character": "Leonardo",
+  "synthetic": true,
+  "speciesKey": "tutorial_green_sea_turtle_leonardo",
+  "assembly": "Leonardo_v1",
+  "assemblyName": "Leonardo_v1",
+  "displayName": "Green sea turtle (Leonardo)",
+  "scientificName": "Chelonia mydas",
+  "commonName": "Green sea turtle",
+  "provider": "demo",
+  "browsableRange": {
+    "1": [
+      1,
+      36000
+    ]
+  },
+  "source": {
+    "type": "synthetic-fixture",
+    "fixture": "turtles-and-friends",
+    "character": "Leonardo",
+    "containsRealSequence": false
+  },
+  "genes": [
+    "gene:leonardo_1",
+    "gene:leonardo_2",
+    "gene:leonardo_3",
+    "gene:leonardo_4"
+  ],
+  "files": {
+    "fasta": "genome.fa",
+    "fasta_index": "genome.fa.fai",
+    "gff3": "annotation.gff3.gz",
+    "metadata": "assembly_report.txt"
+  },
+  "sha256": {
+    "fasta": "5bb29647aab31c0da8ceefb1740fc97e93e1cb31b7f1d8ac3880a31ea50f389d",
+    "fasta_index": "ee3020c153d44ae05360a10233a181e965b7a64109f2406292798d0f86543570",
+    "gff3": "a38c4a526f3cb523dfdb6e5954a4fcc4b0ce45dbbd48604cc8a0b647b33cf65a",
+    "metadata": "c1ed4b990b281e1c68bc42a099024ee8700487fed3c9a43970623a9336157d28"
+  }
+}

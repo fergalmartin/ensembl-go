@@ -158,8 +158,78 @@ export const ACTION_TYPES = Object.freeze([
  *  toggles rather than sets would flip back and forth as the user walked about. */
 export const ARRIVE_TYPES = Object.freeze([
   'browserView', 'browserControls', 'browserScene', 'selectorList', 'genomeSelection', 'pageScroll',
-  'dialog', 'playlists',
+  'dialog', 'playlists', 'customGenome',
 ])
+
+/** The state of the "add your own genome" form a step expects to find.
+ *
+ *  The same argument as `dialog` and `playlists`, for a form filled in over a dozen steps.
+ *  Almost every step of the custom-genome tutorial describes the form in a particular
+ *  condition — a path in one field and not the other, one analysis report open, the
+ *  genome not yet added — and a step that inherits that from the step before it is a step
+ *  that shows the wrong picture the moment anyone presses Back or jumps straight to it.
+ *
+ *  Idempotent by construction, like every other arrival: it **sets** each field rather
+ *  than toggling, so re-entering a step re-establishes the same form rather than typing
+ *  into it twice.
+ *
+ *  File paths are **symbolic**, not literal. `demo:fasta` and `demo:annotation` name files
+ *  the runtime resolves against the tutorial's own workspace, because a portable document
+ *  may not carry an absolute path — `validateTutorialDocument` rejects one outright, and a
+ *  path from the author's machine would be wrong on every other machine anyway. */
+export const CUSTOM_GENOME_FILES = Object.freeze(['', 'demo:fasta', 'demo:annotation'])
+export const CUSTOM_GENOME_REPORTS = Object.freeze(['none', 'ready'])
+
+/** Whether a tutorial needs the demo genome's raw files laid out for the reader to pick.
+ *
+ *  Inferred from the steps rather than declared, so it cannot be forgotten: a tutorial that
+ *  puts the add-a-genome form in a particular state is, necessarily, a tutorial about
+ *  importing files, and it needs some files to import. Every other tutorial copies nothing.
+ */
+export function tutorialNeedsDemoSource(tutorial) {
+  const steps = Array.isArray(tutorial?.steps) ? tutorial.steps : []
+  const arrivalsOf = (step) => (Array.isArray(step?.arrive) ? step.arrive : (step?.arrive ? [step.arrive] : []))
+  const declared = [...steps.flatMap(arrivalsOf), ...arrivalsOf(tutorial)]
+  return declared.some((arrival) => arrival?.type === 'customGenome')
+}
+
+export function arrivalCustomGenome(arrival) {
+  if (!arrival || arrival.type !== 'customGenome') return null
+  const fields = arrival.fields && typeof arrival.fields === 'object' ? arrival.fields : {}
+  const reports = arrival.reports && typeof arrival.reports === 'object' ? arrival.reports : {}
+  const browser = arrival.browser && typeof arrival.browser === 'object' ? arrival.browser : {}
+  const file = (value) => {
+    const raw = String(value || '').trim()
+    return CUSTOM_GENOME_FILES.includes(raw) ? raw : ''
+  }
+  const report = (value) => (CUSTOM_GENOME_REPORTS.includes(String(value || '').trim()) ? String(value).trim() : 'none')
+  return {
+    panel: String(arrival.panel || 'open').trim() === 'closed' ? 'closed' : 'open',
+    fields: {
+      genomeLabel: String(fields.genomeLabel || ''),
+      assemblyLabel: String(fields.assemblyLabel || ''),
+      accession: String(fields.accession || ''),
+      fasta: file(fields.fasta),
+      annotation: file(fields.annotation),
+      homology: file(fields.homology),
+    },
+    reports: { genome: report(reports.genome), annotation: report(reports.annotation) },
+    // `directory` is symbolic for the same reason the file fields are.
+    browser: {
+      state: String(browser.state || 'closed').trim() === 'open' ? 'open' : 'closed',
+      target: String(browser.target || '').trim(),
+      directory: String(browser.directory || '').trim(),
+    },
+    registered: Boolean(arrival.registered),
+    // Registered and active are different states, and the tutorial teaches the difference:
+    // adding a genome makes it available, ticking it makes the other apps work on it. The
+    // step that asks the reader to tick it arrives registered but inactive.
+    //
+    // This cannot be a `genomeSelection` arrival, which names genomes by embedded recipe
+    // id — a genome the reader created from files on disk has no recipe.
+    active: Boolean(arrival.active),
+  }
+}
 
 /** Where a step wants the page scrolled to before its card is read.
  *
@@ -1058,6 +1128,31 @@ export function validateTutorial(tutorial, options = {}) {
         const selected = arrivalSelectedPlaylist(arrival)
         if (selected && !arrivalPlaylists(arrival).some((entry) => entry.name === selected)) {
           problems.push(`${where} arrive: the selected playlist "${selected}" is not one of the playlists.`)
+        }
+      } else if (arrival.type === 'customGenome') {
+        // A literal path is the mistake this catches. It would be rejected by the document
+        // validator anyway, but the message here names the field and says what to write.
+        for (const field of ['fasta', 'annotation', 'homology']) {
+          const value = String(arrival.fields?.[field] || '').trim()
+          if (value && !CUSTOM_GENOME_FILES.includes(value)) {
+            problems.push(
+              `${where} arrive: customGenome ${field} must be one of ${CUSTOM_GENOME_FILES.filter(Boolean).join(', ')} — `
+              + 'a file the tutorial lays down, not a path from this machine.'
+            )
+          }
+        }
+        for (const kind of ['genome', 'annotation']) {
+          const value = arrival.reports?.[kind]
+          if (value !== undefined && !CUSTOM_GENOME_REPORTS.includes(String(value))) {
+            problems.push(`${where} arrive: customGenome ${kind} report must be ${CUSTOM_GENOME_REPORTS.join(' or ')}.`)
+          }
+        }
+        // An analysis report cannot be showing for a file that has not been chosen.
+        if (arrival.reports?.genome === 'ready' && !String(arrival.fields?.fasta || '').trim()) {
+          problems.push(`${where} arrive: customGenome declares a genome report but no FASTA to have analysed.`)
+        }
+        if (arrival.reports?.annotation === 'ready' && !String(arrival.fields?.annotation || '').trim()) {
+          problems.push(`${where} arrive: customGenome declares an annotation report but no annotation to have analysed.`)
         }
       } else if (arrival.type === 'selectorList') {
         if (!anchorSelector(arrival.anchor)) {

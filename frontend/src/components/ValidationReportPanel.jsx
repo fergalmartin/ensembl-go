@@ -332,8 +332,13 @@ const IssueList = ({ issues, isLight }) => {
     )
 }
 
-const Section = ({ title, children, isLight }) => (
-    <div className="space-y-2">
+// `tourId` is spread on rather than derived from the title because a tutorial has to be
+// able to point at one section of one report, and both reports have an "Issues" section —
+// anchors resolve to the first match, so the two need ids that differ. Each call site
+// writes its own out in full: the anchor test is plain text matching over this source and
+// sees a literal or a template, never a value assembled from props.
+const Section = ({ title, children, isLight, tourId }) => (
+    <div className="space-y-2" data-tour-id={tourId}>
         <h4 className={`text-xs font-bold uppercase tracking-wide ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>
             {title}
         </h4>
@@ -385,7 +390,7 @@ const GenomeReport = ({ report, isLight }) => {
 
     return (
         <div className="space-y-4">
-            <Section title="Sequences" isLight={isLight}>
+            <Section title="Sequences" tourId="validation-genome-sequences" isLight={isLight}>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <StatTile isLight={isLight} label="Sequences" value={formatInt(report.sequence_count)} />
                     <StatTile isLight={isLight} label="Total length" value={formatBases(report.total_length)} />
@@ -398,7 +403,7 @@ const GenomeReport = ({ report, isLight }) => {
                 </div>
             </Section>
 
-            <Section title="Base composition" isLight={isLight}>
+            <Section title="Base composition" tourId="validation-genome-base-composition" isLight={isLight}>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <DefinitionList
                         isLight={isLight}
@@ -431,7 +436,7 @@ const GenomeReport = ({ report, isLight }) => {
             </Section>
 
             {longestSegments.length ? (
-                <Section title="Longest sequences" isLight={isLight}>
+                <Section title="Longest sequences" tourId="validation-genome-longest-sequences" isLight={isLight}>
                     <ShareFigure
                         segments={longestSegments}
                         isLight={isLight}
@@ -440,7 +445,7 @@ const GenomeReport = ({ report, isLight }) => {
                 </Section>
             ) : null}
 
-            <Section title="Issues" isLight={isLight}>
+            <Section title="Issues" tourId="validation-genome-issues" isLight={isLight}>
                 <IssueList issues={report.issues} isLight={isLight} />
             </Section>
         </div>
@@ -456,7 +461,7 @@ const AnnotationReport = ({ report, isLight }) => {
 
     return (
         <div className="space-y-4">
-            <Section title="Detected" isLight={isLight}>
+            <Section title="Detected" tourId="validation-annotation-detected" isLight={isLight}>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <StatTile isLight={isLight} label="Format" value={(detected.dialect || 'unknown').toUpperCase()} />
                     <StatTile isLight={isLight} label="Producer" value={detected.producer_guess || '—'} />
@@ -465,7 +470,7 @@ const AnnotationReport = ({ report, isLight }) => {
                 </div>
             </Section>
 
-            <Section title="Model" isLight={isLight}>
+            <Section title="Model" tourId="validation-annotation-model" isLight={isLight}>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <StatTile isLight={isLight} label="Genes" value={formatInt(counts.genes)} />
                     <StatTile isLight={isLight} label="Transcripts" value={formatInt(counts.transcripts)} />
@@ -496,7 +501,7 @@ const AnnotationReport = ({ report, isLight }) => {
                 </div>
             </Section>
 
-            <Section title="Gene classes" isLight={isLight}>
+            <Section title="Gene classes" tourId="validation-annotation-gene-classes" isLight={isLight}>
                 <MajorClassTable
                     geneClasses={classification.gene_major_classes}
                     transcriptClasses={classification.transcript_major_classes}
@@ -536,7 +541,7 @@ const AnnotationReport = ({ report, isLight }) => {
                 </Disclosure>
             </Section>
 
-            <Section title="Sequence regions" isLight={isLight}>
+            <Section title="Sequence regions" tourId="validation-annotation-sequence-regions" isLight={isLight}>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     <StatTile isLight={isLight} label="Regions used" value={formatInt(regions.count)} />
                     <StatTile
@@ -566,7 +571,7 @@ const AnnotationReport = ({ report, isLight }) => {
                 ) : null}
             </Section>
 
-            <Section title="Identifiers" isLight={isLight}>
+            <Section title="Identifiers" tourId="validation-annotation-identifiers" isLight={isLight}>
                 <ul className={`text-xs space-y-1 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
                     <li>Duplicate identifiers: {formatInt(identifiers.duplicate_ids)}</li>
                     <li>Duplicates across regions: {formatInt(identifiers.duplicate_ids_across_regions)}</li>
@@ -583,7 +588,7 @@ const AnnotationReport = ({ report, isLight }) => {
                 ) : null}
             </Section>
 
-            <Section title="Issues" isLight={isLight}>
+            <Section title="Issues" tourId="validation-annotation-issues" isLight={isLight}>
                 <IssueList issues={report.issues} isLight={isLight} />
             </Section>
         </div>
@@ -625,7 +630,10 @@ export default function ValidationReportPanel({
         .join(' · ')
 
     return (
-        <div className={embedded ? '' : `rounded-xl border ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-900/50 border-gray-700'}`}>
+        <div
+            data-tour-id={`validation-report-${kind}`}
+            className={embedded ? '' : `rounded-xl border ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-900/50 border-gray-700'}`}
+        >
             {embedded ? null : (
             <div className={`flex items-center justify-between px-3 py-2 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
                 <div>
