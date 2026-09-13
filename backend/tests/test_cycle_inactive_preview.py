@@ -23,3 +23,10 @@ class CyclePreviewTests(unittest.TestCase):
         with patch.object(main, "tutorial_session_species", return_value=[]):
             genomes = main._browsable_active_species({"active_species": [live], "next_previous_session_genomes": [snapshot]})
         self.assertEqual(genomes, [live])
+
+    def test_alignment_link_can_resolve_by_bare_assembly_accession(self):
+        genome = {"species_key": "human", "assembly": "GCA_000001405.29", "files": {"gff3": "/test/human.gff3", "index": "/test/human.db"}}
+        config = {"active_species": [genome], "next_previous_session_genomes": []}
+        with patch.object(main, "load_config", return_value=config), patch.object(main, "tutorial_session_species", return_value=[]), patch.object(main, "_browse_index_for", return_value="/test/human.db"):
+            context = main._resolve_browse_genome_context("gca_000001405.29")
+        self.assertIs(context["species"], genome)

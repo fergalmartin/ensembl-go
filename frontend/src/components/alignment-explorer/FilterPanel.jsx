@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { getAssemblyAccession } from '../../utils/genomeIdentity'
 import { api } from './data'
 import FilterGrid from './FilterGrid'
 import { parseTerms, SEQUENCE_FILTER, BLOCK_FILTER, filterSequences, filterBlocks, effectiveChoice, filterChunks, rangeChunks, isDefaultFilter } from './filters'
@@ -115,10 +116,11 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
     [matches,known,chosenBlockIds,chosenSequenceIds,lengths])
   const cells=chunks.reduce((n,c)=>n+(c.end-c.start)*c.rowIds.length,0)
 
-  const genomeLabel=key=>{
-    if(!key)return null
-    const match=genomes.find(g=>[g.species_key,g.assembly,g.name].includes(key))
-    return match?.common_name||match?.scientific_name||key
+  const genomeLabel=assembly=>{
+    if(!assembly)return null
+    const wanted=String(assembly).toUpperCase()
+    const match=genomes.find(g=>getAssemblyAccession(g).toUpperCase()===wanted)
+    return match?.common_name||match?.scientific_name||assembly
   }
 
   const sequenceColumns=useMemo(()=>[
@@ -128,8 +130,8 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
     {key:'bases',title:'Bases',width:'104px',numeric:true,value:s=>s.bases||0,
       render:s=>s.placed?number(s.bases):'—'},
     {key:'absent',title:'Absent',width:'70px',numeric:true,value:s=>s.empty||0,render:s=>s.empty?number(s.empty):'—'},
-    {key:'genome',title:'Local genome',width:'minmax(110px,1fr)',value:s=>genomeLabel(s.genome_key)||'',
-      render:s=>s.genome_key?`${genomeLabel(s.genome_key)}${s.chrom?` · ${s.chrom}`:''}`:'—'},
+    {key:'genome',title:'Linked genome',width:'minmax(110px,1fr)',value:s=>genomeLabel(s.assembly)||'',
+      render:s=>s.assembly?`${genomeLabel(s.assembly)}${s.region?` · ${s.region}`:''}`:'—'},
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ],[genomes])
   const blockColumns=useMemo(()=>[
@@ -173,7 +175,7 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
         terms={sequenceFilter.include} onChange={v=>setSequenceFilter({...sequenceFilter,include:v})}/>
       <TermInput label="Exclude" hint="drops any of these words · Enter to add" placeholder="ancestor"
         terms={sequenceFilter.exclude} onChange={v=>setSequenceFilter({...sequenceFilter,exclude:v})}/>
-      <label>Local genome
+      <label>Genome link
         <select value={sequenceFilter.genome} onChange={e=>setSequenceFilter({...sequenceFilter,genome:e.target.value})}>
           <option value="any">Linked or not</option><option value="linked">Linked only</option><option value="unlinked">Not linked</option>
         </select></label>

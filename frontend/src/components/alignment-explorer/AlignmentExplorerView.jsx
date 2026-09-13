@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { getGenomeKey, genomeKeyCandidates, genomeKeyDisplayLabels } from '../../utils/genomeIdentity'
+import { getAssemblyAccession, getGenomeKey, normalizeGenomeRecord } from '../../utils/genomeIdentity'
+import { API_BASE } from '../../backendRuntime'
 import DrawerChevron from '../DrawerChevron'
 import LayerCanvas from './LayerCanvas'
 import LayerCycle from './LayerCycle'
@@ -22,19 +23,19 @@ import useOriginalBlocks from './useOriginalBlocks'
 import ControlChevron from './ControlChevron'
 import useScrollEdges from './toolbarScroll'
 import useLayerData from './useLayerData'
-import { exactGenomeLinks } from './associations'
+import { classifyGenomeLink, exactGenomeLinks, genomeDisplayName } from './associations'
 import FilterPanel from './FilterPanel'
 import GenomeColorPicker from '../GenomeColorPicker'
 import { genomeColorPalette } from '../../genomeColorSchemes'
 import { api, download, demoAlignment } from './data'
-import { toggleHighlights, emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRowBefore, reorderFragmentRow, resolvePicks, addHighlight, unlightRow, removeFragment, removeRowFromLayer, removeHighlight, planeViewport, enterPanelZoom, exitPanelZoom, PANEL_ZOOM_HINT_ATTEMPTS, ZOOM_HINT_MS, layerViewAnchor } from './layers'
+import { toggleHighlights, emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRowBefore, reorderFragmentRow, resolvePicks, expandRowPicks, pickedRowIds, selectedRangesForFragment, addHighlight, unlightRow, removeFragment, removeRowFromLayer, removeHighlight, planeViewport, enterPanelZoom, exitPanelZoom, PANEL_ZOOM_HINT_ATTEMPTS, ZOOM_HINT_MS, layerViewAnchor } from './layers'
 import { NUCLEOTIDE_LETTER_THRESHOLD } from '../../utils/nucleotideStyle'
 import { schemeById } from './colourSchemes'
 import { cohortOf } from './conservationPlan'
 import { litRows } from './layers'
 import './explorer.css'
 
-export default function AlignmentExplorerView({theme='dark',config,genomes=[],incoming,onIncomingConsumed}) {
+export default function AlignmentExplorerView({theme='dark',config,genomes=[],topBarGenomes=genomes,onAddGenome,onOpenGenome,incoming,onIncomingConsumed}) {
   const [motifs,setMotifs]=useState(loadMotifs),[motifsSaved,setMotifsSaved]=useState(true)
   const [dataset,setDataset]=useState(null),[inventory,setInventory]=useState([]),[blocks,setBlocks]=useState({blocks:[],total:0}),[source,setSource]=useState(null)
   const [state,setState]=useState(emptyWorkspace),[size,setSize]=useState({width:900,height:500}),[job,setJob]=useState(null),[opening,setOpening]=useState(''),[cancelling,setCancelling]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('')
@@ -56,7 +57,8 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   // Which of the two ways of selecting the bar's one button offers. A completed
   // selection puts the mode back to Pan, so the choice has to outlive the mode.
   const [selectKind,setSelectKind]=useState('rectangle')
-  const [rowQuery,setRowQuery]=useState(''),[selectRows,setSelectRows]=useState([]),[range,setRange]=useState({fragment:'',start:1,end:100}),[link,setLink]=useState({row:'',genome:'',chrom:''})
+  const [rowQuery,setRowQuery]=useState(''),[selectRows,setSelectRows]=useState([]),[range,setRange]=useState({fragment:'',start:1,end:100}),[link,setLink]=useState({row:'',assembly:'',region:'',strand:'+'})
+  const [localGenomes,setLocalGenomes]=useState([]),[localGenomesLoading,setLocalGenomesLoading]=useState(false),[linkReport,setLinkReport]=useState(null),[linkImporting,setLinkImporting]=useState(false),[addingAssembly,setAddingAssembly]=useState('')
   // 'auto' asks the server to read the file's own signature. Any other value
   // names a reader outright, for files whose signature is missing or misleading.
   const [format,setFormat]=useState('auto'),[capabilities,setCapabilities]=useState(null),[exportFormat,setExportFormat]=useState('fasta')
@@ -71,6 +73,37 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const patch=useCallback(value=>setState(s=>({...s,...value})),[])
   const commit=useCallback(fn=>{const prev=stateRef.current,next=typeof fn==='function'?fn(prev):{...prev,...fn};if(next===prev)return;history.current.past.push(prev);history.current.past=history.current.past.slice(-50);history.current.future=[];stateRef.current=next;setState(next)},[])
   const undo=useCallback(redo=>{const from=redo?history.current.future:history.current.past,to=redo?history.current.past:history.current.future;if(from.length){to.push(stateRef.current);const next=from.pop();stateRef.current=next;setState(next)}},[])
+
+  useEffect(()=>{
+    const controller=new AbortController();let cancelled=false
+    const candidates=[]
+    const push=(item,manual=false)=>{
+      const genome=normalizeGenomeRecord(manual?{...item,is_manual:true}:item),assembly=getAssemblyAccession(genome)
+      if(!assembly||candidates.some(value=>getAssemblyAccession(value).toUpperCase()===assembly.toUpperCase()))return
+      candidates.push(genome)
+    }
+    for(const item of topBarGenomes||[])push(item)
+    for(const item of genomes||[])push(item)
+    for(const item of config?.manual_species||[])push(item,true)
+    const loadLocal=async()=>{
+      const outputDir=String(config?.output_dir||'').trim()
+      if(outputDir){
+        setLocalGenomesLoading(true)
+        try{
+          const response=await fetch(`${API_BASE}/api/remote/local-assemblies?output_dir=${encodeURIComponent(outputDir)}`,{signal:controller.signal})
+          if(response.ok){
+            for(const item of await response.json()){
+              push(item)
+              for(const instance of Array.isArray(item?.dataset_instances)?item.dataset_instances:[])push(instance)
+            }
+          }
+        }catch(error){if(error?.name!=='AbortError')setNotice('Local genome availability could not be refreshed.')}
+      }
+      if(!cancelled){setLocalGenomes(candidates);setLocalGenomesLoading(false)}
+    }
+    loadLocal()
+    return()=>{cancelled=true;controller.abort()}
+  },[config?.manual_species,config?.output_dir,genomes,topBarGenomes])
   
   const orderedInventory=useMemo(()=>{
     const order=resolveRowOrder(inventory.map(r=>r.id),state.rowOrder)
@@ -191,13 +224,34 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     return allowed?orderedInventory.filter(row=>allowed.has(row.id)):orderedInventory
   },[orderedInventory,viewFilter])
   const displayInventory=useMemo(()=>filteredInventory.map(row=>{
-    const key=row.metadata?.genome_key
-    if(!key)return row
-    const genome=genomes.find(g=>genomeKeyCandidates(g).includes(key)),fallback=genomeKeyDisplayLabels(key)
-    const name=genome?.common_name||genome?.scientific_name||fallback.displayName
-    const label=row.label===key?genome?.assembly_name||fallback.displayAssembly:row.label
-    return {...row,label:`${name} · ${label}`}
-  }),[filteredInventory,genomes])
+    const linked=classifyGenomeLink(row,topBarGenomes,localGenomes)
+    if(!linked.assembly)return row
+    const name=genomeDisplayName(linked.genome,'')
+    const label=row.label||row.source
+    return {...row,label:name&&!String(label).toLowerCase().includes(String(name).toLowerCase())?`${name} · ${label}`:label,linkStatus:linked.status,linkedGenome:linked.genome}
+  }),[filteredInventory,localGenomes,topBarGenomes])
+  const genomeOptions=useMemo(()=>{
+    const values=[]
+    for(const genome of [...(topBarGenomes||[]),...localGenomes]){
+      const assembly=getAssemblyAccession(genome)
+      if(assembly&&!values.some(item=>getAssemblyAccession(item).toUpperCase()===assembly.toUpperCase()))values.push(genome)
+    }
+    return values.sort((a,b)=>genomeDisplayName(a,getAssemblyAccession(a)).localeCompare(genomeDisplayName(b,getAssemblyAccession(b))))
+  },[localGenomes,topBarGenomes])
+  const reportGroups=useMemo(()=>{
+    const ids=linkReport?.sequence_ids?new Set(linkReport.sequence_ids):null
+    const rows=inventory.filter(row=>ids?ids.has(row.id):row.metadata?.assembly)
+    const grouped=new Map()
+    for(const row of rows){
+      const linked=classifyGenomeLink(row,topBarGenomes,localGenomes)
+      const key=`${linked.status}:${linked.assembly||row.source}`
+      if(!grouped.has(key))grouped.set(key,{...linked,count:0,sources:[],regions:new Set()})
+      const group=grouped.get(key);group.count++;group.sources.push(row.label||row.source)
+      if(linked.region)group.regions.add(linked.region)
+    }
+    const order={topbar:0,local:1,unavailable:2,unresolved:3}
+    return [...grouped.values()].map(group=>({...group,regionLabel:[...group.regions].slice(0,3).join(', ')+(group.regions.size>3?` +${group.regions.size-3} more`: '')})).sort((a,b)=>(order[a.status]-order[b.status])||String(a.assembly).localeCompare(String(b.assembly)))
+  },[inventory,linkReport,localGenomes,topBarGenomes])
   // The rows laid out, narrowing to whatever is picked. Deliberately the
   // laid-out set rather than the rows that happen to be on screen, so scrolling
   // never restates the question and the colours hold still while reading.
@@ -205,7 +259,16 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const cohort=useMemo(()=>scheme.cohort?cohortOf(layer,displayInventory,litRows(state)):null,[scheme,layer,displayInventory,state])
   const {tiles,annotations,connections,offWindow,counts,pending,warnings,conservation,gaps,displayCamera}=useLayerData(dataset,layer,renderState.camera,renderView,state.annotations,revision,setError,false,cohort)
   const motifSearch=useMotifs(snapshot,layer,displayCamera,renderView,scheme.id==='motif')
-  const canvasState=useMemo(()=>({...renderState,camera:displayCamera,motifRows:motifSearch.rows}),[renderState,displayCamera,motifSearch.rows])
+  const browserRangesByFragment=useMemo(()=>{
+    const eligible=new Set(displayInventory.filter(row=>row.linkStatus==='topbar'&&row.linkedGenome?.files?.gff3).map(row=>row.id)),ranges=new Map()
+    if(!onOpenGenome||!eligible.size)return ranges
+    for(const fragment of layer.fragments){
+      const selected=selectedRangesForFragment(state.selection,fragment,eligible)
+      if(selected.length)ranges.set(fragment.id,selected)
+    }
+    return ranges
+  },[displayInventory,layer.fragments,onOpenGenome,state.selection])
+  const canvasState=useMemo(()=>({...renderState,camera:displayCamera,motifRows:motifSearch.rows,browserFragments:new Set(browserRangesByFragment.keys())}),[renderState,displayCamera,motifSearch.rows,browserRangesByFragment])
   // Original is the whole alignment however it is being looked at, so it is
   // described by the source's own totals. What a filter or a hide holds back is
   // a second line under them, close enough to read against.
@@ -266,7 +329,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
       if(token!==epoch.current)return
       // A block jump still in flight belongs to the previous dataset.
       blockNav.current++
-      history.current={past:[],future:[]};setDataset(data);setInventory(rows);setBlocks(blockList);setSource(first);setState(next);setDialog(null);setInspect(null);setNotice('');setRevision(v=>v+1)
+      history.current={past:[],future:[]};setDataset(data);setInventory(rows);setBlocks(blockList);setSource(first);setState(next);setDialog(null);setInspect(null);setLinkReport(null);setLink({row:'',assembly:'',region:'',strand:'+'});setNotice('');setRevision(v=>v+1)
       try{localStorage.setItem('alignment-layers:last',id)}catch{/* optional */}
     }catch(e){if(token===epoch.current)setError(e.message)}finally{if(token===epoch.current){setBusy(false);setOpening('')}}
   },[])
@@ -471,19 +534,59 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     commit(s=>({...s,layers:s.layers.map(l=>l.id!==s.active?l:{...l,
       fragments:l.fragments.map(f=>f.id===fragmentId?reorderFragmentRow(f,rowId,target.slot):f)})}))
   }
-  function transfer(copy=false,destinationId=target){
+  async function transfer(copy=false,destinationId=target){
+    const selected=state.selection
     const newLayer=destinationId==='new'?createLayer(layerName.trim()||`Layer ${state.layers.length+1}`,state.layers.length):null
-    const present=new Set(active.fragments.map(f=>f.id))
-    const resolved=resolvePicks(state.selection)
+    let transferOriginal=original,selection=selected
+    // The Original is a sliding window of descriptors. A row pick is semantic:
+    // it names the sequence's complete path, so resolve every source block that
+    // carries it before cutting chunks. Rectangles and block picks remain the
+    // precise regions that were drawn or clicked.
+    if(state.original){
+      const rowIds=[...pickedRowIds(selected)]
+      if(rowIds.length){
+        setBusy(true);setError('')
+        try{
+          const result=await api(`/datasets/${dataset.id}/row-fragments`,{ids:rowIds})
+          const complete=(result.fragments||[]).map(f=>createFragment(f.block,0,f.end_x-f.x,f.row_ids,{id:`original:${f.block}`,x:f.x}))
+          const byId=new Map(complete.map(f=>[f.id,f]))
+          // Retain the rows needed by simultaneous region/block picks without
+          // replacing the server's real-presence membership. Loaded Original
+          // descriptors also contain MAF empty components, which are useful as
+          // blank layout bands but must never turn into layer cells.
+          const localRows=new Map()
+          for(const pick of selected)if(pick.kind!=='row'){
+            if(!localRows.has(pick.fragmentId))localRows.set(pick.fragmentId,new Set())
+            for(const id of pick.rowIds)localRows.get(pick.fragmentId).add(id)
+          }
+          for(const f of original.fragments){
+            const local=localRows.get(f.id)
+            if(f.aggregate||!local?.size)continue
+            const resolved=byId.get(f.id)
+            byId.set(f.id,resolved?{...resolved,rowIds:[...new Set([...resolved.rowIds,...local])]}:f)
+          }
+          const fragments=[...byId.values()]
+          transferOriginal={...original,fragments}
+          selection=expandRowPicks(selected,fragments)
+        }catch(error){setError(error.message);return}
+        finally{setBusy(false)}
+      }
+    }
+    const present=new Set((state.original?transferOriginal:active).fragments.map(f=>f.id))
+    const resolved=resolvePicks(selection)
     const waiting=resolved.filter(pick=>!present.has(pick.fragmentId))
     if(waiting.length)setNotice(`${waiting.length} picked ${waiting.length===1?'block is':'blocks are'} not loaded, so ${waiting.length===1?'it was':'they were'} left behind. Navigate to them and move again.`)
     // Nothing to move means nothing to commit: going ahead would leave the
     // workspace pointing at a layer that was never made.
     if(waiting.length===resolved.length)return
     commit(s=>{
+      // Do not apply a delayed path lookup to a selection changed while it was
+      // in flight. The next drop will resolve that newer selection itself.
+      if(s.selection!==selected)return s
       // Original is immutable. Extracting from it creates working cells without
       // removing any source data or storing a duplicate of the full alignment.
-      const input=s.original?{...s,layers:[...s.layers,original],active:'original'}:s
+      const prepared={...s,selection}
+      const input=s.original?{...prepared,layers:[...s.layers,transferOriginal],active:'original'}:prepared
       const next=moveSelection(input,newLayer?.id||destinationId,{copy:copy||s.original,targetLayer:newLayer,viewportWidth:size.width})
       const layers=next.layers.filter(l=>l.id!=='original'),destination=layers.find(l=>l.id===next.active)
       const view=fitCamera(destination,size.width,size.height)
@@ -580,7 +683,39 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     }catch(e){setError(e.message)}finally{setBusy(false)}
   }
   async function save(){try{const value={...workspaceForSave(state,originalFragments),source:{id:dataset.id,name:dataset.name}};await api(`/datasets/${dataset.id}/workspace`,value,undefined,'PUT');download(`${dataset.name||'alignment'}.layers.json`,JSON.stringify(value,null,2),'application/json');setNotice('Layer workspace saved.')}catch(e){setError(e.message)}}
-  async function applyMetadata(content,suffix){await api(`/datasets/${dataset.id}/metadata`,{content,suffix});const rows=[];for(let offset=0;;offset+=5000){const page=await api(`/datasets/${dataset.id}/sequences?offset=${offset}&limit=5000`);rows.push(...page.rows);if(rows.length>=page.total)break}setInventory(rows);setRevision(v=>v+1);setNotice('Genome links updated; all alignment rows remain available.')}
+  async function applyMetadata(content,suffix,label='Genome links'){
+    setLinkImporting(true);setError('')
+    try{
+      const report=await api(`/datasets/${dataset.id}/metadata`,{content,suffix}),rows=[]
+      for(let offset=0;;offset+=5000){const page=await api(`/datasets/${dataset.id}/sequences?offset=${offset}&limit=5000`);rows.push(...page.rows);if(rows.length>=page.total)break}
+      setInventory(rows);setLinkReport({...report,label});setRevision(v=>v+1)
+      setNotice(`${report.updated.toLocaleString()} alignment ${report.updated===1?'sequence':'sequences'} linked; no alignment rows were removed.`)
+      return report
+    }finally{setLinkImporting(false)}
+  }
+  async function addLinkedGenome(genome){
+    if(!onAddGenome||!genome)return
+    const assembly=getAssemblyAccession(genome);setAddingAssembly(assembly)
+    try{
+      const result=await onAddGenome(genome,'alignment_explorer',{desired:'selected'})
+      if(result?.ok===false)throw new Error(result.message||'This genome could not be added to the top bar.')
+    }catch(error){setError(error.message)}finally{setAddingAssembly('')}
+  }
+  async function openSelectionInGenomeBrowser(fragment){
+    const ranges=browserRangesByFragment.get(fragment?.id)
+    if(!dataset||!fragment||!ranges?.length||!onOpenGenome)return
+    setBusy(true);setError('')
+    try{
+      const result=await api(`/datasets/${dataset.id}/genomic-loci`,{block:fragment.sourceBlock,ranges})
+      const loci=(result.loci||[]).map(locus=>{
+        const genome=topBarGenomes.find(item=>getAssemblyAccession(item).toUpperCase()===String(locus.assembly||'').toUpperCase())
+        return genome?{...locus,genomeKey:getGenomeKey(genome)}:null
+      }).filter(Boolean)
+      if(!loci.length){setNotice('The selected alignment cells do not contain placed bases for a browsable top-bar genome.');return}
+      if(result.warnings?.length)setNotice(result.warnings[0].message)
+      await onOpenGenome({loci})
+    }catch(error){setError(error.message)}finally{setBusy(false)}
+  }
   // The server owns the list of readers; this fallback only matters if the
   // capabilities call has not answered yet.
   const formatChoices=useMemo(()=>Object.entries(capabilities?.format_labels||{
@@ -678,7 +813,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
           <div className="al-source"><strong>Export sequences</strong><label>Format<select value={exportFormat} onChange={e=>setExportFormat(e.target.value)}>{exportChoices.map(([value,label])=><option key={value} value={value} disabled={exportRegions.length>1&&(value==='clustal'||value==='phylip-relaxed')}>{label}</option>)}</select></label><button disabled={busy||!exportRegions.length} onClick={exportSequences}>{state.selection.length?'Export picked region':'Export this layer'}</button><small>{!exportRegions.length?'Zoom in to an individual source block, or pick a region, to export its columns.':state.selection.length?`${exportRegions.length} picked ${exportRegions.length===1?'region':'regions'}, in each sequence's own aligned columns.`:`Every chunk on screen: ${exportRegions.length}. Pick a region to export just that.`}{exportRegions.length>1&&' Clustal and PHYLIP hold one alignment each, so several regions export as FASTA or MAF.'}</small></div></details>
         </div>
       </aside>
-      {filterOpen&&<FilterPanel dataset={dataset} genomes={genomes} onError={setError}
+      {filterOpen&&<FilterPanel dataset={dataset} genomes={localGenomes} onError={setError}
         filterApplied={filterOn} applied={state.filter}
         onClose={()=>setFilterOpen(false)}
         onNewLayer={layerFromFilter}
@@ -712,7 +847,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
         {!!state.legendOverlay&&(!!scheme.legend||scheme.id==='motif')&&<ColourLegend legend={scheme.id==='motif'?motifLegend(snapshot?.settings.motifs||[]):scheme.legend(theme==='light',conservation?.scale,state.palette?.[scheme.id],state.shading)}
           cohort={scheme.cohort?cohort:null} onDismiss={()=>patch({legendOverlay:false})}/>}
         {scheme.id==='motif'&&(motifSearch.pending||motifSearch.failure||motifBlocks.blocks)&&<div className="al-motif-tile-status" role="status">{motifSearch.failure|| (motifSearch.pending?'Loading prepared motif tiles…':`${motifBlocks.blocks.length.toLocaleString()} matching blocks`)}{motifBlocks.blocks&&<button onClick={()=>patch({hideUnmatchedMotifBlocks:false})}>Show unmatched blocks</button>}</div>}
-        <LayerCanvas ref={canvas} layer={layer} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} conservation={conservation} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onRemoveBlock={removeBlock} onRemoveRow={removeRow} onDeselect={deselect} onAggregate={(f,inner)=>inner?sourceBlock(inner.block):camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={(value,lit)=>patch({selection:value,mode:'pan',...(lit?.length?{highlighted:toggleHighlights(state.highlighted,lit)}:{})})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:addHighlight(state.highlighted,id)})} onUnlight={id=>patch(unlightRow(state,id))} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock} onReorderRow={reorderRow} onZoomLimit={noteZoomLimit}/></div>
+        <LayerCanvas ref={canvas} layer={layer} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} conservation={conservation} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onBrowseSelection={openSelectionInGenomeBrowser} onRemoveBlock={removeBlock} onRemoveRow={removeRow} onDeselect={deselect} onAggregate={(f,inner)=>inner?sourceBlock(inner.block):camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={(value,lit)=>patch({selection:value,mode:'pan',...(lit?.length?{highlighted:toggleHighlights(state.highlighted,lit)}:{})})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:addHighlight(state.highlighted,id)})} onUnlight={id=>patch(unlightRow(state,id))} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock} onReorderRow={reorderRow} onZoomLimit={noteZoomLimit}/></div>
         <div className="al-status"><span>{pending?'Loading regional detail…':layer.fragments.some(f=>f.aggregate)?'Block presence overview':renderState.camera.scale*renderState.camera.plane>=NUCLEOTIDE_LETTER_THRESHOLD?'Sequence detail':renderState.camera.scale*renderState.camera.plane>=.65?'Base patterns':(scheme.status||state.shading==='uniform')?'Binned':'Binned agreement to first row'}{scheme.status?` \u00b7 ${scheme.status}${scheme.cohort?` among ${cohort?.ids.length||0} ${cohort?.ids.length===1?'sequence':'sequences'}${cohort?.picked?' picked':' in view'}`:''}`:''}{renderState.camera.plane<1?` · Whole panel at ${Math.round(renderState.camera.plane*100)}%`:''}{fallback?' · Canvas fallback':''}</span><span>{inspect?.kind==='aggregate'?`${namedRow?.label||''} · present in ${inspect.aggregate.presence?.[inspect.rowId]||0} of ${inspect.aggregate.count} source blocks (${inspect.aggregate.first}–${inspect.aggregate.last})`:inspect?.kind==='connection'?`${inventory.find(r=>r.id===inspect.connection.rowId)?.label||'Sequence'} · ${inspect.connection.columns==null?'Different source blocks: alignment distance unavailable':inspect.connection.columns<0?`${-inspect.connection.columns} overlapping alignment columns`:`${inspect.connection.columns} omitted alignment columns`} · ${counts[inspect.connection.id]?.bases??'?'} ungapped bases`:inspect?.kind==='cell'?`${namedRow?.label||''} · block ${inspect.fragment.sourceBlock}, column ${(inspect.column+1).toLocaleString()}${inspect.base?` · ${inspect.base}`:''}${inspect.placed?.length?` · In layers: ${inspect.placed.join(', ')}`:''}${inspect.features?.length?` · ${inspect.features.map(f=>f.type).join(', ')}`:''}`:'Click a name or a block header to pick it \u00b7 click a cell or a string to follow its path.'}</span></div>
 
         {!!warnings.length&&<div className="al-annotation-warning">Annotations unavailable for {warnings.length} visible rows: {warnings[0].message}</div>}
@@ -744,7 +879,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     </ControlMenu>
     {selectionDrag&&<><div className="al-selection-dim"/><div className="al-selection-ghost" role="status" style={{left:selectionDrag.x+16,top:selectionDrag.y+16}}><strong>{selectionRows} sequences · {state.selection.length} regions</strong><small>{selectionDrag.target==='new'?'Release to create a new layer':selectionDrag.target?`Release to ${state.original?'place in':'move to'} ${state.layers.find(l=>l.id===selectionDrag.target)?.name}`:'Drop on a sidebar layer or ＋ New layer · Esc cancels'}</small></div></>}
     {merge&&<div className="al-modal-shade"><div className="al-modal" role="dialog" aria-modal="true" aria-label="Overlapping chunks"><h3>These layers contain overlapping chunks</h3><p>Combine overlapping source intervals into one chunk with both sets of sequences, or preserve each chunk separately. Unselected cells remain blank.</p><button className="primary" onClick={()=>finishMerge(merge.from,merge.to,true)}>Combine overlapping chunks</button><button onClick={()=>finishMerge(merge.from,merge.to,false)}>Keep chunks separate</button><button onClick={()=>setMerge(null)}>Cancel</button></div></div>}
-    {dialog&&<div className="al-modal-shade"><div className="al-modal" role="dialog" aria-modal="true" aria-label={typeof dialog==='string'?dialog:'Rename layer'}><button className="al-close" aria-label="Close dialog" onClick={()=>setDialog(null)}>×</button>
+    {dialog&&<div className="al-modal-shade"><div className={`al-modal ${dialog==='links'?'al-links-modal':''}`} role="dialog" aria-modal="true" aria-label={typeof dialog==='string'?dialog:'Rename layer'}><button className="al-close" aria-label="Close dialog" onClick={()=>setDialog(null)}>×</button>
       {dialog==='open'&&<><h3>Open a nucleotide alignment</h3><p>Load a local MAF, aligned FASTA, Clustal, Stockholm, PHYLIP, NEXUS, MSF or XMFA file. Compressed text files are supported.</p><label>Format<select value={format} onChange={e=>setFormat(e.target.value)}><option value="auto">Detect automatically</option>{formatChoices.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><small>{format==='auto'?'The file is read by its own signature. The format used is shown once it loads, so a wrong guess can be corrected here.':'This reader is used whatever the file claims to be.'}</small><button className="primary" disabled={busy||!!job} onClick={chooseFile}>Choose file</button><label>Or enter a local file path<input placeholder="/path/to/alignment.maf" value={path} onChange={e=>setPath(e.target.value)}/></label><button disabled={!path||busy||!!job} onClick={()=>startImport({path,format})}>Open path</button><button disabled={busy||!!job} onClick={()=>startImport({name:'Layer exploration example',format:'fasta',content:demoAlignment()})}>Explore example</button><small>The source file stays unchanged. Layer layouts are stored separately.</small></>}
       {dialog?.rename&&<><h3>Edit layer</h3>
         <label>Colour<div className="al-layer-colour">
@@ -752,7 +887,40 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
           <button onClick={()=>setColorTarget(dialog.rename)}>Change colour…</button>
         </div></label><input aria-label="Layer name" autoFocus value={layerName} maxLength={120} onChange={e=>setLayerName(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&layerName.trim()){commit(s=>({...s,layers:s.layers.map(l=>l.id===dialog.rename?{...l,name:layerName.trim()}:l)}));setDialog(null);setLayerName('')}}}/><button className="primary" disabled={!layerName.trim()} onClick={()=>{commit(s=>({...s,layers:s.layers.map(l=>l.id===dialog.rename?{...l,name:layerName.trim()}:l)}));setDialog(null);setLayerName('')}}>Save name</button></>}
       {dialog==='select'&&<><h3>Select by alignment coordinates</h3>{!selectedFragment?<p className="al-hint">This view groups several source blocks together, so there are no individual alignment columns to address. Zoom in until single blocks are shown, then select by coordinates.</p>:<><label>{state.original?'Source block':'Chunk'}<select value={selectedFragment.id} onChange={e=>{const f=selectableFragments.find(f=>f.id===e.target.value);setRange({fragment:f.id,start:f.start+1,end:f.end});setSelectRows([])}}>{selectableFragments.map(f=><option key={f.id} value={f.id}>Block {f.sourceBlock} · {f.start+1}–{f.end}</option>)}</select></label><div className="al-range"><label>First column<input type="number" min={selectedFragment.start+1} max={selectedFragment.end} value={range.start} onChange={e=>setRange({...range,start:Number(e.target.value)})}/></label><label>Last column<input type="number" min={selectedFragment.start+1} max={selectedFragment.end} value={range.end} onChange={e=>setRange({...range,end:Number(e.target.value)})}/></label></div><label>Sequences <small>None checked means all rows in this region.</small><input placeholder="Search sequences" value={rowQuery} onChange={e=>setRowQuery(e.target.value)}/></label><div className="al-row-choices">{rowChoices.slice(0,200).map(r=><label key={r.id}><input type="checkbox" checked={selectRows.includes(r.id)} onChange={e=>setSelectRows(v=>e.target.checked?[...v,r.id]:v.filter(id=>id!==r.id))}/>{r.label||r.source}</label>)}</div>{rowChoices.length>200&&<small>Showing the first 200 of {rowChoices.length.toLocaleString()} matching sequences. Search to narrow the list, or leave every box unchecked to select all {selectedFragment.rowIds.length.toLocaleString()} rows in this block.</small>}<button className="primary" disabled={range.end<range.start||range.start<=selectedFragment.start||range.end>selectedFragment.end} onClick={()=>{patch({mode:'pan',selection:[{fragmentId:selectedFragment.id,start:range.start-1,end:range.end,rowIds:selectRows.length?selectRows:selectedFragment.rowIds}]});setDialog(null)}}>Select region</button></>}</>}
-      {dialog==='links'&&<><h3>Link local genomes</h3><p>Link sequence identity and contig to local genome data. Coordinate-aware MAF rows use the same GFF3 feature mapping as the existing alignment view. Saved MAFFT annotations are also retained.</p><button onClick={()=>metadata.current.click()}>Import TSV / JSON metadata</button><small>Fields: source (or id), genome_key, chrom, assembly, label. FASTA coordinates: genomic_start / genomic_end (1-based), strand. Links never remove rows.</small><label>Alignment sequence<select value={link.row} onChange={e=>setLink({...link,row:e.target.value})}><option value="">Choose a sequence</option>{inventory.map(r=><option key={r.id} value={r.id}>{r.label} {r.metadata?.genome_key?'· linked':''}</option>)}</select></label><label>Local genome<select value={link.genome} onChange={e=>setLink({...link,genome:e.target.value})}><option value="">Choose a genome</option>{genomes.map(g=><option key={getGenomeKey(g)} value={getGenomeKey(g)}>{g.display_name||g.name||g.species||getGenomeKey(g)}</option>)}</select></label><label>Contig / chromosome<input placeholder="e.g. chr1" value={link.chrom} onChange={e=>setLink({...link,chrom:e.target.value})}/></label><button disabled={!link.row||!link.genome||!link.chrom} onClick={()=>applyMetadata(JSON.stringify([{id:link.row,genome_key:link.genome,chrom:link.chrom}]),'.json').then(()=>patch({annotations:true})).catch(e=>setError(e.message))}>Apply link</button><small>Unpositioned FASTA rows need coordinate metadata or saved alignment annotations; matching a name alone cannot place genomic features.</small></>}
+      {dialog==='links'&&<><h3>Link alignment sequences to genomes</h3>
+        <p>Use an assembly accession as the genome identity and a region name or interval as its location. Links enrich the alignment; they never remove sequences.</p>
+        <div className="al-link-import">
+          <button className="primary" disabled={linkImporting} onClick={()=>metadata.current.click()}>{linkImporting?'Importing…':'Import TSV or JSON'}</button>
+          <small>Required fields: <code>source</code>, <code>assembly</code>, <code>region</code>. Optional: <code>strand</code>, <code>assembly_name</code>, <code>label</code>.</small>
+          <small>Examples: <code>1</code> links a whole sequence from base 1; <code>1:10,000-50,000</code> supplies an explicit start. If its span differs from the ungapped sequence, the start is retained and the end is derived from the sequence. Strand accepts <code>+</code>, <code>-</code>, <code>1</code>, or <code>-1</code>.</small>
+        </div>
+        {(reportGroups.length>0||linkReport)&&<section className="al-link-report" aria-label="Genome link report">
+          <div className="al-link-report-head"><strong>{linkReport?linkReport.label:'Current links'}</strong><span>{linkReport?`${linkReport.updated||0} linked`: `${reportGroups.reduce((total,group)=>total+group.count,0)} linked`}</span></div>
+          <div className="al-link-summary">
+            {['topbar','local','unavailable','unresolved'].map(status=>{
+              const count=reportGroups.filter(group=>group.status===status).reduce((total,group)=>total+group.count,0)+(status==='unresolved'?(linkReport?.unresolved?.length||0):0)
+              const title={topbar:'In top bar',local:'Local',unavailable:'Not downloaded',unresolved:'Unresolved'}[status]
+              return <span key={status} className={`al-link-count ${status}`}><strong>{count}</strong>{title}</span>
+            })}
+          </div>
+          <div className="al-link-list">
+            {reportGroups.map(group=><div className="al-link-row" key={`${group.status}:${group.assembly}`}>
+              <span className={`al-link-pill ${group.status}`}>{group.status==='topbar'?'Top bar':group.status==='local'?'Local':group.status==='unavailable'?'Not downloaded':'Unresolved'}</span>
+              <span><strong>{genomeDisplayName(group.genome,group.assembly)||group.assembly}</strong><small>{group.assembly} · {group.regionLabel} · {group.count} {group.count===1?'sequence':'sequences'}</small></span>
+              {group.status==='local'&&onAddGenome&&<button disabled={addingAssembly===group.assembly} onClick={()=>addLinkedGenome(group.genome)}>{addingAssembly===group.assembly?'Adding…':'Add to top bar'}</button>}
+            </div>)}
+            {(linkReport?.unresolved||[]).map(source=><div className="al-link-row" key={`unresolved:${source}`}><span className="al-link-pill unresolved">Unresolved</span><span><strong>{source}</strong><small>No alignment sequence has this source identifier.</small></span></div>)}
+          </div>
+          {(linkReport?.warnings||[]).map((warning,index)=><small className="al-link-warning" key={`${warning.id}:${index}`}>{warning.source}: {warning.message}</small>)}
+        </section>}
+        <div className="al-link-manual"><strong>Link one sequence</strong>
+          <label>Alignment sequence<select value={link.row} onChange={e=>setLink({...link,row:e.target.value})}><option value="">Choose a sequence</option>{inventory.map(row=><option key={row.id} value={row.id}>{row.label||row.source}{row.metadata?.assembly?' · linked':''}</option>)}</select></label>
+          <label>Local genome<select value={link.assembly} onChange={e=>setLink({...link,assembly:e.target.value})}><option value="">Choose a genome</option>{genomeOptions.map(genome=>{const assembly=getAssemblyAccession(genome);return <option key={getGenomeKey(genome)||assembly} value={assembly}>{genomeDisplayName(genome,assembly)} · {assembly}</option>})}</select></label>
+          <div className="al-link-location"><label>Region<input placeholder="1 or 1:10,000-50,000" value={link.region} onChange={e=>setLink({...link,region:e.target.value})}/></label><label>Strand<select value={link.strand} onChange={e=>setLink({...link,strand:e.target.value})}><option value="+">+</option><option value="-">−</option></select></label></div>
+          <button disabled={linkImporting||!link.row||!link.assembly||!link.region.trim()} onClick={()=>applyMetadata(JSON.stringify([{id:link.row,assembly:link.assembly,region:link.region,strand:link.strand}]),'.json','Manual link').then(()=>patch({annotations:true})).catch(error=>setError(error.message))}>Apply link</button>
+          {localGenomesLoading&&<small>Refreshing local genome availability…</small>}
+        </div>
+      </>}
     </div></div>}
     <GenomeColorPicker isOpen={!!colorTarget} theme={theme} title="Layer colour"
       subtitle={state.layers.find(l=>l.id===colorTarget)?.name||''}
@@ -764,7 +932,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
       onApply={color=>commit(s=>({...s,layers:s.layers.map(l=>l.id===colorTarget?{...l,color}:l)}))}
       onClose={()=>setColorTarget(null)}/>
     <input ref={file} hidden type="file" accept=".maf,.fa,.fasta,.fas,.fna,.mfa,.afa,.fsa,.aln,.clw,.xmfa,.sto,.stk,.stockholm,.phy,.phylip,.nex,.nexus,.nxs,.msf,.gz" onChange={async e=>{const f=e.target.files?.[0];e.target.value='';if(!f)return;const localPath=window.electronAPI?.getPathForFile?.(f)||f.path;if(localPath){startImport({path:localPath,format});return}if(f.size>20_000_000||f.name.endsWith('.gz')){setPath('');setNotice('Use the local file path for compressed files or files larger than 20 MB.');return}startImport({name:f.name,content:await f.text(),format})}}/>
-    <input ref={metadata} hidden type="file" accept=".tsv,.json" onChange={async e=>{const f=e.target.files?.[0];e.target.value='';if(f)try{await applyMetadata(await f.text(),f.name.endsWith('.tsv')?'.tsv':'.json')}catch(error){setError(error.message)}}}/>
+    <input ref={metadata} hidden type="file" accept=".tsv,.json" onChange={async e=>{const f=e.target.files?.[0];e.target.value='';if(f)try{await applyMetadata(await f.text(),f.name.toLowerCase().endsWith('.tsv')?'.tsv':'.json',f.name)}catch(error){setError(error.message)}}}/>
     <input ref={workspace} hidden type="file" accept=".json" onChange={async e=>{const f=e.target.files?.[0];e.target.value='';if(f)try{const value=JSON.parse(await f.text());if(value.source?.id&&value.source.id!==dataset.id)throw new Error('This workspace references a different alignment. Open that source first.');const next=validateLayerWorkspace(value,ids);const token=++blockNav.current;const block=await api(`/datasets/${dataset.id}/blocks/${next.sourceBlock}/rows`);if(token!==blockNav.current)return;setSource(block);commit(next.original?{...next,camera:{...next.camera,x:next.camera.x+(block.layout_start||0)}}:next)}catch(error){setError(error.message)}}}/>
   </section>
 }

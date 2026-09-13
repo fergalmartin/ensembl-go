@@ -69,22 +69,65 @@ class StoreTests(unittest.TestCase):
         path=self.root/'input.fa';path.write_text('>a\nACGT\n>b\nACTG\n')
         with self.assertRaises(InterruptedError):self.store.import_file(path,'fasta',lambda:True)
     def test_metadata_does_not_remove_sequences(self):
-        self.load();self.store.update_metadata([{'source':'mouse.chr1','genome_key':'active::mouse','group':'mammals'}])
+        self.load();report=self.store.update_metadata([{'source':'mouse.chr1','assembly':'GCA_000001635.9','region':'1'}])
         self.assertEqual(self.store.inventory()['total'],5)
         mouse=[r for r in self.store.inventory()['rows'] if r['source']=='mouse.chr1']
-        self.assertTrue(all(r['metadata']['group']=='mammals' for r in mouse))
+        self.assertTrue(all(r['metadata']['assembly']=='GCA_000001635.9' for r in mouse))
+        self.assertEqual(report['updated'],2)
     def test_saved_fasta_metadata_restores_verified_source_coordinates(self):
         self.load('>sample\nAC-GT\n','fasta')
-        entries=parse_metadata(json.dumps({'genomes':[{'genome_key':'sample','chrom':'chr1','genomic_start':101,'genomic_end':104,'strand':'-'}]}),'.json')
+        entries=parse_metadata(json.dumps([{'source':'sample','assembly':'GCA_123.1','region':'chr1:101-104','strand':'-'}]),'.json')
         self.store.update_metadata(entries)
         row=self.store.region(1)['rows'][0]
         self.assertEqual((row['start'],row['end'],row['strand'],row['coordinates']),(100,104,'-',1))
         self.assertEqual(locate_column(self.store,1,row['id'],102),1)
 
-    def test_invalid_fasta_coordinate_metadata_is_rejected(self):
+    def test_fasta_range_trusts_start_and_derives_end_from_sequence(self):
         self.load('>sample\nAC-GT\n','fasta')
-        with self.assertRaises(ValueError):self.store.update_metadata([{'source':'sample','genomic_start':10,'genomic_end':20}])
-        self.assertFalse(self.store.region(1)['rows'][0]['coordinates'])
+        report=self.store.update_metadata([{'source':'sample','assembly':'GCA_123.1','region':'chr1:10-20','strand':'-1'}])
+        row=self.store.region(1)['rows'][0]
+        self.assertEqual((row['start'],row['end'],row['strand'],row['coordinates']),(9,13,'-',1))
+        self.assertEqual(len(report['warnings']),1)
+        self.assertEqual(row['metadata']['declared_genomic_end'],20)
+
+    def test_bare_region_places_sequence_at_base_one_and_unresolved_rows_are_reported(self):
+        self.load('>sample\nAC-GT\n','fasta')
+        report=self.store.update_metadata([
+            {'source':'sample','assembly':'GCA_123.1','region':'contig_A'},
+            {'source':'missing','assembly':'GCA_456.1','region':'1'},
+        ])
+        row=self.store.region(1)['rows'][0]
+        self.assertEqual((row['start'],row['end'],row['strand']),(0,4,'+'))
+        self.assertEqual(report['unresolved'],['missing'])
+
+    def test_sequence_only_link_can_be_repositioned_and_restranded(self):
+        self.load('>sample\nAC-GT\n','fasta')
+        self.store.update_metadata([{'source':'sample','assembly':'GCA_123.1','region':'1'}])
+        self.store.update_metadata([{'source':'sample','assembly':'GCA_123.1','region':'2:51-54','strand':'-'}])
+        row=self.store.region(1)['rows'][0]
+        self.assertEqual((row['start'],row['end'],row['strand']),(50,54,'-'))
+        self.assertEqual(row['metadata']['region'],'2')
+
+    def test_genome_link_format_is_strict_and_normalises_strand(self):
+        [entry]=parse_metadata('source\tassembly\tregion\tstrand\nsample\tGCA_123.1\t1:10,000-10,003\t1\n','.tsv')
+        self.assertEqual((entry['region'],entry['genomic_start'],entry['genomic_end'],entry['strand']),('1',10000,10003,'+'))
+        with self.assertRaisesRegex(ValueError,'Unknown genome-link field'):
+            parse_metadata('source\tgenome_key\tchrom\nsample\thuman\t1\n','.tsv')
+
+    def test_selected_alignment_columns_project_to_genomic_loci(self):
+        self.load()
+        self.store.update_metadata([
+            {'source':'human.chr1','assembly':'GCA_human.1','region':'1'},
+            {'source':'mouse.chr1','assembly':'GCA_mouse.1','region':'1'},
+        ])
+        result=self.store.genomic_loci(1,[
+            {'id':stable_id('human.chr1'),'start':1,'end':6},
+            {'id':stable_id('mouse.chr1'),'start':1,'end':6},
+        ])
+        loci={locus['assembly']:locus for locus in result['loci']}
+        self.assertEqual((loci['GCA_human.1']['region'],loci['GCA_human.1']['start'],loci['GCA_human.1']['end']),('1',12,15))
+        self.assertEqual((loci['GCA_mouse.1']['start'],loci['GCA_mouse.1']['end'],loci['GCA_mouse.1']['strand']),(76,79,'-'))
+        self.assertEqual(result['warnings'],[])
 
     def test_region_lookup_finds_all_mappings(self):
         self.load();self.assertEqual(self.store.blocks(sequence_id=stable_id('human.chr1'),coordinate=31)['total'],1)
@@ -226,6 +269,18 @@ class ApiTests(unittest.TestCase):
         response=self.client.post(prefix+'/annotations',json={'block':1,'start':1,'end':4}).json()
         self.assertEqual(list(response['rows'].values())[0],[{'type':'cds','start':1,'end':3}])
 
+    def test_metadata_endpoint_returns_a_linkage_report(self):
+        status=self.register(content='>sample\nAC-GT\n',format='fasta')
+        prefix='/api/alignment-explorer/datasets/'+status['dataset_id']
+        response=self.client.post(prefix+'/metadata',json={'entries':[
+            {'source':'sample','assembly':'GCA_123.1','region':'1:10-20','strand':'-1'},
+            {'source':'missing','assembly':'GCA_456.1','region':'2'},
+        ]})
+        self.assertEqual(response.status_code,200)
+        report=response.json()
+        self.assertEqual((report['requested'],report['updated'],report['unresolved']),(2,1,['missing']))
+        self.assertEqual(len(report['warnings']),1)
+
     def test_linked_annotation_callback_receives_reverse_source_span(self):
         calls=[]
         def provider(*args):
@@ -236,9 +291,9 @@ class ApiTests(unittest.TestCase):
         previous=self.client;self.client=TestClient(app)
         try:
             status=self.register(content=MAF,format='maf');prefix='/api/alignment-explorer/datasets/'+status['dataset_id'];row=stable_id('mouse.chr1')
-            self.client.post(prefix+'/metadata',json={'entries':[{'id':row,'genome_key':'mouse','chrom':'chr1'}]})
+            self.client.post(prefix+'/metadata',json={'entries':[{'id':row,'assembly':'GCA_mouse.1','region':'chr1'}]})
             response=self.client.post(prefix+'/annotations',json={'block':1,'start':1,'end':6,'ids':[row]}).json()
-            self.assertEqual(calls[0][:6],('mouse','chr1',76,79,'T-GTN','-'))
+            self.assertEqual(calls[0][:6],('GCA_mouse.1','chr1',76,79,'T-GTN','-'))
             self.assertEqual(response['rows'][row],[{'type':'cds','start':1,'end':2}])
         finally:self.client.close();self.client=previous
 
@@ -402,7 +457,7 @@ class LayoutPerformanceTests(unittest.TestCase):
     def test_summary_counts_blocks_bases_and_columns_per_sequence(self):
         self.store.add_block([{'source':'a','sequence':'ACGT'*10},{'source':'b','sequence':'AC--'*10}])
         self.store.add_block([{'source':'a','sequence':'ACGTA'}])
-        self.store.update_metadata([{'source':'a','genome_key':'human','chrom':'1'}])
+        self.store.update_metadata([{'source':'b','assembly':'GCA_human.1','region':'1'}])
         summary=self.store.summary()
         rows={r['source']:r for r in summary['sequences']}
         # Blocks a sequence appears in, and the alignment columns of those blocks.
@@ -410,13 +465,14 @@ class LayoutPerformanceTests(unittest.TestCase):
         self.assertEqual(rows['a']['columns'],45)
         self.assertEqual(rows['b']['blocks'],1)
         self.assertEqual(rows['b']['columns'],40)
-        # These rows carry no source coordinates, so ungapped bases are not
-        # derivable and are reported as none counted rather than as zero bases.
+        # The unlinked multi-block row remains unplaced; the linked single FASTA
+        # row is placed from base one and its ungapped length becomes countable.
         self.assertEqual(rows['a']['placed'],0)
-        self.assertEqual(rows['b']['placed'],0)
+        self.assertEqual(rows['b']['placed'],1)
         # Explicit links travel with the sequence so the panel can filter on them.
-        self.assertEqual(rows['a']['genome_key'],'human')
-        self.assertIsNone(rows['b']['genome_key'])
+        self.assertEqual(rows['b']['assembly'],'GCA_human.1')
+        self.assertEqual(rows['b']['region'],'1')
+        self.assertIsNone(rows['a']['assembly'])
         blocks={b['id']:b for b in summary['blocks']}
         self.assertEqual((blocks[1]['length'],blocks[1]['available']),(40,2))
         self.assertEqual((blocks[2]['length'],blocks[2]['available']),(5,1))
@@ -484,6 +540,20 @@ class LayoutPerformanceTests(unittest.TestCase):
         # An empty component is not a presence.
         self.store.add_block([{'source':'z','sequence':'ACGT'},{'source':c,'sequence':None,'empty_status':'C','start':0,'end':0}])
         self.assertEqual([e['block'] for e in self.store.blocks_with([c])],[3])
+
+    def test_row_fragments_resolve_the_complete_path_with_layout(self):
+        self.store.add_block([{'source':'a','sequence':'ACGT'},{'source':'b','sequence':'ACGT'}])
+        self.store.add_block([{'source':'b','sequence':'ACGTAC'}])
+        self.store.add_block([{'source':'a','sequence':'ACGTACGT'},
+                              {'source':'b','sequence':None,'empty_status':'C','start':0,'end':0}])
+        a,b=(stable_id(x) for x in 'ab')
+        found=self.store.row_fragments([a,b])
+        self.assertEqual([f['block'] for f in found],[1,2,3])
+        self.assertEqual(found[0]['row_ids'],[a,b])
+        self.assertEqual(found[1]['row_ids'],[b])
+        self.assertEqual(found[2]['row_ids'],[a], 'empty components are not path cells')
+        self.assertEqual([(f['x'],f['end_x']-f['x']) for f in found],
+                         [(0,4),(4+SOURCE_GAP,6),(10+2*SOURCE_GAP,8)])
 
     def test_blocks_in_range_finds_the_interval_on_either_strand(self):
         # Forward and reverse rows of the same region. The importer converts MAF

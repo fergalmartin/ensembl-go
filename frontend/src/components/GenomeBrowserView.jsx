@@ -1405,11 +1405,25 @@ export default function GenomeBrowserView({
     const lastAlignmentLocus = useRef(null)
     useEffect(() => {
         if (!isActive || !externalAlignmentLocus || lastAlignmentLocus.current === externalAlignmentLocus.token) return
-        const panel = panels.find(p => p.key === externalAlignmentLocus.genomeKey)
-        if (!panel) return
+        const requested = Array.isArray(externalAlignmentLocus.loci) && externalAlignmentLocus.loci.length
+            ? externalAlignmentLocus.loci
+            : [externalAlignmentLocus]
+        const positioned = requested.map((locus) => ({ locus, panel: panels.find((panel) => panel.key === locus.genomeKey) }))
+        // Configuration and panel creation are asynchronous. Wait until every
+        // selected genome has its panel before consuming the handoff token, or
+        // an early existing panel would navigate while a newly activated one
+        // permanently missed its locus.
+        if (positioned.some(({ panel }) => !panel)) return
         lastAlignmentLocus.current = externalAlignmentLocus.token
-        const { chrom, start, end } = externalAlignmentLocus
-        setNavigateGenes(prev => ({ ...prev, [panel.key]: { chrom, start, end, windowStart: start, windowEnd: end, centerVertically: false } }))
+        setNavigateGenes((prev) => {
+            const next = { ...prev }
+            for (const { locus, panel } of positioned) {
+                const chrom = locus.chrom || locus.region
+                const { start, end, strand } = locus
+                next[panel.key] = { chrom, start, end, strand, windowStart: start, windowEnd: end, centerVertically: false }
+            }
+            return next
+        })
     }, [externalAlignmentLocus, isActive, panels])
 
     const firstPanel = panels[0] || null

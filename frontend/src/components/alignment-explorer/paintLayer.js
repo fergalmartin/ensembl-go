@@ -53,6 +53,12 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   // make. Same colour, from its own table, so the two views stay one
   // vocabulary and cannot drift apart.
   colors.gap=FEATURE_COLORS.genomic?.bg||'#60a5fa'
+  const linkedPill=(row,x,y,width)=>{
+    if(row?.linkStatus!=='topbar'&&row?.linkStatus!=='local')return
+    ctx.save();ctx.fillStyle=light?'#dbeafe':'#17365f';ctx.strokeStyle=colors.gap;ctx.lineWidth=1
+    if(row.linkStatus==='local')ctx.setLineDash([3,2])
+    rounded(ctx,x-4,y+3,width+8,ROW_HEIGHT-6,5);ctx.fill();ctx.stroke();ctx.restore()
+  }
   // The palette is chosen here and nowhere else: the inner loops still read one
   // table by key, whichever set of colours it holds.
   const baseColors=basePalette(state.palette?.bases,light)
@@ -214,9 +220,10 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     // interval is too narrow to tick it either.
     const headerLeft=Math.max(state.original?MARGIN_X:0,r.x),headerRight=Math.min(size.width,r.x+w)
     const interval=`${(f.start+1).toLocaleString()}–${f.end.toLocaleString()}`
+    const canBrowse=state.browserFragments?.has(f.id)
     ctx.font=monoFont(10)
     const headerPlan=legible&&headerRight-headerLeft>2*HEADER_PAD?blockHeaderPlan({
-      room:headerRight-headerLeft-2*HEADER_PAD,actionsWidth:(state.original?3:2)*23,
+      room:headerRight-headerLeft-2*HEADER_PAD,actionsWidth:((state.original?3:2)+(canBrowse?1:0))*23,
       sourceBlock:f.sourceBlock,interval,compact:f.compact&&!dense,
       measure:text=>ctx.measureText(text).width}):null
     ctx.fillStyle=colors.head;ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,HEADER_HEIGHT)
@@ -446,6 +453,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       const box={x:labelX-cross,y,width:width+cross,height:ROW_HEIGHT}
       if(drawLayer.fragments.some(other=>{if(other.id===f.id)return false;const rect=panelRect(other,camera);return box.x<rect.x+rect.width&&box.x+box.width>rect.x&&box.y<rect.y+rect.height&&box.y+box.height>rect.y-HEADER_HEIGHT})||labelBoxes.some(b=>box.x<b.x+b.width&&box.x+box.width>b.x&&box.y<b.y+b.height&&box.y+box.height>b.y))continue
       labelBoxes.push(box)
+      linkedPill(byId.get(id),labelX,y,width)
       ctx.strokeStyle=colors.background;ctx.lineWidth=3;ctx.lineJoin='round';ctx.strokeText(label,labelX,y+17)
       ctx.fillStyle=lit.has(id)?PICKED:colors.text;ctx.fillText(label,labelX,y+17)
       hits.push({kind:'label',rowId:id,fragmentId:f.id,x:labelX-3,y,width:width+6,height:ROW_HEIGHT})
@@ -486,6 +494,15 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       hits.push({kind:'removeBlock',fragmentId:f.id,x:closeX,y:iconY,width:20,height:22})}
     if(state.original){const plusX=iconX-23;ctx.fillStyle=colors.head;rounded(ctx,plusX,iconY,20,22,3);ctx.fill();ctx.strokeStyle=colors.text;ctx.beginPath();ctx.moveTo(plusX+5,iconY+11);ctx.lineTo(plusX+15,iconY+11);ctx.moveTo(plusX+10,iconY+6);ctx.lineTo(plusX+10,iconY+16);ctx.stroke();hits.push({kind:'layer',fragmentId:f.id,x:plusX,y:iconY,width:20,height:22})
       const rowX=plusX-23;ctx.fillStyle=colors.head;rounded(ctx,rowX,iconY,20,22,3);ctx.fill();ctx.strokeStyle=colors.text;ctx.beginPath();for(let i=0;i<3;i++){const y=iconY+6+i*(f.compact?3:5);ctx.moveTo(rowX+5,y);ctx.lineTo(rowX+15,y)}ctx.stroke();hits.push({kind:'rows',fragmentId:f.id,x:rowX,y:iconY,width:20,height:22})}
+    if(canBrowse){
+      const browseX=iconX-(state.original?69:46)
+      ctx.fillStyle=light?'#dbeafe':'#17365f';rounded(ctx,browseX,iconY,20,22,3);ctx.fill()
+      ctx.strokeStyle=colors.gap;ctx.lineWidth=1.25;rounded(ctx,browseX+4,iconY+4,12,14,2);ctx.stroke()
+      ctx.beginPath();ctx.moveTo(browseX+4,iconY+9);ctx.lineTo(browseX+16,iconY+9);ctx.stroke()
+      ctx.fillStyle=colors.gap
+      for(const x of [browseX+7,browseX+10,browseX+13]){ctx.beginPath();ctx.arc(x,iconY+7,0.7,0,Math.PI*2);ctx.fill()}
+      ctx.lineWidth=1;hits.push({kind:'browse',fragmentId:f.id,x:browseX,y:iconY,width:20,height:22})
+    }
     }
 
   }
@@ -506,6 +523,8 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       // still answers to a click when it is too small to carry its own label.
       if(legible){
         let label=row.label||row.source||row.id;ctx.font='11px Lato, sans-serif';while(label.length&&ctx.measureText(label).width>MARGIN_X-18)label=label.slice(0,-2)+'…'
+        const width=ctx.measureText(label).width
+        linkedPill(row,MARGIN_X-10-width,y,width)
         ctx.fillStyle=lit.has(row.id)?PICKED:colors.text;ctx.textAlign='right';ctx.fillText(label,MARGIN_X-10,y+17);ctx.textAlign='left'
       }
       hits.push({kind:'label',rowId:row.id,anchor:compactAnchor?compactAnchor.sourceBlock:null,x:0,y,width:MARGIN_X,height:ROW_HEIGHT})

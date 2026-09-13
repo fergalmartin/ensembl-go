@@ -10132,9 +10132,21 @@ def _resolve_browse_genome_context(genome: str) -> Dict[str, Any]:
             None,
         )
     if not species:
+        # Alignment genome-link files use the assembly accession itself as the
+        # stable identity. Resolve that compact public identifier to the full
+        # local genome record only at the browser/annotation boundary.
+        assembly_token = token.upper()
+        species = next(
+            (
+                s for s in active_species
+                if str(s.get("assembly") or s.get("gca") or s.get("assembly_accession") or "").strip().upper() == assembly_token
+            ),
+            None,
+        )
+    if not species:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid genome: {genome}. Use 'reference', 'target', or a genome key such as '<provider>::<species_key>::<assembly>'."
+            detail=f"Invalid genome: {genome}. Use 'reference', 'target', an assembly accession, or a genome key such as '<provider>::<species_key>::<assembly>'."
         )
 
     files = species.get("files") or {}

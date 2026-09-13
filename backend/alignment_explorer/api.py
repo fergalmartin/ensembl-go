@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from typing import Literal, Optional
-from .store import AlignmentStore, detect_format, fingerprint, parse_metadata
+from .store import AlignmentStore, detect_format, fingerprint, normalize_metadata_entries, parse_metadata
 
 
 class ImportRequest(BaseModel):
@@ -157,7 +157,8 @@ def create_router(cache_root=None, annotation_provider=None):
                     for i, row in enumerate(payload.rows):
                         seq = clean_sequence(row.get('aligned_sequence', row.get('sequence', '')))
                         if not seq: raise ValueError(f'Row {i+1} has no aligned sequence')
-                        rows.append({'source': row.get('genome_key') or row.get('source') or f'row_{i+1}', 'sequence': seq, 'label': row.get('gene_label') or row.get('tag') or row.get('genome_key') or f'Row {i+1}', 'genome_key': row.get('genome_key'), 'chrom': row.get('chrom'), 'start': max(0, int(row.get('genomic_start', 1))-1), 'end': row.get('genomic_end', 0), 'strand': row.get('strand', '+'), 'coordinates': bool(row.get('chrom') and row.get('genomic_start')), 'transcript_id': row.get('transcript_id'), 'features': row.get('display_features') or row.get('features', [])})
+                        region=row.get('region') or row.get('chrom')
+                        rows.append({'source': row.get('source') or row.get('genome_key') or f'row_{i+1}', 'sequence': seq, 'label': row.get('gene_label') or row.get('tag') or row.get('source') or row.get('genome_key') or f'Row {i+1}', 'assembly': row.get('assembly') or row.get('gca'), 'region': region, 'start': max(0, int(row.get('genomic_start', 1))-1), 'end': row.get('genomic_end', 0), 'strand': row.get('strand', '+'), 'coordinates': bool(region and row.get('genomic_start')), 'transcript_id': row.get('transcript_id'), 'features': row.get('display_features') or row.get('features', [])})
                     store.add_block(rows, {'origin': 'MAFFT'})
                     store.set_meta('format', 'fasta')
                     store.set_meta('format_chosen', True)
@@ -362,6 +363,28 @@ def create_router(cache_root=None, annotation_provider=None):
         if not all(isinstance(i, str) for i in ids): raise HTTPException(400, 'Invalid sequence identifier')
         return {'blocks': store_for(dataset_id).blocks_with(ids)}
 
+    @router.post('/datasets/{dataset_id}/row-fragments')
+    def row_fragments(dataset_id: str, payload: dict):
+        ids = payload.get('ids', [])
+        if not isinstance(ids, list) or not 0 < len(ids) <= 5000: raise HTTPException(400, 'Choose between 1 and 5,000 sequences')
+        if not all(isinstance(i, str) for i in ids): raise HTTPException(400, 'Invalid sequence identifier')
+        return {'fragments': store_for(dataset_id).row_fragments(ids)}
+
+    @router.post('/datasets/{dataset_id}/genomic-loci')
+    def genomic_loci(dataset_id: str, payload: dict):
+        ranges=payload.get('ranges',[])
+        if not isinstance(ranges,list) or not 0 < len(ranges) <= 5000: raise HTTPException(400,'Choose between 1 and 5,000 selected sequence ranges')
+        try: block=int(payload['block'])
+        except (KeyError,TypeError,ValueError) as exc: raise HTTPException(400,'Invalid source block') from exc
+        cleaned=[]
+        for item in ranges:
+            if not isinstance(item,dict) or not isinstance(item.get('id'),str): raise HTTPException(400,'Invalid selected sequence range')
+            try: start,end=int(item['start']),int(item['end'])
+            except (KeyError,TypeError,ValueError) as exc: raise HTTPException(400,'Invalid selected sequence range') from exc
+            if start < 0 or end <= start: raise HTTPException(400,'Invalid selected sequence range')
+            cleaned.append({'id':item['id'],'start':start,'end':end})
+        return store_for(dataset_id).genomic_loci(block,cleaned)
+
     @router.post('/datasets/{dataset_id}/blocks-in-range')
     def blocks_in_range(dataset_id: str, payload: dict):
         ids = payload.get('ids', [])
@@ -400,12 +423,12 @@ def create_router(cache_root=None, annotation_provider=None):
             embedded=meta.get('features') or []
             if embedded:
                 output[row['id']]=[f for f in embedded if f['end']>=data['start'] and f['start']<data['end']]
-            genome,chrom=meta.get('genome_key'),meta.get('chrom')
-            if not genome or not chrom or not annotation_provider: continue
+            assembly,region=meta.get('assembly'),meta.get('region')
+            if not assembly or not region or not annotation_provider: continue
             span=source_span(store,payload.block,row['id'],data['start'],data['end'])
             if not span or not span['coordinates'] or not span['bases']: continue
             try:
-                features=annotation_provider(genome,chrom,span['start']+1,span['end'],row['sequence'],row['strand'],meta.get('transcript_id'))
+                features=annotation_provider(assembly,region,span['start']+1,span['end'],row['sequence'],row['strand'],meta.get('transcript_id'))
                 output[row['id']]=[{**f,'start':f['start']+data['start'],'end':f['end']+data['start']} for f in features]
             except Exception as exc:
                 warnings.append({'id':row['id'],'message':str(getattr(exc,'detail',exc))})
@@ -444,9 +467,8 @@ def create_router(cache_root=None, annotation_provider=None):
     @router.post('/datasets/{dataset_id}/metadata')
     def metadata(dataset_id: str, payload: MetadataRequest):
         try:
-            entries = parse_metadata(payload.content, payload.suffix) if payload.content is not None else payload.entries
-            store_for(dataset_id).update_metadata(entries)
-            return {'updated': len(entries)}
+            entries = parse_metadata(payload.content, payload.suffix) if payload.content is not None else normalize_metadata_entries(payload.entries, public=True)
+            return store_for(dataset_id).update_metadata(entries)
         except (ValueError, KeyError) as exc: raise HTTPException(400, str(exc)) from exc
 
     @router.post('/datasets/{dataset_id}/export')

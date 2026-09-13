@@ -42,7 +42,7 @@ class SummaryCacheTests(unittest.TestCase):
     def test_reopen_and_metadata_change_reuse_persisted_counts(self):
         expected = self.store.region(1, 0, CHUNK, max_cells=0, bins=128, focus_id=stable_id('0'))
         reopened = AlignmentStore(Path(self.temp.name))
-        reopened.update_metadata([{'id':stable_id('0'), 'label':'Updated label'}])
+        reopened.update_metadata([{'id':stable_id('0'), 'assembly':'GCA_123.1', 'region':'1', 'label':'Updated label'}])
         with patch('alignment_explorer.summary_cache.build_prefix', side_effect=AssertionError('Rebuilt warm summary')):
             actual = reopened.region(1, 0, CHUNK, max_cells=0, bins=256, focus_id=stable_id('0'))
         self.assertEqual(actual['rows'][0]['label'], 'Updated label')

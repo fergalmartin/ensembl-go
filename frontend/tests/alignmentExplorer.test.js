@@ -20,10 +20,30 @@ test('workspace roundtrip preserves masks, positions, camera and layer names',()
 
 test('automatic genome association requires an unambiguous assembly identifier',async()=>{
   const {exactGenomeLinks}=await import('../src/components/alignment-explorer/associations.js')
-  const genome={species_key:'human',assembly:'GCA_123.1'},rows=[{id:'a',source:'GCA_123.1.chr1',metadata:{}},{id:'b',source:'human.chr1',metadata:{}},{id:'c',source:'GCA_123.1.chr2',metadata:{genome_key:'explicit'}}]
+  const genome={species_key:'human',assembly:'GCA_123.1'},rows=[{id:'a',source:'GCA_123.1.chr1',metadata:{}},{id:'b',source:'human.chr1',metadata:{}},{id:'c',source:'GCA_123.1.chr2',metadata:{assembly:'GCA_explicit.1'}}]
   assert.equal(exactGenomeLinks(rows,[genome]).length,1)
-  assert.equal(exactGenomeLinks(rows,[genome])[0].chrom,'chr1')
-  assert.equal(exactGenomeLinks(rows,[genome,{...genome,provider:'manual'}]).length,0)
+  assert.deepEqual(exactGenomeLinks(rows,[genome])[0],{id:'a',assembly:'GCA_123.1',region:'chr1',strand:'+'})
+  assert.equal(exactGenomeLinks(rows,[genome,{...genome,provider:'manual'}]).length,1)
+})
+
+test('genome navigation retains only selected, present cells from eligible rows',async()=>{
+  const {selectedRangesForFragment}=await import('../src/components/alignment-explorer/layers.js')
+  const fragment=createFragment(7,0,12,['a','b'],{coverage:{a:[[0,5],[8,12]],b:[[0,12]]}})
+  const selection=[{fragmentId:fragment.id,start:2,end:10,rowIds:['a','b']}]
+  assert.deepEqual(selectedRangesForFragment(selection,fragment,new Set(['a'])),[
+    {id:'a',start:2,end:5},
+    {id:'a',start:8,end:10},
+  ])
+  assert.deepEqual(selectedRangesForFragment(selection,fragment,new Set(['missing'])),[])
+})
+
+test('genome link availability is derived from assembly rather than stored app keys',async()=>{
+  const {classifyGenomeLink}=await import('../src/components/alignment-explorer/associations.js')
+  const row={metadata:{assembly:'GCA_123.1',region:'1'}},local={assembly:'GCA_123.1'},other={assembly:'GCA_456.1'}
+  assert.equal(classifyGenomeLink(row,[local],[local]).status,'topbar')
+  assert.equal(classifyGenomeLink(row,[],[local]).status,'local')
+  assert.equal(classifyGenomeLink(row,[],[other]).status,'unavailable')
+  assert.equal(classifyGenomeLink({metadata:{}},[],[]).status,'unresolved')
 })
 
 test('drag hit testing only starts on highlighted cells, not other rows or gaps in membership',async()=>{
@@ -703,6 +723,26 @@ test('names, blocks and regions are picked into one list and toggle off',async()
   assert.deepEqual(togglePicks(sel,[blockPick(f2)]).map(p=>p.kind).sort(),['region','row','row'])
 })
 
+test('a viewport row pick expands to the sequence complete source path before transfer',async()=>{
+  const {expandRowPicks,moveSelection,createLayer,emptyWorkspace}=await import('../src/components/alignment-explorer/layers.js')
+  const visible=createFragment(2,0,80,['a','b'],{id:'original:2',x:112})
+  const complete=[
+    createFragment(1,0,100,['a'],{id:'original:1',x:0}),
+    visible,
+    createFragment(3,0,60,['a'],{id:'original:3',x:224}),
+  ]
+  const local=[{kind:'row',fragmentId:visible.id,start:0,end:80,rowIds:['a']},
+    {kind:'region',fragmentId:visible.id,start:10,end:20,rowIds:['b']}]
+  const expanded=expandRowPicks(local,complete)
+  assert.deepEqual(expanded.filter(p=>p.kind==='row').map(p=>p.fragmentId),['original:1','original:2','original:3'])
+  assert.deepEqual(expanded.filter(p=>p.kind==='region'),[local[1]],'an explicit region keeps its drawn extent')
+  const original=createLayer('Original',0,complete),target=createLayer('Layer')
+  const moved=moveSelection({...emptyWorkspace(),layers:[original],active:original.id,selection:expanded},target.id,{copy:true,targetLayer:target})
+    .layers.find(l=>l.id===target.id).fragments
+  assert.deepEqual(moved.map(f=>f.sourceBlock),[1,2,3])
+  assert.deepEqual(moved.find(f=>f.sourceBlock===2).rowIds.sort(),['a','b'])
+})
+
 test('a picked block takes the whole block; regions elsewhere stay separate',async()=>{
   const {resolvePicks,blockPick}=await import('../src/components/alignment-explorer/layers.js')
   const f1=createFragment(1,0,100,['a','b'],{id:'f1'})
@@ -766,9 +806,9 @@ test('auto arrange stacks overlapping chunks and keeps their columns aligned',as
 test('filters narrow sequences by words, links and size',async()=>{
   const {filterSequences,parseTerms,matchesTerms}=await import('../src/components/alignment-explorer/filters.js')
   const rows=[
-    {id:'1',source:'homo_sapiens.1',blocks:200,bases:23165866,genome_key:'human'},
-    {id:'2',source:'gorilla_gorilla.1',blocks:180,bases:19000000,genome_key:null},
-    {id:'3',source:'ancestral_sequences.Ancestor_2006_1',blocks:4,bases:12000,genome_key:null},
+    {id:'1',source:'homo_sapiens.1',blocks:200,bases:23165866,assembly:'GCA_000001405.29'},
+    {id:'2',source:'gorilla_gorilla.1',blocks:180,bases:19000000,assembly:null},
+    {id:'3',source:'ancestral_sequences.Ancestor_2006_1',blocks:4,bases:12000,assembly:null},
   ]
   // Include is any-of, so two species can be asked for at once.
   assert.deepEqual(filterSequences(rows,{include:'homo gorilla'}).map(r=>r.id),['1','2'])
@@ -884,9 +924,9 @@ test('filter terms work as a collected list, not only as typed text',async()=>{
   assert.deepEqual(parseTerms(undefined),[])
 
   const rows=[
-    {id:'1',source:'homo_sapiens.1',blocks:200,bases:1,genome_key:null},
-    {id:'2',source:'gorilla_gorilla.1',blocks:180,bases:1,genome_key:null},
-    {id:'3',source:'ancestral_sequences.Ancestor_1',blocks:4,bases:1,genome_key:null},
+    {id:'1',source:'homo_sapiens.1',blocks:200,bases:1,assembly:null},
+    {id:'2',source:'gorilla_gorilla.1',blocks:180,bases:1,assembly:null},
+    {id:'3',source:'ancestral_sequences.Ancestor_1',blocks:4,bases:1,assembly:null},
   ]
   // A list of chips filters exactly as the equivalent typed text did.
   assert.deepEqual(filterSequences(rows,{include:['homo','gorilla']}).map(r=>r.id),['1','2'])

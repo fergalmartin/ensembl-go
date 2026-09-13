@@ -5481,6 +5481,38 @@ function App() {
     if (tutorialConfig?.tutorial_selected_genomes) return tutorialConfig.tutorial_selected_genomes
     return [...orderedActive, ...extras]
   }, [config?.active_species, contextFullyActiveSpecies, inactiveSelectedSpecies, tutorialConfig])
+  const handleOpenAlignmentExplorerLoci = async ({ loci = [] } = {}) => {
+    const wanted=[]
+    for(const locus of loci){
+      const assembly=String(locus?.assembly||'').trim().toUpperCase()
+      const species=topBarSpecies.find(item=>getAssemblyAccession(item).toUpperCase()===assembly&&item?.files?.gff3)
+      if(species&&!wanted.some(item=>speciesItemKey(item)===speciesItemKey(species)))wanted.push(species)
+    }
+    if(!wanted.length)return
+    const wantedKeys=new Set(wanted.map(speciesItemKey))
+    const inactive=topBarSpecies.filter(species=>!wantedKeys.has(speciesItemKey(species)))
+    const nextFocus=buildFocusFromActive(wanted,{
+      primaryKey:speciesItemKey(wanted[0]),
+      secondaryKey:wanted[1]?speciesItemKey(wanted[1]):'',
+    })
+    const currentConfig=tutorialConfig||configRef.current||config
+    suppressViewSyncRef.current=true
+    try{
+      if(!tutorialConfig)setInactiveSelectedSpecies(inactive)
+      dualViewFocusRef.current=nextFocus;setDualViewFocus(nextFocus)
+      setCurrentView('genome_browser')
+      const nextConfig=getAlignedGenomeConfigForView(
+        withNextPreviousSessionGenomes({...currentConfig,active_species:wanted},topBarSpecies),
+        'genome_browser',nextFocus,
+      )
+      await handleBrowserConfigChange(nextConfig)
+      const positioned=loci.map(locus=>{
+        const species=wanted.find(item=>getAssemblyAccession(item).toUpperCase()===String(locus?.assembly||'').trim().toUpperCase())
+        return species?{...locus,genomeKey:speciesItemKey(species)}:null
+      }).filter(Boolean)
+      setExplorerLocus({loci:positioned,token:Date.now()})
+    }finally{suppressViewSyncRef.current=false}
+  }
   const selectorSelectedSpecies = useMemo(() => (
     tutorialConfig
       ? dedupeSpeciesList([...(config?.active_species || []), ...inactiveSelectedSpecies])
@@ -6428,7 +6460,7 @@ function App() {
               </div>
             </ErrorBoundary>
           ) : currentView === 'alignment_explorer' ? (
-            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Alignment Explorer…</div>}><AlignmentExplorerView theme={theme} config={config} genomes={config?.active_species || []} incoming={explorerIncoming} onIncomingConsumed={() => setExplorerIncoming(null)} onOpenGenome={(locus) => { setExplorerLocus({ ...locus, token: Date.now() }); setCurrentView('genome_browser') }} /></React.Suspense></ErrorBoundary>
+            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Alignment Explorer…</div>}><AlignmentExplorerView theme={theme} config={config} genomes={config?.active_species || []} topBarGenomes={topBarSpecies} onAddGenome={handleSpeciesPillToggle} incoming={explorerIncoming} onIncomingConsumed={() => setExplorerIncoming(null)} onOpenGenome={handleOpenAlignmentExplorerLoci} /></React.Suspense></ErrorBoundary>
           ) : currentView === 'neighbourhood' ? (
             /* ========== NEIGHBOURHOOD VIEW ========== */
             <div className="h-full">

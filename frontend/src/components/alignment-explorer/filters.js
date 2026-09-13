@@ -47,15 +47,15 @@ const bound = (value,text,compare) => {
 const atLeast = (value,text) => bound(value,text,(v,l)=>v>=l)
 const atMost = (value,text) => bound(value,text,(v,l)=>v<=l)
 
-/** `genome`: 'any', 'linked' for sequences tied to a local genome, 'unlinked'
+/** `genome`: 'any', 'linked' for sequences carrying an assembly link, 'unlinked'
  * for the rest. Ancestors and unplaced rows are the usual reason to want either. */
 export function filterSequences(sequences,filter={}) {
   const f={...SEQUENCE_FILTER,...filter}
   const include=parseTerms(f.include),exclude=parseTerms(f.exclude)
   return (sequences||[]).filter(s=>{
-    if(!matchesTerms(`${s.source||''} ${s.label||''} ${s.genome_key||''} ${s.assembly||''}`,include,exclude))return false
-    if(f.genome==='linked'&&!s.genome_key)return false
-    if(f.genome==='unlinked'&&s.genome_key)return false
+    if(!matchesTerms(`${s.source||''} ${s.label||''} ${s.assembly||''} ${s.region||''}`,include,exclude))return false
+    if(f.genome==='linked'&&!s.assembly)return false
+    if(f.genome==='unlinked'&&s.assembly)return false
     return atLeast(s.blocks||0,f.minBlocks)&&atMost(s.blocks||0,f.maxBlocks)
       &&atLeast(s.bases||0,f.minBases)&&atMost(s.bases||0,f.maxBases)
   })

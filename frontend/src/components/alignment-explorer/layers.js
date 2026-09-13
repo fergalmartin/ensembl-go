@@ -143,11 +143,20 @@ export const pickId = pick => `${pick.kind}:${pick.fragmentId}:${pick.start}:${p
 export const blockPick = fragment =>
   ({kind:'block',fragmentId:fragment.id,start:fragment.start,end:fragment.end,rowIds:[...fragment.rowIds]})
 
-/** A sequence picked by name covers its whole extent in every loaded fragment
- * holding it, so picking a name reaches the parts of the path off screen too. */
+/** A sequence picked by name covers its whole extent in every supplied fragment.
+ * Original initially supplies its viewport; transfer resolves the file-wide set. */
 export function rowPicks(layer,rowId) {
   return layer.fragments.filter(f=>!f.aggregate&&f.rowIds.includes(rowId))
     .map(f=>({kind:'row',fragmentId:f.id,start:f.start,end:f.end,rowIds:[rowId]}))
+}
+
+/** Replace viewport-local row picks with picks over their complete resolved path.
+ * Region and block picks keep the exact geometry the reader chose. */
+export function expandRowPicks(selection,fragments) {
+  const rows=[...pickedRowIds(selection)]
+  if(!rows.length)return selection
+  const layer={fragments}
+  return [...selection.filter(p=>p.kind!=='row'),...rows.flatMap(id=>rowPicks(layer,id))]
 }
 
 /** Add picks, or remove them when every one is already picked, so a second click
@@ -242,6 +251,27 @@ export function resolvePicks(selection) {
     seen.add(id);result.push(pick)
   }
   return result
+}
+
+/** Alignment-column ranges from a selection that can be projected into genomes
+ * for one displayed block. Coverage masks are retained, so a merged/cut layer
+ * never asks the browser to open cells that are blank in that row. */
+export function selectedRangesForFragment(selection,fragment,eligibleRows) {
+  if(!fragment||fragment.aggregate)return []
+  const eligible=eligibleRows instanceof Set?eligibleRows:new Set(eligibleRows||[])
+  const byRow=new Map()
+  for(const pick of resolvePicks(selection||[])){
+    if(pick.fragmentId!==fragment.id)continue
+    const start=Math.max(fragment.start,Number(pick.start??fragment.start))
+    const end=Math.min(fragment.end,Number(pick.end??fragment.end))
+    if(end<=start)continue
+    for(const id of pick.rowIds||[]){
+      if(!eligible.has(id)||!fragment.rowIds.includes(id))continue
+      const ranges=intersectRanges(cellRanges(fragment,id),start,end)
+      if(ranges.length)byRow.set(id,[...(byRow.get(id)||[]),...ranges])
+    }
+  }
+  return [...byRow].flatMap(([id,ranges])=>unionRanges(ranges).map(([start,end])=>({id,start,end})))
 }
 export function layerOverlap(source,target) {
   return source.fragments.some(a=>target.fragments.some(b=>overlap(a,b)))

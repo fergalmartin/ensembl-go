@@ -1,0 +1,81 @@
+source	assembly	region	strand	label
+balaenoptera_musculus.1	GCA_009873245.2	1	+	Blue whale : 1
+bos_grunniens.14	GCA_005887515.1	14	+	Domestic yak : 14
+bos_indicus_hybrid.16	GCA_003369695.2	16	+	Hybrid - Bos Indicus : 16
+bos_taurus.16	GCA_002263795.4	16	+	Cattle : 16
+callithrix_jacchus.7	GCA_011100555.1	7	+	White-tufted-ear marmoset : 7
+camelus_dromedarius.13	GCA_000803125.2	13	+	Arabian camel : 13
+canis_lupus_dingo.QKWQ01002225.1	GCA_003254725.1	QKWQ01002225.1	+	Dingo : QKWQ01002225.1
+canis_lupus_familiaris.5	GCA_014441545.1	5	+	Dog : 5
+capra_hircus.16	GCA_001704415.1	16	+	Goat : 16
+catagonus_wagneri.PVHT020000030.1	GCA_004024745.2	PVHT020000030.1	+	Chacoan peccary : PVHT020000030.1
+catagonus_wagneri.PVHT020000040.1	GCA_004024745.2	PVHT020000040.1	+	Chacoan peccary : PVHT020000040.1
+catagonus_wagneri.PVHT020000047.1	GCA_004024745.2	PVHT020000047.1	+	Chacoan peccary : PVHT020000047.1
+catagonus_wagneri.PVHT020000098.1	GCA_004024745.2	PVHT020000098.1	+	Chacoan peccary : PVHT020000098.1
+catagonus_wagneri.PVHT020000112.1	GCA_004024745.2	PVHT020000112.1	+	Chacoan peccary : PVHT020000112.1
+catagonus_wagneri.PVHT021183551.1	GCA_004024745.2	PVHT021183551.1	+	Chacoan peccary : PVHT021183551.1
+catagonus_wagneri.PVHT021183552.1	GCA_004024745.2	PVHT021183552.1	+	Chacoan peccary : PVHT021183552.1
+catagonus_wagneri.PVHT021183575.1	GCA_004024745.2	PVHT021183575.1	+	Chacoan peccary : PVHT021183575.1
+catagonus_wagneri.PVHT021183637.1	GCA_004024745.2	PVHT021183637.1	+	Chacoan peccary : PVHT021183637.1
+catagonus_wagneri.PVHT021183638.1	GCA_004024745.2	PVHT021183638.1	+	Chacoan peccary : PVHT021183638.1
+cavia_porcellus.DS562880.1	GCA_000151735.1	DS562880.1	+	Guinea Pig : DS562880.1
+cavia_porcellus.DS563041.1	GCA_000151735.1	DS563041.1	+	Guinea Pig : DS563041.1
+cervus_hanglu_yarkandensis.14	GCA_010411085.1	14	+	Yarkand deer : 14
+chlorocebus_sabaeus.20	GCA_000409795.2	20	+	Vervet-AGM : 20
+cricetulus_griseus_chok1gshd.scaffold_2	GCA_900186095.1	scaffold_2	+	Chinese hamster CHOK1GS : scaffold_2
+delphinapterus_leucas.ML702061.1	GCA_002288925.3	ML702061.1	+	Beluga whale : ML702061.1
+equus_caballus.2	GCA_002863925.1	2	+	Horse : 2
+gorilla_gorilla.1	GCA_000151905.3	1	+	Gorilla : 1
+gorilla_gorilla.CABD030131344.1	GCA_000151905.3	CABD030131344.1	+	Gorilla : CABD030131344.1
+gorilla_gorilla.CABD030132223.1	GCA_000151905.3	CABD030132223.1	+	Gorilla : CABD030132223.1
+homo_sapiens.1	GCA_000001405.29	1	+	Human : 1
+homo_sapiens.15	GCA_000001405.29	15	+	Human : 15
+homo_sapiens.16	GCA_000001405.29	16	+	Human : 16
+homo_sapiens.19	GCA_000001405.29	19	+	Human : 19
+homo_sapiens.5	GCA_000001405.29	5	+	Human : 5
+homo_sapiens.6	GCA_000001405.29	6	+	Human : 6
+homo_sapiens.8	GCA_000001405.29	8	+	Human : 8
+homo_sapiens.9	GCA_000001405.29	9	+	Human : 9
+homo_sapiens.KI270748.1	GCA_000001405.29	KI270748.1	+	Human : KI270748.1
+loxodonta_africana.scaffold_26	GCA_000001905.1	scaffold_26	+	Elephant : scaffold_26
+macaca_fascicularis.1	GCA_011100615.1	1	+	Crab-eating macaque : 1
+macaca_mulatta.1	GCA_003339765.3	1	+	Macaque : 1
+macaca_mulatta.QNVO02000275.1	GCA_003339765.3	QNVO02000275.1	+	Macaque : QNVO02000275.1
+marmota_marmota_marmota.CZRN01000074.1	GCA_001458135.1	CZRN01000074.1	+	Alpine marmot : CZRN01000074.1
+microcebus_murinus.2	GCA_000165445.3	2	+	Mouse Lemur : 2
+microtus_ochrogaster.10	GCA_000317375.1	10	+	Prairie vole : 10
+microtus_ochrogaster.JH996468.1	GCA_000317375.1	JH996468.1	+	Prairie vole : JH996468.1
+monodon_monoceros.SIHG01006954.1	GCA_005190385.2	SIHG01006954.1	+	Narwhal : SIHG01006954.1
+monodon_monoceros.SIHG01006960.1	GCA_005190385.2	SIHG01006960.1	+	Narwhal : SIHG01006960.1
+mus_caroli.4	GCA_900094665.2	4	+	Ryukyu mouse : 4
+mus_musculus.4	GCA_000001635.9	4	+	Mouse : 4
+mus_pahari.6	GCA_900095145.2	6	+	Shrew mouse : 6
+nomascus_leucogenys.24	GCA_000146795.3	24	+	Gibbon : 24
+oryctolagus_cuniculus.13	GCA_000003625.1	13	+	Rabbit : 13
+oryctolagus_cuniculus.GL018987	GCA_000003625.1	GL018987	+	Rabbit : GL018987
+oryctolagus_cuniculus.GL019084	GCA_000003625.1	GL019084	+	Rabbit : GL019084
+oryctolagus_cuniculus.GL019126	GCA_000003625.1	GL019126	+	Rabbit : GL019126
+oryctolagus_cuniculus.GL019171	GCA_000003625.1	GL019171	+	Rabbit : GL019171
+oryctolagus_cuniculus.GL019427	GCA_000003625.1	GL019427	+	Rabbit : GL019427
+ovis_aries.12	GCA_016772045.2	12	+	Sheep : 12
+pan_paniscus.1	GCA_000258655.2	1	+	Bonobo : 1
+pan_troglodytes.1	GCA_000001515.5	1	+	Chimpanzee : 1
+pan_troglodytes.15	GCA_000001515.5	15	+	Chimpanzee : 15
+pan_troglodytes.7	GCA_000001515.5	7	+	Chimpanzee : 7
+pan_troglodytes.AACZ04001451.1	GCA_000001515.5	AACZ04001451.1	+	Chimpanzee : AACZ04001451.1
+panthera_leo.C2	GCA_008795835.1	C2	+	Lion : C2
+panthera_pardus.KV860309.1	GCA_001857705.1	KV860309.1	+	Leopard : KV860309.1
+papio_anubis.1	GCA_008728515.1	1	+	Olive baboon : 1
+papio_anubis.VSMJ01000177.1	GCA_008728515.1	VSMJ01000177.1	+	Olive baboon : VSMJ01000177.1
+peromyscus_maniculatus_bairdii.2	GCA_003704035.1	2	+	Northern American deer mouse : 2
+phocoena_sinus.1	GCA_008692025.1	1	+	Vaquita : 1
+physeter_catodon.3	GCA_002837175.2	3	+	Sperm whale : 3
+physeter_catodon.ML160744.1	GCA_002837175.2	ML160744.1	+	Sperm whale : ML160744.1
+physeter_catodon.ML160875.1	GCA_002837175.2	ML160875.1	+	Sperm whale : ML160875.1
+physeter_catodon.ML161229.1	GCA_002837175.2	ML161229.1	+	Sperm whale : ML161229.1
+physeter_catodon.PGGR02118706.1	GCA_002837175.2	PGGR02118706.1	+	Sperm whale : PGGR02118706.1
+pongo_abelii.1	GCA_002880775.3	1	+	Sumatran orangutan : 1
+rattus_norvegicus.5	GCA_036323735.1	5	+	Norway rat - BN/NHsdMcwi : 5
+rhinolophus_ferrumequinum.9	GCA_004115265.2	9	+	Greater horseshoe bat : 9
+sciurus_vulgaris.1	GCA_902686455.1	1	+	Eurasian red squirrel : 1
+sus_scrofa.6	GCA_000003025.6	6	+	Pig : 6

@@ -426,9 +426,9 @@ class AlignmentStore:
                    GROUP BY s.id ORDER BY s.rowid LIMIT ?''', (limit,))]
             for row in sequences:
                 metadata = json.loads(row.pop('metadata') or '{}')
-                row['genome_key'] = metadata.get('genome_key')
-                row['chrom'] = metadata.get('chrom')
                 row['assembly'] = metadata.get('assembly')
+                row['assembly_name'] = metadata.get('assembly_name')
+                row['region'] = metadata.get('region')
             blocks = [dict(r) for r in db.execute(
                 '''SELECT b.id, b.length,
                           count(r.id) AS rows,
@@ -485,6 +485,40 @@ class AlignmentStore:
                 (*ids, limit)):
                 found.setdefault(row['block'], []).append(row['id'])
         return [{'block': block, 'ids': members} for block, members in sorted(found.items())]
+
+    def row_fragments(self, ids):
+        """Whole-block descriptors for every real occurrence of named rows.
+
+        Original is loaded through a sliding layout window, but choosing a row
+        by name means its file-wide path rather than the part of that path whose
+        descriptors happen to be in the browser.  Resolve that path directly
+        from the row-membership index and carry only the requested membership;
+        returning every row of every matching block would make a small name
+        selection grow with the total alignment size.
+
+        Empty MAF components describe absence and therefore do not become layer
+        cells, consistently with ``blocks_with`` and the regional readers.
+        """
+        if not ids: return []
+        self.ensure_layout()
+        marks = ','.join('?' * len(ids))
+        fragments = []
+        with self.connect() as db:
+            rows = db.execute(
+                f'''SELECT l.block,l.x,l.end_x,r.id
+                    FROM rows r
+                    JOIN source_layout l ON l.block=r.block
+                    JOIN sequences s ON s.id=r.id
+                    WHERE r.id IN ({marks}) AND r.empty_status IS NULL
+                    ORDER BY l.block,s.rowid''', ids)
+            current = None
+            for row in rows:
+                if current is None or current['block'] != row['block']:
+                    current = {'block': row['block'], 'x': row['x'],
+                               'end_x': row['end_x'], 'row_ids': []}
+                    fragments.append(current)
+                current['row_ids'].append(row['id'])
+        return fragments
 
     def blocks_in_range(self, ids, start, end, limit=2000):
         """Blocks where any of these sequences covers a genomic interval.
@@ -681,31 +715,96 @@ class AlignmentStore:
                     'bin_size': step, 'cohort': len(cohort), 'bins': counts}
 
     def update_metadata(self, entries):
+        entries = normalize_metadata_entries(entries)
+        report = {'requested': len(entries), 'updated': 0, 'sequence_ids': [], 'unresolved': [], 'warnings': []}
         with self.connect() as db:
             for entry in entries:
                 if entry.get('id'):
                     matches = db.execute('SELECT * FROM sequences WHERE id=?', (entry['id'],)).fetchall()
                 else: matches = db.execute('SELECT * FROM sequences WHERE source=?', (entry.get('source', ''),)).fetchall()
-                if not matches: raise ValueError('Metadata source not found: ' + str(entry.get('source', entry.get('id'))))
+                if not matches:
+                    report['unresolved'].append(str(entry.get('source') or entry.get('id') or ''))
+                    continue
                 for row in matches:
-                    data = json.loads(row['metadata']); data.update({k: v for k, v in entry.items() if k not in ('id', 'source')})
+                    data = json.loads(row['metadata'])
+                    linked_coordinates=bool(data.get('link_coordinates'))
+                    data.update({k: v for k, v in entry.items() if k not in ('id', 'source', 'declared_region')})
+                    # A sequence-only alignment has no intrinsic placement. A bare
+                    # region means the supplied sequence starts at base 1; a ranged
+                    # region supplies its 1-based start. In either case the observed
+                    # ungapped sequence length determines the effective end. That
+                    # lets a slightly stale/rounded declared range remain useful
+                    # without claiming bases that the alignment does not contain.
+                    occurrences=db.execute('SELECT r.*,b.length FROM rows r JOIN blocks b ON b.id=r.block WHERE r.id=?',(row['id'],)).fetchall()
+                    unplaced=[r for r in occurrences if linked_coordinates or not r['coordinates']]
+                    if len(occurrences)!=1 and unplaced:
+                        raise ValueError('Genome-link coordinates are ambiguous for a sequence repeated across multiple blocks')
+                    if not unplaced:
+                        # MAF/XMFA placement lives on each block occurrence and
+                        # wins over sequence-level link hints, including strand.
+                        for key in ('genomic_start','genomic_end','declared_genomic_end','coordinate_adjusted','strand','link_coordinates'):
+                            data.pop(key, None)
+                    for occurrence in unplaced:
+                        start=int(entry.get('genomic_start') or 1)-1
+                        size=sequence_prefix(db,occurrence['block'],row['id'],occurrence['length'])
+                        if size is None: continue
+                        end=start+size
+                        declared_end=entry.get('genomic_end')
+                        if declared_end is not None and int(declared_end) != end:
+                            data['declared_genomic_end']=int(declared_end)
+                            data['coordinate_adjusted']=True
+                            report['warnings'].append({
+                                'id': row['id'], 'source': row['source'],
+                                'message': f"Declared end {int(declared_end):,} was adjusted to {end:,} from the ungapped sequence length.",
+                            })
+                        else:
+                            data.pop('declared_genomic_end', None)
+                            data.pop('coordinate_adjusted', None)
+                        data['genomic_start']=start+1
+                        data['genomic_end']=end
+                        data['link_coordinates']=True
+                        db.execute('UPDATE rows SET start=?,end=?,strand=?,coordinates=1 WHERE block=? AND id=?',(start,end,entry.get('strand','+'),occurrence['block'],row['id']))
                     db.execute('UPDATE sequences SET metadata=?,label=? WHERE id=?', (json.dumps(data), entry.get('label') or row['label'], row['id']))
-                    # FASTA coordinates are opt-in and must account for every ungapped
-                    # base. Never replace the coordinates carried by a MAF block.
-                    if entry.get('genomic_start'):
-                        occurrences=db.execute('SELECT r.*,b.length FROM rows r JOIN blocks b ON b.id=r.block WHERE r.id=?',(row['id'],)).fetchall()
-                        unplaced=[r for r in occurrences if not r['coordinates']]
-                        if len(occurrences)!=1 and unplaced:
-                            raise ValueError('Source-coordinate metadata is ambiguous across multiple blocks')
-                        for occurrence in unplaced:
-                            start=int(entry['genomic_start'])-1
-                            size=sequence_prefix(db,occurrence['block'],row['id'],occurrence['length'])
-                            if size is None: continue
-                            end=int(entry.get('genomic_end') or start+size)
-                            strand=entry.get('strand','+')
-                            if start<0 or end-start!=size or strand not in ('+','-'):
-                                raise ValueError('FASTA genomic coordinates must match the ungapped sequence length and use + or - strand')
-                            db.execute('UPDATE rows SET start=?,end=?,strand=?,coordinates=1 WHERE block=? AND id=?',(start,end,strand,occurrence['block'],row['id']))
+                    report['updated'] += 1
+                    report['sequence_ids'].append(row['id'])
+        return report
+
+    def genomic_loci(self, block, ranges):
+        """Project selected alignment columns into at most one locus per assembly."""
+        projected=[];warnings=[]
+        ids=list(dict.fromkeys(item['id'] for item in ranges))
+        with self.connect() as db:
+            metadata={row['id']:(row['source'],json.loads(row['metadata'] or '{}')) for row in db.execute(
+                'SELECT id,source,metadata FROM sequences WHERE id IN (%s)' % ','.join('?'*len(ids)),ids)} if ids else {}
+        for item in ranges:
+            source,meta=metadata.get(item['id'],(item['id'],{}))
+            assembly,region=meta.get('assembly'),meta.get('region')
+            if not assembly or not region:
+                warnings.append({'id':item['id'],'message':'The selected sequence has no genome link.'});continue
+            span=source_span(self,block,item['id'],item['start'],item['end'])
+            if not span or not span.get('coordinates') or not span.get('bases'):
+                warnings.append({'id':item['id'],'message':'The selected columns contain no placed genomic bases.'});continue
+            projected.append({'assembly':assembly,'region':region,'start':span['start']+1,'end':span['end'],
+                              'strand':span['strand'],'bases':span['bases'],'source':source})
+        groups={}
+        for locus in projected:
+            key=(str(locus['assembly']).upper(),locus['region'])
+            if key not in groups: groups[key]={**locus}
+            else:
+                groups[key]['start']=min(groups[key]['start'],locus['start'])
+                groups[key]['end']=max(groups[key]['end'],locus['end'])
+                groups[key]['bases']+=locus['bases']
+        by_assembly={}
+        for locus in groups.values():
+            key=str(locus['assembly']).upper()
+            current=by_assembly.get(key)
+            if current is None or locus['bases']>current['bases']: by_assembly[key]=locus
+        for assembly in {str(item['assembly']).upper() for item in groups.values()}:
+            regions={item['region'] for item in groups.values() if str(item['assembly']).upper()==assembly}
+            if len(regions)>1:
+                kept=by_assembly[assembly]['region']
+                warnings.append({'assembly':by_assembly[assembly]['assembly'],'message':f'Multiple regions were selected; opened {kept}, which contains the most selected bases.'})
+        return {'loci':list(by_assembly.values()),'warnings':warnings}
 
     EXPORT_FORMATS = {'fasta': 'Aligned FASTA', 'clustal': 'Clustal', 'phylip-relaxed': 'PHYLIP (relaxed names)', 'maf': 'MAF'}
 
@@ -755,13 +854,62 @@ class AlignmentStore:
         return ''.join(output)
 
 
+GENOME_LINK_FIELDS = {'source', 'id', 'assembly', 'assembly_name', 'region', 'label', 'strand'}
+_CANONICAL_LINK_FIELDS = GENOME_LINK_FIELDS | {'genomic_start', 'genomic_end', 'declared_region'}
+_REGION_RANGE = re.compile(r'^(.+?):\s*([0-9][0-9,]*)\s*[-–]\s*([0-9][0-9,]*)$')
+
+
+def normalize_metadata_entries(entries, public=False):
+    """Validate and canonicalise genome links.
+
+    The public file format deliberately has one genome identity (`assembly`) and
+    one location (`region`). Coordinates are encoded in the region as
+    ``name:start-end``. Internal start/end fields exist only after parsing so the
+    store can place sequence-only alignments without perpetuating another file
+    schema.
+    """
+    if not isinstance(entries, list):
+        raise ValueError('Genome links must be a list of rows')
+    output=[]
+    allowed=GENOME_LINK_FIELDS if public else _CANONICAL_LINK_FIELDS
+    for index, raw in enumerate(entries, 1):
+        if not isinstance(raw, dict): raise ValueError(f'Genome-link row {index} is not an object')
+        entry={str(k).strip(): (v.strip() if isinstance(v,str) else v) for k,v in raw.items() if v is not None and (not isinstance(v,str) or v.strip())}
+        unknown=sorted(set(entry)-allowed)
+        if unknown: raise ValueError('Unknown genome-link field' + ('s' if len(unknown)>1 else '') + ': ' + ', '.join(unknown))
+        locator=entry.get('source') or entry.get('id')
+        if not locator: raise ValueError(f'Genome-link row {index} needs source')
+        if not entry.get('assembly'): raise ValueError(f'Genome-link row {index} needs assembly')
+        region=str(entry.get('region') or '').strip()
+        if not region: raise ValueError(f'Genome-link row {index} needs region')
+        strand=str(entry.get('strand') or '+').strip()
+        strand={'+1':'+','1':'+','-1':'-'}.get(strand,strand)
+        if strand not in ('+','-'): raise ValueError(f'Genome-link row {index} strand must be + or -')
+        normalized={k:v for k,v in entry.items() if k in allowed}
+        normalized['strand']=strand
+        match=_REGION_RANGE.match(region)
+        if match:
+            name=match.group(1).strip();start=int(match.group(2).replace(',',''));end=int(match.group(3).replace(',',''))
+            if not name or start < 1 or end < start: raise ValueError(f'Genome-link row {index} has an invalid region range')
+            normalized.update({'region':name,'genomic_start':start,'genomic_end':end,'declared_region':region})
+        else:
+            normalized['region']=region
+        output.append(normalized)
+    return output
+
+
 def parse_metadata(text, suffix):
-    if suffix.lower() == '.tsv': return list(csv.DictReader(io.StringIO(text), delimiter='\t'))
-    value = json.loads(text)
-    if isinstance(value, list): return value
-    if 'genomes' in value:  # Existing Ensembl Go FASTA/JSON pair.
-        return [{'source': g['genome_key'], 'genome_key': g['genome_key'], 'label': g.get('gene_symbol') or g['genome_key'], 'chrom': g.get('chrom'), 'assembly': g.get('assembly'), 'genomic_start': g.get('genomic_start'), 'genomic_end': g.get('genomic_end'), 'strand': g.get('strand','+'), 'transcript_id': g.get('transcript_id'), 'features': g.get('features', [])} for g in value['genomes']]
-    return value.get('sequences', [])
+    if suffix.lower() == '.tsv':
+        reader=csv.DictReader(io.StringIO(text), delimiter='\t')
+        if not reader.fieldnames: raise ValueError('Genome-link TSV needs a header row')
+        if 'source' not in reader.fieldnames: raise ValueError('Genome-link TSV needs a source column')
+        unknown=sorted(set(reader.fieldnames)-GENOME_LINK_FIELDS)
+        if unknown: raise ValueError('Unknown genome-link field' + ('s' if len(unknown)>1 else '') + ': ' + ', '.join(unknown))
+        return normalize_metadata_entries(list(reader), public=True)
+    value=json.loads(text)
+    if isinstance(value,dict): value=value.get('sequences')
+    if value is None: raise ValueError('Genome-link JSON must be a list or contain a sequences list')
+    return normalize_metadata_entries(value, public=True)
 
 
 def locate_column(store, block, row_id, coordinate):
