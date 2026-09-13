@@ -759,7 +759,7 @@ export function describeBrowsingControls(controls, device = 'mouse') {
         rows.push({ gesture: 'Left / Right arrows', action: 'Move along the chromosome (Shift for a bigger step)' })
         rows.push({ gesture: '+ / -', action: 'Zoom in and out' })
         rows.push({ gesture: 'Home / End', action: 'Jump to the start or end of the chromosome' })
-        rows.push({ gesture: '0 / F', action: 'Fit the whole chromosome, or the selected gene' })
+        rows.push({ gesture: '0 / F', action: 'Fit the whole chromosome, or what is in focus' })
     }
     return rows
 }

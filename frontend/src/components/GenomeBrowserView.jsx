@@ -7,6 +7,7 @@ import GenomeBrowser from './GenomeBrowser'
 import GenomeWheel from './GenomeWheel'
 import { registerTutorialBrowserHost } from '../utils/tutorialBrowserScene.js'
 import FocusGeneDrawer, { FOCUS_DRAWER_DETAIL_WIDTH, FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from './FocusGeneDrawer'
+import FocusLocationDrawer, { LOCATION_DRAWER_DETAIL_WIDTH } from './FocusLocationDrawer'
 import AssemblyInfoDrawer from './AssemblyInfoDrawer'
 import { hasAssemblyMetadata } from '../utils/assemblyMetadataRows'
 import ScreenshotExportModal from './ScreenshotExportModal'
@@ -22,9 +23,14 @@ import { cycleBottomSpacer } from '../utils/genomeWheel'
 import { LOCKED_ICON_PATH, UNLOCKED_ICON_PATH } from '../utils/lockIcons'
 import {
     DEFAULT_NOTE_SORT_MODE,
+    NOTE_TARGET_KIND_LOCATION,
     buildGeneNoteTarget,
+    buildLocationNoteTarget,
+    locationNoteTargetId,
     normalizeNoteGenomeKey,
 } from '../utils/geneNotes'
+import { classifyBiotype } from '../utils/geneBiotypes'
+import { locationSpan } from '../utils/locationFocus'
 import useNoteStore from '../hooks/useNoteStore'
 import { alignBandToBar, getGenomeBrowserPanelSizing } from './genomeBrowserViewportLayout'
 import {
@@ -283,9 +289,11 @@ export default function GenomeBrowserView({
     alignmentOverlay,
     onClearAlignmentOverlay,
     externalRefGene = null,
-    externalAlignmentLocus = null,
     externalTgtGene = null,
     externalFocusGenesByGenome = null,
+    // genomeKey -> { chrom, start, end } a location note asked the browser to
+    // go to. Handed straight to the panel, which focuses it on arrival.
+    externalFocusLocationsByGenome = null,
     onGeneFocusByGenomeChange = null,
     onClearFocusedGenes = null,
     screenshotMode = false,
@@ -323,6 +331,25 @@ export default function GenomeBrowserView({
         .map(([k]) => k)
 
     const [selectedGenes, setSelectedGenes] = useState({})
+    // panelKey -> the location of focus that panel holds, mirrored up from the
+    // panels so the view can hang a drawer off it and the toolbar can offer to
+    // clear it.
+    const [selectedLocations, setSelectedLocations] = useState({})
+    // The location drawer's own view model, per panel: whether it is out, which
+    // wide panel it has open, the genes it has read for the region, and which of
+    // them the reader has hidden from the browser.
+    const [locationDrawerOpenByPanel, setLocationDrawerOpenByPanel] = useState({})
+    const [locationDetailByPanel, setLocationDetailByPanel] = useState({})
+    const [locationFeaturesByPanel, setLocationFeaturesByPanel] = useState({})
+    const [locationHiddenGenesByPanel, setLocationHiddenGenesByPanel] = useState({})
+    const [locationFeaturesEpoch, setLocationFeaturesEpoch] = useState(0)
+    const [locationNotesPanelOpenByPanel, setLocationNotesPanelOpenByPanel] = useState({})
+    const [locationOpenNoteIdByPanel, setLocationOpenNoteIdByPanel] = useState({})
+    const [locationNoteSortByPanel, setLocationNoteSortByPanel] = useState({})
+    // Extra panel height the open location drawer has asked for, per panel, so a
+    // list or a sequence view longer than the tracks is not cut off at the
+    // bottom edge of a panel sized for two rows of genes.
+    const [locationDrawerFitByPanel, setLocationDrawerFitByPanel] = useState({})
     const [navigateGenes, setNavigateGenes] = useState({})
     const [panelPositions, setPanelPositions] = useState({})
     const [linkedPanelKeys, setLinkedPanelKeys] = useState([])
@@ -410,6 +437,7 @@ export default function GenomeBrowserView({
     const panelCount = panels.length
     const hasPanels = panelCount > 0
     const anyGeneSelected = panels.some((panel) => Boolean(selectedGenes[panel.key]))
+    const anyLocationSelected = panels.some((panel) => Boolean(selectedLocations[panel.key]))
 
     // --- Focus drawer plumbing ------------------------------------------------
 
@@ -432,6 +460,221 @@ export default function GenomeBrowserView({
             if (current && JSON.stringify(current) === JSON.stringify(next)) return prev
             return { ...prev, [panelKey]: { ...panelViews, [geneId]: next } }
         })
+    }, [])
+
+    /** Per-panel state that belongs to one location and dies with it. */
+    const resetLocationPanelState = useCallback((panelKey) => {
+        const drop = (setter) => setter((prev) => {
+            if (!(panelKey in prev)) return prev
+            const next = { ...prev }
+            delete next[panelKey]
+            return next
+        })
+        drop(setLocationDetailByPanel)
+        drop(setLocationFeaturesByPanel)
+        // Hiding a gene is scoped to the location that is in focus: clearing the
+        // focus is what puts every hidden gene back on the track.
+        drop(setLocationHiddenGenesByPanel)
+        drop(setLocationNotesPanelOpenByPanel)
+        drop(setLocationOpenNoteIdByPanel)
+        // The panel goes back to its own content height; the next drawer asks
+        // again for whatever it needs.
+        drop(setLocationDrawerFitByPanel)
+    }, [])
+
+    const handlePanelLocationSelect = useCallback((panelKey, location) => {
+        setSelectedLocations((prev) => {
+            const current = prev[panelKey] || null
+            if (!location) {
+                if (!current) return prev
+                const next = { ...prev }
+                delete next[panelKey]
+                return next
+            }
+            const same = current
+                && current.chrom === location.chrom
+                && current.start === location.start
+                && current.end === location.end
+            return same ? prev : { ...prev, [panelKey]: location }
+        })
+    }, [])
+
+    /* A different region is a different subject: the genes read for the old one,
+     * the genes hidden from it and whatever was open beside it all go with it.
+     *
+     * Done here rather than in the handler above because the location also
+     * changes without one — a panel reporting its own focus cleared, a genome
+     * leaving the top bar — and every route has to leave the same clean slate. */
+    const lastLocationSignatureRef = useRef(new Map())
+    const locationSignature = useMemo(() => panels.map((panel) => {
+        const location = selectedLocations[panel.key]
+        const span = locationSpan(location)
+        return `${panel.key}=${span ? `${location.chrom}:${span.start}-${span.end}` : ''}`
+    }).join('|'), [panels, selectedLocations])
+
+    useEffect(() => {
+        for (const entry of locationSignature.split('|')) {
+            const separator = entry.indexOf('=')
+            if (separator < 0) continue
+            const panelKey = entry.slice(0, separator)
+            const signature = entry.slice(separator + 1)
+            if (lastLocationSignatureRef.current.get(panelKey) === signature) continue
+            lastLocationSignatureRef.current.set(panelKey, signature)
+            resetLocationPanelState(panelKey)
+            // A fresh focus presents its drawer open, whatever the reader did
+            // with the collapse arrow on the last one.
+            if (signature) setLocationDrawerOpenByPanel((all) => ({ ...all, [panelKey]: true }))
+        }
+    }, [locationSignature, resetLocationPanelState])
+
+    const isLocationDrawerOpen = useCallback(
+        (panelKey) => locationDrawerOpenByPanel[panelKey] !== false,
+        [locationDrawerOpenByPanel]
+    )
+
+    /* The genes inside each focused location.
+     *
+     * Read straight from the region endpoint rather than from the panel's tile
+     * cache: the drawer lists the whole location, and the tiles only cover what
+     * the viewport has been near. Descriptions come with them, because the gene
+     * detail beside the list is the only thing that shows them. */
+    const locationFeatureRequestsRef = useRef(new Map())
+    useEffect(() => {
+        const wanted = new Map()
+        for (const panel of panels) {
+            const location = selectedLocations[panel.key]
+            const span = locationSpan(location)
+            if (!span) continue
+            wanted.set(panel.key, {
+                genome: panel.genomeParam,
+                chrom: String(location.chrom || ''),
+                start: span.start,
+                end: span.end,
+                key: `${locationFeaturesEpoch}|${panel.genomeParam}|${location.chrom}|${span.start}-${span.end}`,
+            })
+        }
+
+        // Panels that no longer hold a location stop being tracked, so focusing
+        // the same region again re-reads it rather than showing a stale list.
+        for (const key of [...locationFeatureRequestsRef.current.keys()]) {
+            if (!wanted.has(key)) locationFeatureRequestsRef.current.delete(key)
+        }
+
+        const controllers = []
+        for (const [panelKey, request] of wanted) {
+            if (locationFeatureRequestsRef.current.get(panelKey) === request.key) continue
+            locationFeatureRequestsRef.current.set(panelKey, request.key)
+
+            const controller = new AbortController()
+            controllers.push(controller)
+            setLocationFeaturesByPanel((prev) => ({
+                ...prev,
+                [panelKey]: { genes: prev[panelKey]?.genes || [], loading: true, error: '' },
+            }))
+
+            ;(async () => {
+                try {
+                    const params = new URLSearchParams({
+                        genome: request.genome,
+                        chrom: request.chrom,
+                        start: String(request.start),
+                        end: String(request.end),
+                        include_description: 'true',
+                    })
+                    const res = await fetch(`${API_BASE}/api/browse/genes?${params.toString()}`, {
+                        signal: controller.signal,
+                    })
+                    const payload = await res.json().catch(() => ([]))
+                    if (!res.ok) throw new Error(payload?.detail || 'Could not read the genes in this location.')
+                    setLocationFeaturesByPanel((prev) => ({
+                        ...prev,
+                        [panelKey]: { genes: Array.isArray(payload) ? payload : [], loading: false, error: '' },
+                    }))
+                } catch (error) {
+                    if (controller.signal.aborted) return
+                    // Left retryable: the drawer offers the retry, which bumps
+                    // the epoch and brings this effect back round.
+                    locationFeatureRequestsRef.current.delete(panelKey)
+                    setLocationFeaturesByPanel((prev) => ({
+                        ...prev,
+                        [panelKey]: {
+                            genes: [],
+                            loading: false,
+                            error: error?.message || 'Could not read the genes in this location.',
+                        },
+                    }))
+                }
+            })()
+        }
+
+        return () => { for (const controller of controllers) controller.abort() }
+    }, [panels, selectedLocations, locationFeaturesEpoch])
+
+    /* The drawer reports how far its content overruns the panel; the panel grows
+     * or shrinks by that much. A delta rather than an absolute, because only the
+     * drawer can see what fits and only the panel knows how tall it is — each
+     * correction is measured against the result of the last one, so the two
+     * settle within a frame or two. */
+    const MAX_LOCATION_DRAWER_FIT = 1200
+    const handleLocationDrawerFit = useCallback((panelKey, delta) => {
+        setLocationDrawerFitByPanel((prev) => {
+            const current = prev[panelKey] || 0
+            const next = Math.max(0, Math.min(MAX_LOCATION_DRAWER_FIT, current + delta))
+            if (Math.abs(next - current) < 8) return prev
+            return { ...prev, [panelKey]: next }
+        })
+    }, [])
+
+    /** The class filter above the browser, as the drawer's list reads it. */
+    const isFeatureHiddenByClass = useCallback((feature) => {
+        if (hiddenBiotypeClasses.length === 0) return false
+        const cls = classifyBiotype(feature?.biotype)
+        return Boolean(cls && hiddenBiotypeClasses.includes(cls))
+    }, [hiddenBiotypeClasses])
+
+    const handleLocationDetailChange = useCallback((panelKey, detail) => {
+        setLocationDetailByPanel((prev) => ({ ...prev, [panelKey]: detail || null }))
+        // The wide slot holds one thing at a time, as in the gene drawer.
+        if (detail) setLocationNotesPanelOpenByPanel((prev) => ({ ...prev, [panelKey]: false }))
+    }, [])
+
+    /** Hide one gene from the track, or put every hidden gene back. */
+    const handleLocationGeneHiddenToggle = useCallback((panelKey, geneId) => {
+        setLocationHiddenGenesByPanel((prev) => {
+            if (!geneId) {
+                if (!prev[panelKey]?.length) return prev
+                return { ...prev, [panelKey]: [] }
+            }
+            const current = prev[panelKey] || []
+            const id = String(geneId)
+            return {
+                ...prev,
+                [panelKey]: current.includes(id)
+                    ? current.filter((entry) => entry !== id)
+                    : [...current, id],
+            }
+        })
+    }, [])
+
+    /* The drawer's focus target: jump to the gene and make it the gene of focus.
+     *
+     * Only the navigation is sent. The panel focuses whatever it navigates to
+     * and reports that back up through onGeneSelect, and focusing a gene is what
+     * clears the location — which is also what puts the hidden genes back. */
+    const handleLocationFocusGene = useCallback((panelKey, gene) => {
+        if (!gene?.id) return
+        setNavigateGenes((prev) => ({
+            ...prev,
+            [panelKey]: {
+                chrom: gene.chrom,
+                start: gene.start,
+                end: gene.end,
+                strand: gene.strand,
+                name: gene.name || '',
+                id: gene.id,
+                centerVertically: true,
+            },
+        }))
     }, [])
 
     const handlePanelGeneSelect = useCallback((panelKey, gene) => {
@@ -837,7 +1080,7 @@ export default function GenomeBrowserView({
         [panels, selectedGenes]
     )
 
-    const { notesForGene, geneNoteCountsForGenome: geneNoteCountsFor } = noteStore
+    const { notesForGene, notesForTarget, geneNoteCountsForGenome: geneNoteCountsFor } = noteStore
 
     // Memoized rather than derived inside the render loop: the drawer memoizes
     // its sorted list and its summary rows on these arrays, and handing it a
@@ -851,6 +1094,18 @@ export default function GenomeBrowserView({
         }
         return out
     }, [panels, selectedGenes, notesGenomeKeyFor, notesForGene])
+
+    const locationNotesByPanel = useMemo(() => {
+        const out = {}
+        for (const panel of panels) {
+            const genomeKey = notesGenomeKeyFor(panel)
+            const targetId = locationNoteTargetId(selectedLocations[panel.key])
+            out[panel.key] = (genomeKey && targetId)
+                ? notesForTarget(NOTE_TARGET_KIND_LOCATION, genomeKey, targetId)
+                : EMPTY_NOTE_LIST
+        }
+        return out
+    }, [panels, selectedLocations, notesGenomeKeyFor, notesForTarget])
 
     const noteCountsByPanel = useMemo(() => {
         const out = {}
@@ -898,6 +1153,43 @@ export default function GenomeBrowserView({
         })
         setFocusDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
     }, [panels, selectedGenes, notesGenomeKeyFor, handleDetailTranscriptChange, handleFocusTranscriptViewChange, noteStore, emitTutorialSignal])
+
+    const handleLocationNoteCreate = useCallback((panelKey) => {
+        const panel = panels.find((candidate) => candidate.key === panelKey)
+        const genomeKey = notesGenomeKeyFor(panel)
+        const location = selectedLocations[panelKey]
+        if (!genomeKey || !locationNoteTargetId(location)) return
+
+        const target = buildLocationNoteTarget({
+            genomeKey,
+            selectionKey: panel?.key || '',
+            location,
+        })
+        const { tempId } = noteStore.createNote(target, {
+            onIdAssigned: (fromId, toId) => {
+                setLocationOpenNoteIdByPanel((prev) => (
+                    prev[panelKey] === fromId ? { ...prev, [panelKey]: toId } : prev
+                ))
+            },
+        })
+        setLocationOpenNoteIdByPanel((prev) => ({ ...prev, [panelKey]: tempId }))
+        setLocationNotesPanelOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
+        setLocationDetailByPanel((prev) => ({ ...prev, [panelKey]: null }))
+        setLocationDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
+    }, [panels, selectedLocations, notesGenomeKeyFor, noteStore])
+
+    const handleLocationNoteDelete = useCallback((panelKey, noteId) => {
+        setLocationOpenNoteIdByPanel((prev) => ({ ...prev, [panelKey]: '' }))
+        setLocationNotesPanelOpenByPanel((prev) => ({ ...prev, [panelKey]: false }))
+        noteStore.deleteNote(noteId)
+    }, [noteStore])
+
+    const handleLocationNotesPanelToggle = useCallback((panelKey) => {
+        const opening = !locationNotesPanelOpenByPanel[panelKey]
+        setLocationNotesPanelOpenByPanel((prev) => ({ ...prev, [panelKey]: !prev[panelKey] }))
+        // One wide slot: opening the notes puts away whatever detail is in it.
+        if (opening) setLocationDetailByPanel((prev) => ({ ...prev, [panelKey]: null }))
+    }, [locationNotesPanelOpenByPanel])
 
     const handleNoteDelete = useCallback((panelKey, noteId) => {
         // Deleting is leaving the editor, not navigating to an empty editor
@@ -1113,7 +1405,7 @@ export default function GenomeBrowserView({
             observer.disconnect()
             window.removeEventListener('resize', measure)
         }
-    }, [focusDrawerEntries, focusTranscriptViews, findPanelScroller])
+    }, [focusDrawerEntries, focusTranscriptViews, selectedLocations, findPanelScroller])
 
     // --- Assembly drawer ------------------------------------------------------
     //
@@ -1362,20 +1654,26 @@ export default function GenomeBrowserView({
     // focus still frames for the open width, because clicking a gene there both
     // moves the drawer to it and opens it.
     const focusDrawerInsetFor = useCallback((panelKey) => {
+        // Either drawer covers the same strip of the panel, and only one of them
+        // is ever out — the two focuses are mutually exclusive.
+        if (selectedLocations[panelKey]) {
+            return isLocationDrawerOpen(panelKey) ? FOCUS_DRAWER_WIDTH : FOCUS_DRAWER_RAIL_WIDTH
+        }
         if (!focusDrawerEntries.some((entry) => entry.panelKey === panelKey)) return 0
         // Deliberately blind to the transcript detail. Someone reading metadata
         // is not reading the track, and re-framing the gene every time that
         // panel opens or closes would shuffle the browser under them for nothing.
         return isFocusDrawerOpen(panelKey) ? FOCUS_DRAWER_WIDTH : FOCUS_DRAWER_RAIL_WIDTH
-    }, [focusDrawerEntries, isFocusDrawerOpen])
+    }, [focusDrawerEntries, isFocusDrawerOpen, selectedLocations, isLocationDrawerOpen])
 
     const anyFocusedGene = useMemo(() => {
         if (anyGeneSelected) return true
+        if (anyLocationSelected) return true
         for (const gene of Object.values(externalFocusGenesByGenome || {})) {
             if (gene?.id || gene?.name) return true
         }
         return false
-    }, [anyGeneSelected, externalFocusGenesByGenome])
+    }, [anyGeneSelected, anyLocationSelected, externalFocusGenesByGenome])
     const browserActionButtonStyle = useCallback((enabled, active = false, options = {}) => {
         const working = Boolean(options.working)
         const disabledBg = isLight ? '#ffffff' : '#1E2938'
@@ -1401,30 +1699,6 @@ export default function GenomeBrowserView({
 
     const fallbackBrowseRoot = config?.output_dir ? `${config.output_dir.replace(/\/+$/, '')}/local_data` : (config?.working_dir || '.')
     const activePanelKeySet = useMemo(() => new Set(panels.map((panel) => panel.key)), [panels])
-
-    const lastAlignmentLocus = useRef(null)
-    useEffect(() => {
-        if (!isActive || !externalAlignmentLocus || lastAlignmentLocus.current === externalAlignmentLocus.token) return
-        const requested = Array.isArray(externalAlignmentLocus.loci) && externalAlignmentLocus.loci.length
-            ? externalAlignmentLocus.loci
-            : [externalAlignmentLocus]
-        const positioned = requested.map((locus) => ({ locus, panel: panels.find((panel) => panel.key === locus.genomeKey) }))
-        // Configuration and panel creation are asynchronous. Wait until every
-        // selected genome has its panel before consuming the handoff token, or
-        // an early existing panel would navigate while a newly activated one
-        // permanently missed its locus.
-        if (positioned.some(({ panel }) => !panel)) return
-        lastAlignmentLocus.current = externalAlignmentLocus.token
-        setNavigateGenes((prev) => {
-            const next = { ...prev }
-            for (const { locus, panel } of positioned) {
-                const chrom = locus.chrom || locus.region
-                const { start, end, strand } = locus
-                next[panel.key] = { chrom, start, end, strand, windowStart: start, windowEnd: end, centerVertically: false }
-            }
-            return next
-        })
-    }, [externalAlignmentLocus, isActive, panels])
 
     const firstPanel = panels[0] || null
     const secondPanel = panels[1] || null
@@ -2807,7 +3081,7 @@ export default function GenomeBrowserView({
                                         disabled={!anyFocusedGene}
                                         className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
                                         style={browserActionButtonStyle(anyFocusedGene, anyFocusedGene, { emphasizeWhenEnabled: true })}
-                                        title="Clear all focused genes across genomes"
+                                        title="Clear all focused genes and locations across genomes"
                                     >
                                         Unfocus
                                     </button>
@@ -2944,16 +3218,7 @@ export default function GenomeBrowserView({
                         </>
                     )}
                 </div>
-                <div className="flex items-stretch flex-shrink-0" style={{ marginRight: '34px' }}>
-                    {onPromoteGenome && <GenomeWheel
-                        species={listedGenomes}
-                        activeSpecies={panelSpecies}
-                        config={config}
-                        panelRootRef={screenshotPanelsRef}
-                        onPromote={handleCyclePromote}
-                        isActive={isActive && !screenshotMode}
-                        isLight={isLight}
-                    />}
+                <div className="flex items-stretch flex-shrink-0 gap-2 ml-4" style={{ marginRight: '34px' }}>
                     <button
                         type="button"
                         data-tour-id="browser-controls-lock"
@@ -2976,6 +3241,15 @@ export default function GenomeBrowserView({
                             <path d={controlsFollowScroll ? UNLOCKED_ICON_PATH : LOCKED_ICON_PATH} />
                         </svg>
                     </button>
+                    {onPromoteGenome && <GenomeWheel
+                        species={listedGenomes}
+                        activeSpecies={panelSpecies}
+                        config={config}
+                        panelRootRef={screenshotPanelsRef}
+                        onPromote={handleCyclePromote}
+                        isActive={isActive && !screenshotMode}
+                        isLight={isLight}
+                    />}
                 </div>
             </div>
 
@@ -3016,25 +3290,33 @@ export default function GenomeBrowserView({
                             : (panel.alignmentRole === 'target' ? tgtReloadKey : 0)
 
                         const drawerEntry = focusDrawerEntries.find((entry) => entry.panelKey === panelKey) || null
+                        const panelLocation = selectedLocations[panelKey] || null
                         const drawerAlign = focusDrawerAlignByPanel[panelKey] || { top: 0, height: 0 }
                         const drawerPinOffset = activePinPanelKey === panelKey ? focusDrawerPinOffset : 0
                         // With a gene of focus the assembly drawer drops down onto
                         // the focus drawer's band line and takes its height, so the
                         // two headers read as one row across the panel. With no
                         // gene it goes back to the toolbar its pill sits in.
-                        const assemblyAlign = (drawerEntry && drawerAlign.height)
+                        const assemblyAlign = ((drawerEntry || panelLocation) && drawerAlign.height)
                             ? drawerAlign
                             : (assemblyDrawerAlignByPanel[panelKey] || { top: 0, height: 0 })
                         const assemblyState = assemblyInfoByPanel[panelKey] || null
-                        // Cleared past whatever the focus drawer is currently
-                        // taking, so the two never sit on top of each other.
-                        const focusDrawerCoverage = !drawerEntry
-                            ? 0
-                            : !isFocusDrawerOpen(panelKey)
+                        // Cleared past whatever drawer is currently out, so the
+                        // two never sit on top of each other. Only one of them
+                        // can be — a panel focuses a gene or a location, never both.
+                        const focusDrawerCoverage = panelLocation
+                            ? (!isLocationDrawerOpen(panelKey)
                                 ? FOCUS_DRAWER_RAIL_WIDTH
-                                : ((detailTranscriptByPanel[panelKey] || notesPanelOpenByPanel[panelKey])
-                                    ? FOCUS_DRAWER_DETAIL_WIDTH
-                                    : FOCUS_DRAWER_WIDTH)
+                                : ((locationDetailByPanel[panelKey] || locationNotesPanelOpenByPanel[panelKey])
+                                    ? LOCATION_DRAWER_DETAIL_WIDTH
+                                    : FOCUS_DRAWER_WIDTH))
+                            : !drawerEntry
+                                ? 0
+                                : !isFocusDrawerOpen(panelKey)
+                                    ? FOCUS_DRAWER_RAIL_WIDTH
+                                    : ((detailTranscriptByPanel[panelKey] || notesPanelOpenByPanel[panelKey])
+                                        ? FOCUS_DRAWER_DETAIL_WIDTH
+                                        : FOCUS_DRAWER_WIDTH)
 
                         return (
                             <div
@@ -3104,7 +3386,12 @@ export default function GenomeBrowserView({
                                             alignmentOverlay={panel.alignmentRole ? alignmentOverlay : null}
                                             onPositionChange={(chrom, start, end, targetTrack, anchorRatio) => handlePanelPositionChange(panelKey, chrom, start, end, targetTrack, anchorRatio)}
                                             onViewSync={(chrom, start, end) => { panelActualPositionsRef.current[panelKey] = { chrom, start, end } }}
-                                            minCanvasHeight={sharedCanvasHeight}
+                                            minCanvasHeight={Math.max(
+                                                sharedCanvasHeight,
+                                                locationDrawerFitByPanel[panelKey]
+                                                    ? (panelContentHeights[panelKey] || 0) + locationDrawerFitByPanel[panelKey]
+                                                    : 0
+                                            )}
                                             onContentHeightChange={(height) => handlePanelContentHeight(panelKey, height)}
                                             browsingControls={browsingControls}
                                             onBrowsingTargetChange={(descriptor) => handleBrowsingTargetChange(panelKey, descriptor)}
@@ -3116,6 +3403,8 @@ export default function GenomeBrowserView({
                                             lockPan={effectiveLockPan}
                                             lockZoom={effectiveLockZoom}
                                             onGeneSelect={(gene) => handlePanelGeneSelect(panelKey, gene)}
+                                            onLocationSelect={(location) => handlePanelLocationSelect(panelKey, location)}
+                                            hiddenGeneIds={locationHiddenGenesByPanel[panelKey] || null}
                                             focusTranscriptView={focusTranscriptViews[panelKey] || null}
                                             geneTranscriptViews={geneTranscriptViews[panelKey] || null}
                                             focusDrawerInset={focusDrawerInsetFor(panelKey)}
@@ -3125,6 +3414,7 @@ export default function GenomeBrowserView({
                                             onFocusRowGeometryChange={(geometry) => handleFocusRowGeometryChange(panelKey, geometry)}
                                             onGeneTranscriptViewChange={(geneId, patch) => handleGeneTranscriptViewChange(panelKey, geneId, patch)}
                                             navigateToGene={navigateGenes[panelKey] || null}
+                                            navigateToLocation={externalFocusLocationsByGenome?.[panelKey] || null}
                                             onManualNavigate={handleManualBrowserNavigate}
                                             clearFocusEpoch={clearFocusEpoch + (panelClearEpochs[panelKey] || 0)}
                                             screenshotTargetId={panelKey}
@@ -3192,6 +3482,56 @@ export default function GenomeBrowserView({
                                         onNoteFieldChange={(id, patch) => noteStore.updateNoteFields(id, patch)}
                                         onNoteSave={(id, options) => noteStore.saveNote(id, options)}
                                         onNoteDelete={(id) => handleNoteDelete(panelKey, id)}
+                                        onNotesReload={(noteId) => noteStore.reload({ noteId })}
+                                    />
+                                )}
+
+                                {panelLocation && (
+                                    <FocusLocationDrawer
+                                        theme={theme}
+                                        open={isLocationDrawerOpen(panelKey)}
+                                        onToggle={() => setLocationDrawerOpenByPanel((prev) => {
+                                            const wasOpen = prev[panelKey] !== false
+                                            // Collapsing puts away what was open beside the
+                                            // list: the wide slot has nothing to hang off.
+                                            if (wasOpen) {
+                                                setLocationDetailByPanel((all) => ({ ...all, [panelKey]: null }))
+                                                setLocationNotesPanelOpenByPanel((all) => ({ ...all, [panelKey]: false }))
+                                            }
+                                            return { ...prev, [panelKey]: !wasOpen }
+                                        })}
+                                        onDismiss={() => handleClearPanelFocus(panelKey)}
+                                        location={panelLocation}
+                                        genome={panel.genomeParam}
+                                        genomeLabel={panel.genomePillLabel || panel.label}
+                                        accent={resolveGenomeColor(panel.species)}
+                                        alignTop={drawerAlign.top}
+                                        alignHeight={drawerAlign.height}
+                                        stickyTopInset={focusDrawerStickyInset}
+                                        features={locationFeaturesByPanel[panelKey] || null}
+                                        onFeaturesReload={() => setLocationFeaturesEpoch((prev) => prev + 1)}
+                                        isFeatureHiddenByClass={isFeatureHiddenByClass}
+                                        hiddenGeneIds={locationHiddenGenesByPanel[panelKey] || null}
+                                        onToggleGeneHidden={(geneId) => handleLocationGeneHiddenToggle(panelKey, geneId)}
+                                        onFocusGene={(gene) => handleLocationFocusGene(panelKey, gene)}
+                                        detail={locationDetailByPanel[panelKey] || null}
+                                        onDetailChange={(detail) => handleLocationDetailChange(panelKey, detail)}
+                                        onHeightFitChange={(delta) => handleLocationDrawerFit(panelKey, delta)}
+                                        notesEnabled={Boolean(notesGenomeKeyFor(panel))}
+                                        notes={locationNotesByPanel[panelKey] || EMPTY_NOTE_LIST}
+                                        notesStatus={noteStore.status}
+                                        notesError={noteStore.error}
+                                        notesPanelOpen={Boolean(locationNotesPanelOpenByPanel[panelKey])}
+                                        onNotesPanelToggle={() => handleLocationNotesPanelToggle(panelKey)}
+                                        openNoteId={locationOpenNoteIdByPanel[panelKey] || ''}
+                                        onOpenNoteChange={(id) => setLocationOpenNoteIdByPanel((prev) => ({ ...prev, [panelKey]: id }))}
+                                        noteSortMode={locationNoteSortByPanel[panelKey] || DEFAULT_NOTE_SORT_MODE}
+                                        onNoteSortChange={(mode) => setLocationNoteSortByPanel((prev) => ({ ...prev, [panelKey]: mode }))}
+                                        noteSaveState={noteStore.saveStateFor(locationOpenNoteIdByPanel[panelKey] || '')}
+                                        onNoteCreate={() => handleLocationNoteCreate(panelKey)}
+                                        onNoteFieldChange={(id, patch) => noteStore.updateNoteFields(id, patch)}
+                                        onNoteSave={(id, options) => noteStore.saveNote(id, options)}
+                                        onNoteDelete={(id) => handleLocationNoteDelete(panelKey, id)}
                                         onNotesReload={(noteId) => noteStore.reload({ noteId })}
                                     />
                                 )}

@@ -65,6 +65,12 @@ function PlusGlyph({ size = 14 }) {
 export default function FocusNotesPanel({
     theme = 'dark',
     gene = null,
+    // What these notes are about, when it is not a gene. The panel is the same
+    // inbox either way — only what it calls its subject changes — so the
+    // location drawer reuses it rather than growing a second copy.
+    subjectLabel = '',
+    subjectNoun = 'gene',
+    subjectKey = '',
     notes = [],
     status = 'ready',
     error = '',
@@ -94,7 +100,7 @@ export default function FocusNotesPanel({
     const dangerColor = isLight ? '#dc2626' : '#f87171'
     const cardBg = isLight ? '#f8fafc' : '#161d29'
 
-    const geneLabel = gene?.name || gene?.id || ''
+    const geneLabel = subjectLabel || gene?.name || gene?.id || ''
     const ordered = useMemo(() => sortNotes(notes, sortMode), [notes, sortMode])
     const openNote = useMemo(
         // A delete can land between the state update and this render; falling
@@ -180,13 +186,19 @@ export default function FocusNotesPanel({
 
     const headerButton = `flex-none flex items-center justify-center rounded transition-colors ${rowHoverClass}`
 
+    const handleClose = useCallback(() => {
+        onOpenNoteChange?.('')
+        onClose?.()
+    }, [onOpenNoteChange, onClose])
+
     const closeButton = (
         <button
             type="button"
-            onClick={() => onClose?.()}
+            onClick={handleClose}
             className={`${headerButton} p-1`}
             style={{ color: accentColor }}
             title="Close notes"
+            aria-label="Close notes"
         >
             <CloseGlyph />
         </button>
@@ -221,7 +233,7 @@ export default function FocusNotesPanel({
             <div
                 className="flex flex-col h-full min-h-0 overflow-hidden border-l"
                 style={{ width: FOCUS_NOTES_WIDTH, borderColor: dividerColor }}
-                data-focus-notes-panel={gene?.id || ''}
+                data-focus-notes-panel={subjectKey || gene?.id || ''}
             >
                 <div className="flex-none flex items-center gap-2 px-2 py-1.5 border-b" style={{ borderColor: dividerColor }}>
                     <button
@@ -269,6 +281,7 @@ export default function FocusNotesPanel({
                     >
                         {confirming ? 'Confirm delete' : <TrashGlyph />}
                     </button>
+                    {closeButton}
                 </div>
 
                 {saveState === NOTE_SAVE_STATES.CONFLICT && (
@@ -309,7 +322,7 @@ export default function FocusNotesPanel({
                     value={openNote.body}
                     onChange={(event) => onFieldChange?.(openNote.id, { body: event.target.value })}
                     onKeyDown={handleKeyDown}
-                    placeholder="Write anything about this gene…"
+                    placeholder={`Write anything about this ${subjectNoun}…`}
                     spellCheck
                     className={`flex-1 min-h-0 w-full resize-none bg-transparent outline-none themed-scrollbar px-3 pb-3 text-[12px] leading-[1.55] ${textClass}`}
                 />
@@ -323,7 +336,7 @@ export default function FocusNotesPanel({
         <div
             className="flex flex-col h-full min-h-0 overflow-hidden border-l"
             style={{ width: FOCUS_NOTES_WIDTH, borderColor: dividerColor }}
-            data-focus-notes-panel={gene?.id || ''}
+            data-focus-notes-panel={subjectKey || gene?.id || ''}
         >
             <div className="flex-none flex items-center gap-2 px-2 py-1.5 border-b" style={{ borderColor: dividerColor }}>
                 <span className={`flex-none inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase ${subTextClass}`}>
@@ -377,11 +390,11 @@ export default function FocusNotesPanel({
                 {status === 'ready' && notes.length === 0 && (
                     <div className={`px-1 py-3 flex flex-col items-start gap-2 text-[11px] ${subTextClass}`}>
                         <span>
-                            No notes for {geneLabel || 'this gene'} yet.
+                            No notes for {geneLabel || `this ${subjectNoun}`} yet.
                             {/* Said once, here, because the alternative is a tester
                                 deciding notes are broken when the same gene in
                                 another assembly comes up empty. */}
-                            <br />Notes are kept per assembly, so this gene in another genome has its own.
+                            <br />Notes are kept per assembly, so this {subjectNoun} in another genome has its own.
                         </span>
                         {newNoteButton}
                     </div>

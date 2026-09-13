@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  BOX_SELECT_FILL_FRACTION,
+  FOCUS_RANGE_FILL_FRACTION,
   SEQUENCE_TRACK_HEIGHT,
   alignBandToBar,
   frameRangeWithRightInset,
@@ -10,6 +12,8 @@ import {
   getFeatureRowTargetY,
   getGenomeBrowserPanelSizing,
   rebalanceRangeForInsetChange,
+  getFocusLocationRange,
+  isSameChromToken,
   shouldRenderViewportTranscriptStructures,
 } from '../src/components/genomeBrowserViewportLayout.js'
 
@@ -214,6 +218,17 @@ test('re-opening the drawer undoes the span change exactly', () => {
   assert.ok(Math.abs((reopened.end - reopened.start) - 100_000) < 1e-6)
 })
 
+test('closing the primary drawer recentres the focus in the recovered track width', () => {
+  const next = rebalanceRangeForInsetChange({
+    start: 1_000_000, end: 1_100_000, trackWidthPx: TRACK,
+    fromInsetPx: OPEN, toInsetPx: 0, focusCentre: 1_050_000,
+  })
+  const bpPerPx = (next.end - next.start) / TRACK
+  const centrePx = (1_050_000 - next.start) / bpPerPx
+  assert.ok(Math.abs(centrePx - TRACK / 2) < 1e-6)
+  assert.ok(next.end - next.start < 100_000)
+})
+
 test('the rescale is proportional, so a zoomed-out view is not hauled back in', () => {
   const near = rebalanceRangeForInsetChange({
     start: 1_000_000, end: 1_100_000, trackWidthPx: TRACK,
@@ -319,4 +334,40 @@ test("a locus around the focused gene clears the drawer that is over the track",
   assert.ok(left > 0, 'and has not been pushed off the left edge')
   // Centred in what stays visible, rather than in the whole track.
   assert.ok(Math.abs(left - (visible - right)) < 1, 'the gene is not centred in the visible width')
+})
+
+test('a location of focus is normalised however its coordinates arrive', () => {
+  assert.deepEqual(
+    getFocusLocationRange({ chrom: '1', start: 1000, end: 2000 }),
+    { chrom: '1', start: 1000, end: 2000 }
+  )
+  // A box-select dragged right to left hands over its coordinates reversed.
+  assert.deepEqual(
+    getFocusLocationRange({ chrom: 'chr7', start: 2000, end: 1000 }),
+    { chrom: 'chr7', start: 1000, end: 2000 }
+  )
+  // A single base still bounds a region, so it never collapses to nothing.
+  assert.deepEqual(
+    getFocusLocationRange({ chrom: '1', start: 500, end: 500 }),
+    { chrom: '1', start: 500, end: 501 }
+  )
+  assert.equal(getFocusLocationRange(null), null)
+  assert.equal(getFocusLocationRange({ start: 1, end: 2 }), null, 'a region needs a chromosome')
+  assert.equal(getFocusLocationRange({ chrom: '1', start: 'x', end: 2 }), null)
+})
+
+test('chromosome tokens compare across the chr prefix and case', () => {
+  assert.ok(isSameChromToken('1', 'chr1'))
+  assert.ok(isSameChromToken('CHR1', '1'))
+  assert.ok(isSameChromToken('chrX', 'X'))
+  assert.ok(!isSameChromToken('1', '2'))
+  assert.ok(!isSameChromToken('', ''), 'nothing is the same chromosome as no chromosome')
+})
+
+test('a focused range is framed wider than itself so its boundary lines stay in view', () => {
+  assert.ok(FOCUS_RANGE_FILL_FRACTION < 1 && FOCUS_RANGE_FILL_FRACTION > 0)
+  // A box-select is already the window the user drew, so it is padded far less
+  // than a focus framed from scratch.
+  assert.ok(BOX_SELECT_FILL_FRACTION > FOCUS_RANGE_FILL_FRACTION)
+  assert.ok(BOX_SELECT_FILL_FRACTION < 1)
 })

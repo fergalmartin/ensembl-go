@@ -1,4 +1,4 @@
-.genome-wheel-button { display:flex; align-items:center; gap:6px; flex-shrink:0; margin-left:16px; margin-right:8px; padding:7px 10px; border:1px solid #77859966; border-radius:6px; font-size:12px; color:inherit; cursor:ns-resize; touch-action:none; user-select:none; }
+.genome-wheel-button { display:flex; align-items:center; gap:6px; flex-shrink:0; padding:7px 10px; border:1px solid #77859966; border-radius:6px; font-size:12px; color:inherit; cursor:ns-resize; touch-action:none; user-select:none; }
 .genome-wheel-button:hover:not(:disabled) { background:#698fba25; }
 .genome-wheel-button:disabled { opacity:.35; cursor:default; }
 .genome-wheel-button:focus-visible { outline:2px solid #60a5fa; outline-offset:3px; }
@@ -8,6 +8,7 @@
 /* Released without dragging: the wheel now follows the bare cursor and the next click confirms. */
 .genome-wheel-overlay.hovering { cursor:pointer; }
 .genome-wheel-scene { position:absolute; left:5%; right:155px; top:0; bottom:140px; perspective:1500px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+.genome-wheel-overlay-genome .genome-wheel-scene { right:120px; }
 .genome-wheel-drum { position:relative; width:100%; height:var(--face-height); transform-style:preserve-3d; transform:scale(.85) translateZ(calc(-1 * var(--radius))) rotateX(calc(var(--wheel-position) * var(--face-step))); }
 .genome-wheel-face { position:absolute; inset:0; overflow:hidden; backface-visibility:hidden; border:1px solid var(--accent); border-top:3px solid var(--accent); border-radius:10px; background:#182333; box-shadow:0 18px 45px #0005; transform:rotateX(calc(-1 * var(--face-index) * var(--face-step))) translateZ(var(--radius)); }
 .light .genome-wheel-face { background:#fff; }
@@ -23,6 +24,7 @@
 .genome-wheel-dot { position:absolute; left:21px; width:10px; height:10px; border-radius:50%; transform:translateY(-50%); }
 .genome-wheel-indicator { position:absolute; left:16px; width:20px; height:20px; border:2px solid currentColor; border-radius:50%; transform:translateY(-50%); box-shadow:0 0 15px #7fa9f355; }
 .genome-wheel-status { position:absolute; bottom:12px; left:16px; right:150px; font-size:12px; display:flex; flex-direction:column; align-items:center; gap:4px; text-align:center; }
+.genome-wheel-overlay-genome .genome-wheel-status { right:115px; }
 .genome-wheel-status strong { font-size:16px; }
 .genome-wheel-status span { font-size:12px; opacity:.65; }
 @media (prefers-reduced-motion:reduce) {

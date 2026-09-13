@@ -9,6 +9,7 @@ import {
     GENERAL_NOTES_TARGET_ID,
     NOTE_TARGET_KIND_GENE,
     NOTE_TARGET_KIND_GENOME,
+    NOTE_TARGET_KIND_LOCATION,
     noteDisplayTitle,
     normalizeNoteGenomeKey,
 } from './geneNotes.js'
@@ -99,7 +100,11 @@ export function buildNoteSections(notes, activeGenomes, { geneSortMode = DEFAULT
     const byGenome = new Map()
     for (const note of all) {
         const kind = text(note?.target?.kind).trim()
-        if (kind !== NOTE_TARGET_KIND_GENE && kind !== NOTE_TARGET_KIND_GENOME) continue
+        if (
+            kind !== NOTE_TARGET_KIND_GENE
+            && kind !== NOTE_TARGET_KIND_GENOME
+            && kind !== NOTE_TARGET_KIND_LOCATION
+        ) continue
         const key = normalizeNoteGenomeKey(note?.target?.genome_key)
         if (!key) continue
         if (!byGenome.has(key)) byGenome.set(key, [])
@@ -124,6 +129,9 @@ export function buildNoteSections(notes, activeGenomes, { geneSortMode = DEFAULT
             genome,
             inTopBar: true,
             genes: groupNotesByGene(genomeNotes.filter((note) => text(note?.target?.kind).trim() === NOTE_TARGET_KIND_GENE), geneSortMode),
+            // Locations group exactly as genes do — the row is "one target's
+            // notes", and a region is a target like any other.
+            locations: groupNotesByGene(genomeNotes.filter((note) => text(note?.target?.kind).trim() === NOTE_TARGET_KIND_LOCATION), geneSortMode),
             generalNotes,
             generalActiveCount: generalNotes.filter((note) => !note?.archived).length,
             generalArchivedCount: generalNotes.filter((note) => Boolean(note?.archived)).length,
@@ -147,6 +155,9 @@ export function buildNoteSections(notes, activeGenomes, { geneSortMode = DEFAULT
             genome: null,
             inTopBar: false,
             genes: groupNotesByGene(genomeNotes.filter((note) => text(note?.target?.kind).trim() === NOTE_TARGET_KIND_GENE), geneSortMode),
+            // Locations group exactly as genes do — the row is "one target's
+            // notes", and a region is a target like any other.
+            locations: groupNotesByGene(genomeNotes.filter((note) => text(note?.target?.kind).trim() === NOTE_TARGET_KIND_LOCATION), geneSortMode),
             generalNotes,
             generalActiveCount: generalNotes.filter((note) => !note?.archived).length,
             generalArchivedCount: generalNotes.filter((note) => Boolean(note?.archived)).length,

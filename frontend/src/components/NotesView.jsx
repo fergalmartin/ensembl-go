@@ -13,7 +13,9 @@ import {
     GENERAL_NOTES_TARGET_ID,
     NOTE_TARGET_KIND_GENE,
     NOTE_TARGET_KIND_GENOME,
+    NOTE_TARGET_KIND_LOCATION,
     NOTE_TARGET_KIND_TODO,
+    parseLocationNoteTargetId,
     NOTE_SAVE_STATES,
     TODO_GENOME_KEY,
     TODO_TARGET_ID,
@@ -715,6 +717,9 @@ export default function NotesView({
     activeSpecies = null,
     onGenomeFocusGeneSelect = null,
     onNavigateToBrowser = null,
+    // Jumping from a location note lands the browser on that region and focuses
+    // it, the way a gene note lands on its gene.
+    onGenomeFocusLocationSelect = null,
     onAddGenome = null,
     onRedownloadGenome = null,
 }) {
@@ -1005,12 +1010,22 @@ export default function NotesView({
     const selectedCountClass = isLight ? 'font-semibold text-blue-700' : 'font-semibold text-blue-300'
     const activeCountClass = showingArchived ? textSecondary : selectedCountClass
     const archivedCountClass = showingArchived ? selectedCountClass : textSecondary
-    const activeGenomeNotes = useMemo(() => store.notes.filter((note) => (
-        note?.target?.kind === NOTE_TARGET_KIND_GENE || note?.target?.kind === NOTE_TARGET_KIND_GENOME
-    )), [store.notes])
-    const archivedGenomeNotes = useMemo(() => store.archivedNotes.filter((note) => (
-        note?.target?.kind === NOTE_TARGET_KIND_GENE || note?.target?.kind === NOTE_TARGET_KIND_GENOME
-    )), [store.archivedNotes])
+    // Everything filed against a genome, whatever it is about: its genes, the
+    // locations in it, and the genome itself. Todos are the one kind kept out —
+    // they have their own list above.
+    const isGenomeScopedNote = useCallback((note) => (
+        note?.target?.kind === NOTE_TARGET_KIND_GENE
+        || note?.target?.kind === NOTE_TARGET_KIND_GENOME
+        || note?.target?.kind === NOTE_TARGET_KIND_LOCATION
+    ), [])
+    const activeGenomeNotes = useMemo(
+        () => store.notes.filter(isGenomeScopedNote),
+        [store.notes, isGenomeScopedNote]
+    )
+    const archivedGenomeNotes = useMemo(
+        () => store.archivedNotes.filter(isGenomeScopedNote),
+        [store.archivedNotes, isGenomeScopedNote]
+    )
     const activeTodoNotes = useMemo(
         () => store.notes.filter((note) => note?.target?.kind === NOTE_TARGET_KIND_TODO),
         [store.notes],
@@ -1068,20 +1083,24 @@ export default function NotesView({
             const localGenome = section.genome || availableLocalGenomes.find(
                 (candidate) => genomeKeysMatch(candidate.species, section.genomeKey),
             ) || null
+            // The same test for every target row, gene or location: archived
+            // view shows only what has archives, a search shows only what matches.
+            const keepRow = (row) => {
+                if (showingArchived && row.archivedCount === 0) return false
+                if (!hasFilters) return true
+                return row.notes.some((note) => visibleNoteIds.has(note.id))
+            }
             return {
                 ...section,
                 genome: localGenome,
-                genes: section.genes.filter((geneRow) => {
-                    if (showingArchived && geneRow.archivedCount === 0) return false
-                    if (!hasFilters) return true
-                    return geneRow.notes.some((note) => visibleNoteIds.has(note.id))
-                }),
+                genes: section.genes.filter(keepRow),
+                locations: section.locations.filter(keepRow),
             }
         })
         .filter((section) => {
             if (hasFilters) {
                 const generalMatches = section.generalNotes.some((note) => visibleNoteIds.has(note.id))
-                return section.genes.length > 0 || generalMatches
+                return section.genes.length > 0 || section.locations.length > 0 || generalMatches
             }
             if (showingArchived) return section.archivedNoteCount > 0
             return true
@@ -1229,12 +1248,17 @@ export default function NotesView({
         .filter((note) => !note.pending && normalizeNoteGenomeKey(note?.target?.genome_key) === genomeKey)
         .map((note) => note.id), [currentNotes])
 
-    const noteIdsForGene = useCallback((genomeKey, geneId) => currentNotes
+    const noteIdsForTarget = useCallback((kind, genomeKey, targetId) => currentNotes
         .filter((note) => !note.pending
-            && note?.target?.kind === NOTE_TARGET_KIND_GENE
+            && note?.target?.kind === kind
             && normalizeNoteGenomeKey(note?.target?.genome_key) === genomeKey
-            && String(note?.target?.id || '') === geneId)
+            && String(note?.target?.id || '') === targetId)
         .map((note) => note.id), [currentNotes])
+
+    const noteIdsForGene = useCallback(
+        (genomeKey, geneId) => noteIdsForTarget(NOTE_TARGET_KIND_GENE, genomeKey, geneId),
+        [noteIdsForTarget]
+    )
 
     const noteIdsForGeneral = useCallback((genomeKey) => currentNotes
         .filter((note) => !note.pending
@@ -1243,13 +1267,13 @@ export default function NotesView({
             && String(note?.target?.id || '') === GENERAL_NOTES_TARGET_ID)
         .map((note) => note.id), [currentNotes])
 
-    const handleCreate = useCallback((genomeKey, geneId, label, selectionKey) => {
+    const handleCreate = useCallback((genomeKey, geneId, label, selectionKey, kind = NOTE_TARGET_KIND_GENE) => {
         setTodoDraft(null)
         setOpenTodoId('')
-        setCollapsedNoteGroups((current) => ({ ...current, [`gene:${genomeKey}:${geneId}`]: false }))
+        setCollapsedNoteGroups((current) => ({ ...current, [`${kind}:${genomeKey}:${geneId}`]: false }))
         const { tempId } = store.createNote(
             {
-                kind: NOTE_TARGET_KIND_GENE,
+                kind,
                 genome_key: genomeKey,
                 id: geneId,
                 label: label || '',
@@ -1358,6 +1382,118 @@ export default function NotesView({
         setDraggedTodoId('')
     }, [draggedTodoId, store, todoNotes, todoSortMode])
 
+    /* One target's notes — a gene, or a location — with the controls that act on
+     * the whole group. Shared by both so a location row cannot drift into being
+     * a lesser citizen than a gene row; only the id line and where "show in the
+     * browser" lands differ, and both are decided by `kind`. */
+    const renderTargetRow = (section, genome, row, kind) => {
+                                            const groupKey = `${kind}:${section.genomeKey}:${row.geneId}`
+                                            const rowCollapsed = !hasFilters && Boolean(collapsedNoteGroups[groupKey])
+                                            return (
+                                            <div key={row.geneId} className="px-3 py-2 border-b last:border-b-0" style={{ borderColor: dividerColor }}>
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleNoteGroup(groupKey)}
+                                                        className={collapseArrowClass}
+                                                        aria-expanded={!rowCollapsed}
+                                                        title={rowCollapsed ? `Show notes for ${row.label || row.geneId}` : `Hide notes for ${row.label || row.geneId}`}
+                                                    >
+                                                        <Chevron open={!rowCollapsed} size={12} />
+                                                    </button>
+                                                    <span className={`text-sm font-semibold ${textPrimary}`}>{row.label || row.geneId}</span>
+                                                    {kind === NOTE_TARGET_KIND_GENE && (
+                                                        <span className={`text-xs font-mono ${textSecondary}`}>{row.geneId}</span>
+                                                    )}
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 text-xs ${activeCountClass}`}
+                                                        title={`${row.activeCount} active note${row.activeCount === 1 ? '' : 's'}`}
+                                                        aria-label={`${row.activeCount} active note${row.activeCount === 1 ? '' : 's'}`}
+                                                    >
+                                                        <NoteGlyph size={12} filled knockout={isLight ? '#ffffff' : '#1a2232'} />
+                                                        {row.activeCount}
+                                                    </span>
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 text-xs ${archivedCountClass}`}
+                                                        title={`${row.archivedCount} archived note${row.archivedCount === 1 ? '' : 's'}`}
+                                                        aria-label={`${row.archivedCount} archived note${row.archivedCount === 1 ? '' : 's'}`}
+                                                    >
+                                                        <ArchiveGlyph size={12} />
+                                                        {row.archivedCount}
+                                                    </span>
+                                                    <div className="flex-1" />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleViewInBrowser(section, row, kind)}
+                                                        disabled={!genome?.browsable}
+                                                        className={iconActionClass}
+                                                        style={{ color: accentColor }}
+                                                        title={genome?.browsable
+                                                            ? `Show ${row.label || row.geneId} in the Genome Browser`
+                                                            : 'Add this genome to view it in the browser'}
+                                                    >
+                                                        {/* Reuse the browser app button's exact mark so
+                                                            the action and its destination read alike. */}
+                                                        <span className="inline-flex">
+                                                            <AppButtonIcon buttonId="genome_browser" isLight={isLight} compact />
+                                                        </span>
+                                                    </button>
+                                                    <div className="grid w-[84px] flex-none grid-cols-3 place-items-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleCreate(section.genomeKey, row.geneId, row.label, genome?.selectionKey, kind)}
+                                                            disabled={showingArchived}
+                                                            className={iconActionClass}
+                                                            style={{ color: accentColor }}
+                                                            title={showingArchived ? 'Switch to Active to add a note' : `Add a note on ${row.label || row.geneId}`}
+                                                        >
+                                                            <PlusGlyph />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleArchiveNotes(
+                                                                noteIdsForTarget(kind, section.genomeKey, row.geneId),
+                                                                !showingArchived,
+                                                                groupKey,
+                                                            )}
+                                                            disabled={Boolean(archiveBusyKey) || noteIdsForTarget(kind, section.genomeKey, row.geneId).length === 0}
+                                                            className={iconActionClass}
+                                                            style={{ color: archiveActionColor }}
+                                                            title={noteIdsForTarget(kind, section.genomeKey, row.geneId).length > 0
+                                                                ? `${showingArchived ? 'Restore' : 'Archive'} all ${noteIdsForTarget(kind, section.genomeKey, row.geneId).length} ${showingArchived ? 'archived' : 'active'} note${noteIdsForTarget(kind, section.genomeKey, row.geneId).length === 1 ? '' : 's'} for ${row.label || row.geneId}`
+                                                                : `No ${showingArchived ? 'archived' : 'active'} notes to ${showingArchived ? 'restore' : 'archive'} for ${row.label || row.geneId}`}
+                                                            aria-label={`${showingArchived ? 'Restore' : 'Archive'} all notes for ${row.label || row.geneId}`}
+                                                        >
+                                                            <ArchiveGlyph restore={showingArchived} />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => requestBulkDelete(
+                                                                noteIdsForTarget(kind, section.genomeKey, row.geneId),
+                                                                `notes for ${row.label || row.geneId}`,
+                                                            )}
+                                                            disabled={noteIdsForTarget(kind, section.genomeKey, row.geneId).length === 0}
+                                                            className={iconActionClass}
+                                                            style={{ color: dangerColor }}
+                                                            title={noteIdsForTarget(kind, section.genomeKey, row.geneId).length > 0
+                                                                ? `Delete all ${showingArchived ? 'archived' : 'active'} notes for ${row.label || row.geneId}`
+                                                                : `No ${showingArchived ? 'archived' : 'active'} notes to delete for ${row.label || row.geneId}`}
+                                                            aria-label={`Delete all notes for ${row.label || row.geneId}`}
+                                                        >
+                                                            <TrashGlyph />
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {!rowCollapsed && (
+                                                    <div className="mt-1 space-y-0.5">
+                                                        {renderGenomeNoteRows(row.notes)}
+                                                    </div>
+                                                )}
+                                            </div>
+        )
+    }
+
     /**
      * Open a gene in the genome browser.
      *
@@ -1365,9 +1501,20 @@ export default function NotesView({
      * coordinates, so the gene is resolved against that genome first. The same
      * endpoint takes transcript ids, which is why it is also what search uses.
      */
-    const handleViewInBrowser = useCallback(async (section, geneRow) => {
+    const handleViewInBrowser = useCallback(async (section, geneRow, kind = NOTE_TARGET_KIND_GENE) => {
         const genome = section.genome
         if (!genome?.browsable) return
+
+        /* A location note carries the region in its own id, so there is nothing
+         * to resolve — hand the browser the coordinates and let it focus them. */
+        if (kind === NOTE_TARGET_KIND_LOCATION) {
+            const region = parseLocationNoteTargetId(geneRow.geneId)
+            if (!region) return
+            onGenomeFocusLocationSelect?.(genome.selectionKey, region)
+            onNavigateToBrowser?.(genome.selectionKey)
+            return
+        }
+
         setBusyGenomeKey(section.genomeKey)
         try {
             const params = new URLSearchParams({ genome: genome.selectionKey, query: geneRow.geneId })
@@ -1385,7 +1532,7 @@ export default function NotesView({
         } finally {
             setBusyGenomeKey('')
         }
-    }, [onGenomeFocusGeneSelect, onNavigateToBrowser])
+    }, [onGenomeFocusGeneSelect, onGenomeFocusLocationSelect, onNavigateToBrowser])
 
     /** Pull a locally available genome back into the active top-bar set. */
     const handleAddGenome = useCallback(async (genomeKey) => {
@@ -2515,6 +2662,9 @@ export default function NotesView({
                                                     {section.genes.length > 0 && (
                                                         <>{section.genes.length} gene{section.genes.length === 1 ? '' : 's'} · </>
                                                     )}
+                                                    {section.locations.length > 0 && (
+                                                        <>{section.locations.length} location{section.locations.length === 1 ? '' : 's'} · </>
+                                                    )}
                                                     <span className={activeCountClass}>
                                                         {section.activeNoteCount} active note{section.activeNoteCount === 1 ? '' : 's'}
                                                     </span>
@@ -2563,10 +2713,10 @@ export default function NotesView({
                                     </div>
                                 </div>
 
-                                {!collapsed && (showGeneralRow || section.genes.length > 0) && (
+                                {!collapsed && (showGeneralRow || section.genes.length > 0 || section.locations.length > 0) && (
                                     <div className="border-t" style={{ borderColor: dividerColor }}>
                                         {showGeneralRow && (
-                                            <div className={`px-3 py-2 ${section.genes.length > 0 ? 'border-b' : ''}`} style={{ borderColor: dividerColor }}>
+                                            <div className={`px-3 py-2 ${(section.genes.length > 0 || section.locations.length > 0) ? 'border-b' : ''}`} style={{ borderColor: dividerColor }}>
                                                 <div className="flex items-center gap-2">
                                                     {section.generalNotes.length > 0 && (
                                                         <button
@@ -2650,111 +2800,8 @@ export default function NotesView({
                                                 )}
                                             </div>
                                         )}
-                                        {section.genes.map((geneRow) => {
-                                            const geneGroupKey = `gene:${section.genomeKey}:${geneRow.geneId}`
-                                            const geneCollapsed = !hasFilters && Boolean(collapsedNoteGroups[geneGroupKey])
-                                            return (
-                                            <div key={geneRow.geneId} className="px-3 py-2 border-b last:border-b-0" style={{ borderColor: dividerColor }}>
-                                                <div className="flex items-center gap-2">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => toggleNoteGroup(geneGroupKey)}
-                                                        className={collapseArrowClass}
-                                                        aria-expanded={!geneCollapsed}
-                                                        title={geneCollapsed ? `Show notes for ${geneRow.label || geneRow.geneId}` : `Hide notes for ${geneRow.label || geneRow.geneId}`}
-                                                    >
-                                                        <Chevron open={!geneCollapsed} size={12} />
-                                                    </button>
-                                                    <span className={`text-sm font-semibold ${textPrimary}`}>{geneRow.label || geneRow.geneId}</span>
-                                                    <span className={`text-xs font-mono ${textSecondary}`}>{geneRow.geneId}</span>
-                                                    <span
-                                                        className={`inline-flex items-center gap-1 text-xs ${activeCountClass}`}
-                                                        title={`${geneRow.activeCount} active note${geneRow.activeCount === 1 ? '' : 's'}`}
-                                                        aria-label={`${geneRow.activeCount} active note${geneRow.activeCount === 1 ? '' : 's'}`}
-                                                    >
-                                                        <NoteGlyph size={12} filled knockout={isLight ? '#ffffff' : '#1a2232'} />
-                                                        {geneRow.activeCount}
-                                                    </span>
-                                                    <span
-                                                        className={`inline-flex items-center gap-1 text-xs ${archivedCountClass}`}
-                                                        title={`${geneRow.archivedCount} archived note${geneRow.archivedCount === 1 ? '' : 's'}`}
-                                                        aria-label={`${geneRow.archivedCount} archived note${geneRow.archivedCount === 1 ? '' : 's'}`}
-                                                    >
-                                                        <ArchiveGlyph size={12} />
-                                                        {geneRow.archivedCount}
-                                                    </span>
-                                                    <div className="flex-1" />
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleViewInBrowser(section, geneRow)}
-                                                        disabled={!genome?.browsable}
-                                                        className={iconActionClass}
-                                                        style={{ color: accentColor }}
-                                                        title={genome?.browsable
-                                                            ? `Show ${geneRow.label || geneRow.geneId} in the Genome Browser`
-                                                            : 'Add this genome to view it in the browser'}
-                                                    >
-                                                        {/* Reuse the browser app button's exact mark so
-                                                            the action and its destination read alike. */}
-                                                        <span className="inline-flex">
-                                                            <AppButtonIcon buttonId="genome_browser" isLight={isLight} compact />
-                                                        </span>
-                                                    </button>
-                                                    <div className="grid w-[84px] flex-none grid-cols-3 place-items-center">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleCreate(section.genomeKey, geneRow.geneId, geneRow.label, genome?.selectionKey)}
-                                                            disabled={showingArchived}
-                                                            className={iconActionClass}
-                                                            style={{ color: accentColor }}
-                                                            title={showingArchived ? 'Switch to Active to add a note' : `Add a note on ${geneRow.label || geneRow.geneId}`}
-                                                        >
-                                                            <PlusGlyph />
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleArchiveNotes(
-                                                                noteIdsForGene(section.genomeKey, geneRow.geneId),
-                                                                !showingArchived,
-                                                                `gene:${section.genomeKey}:${geneRow.geneId}`,
-                                                            )}
-                                                            disabled={Boolean(archiveBusyKey) || noteIdsForGene(section.genomeKey, geneRow.geneId).length === 0}
-                                                            className={iconActionClass}
-                                                            style={{ color: archiveActionColor }}
-                                                            title={noteIdsForGene(section.genomeKey, geneRow.geneId).length > 0
-                                                                ? `${showingArchived ? 'Restore' : 'Archive'} all ${noteIdsForGene(section.genomeKey, geneRow.geneId).length} ${showingArchived ? 'archived' : 'active'} note${noteIdsForGene(section.genomeKey, geneRow.geneId).length === 1 ? '' : 's'} for ${geneRow.label || geneRow.geneId}`
-                                                                : `No ${showingArchived ? 'archived' : 'active'} notes to ${showingArchived ? 'restore' : 'archive'} for ${geneRow.label || geneRow.geneId}`}
-                                                            aria-label={`${showingArchived ? 'Restore' : 'Archive'} all notes for ${geneRow.label || geneRow.geneId}`}
-                                                        >
-                                                            <ArchiveGlyph restore={showingArchived} />
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => requestBulkDelete(
-                                                                noteIdsForGene(section.genomeKey, geneRow.geneId),
-                                                                `notes for ${geneRow.label || geneRow.geneId}`,
-                                                            )}
-                                                            disabled={noteIdsForGene(section.genomeKey, geneRow.geneId).length === 0}
-                                                            className={iconActionClass}
-                                                            style={{ color: dangerColor }}
-                                                            title={noteIdsForGene(section.genomeKey, geneRow.geneId).length > 0
-                                                                ? `Delete all ${showingArchived ? 'archived' : 'active'} notes for ${geneRow.label || geneRow.geneId}`
-                                                                : `No ${showingArchived ? 'archived' : 'active'} notes to delete for ${geneRow.label || geneRow.geneId}`}
-                                                            aria-label={`Delete all notes for ${geneRow.label || geneRow.geneId}`}
-                                                        >
-                                                            <TrashGlyph />
-                                                        </button>
-                                                    </div>
-                                                </div>
-
-                                                {!geneCollapsed && (
-                                                    <div className="mt-1 space-y-0.5">
-                                                        {renderGenomeNoteRows(geneRow.notes)}
-                                                    </div>
-                                                )}
-                                            </div>
-                                            )
-                                        })}
+                                        {section.genes.map((geneRow) => renderTargetRow(section, genome, geneRow, NOTE_TARGET_KIND_GENE))}
+                                        {section.locations.map((locationRow) => renderTargetRow(section, genome, locationRow, NOTE_TARGET_KIND_LOCATION))}
                                     </div>
                                 )}
                             </section>

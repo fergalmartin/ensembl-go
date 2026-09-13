@@ -339,6 +339,12 @@ export default function HelpView({ theme = 'dark' }) {
             under its transcript list — and read them all back here, grouped by genome and by the gene they belong to.
           </p>
           <p>
+            A region can carry notes too. Search a coordinate range or drag a selection zoom in the browser to make it the
+            location of focus, and its drawer has the same Notes section under the sequence and the genes it contains. Location
+            notes are listed here beside the gene notes for that genome, headed by the region they are about, and the browser
+            button on the row takes you straight back to it.
+          </p>
+          <p>
             A gene that carries notes is marked in the browser with a speech bubble at its left edge, once you are zoomed in far
             enough to see transcripts. Clicking that bubble focuses the gene and opens its notes.
           </p>

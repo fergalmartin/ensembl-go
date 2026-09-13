@@ -61,9 +61,14 @@ import {
     resolveWheelAction,
     isWheelGestureFromChrome,
 } from '../utils/browsingControls'
+import { classifyBiotype } from '../utils/geneBiotypes'
 import {
+    BOX_SELECT_FILL_FRACTION,
+    FOCUS_RANGE_FILL_FRACTION,
     SEQUENCE_TRACK_HEIGHT,
     getAnchoredContentPageScrollDelta,
+    getFocusLocationRange,
+    isSameChromToken,
     getFeatureRowAnchor,
     getFeatureRowTargetY,
     frameRangeWithRightInset,
@@ -328,51 +333,6 @@ const BIGWIG_DATA_TYPE_DEFAULTS = {
     },
 }
 
-// ── Biotype classification ──────────────────────────────────────────────────
-// Maps Ensembl biotype strings to one of four display classes.
-// Genes whose class is in hiddenBiotypeClasses are excluded from rendering.
-// Any biotype not listed falls back to pattern matching, then null (always shown).
-const BIOTYPE_CLASS = {
-    // Protein-coding
-    protein_coding: 'proteinCoding',
-    IG_C_gene: 'proteinCoding', IG_D_gene: 'proteinCoding',
-    IG_J_gene: 'proteinCoding', IG_V_gene: 'proteinCoding',
-    TR_C_gene: 'proteinCoding', TR_D_gene: 'proteinCoding',
-    TR_J_gene: 'proteinCoding', TR_V_gene: 'proteinCoding',
-    // Pseudogene
-    pseudogene: 'pseudogene',
-    processed_pseudogene: 'pseudogene', unprocessed_pseudogene: 'pseudogene',
-    transcribed_processed_pseudogene: 'pseudogene', transcribed_unprocessed_pseudogene: 'pseudogene',
-    transcribed_unitary_pseudogene: 'pseudogene', translated_processed_pseudogene: 'pseudogene',
-    unitary_pseudogene: 'pseudogene', polymorphic_pseudogene: 'pseudogene',
-    IG_C_pseudogene: 'pseudogene', IG_D_pseudogene: 'pseudogene',
-    IG_J_pseudogene: 'pseudogene', IG_V_pseudogene: 'pseudogene',
-    TR_J_pseudogene: 'pseudogene', TR_V_pseudogene: 'pseudogene',
-    // Long non-coding
-    lncRNA: 'lncRNA', antisense: 'lncRNA',
-    processed_transcript: 'lncRNA', retained_intron: 'lncRNA',
-    sense_intronic: 'lncRNA', sense_overlapping: 'lncRNA',
-    bidirectional_promoter_lncRNA: 'lncRNA', TEC: 'lncRNA',
-    non_coding: 'lncRNA', macro_lncRNA: 'lncRNA',
-    '3prime_overlapping_ncrna': 'lncRNA', '3prime_overlapping_ncRNA': 'lncRNA',
-    // Small non-coding
-    snRNA: 'smallNonCoding', snoRNA: 'smallNonCoding',
-    miRNA: 'smallNonCoding', misc_RNA: 'smallNonCoding',
-    rRNA: 'smallNonCoding', scRNA: 'smallNonCoding',
-    scaRNA: 'smallNonCoding', vault_RNA: 'smallNonCoding',
-    Mt_rRNA: 'smallNonCoding', Mt_tRNA: 'smallNonCoding',
-    ribozyme: 'smallNonCoding', tRNA: 'smallNonCoding',
-}
-function classifyBiotype(biotype) {
-    if (!biotype) return 'proteinCoding'
-    const direct = BIOTYPE_CLASS[biotype]
-    if (direct) return direct
-    const b = biotype.toLowerCase()
-    if (b.includes('pseudogene')) return 'pseudogene'
-    if (b.includes('lncrna') || b.includes('lnc_rna')) return 'lncRNA'
-    if (b.includes('snrna') || b.includes('snorna') || b.includes('mirna') || b.includes('rrna')) return 'smallNonCoding'
-    return null // unknown biotype — always show
-}
 
 const VCF_EFFECT_COLORS = {
     light: {
@@ -1613,6 +1573,14 @@ export default function GenomeBrowser({
     adaptiveHeight = false,
     hiddenBiotypeClasses = [],
     onGeneSelect,
+    // Genes the location drawer has hidden from the track. Scoped to the
+    // location of focus by the view, which drops the set when that focus goes —
+    // so nothing here has to remember to put them back.
+    hiddenGeneIds = null,
+    // The location of focus, reported upward the way the gene of focus is. There
+    // is no drawer behind it — the view only needs to know a panel holds one, so
+    // the Unfocus control can offer to clear it.
+    onLocationSelect = null,
     // Focus-gene drawer: the parent owns the view model (ordering, hidden
     // transcripts, expand state, hover/ghost) and this panel renders it.
     focusTranscriptView = null,
@@ -1635,6 +1603,9 @@ export default function GenomeBrowser({
     focusDrawerInset = 0,
     focusDrawerInsetOnFocus = 0,
     navigateToGene,
+    // A region asked for from outside the browser — a location note offering to
+    // take the reader back. Focused on arrival, the way a typed region is.
+    navigateToLocation = null,
     onManualNavigate,
     clearFocusEpoch = 0,
     screenshotTargetId = '',
@@ -1696,6 +1667,11 @@ export default function GenomeBrowser({
     const [isViewportTranscriptExpandMode, setIsViewportTranscriptExpandMode] = useState(false)
     const [transcriptCache, setTranscriptCache] = useState({})  // gene_id -> transcripts[]
     const [selectedGene, setSelectedGene] = useState(null)
+    // The location of focus: the same idea as the gene of focus, for a plain
+    // stretch of the genome. { chrom, start, end } in 1-based genomic
+    // coordinates. No drawer hangs off it — it is a focus bar, two boundary
+    // lines and a re-centre target, nothing more.
+    const [selectedLocation, setSelectedLocation] = useState(null)
     const [hiddenStrands, setHiddenStrands] = useState({ forward: false, reverse: false, sequence: false })
     const [sidebarTooltip, setSidebarTooltip] = useState(null)
     const [sequence, setSequence] = useState(null)
@@ -2463,6 +2439,20 @@ export default function GenomeBrowser({
         return Boolean(cls && hiddenBiotypeClasses.includes(cls))
     }, [hiddenBiotypeClasses])
 
+    /* What the track leaves out: classes the reader filtered, and genes they hid
+     * one at a time from the location drawer. Every path that draws, labels,
+     * hit-tests or counts a gene goes through this, so a hidden gene is hidden
+     * from the canvas rather than merely invisible. */
+    const hiddenGeneIdSet = useMemo(
+        () => new Set((Array.isArray(hiddenGeneIds) ? hiddenGeneIds : []).map(String)),
+        [hiddenGeneIds]
+    )
+    const isGeneHiddenFromTracks = useCallback((gene) => {
+        if (!gene) return false
+        if (hiddenGeneIdSet.size > 0 && hiddenGeneIdSet.has(String(gene.id))) return true
+        return isGeneHiddenByBiotype(gene)
+    }, [hiddenGeneIdSet, isGeneHiddenByBiotype])
+
     const selectedGeneForVisibility = useMemo(() => {
         if (!selectedGene) return null
         if (selectedGene.biotype) return selectedGene
@@ -2478,6 +2468,33 @@ export default function GenomeBrowser({
         (selectedGene.strand === '-' && hiddenStrands.reverse) ||
         selectedGeneHiddenByBiotype
     )
+
+    const focusLocationRange = useMemo(() => getFocusLocationRange(selectedLocation), [selectedLocation])
+
+    // A location only means anything on its own chromosome: switching region
+    // leaves the focus in place but stops drawing it, the same way a hidden
+    // strand stops drawing the gene of focus.
+    const isLocationFocusVisible = Boolean(
+        focusLocationRange && isSameChromToken(focusLocationRange.chrom, selectedChrom)
+    )
+
+    /* A panel focuses one thing at a time. Gene and location are separate states
+     * because they carry different information and will be joined by other focus
+     * kinds, so each new focus clears the others here rather than at every call
+     * site that sets one. */
+    const focusLocation = useCallback((location) => {
+        const range = getFocusLocationRange(location)
+        if (!range) {
+            setSelectedLocation(null)
+            return
+        }
+        setSelectedGene(null)
+        setSelectedLocation(range)
+    }, [])
+
+    useEffect(() => {
+        if (selectedGene) setSelectedLocation(null)
+    }, [selectedGene])
     // ── Unified track tile cache (all signal tracks: BigWig, BAM coverage, etc.) ──────────────
     // Key: `${trackId}|${chrom}|${levelId}|${tileStart}`
     // Value: { start, end, bpPerBin, bins, has_data, error, min, max }
@@ -4075,8 +4092,10 @@ export default function GenomeBrowser({
                     const data = await res.json()
                     if (controller.signal.aborted) return
                     setRegions(data)
-                    // Auto-select informative default locus for initial view.
-                    if (data.length > 0 && !selectedChrom) {
+                    // Auto-select informative default locus for initial view —
+                    // unless the panel was opened on a region someone asked for,
+                    // which is about to frame itself and must not be overruled.
+                    if (data.length > 0 && !selectedChrom && !pendingLocationNavigateRef.current) {
                         let initialized = false
 
                         try {
@@ -5709,6 +5728,13 @@ export default function GenomeBrowser({
 
 
 
+    // Notify parent when the location of focus changes
+    const onLocationSelectRef = useRef(onLocationSelect)
+    onLocationSelectRef.current = onLocationSelect
+    useEffect(() => {
+        onLocationSelectRef.current?.(focusLocationRange)
+    }, [focusLocationRange])
+
     // Notify parent when selected gene changes
     const lastSelectedGeneSignatureRef = useRef('')
     useEffect(() => {
@@ -5823,9 +5849,74 @@ export default function GenomeBrowser({
         setSelectedGene({ chrom: chromName, start: geneStart, end: geneEnd, strand, name, id })
     }, [navigateToGene, selectedChrom, regions, isAligned, chromLength, focusDrawerInsetOnFocus, isFlipped])
 
+    /* An outside request to go to a region and focus it.
+     *
+     * Compared by identity rather than by coordinates, so asking for the same
+     * region twice still moves the browser — the caller mints a new object each
+     * time, exactly as the gene path above does. */
+    const lastNavigateLocationRef = useRef(null)
+    // Read by the regions fetch below, which otherwise drops the panel on this
+    // genome's default locus the moment it lands — after this effect has already
+    // framed the region the reader asked for.
+    const pendingLocationNavigateRef = useRef(false)
+    pendingLocationNavigateRef.current = Boolean(
+        navigateToLocation && navigateToLocation !== lastNavigateLocationRef.current
+    )
+    useEffect(() => {
+        if (!navigateToLocation || navigateToLocation === lastNavigateLocationRef.current) return
+        // Held, not dropped: without the region list there is no chromosome to
+        // resolve against or clamp to, so this runs again when the regions land.
+        if (regions.length === 0) return
+        lastNavigateLocationRef.current = navigateToLocation
+        pendingLocationNavigateRef.current = false
+        const range = getFocusLocationRange(navigateToLocation)
+        if (!range) return
+
+        if (!isSameChromToken(range.chrom, selectedChrom)) {
+            const regionForChrom = regions.find((region) => isSameChromToken(region.chrom, range.chrom)) || null
+            setSelectedChrom(regionForChrom?.chrom || range.chrom)
+            if (regionForChrom) setChromLength(regionForChrom.end)
+            setGenes([])
+            tileCacheRef.current.clear()
+            fetchingTilesRef.current.clear()
+        }
+
+        // Framed like every other focus, so the boundary lines land inside the
+        // view. Clamped against the region the way the gene path above does,
+        // rather than through clampView, which is not declared until later.
+        const span = Math.max(1, range.end - range.start)
+        const flank = Math.max(1, (span / FOCUS_RANGE_FILL_FRACTION - span) / 2)
+        const region = regions.find((candidate) => isSameChromToken(candidate.chrom, range.chrom)) || null
+        const maxEnd = Math.max(2, region?.end || chromLength || range.end + flank)
+        const unframedStart = range.start - flank
+        const unframedEnd = range.end + flank
+        // External location requests can arrive before the drawer exists, so
+        // focusDrawerInset is still zero. Anticipate the primary drawer exactly
+        // as gene focus does; the secondary detail/notes panes deliberately do
+        // not contribute to this inset.
+        const framed = frameRangeWithRightInset({
+            start: unframedStart,
+            end: unframedEnd,
+            trackWidthPx: Math.max(1, viewWidthRef.current - LHS_WIDTH),
+            // If a primary drawer is already present, frame for its current
+            // open/rail state and let the inset-change effect handle any toggle.
+            // With no drawer yet, anticipate the one this focus will open.
+            rightInsetPx: focusDrawerInset || focusDrawerInsetOnFocus,
+            flipped: isFlipped,
+        })
+        const nextStart = Math.max(1, framed?.start ?? unframedStart)
+        let nextEnd = Math.min(maxEnd, framed?.end ?? unframedEnd)
+        if (nextEnd <= nextStart) nextEnd = nextStart + 1
+        setViewStart(nextStart)
+        setViewEnd(nextEnd)
+        focusLocation(range)
+        if (onManualNavigate) onManualNavigate()
+    }, [navigateToLocation, selectedChrom, regions, chromLength, focusLocation, onManualNavigate, focusDrawerInset, focusDrawerInsetOnFocus, isFlipped])
+
     useEffect(() => {
         if (clearFocusEpoch <= 0) return
         setSelectedGene(null)
+        setSelectedLocation(null)
     }, [clearFocusEpoch])
 
     // ============ Coordinate Helpers ============
@@ -5838,7 +5929,7 @@ export default function GenomeBrowser({
         const ids = []
         const seen = new Set()
         for (const gene of genes) {
-            if (!gene?.id || isGeneHiddenByBiotype(gene)) continue
+            if (!gene?.id || isGeneHiddenFromTracks(gene)) continue
             if (gene.strand === '+' && effectiveHiddenStrands.forward) continue
             if (gene.strand === '-' && effectiveHiddenStrands.reverse) continue
             const id = String(gene.id)
@@ -5847,7 +5938,7 @@ export default function GenomeBrowser({
             ids.push(id)
         }
         return ids
-    }, [genes, isGeneHiddenByBiotype, effectiveHiddenStrands])
+    }, [genes, isGeneHiddenFromTracks, effectiveHiddenStrands])
     const shouldRenderTranscriptStructures = useMemo(() => (
         shouldRenderViewportTranscriptStructures({
             viewSpan,
@@ -6443,8 +6534,11 @@ export default function GenomeBrowser({
         }
         geneSubtrackStateRef.current = enableSubtracks
 
-        const biotypeFilter = hiddenBiotypeClasses.length > 0
-            ? (g) => !isGeneHiddenByBiotype(g)
+        // Skipped outright when nothing is hidden: this runs over every gene in
+        // the layout window on every frame of a zoom.
+        const anythingHidden = hiddenBiotypeClasses.length > 0 || hiddenGeneIdSet.size > 0
+        const biotypeFilter = anythingHidden
+            ? (g) => !isGeneHiddenFromTracks(g)
             : () => true
 
         const geneOverlapsCurrentWindow = (gene) => {
@@ -6702,7 +6796,7 @@ export default function GenomeBrowser({
             (selectedGene.strand === '-' && hiddenStrands.reverse) ||
             selectedGeneHiddenByBiotype
         )
-        const visibleFocusBarHeight = selectedGene && !selectedGeneHiddenForLayout
+        const visibleFocusBarHeight = (selectedGene && !selectedGeneHiddenForLayout) || isLocationFocusVisible
             ? (focusBarHeight || 30)
             : 0
         const alignTracksToBottom = effectiveTrackAlign === 'bottom' && !compactPanelHeight
@@ -6767,7 +6861,7 @@ export default function GenomeBrowser({
             customTrackLayouts,
             orderedTracks,
         }
-    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, hiddenStrands, selectedGeneHiddenByBiotype, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, isGeneHiddenByBiotype, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight, stickyLayoutResetEpoch, holdGeneTrackHeight])
+    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, isLocationFocusVisible, hiddenStrands, selectedGeneHiddenByBiotype, isGeneHiddenFromTracks, hiddenGeneIdSet, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight, stickyLayoutResetEpoch, holdGeneTrackHeight])
 
     // Where the note about the gene index goes: the forward and reverse tracks
     // taken together, minus whichever of them the user has hidden. Null when
@@ -6959,7 +7053,7 @@ export default function GenomeBrowser({
         const ro = new ResizeObserver(updateHeight)
         ro.observe(node)
         return () => ro.disconnect()
-    }, [selectedGene, isSelectedHidden, effectiveFocusBarPosition, theme])
+    }, [selectedGene, isSelectedHidden, isLocationFocusVisible, effectiveFocusBarPosition, theme])
 
     const getCustomTrackToggleY = useCallback((trackLayout) => {
         return trackLayout.y + Math.max(18, (trackLayout.height * 0.45))
@@ -7122,7 +7216,7 @@ export default function GenomeBrowser({
             Math.round(rootNode.getBoundingClientRect().width || rootNode.clientWidth || viewWidth || 1)
         )
         const toolbarNode = toolbarRef.current
-        const focusNode = selectedGene && !isSelectedHidden ? focusBarRef.current : null
+        const focusNode = (selectedGene && !isSelectedHidden) || isLocationFocusVisible ? focusBarRef.current : null
         const toolbarHeight = toolbarNode
             ? Math.max(1, Math.round(toolbarNode.getBoundingClientRect().height || toolbarNode.clientHeight || 0))
             : 0
@@ -8366,7 +8460,7 @@ export default function GenomeBrowser({
             svgMarkup,
             backgroundColor: colors.bg,
         }
-    }, [ANCHOR_ICON_BODY, REV_COMP, alignData, alignmentCoords, bpPerPx, clickedBigBedFeature, clickedVcfVariant, colors, colors.bg, colors.geneLabelText, colors.rulerBg, colors.rulerText, customTrackData, customTracksById, dimNonSelectedGenes, effectiveFocusBarPosition, effectiveHiddenStrands, effectiveRulerHeight, effectiveRulerPosition, effectiveToolbarPosition, expandedGenes, flattenTracks, genes, genomicToScreen, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackToggleY, getEffectiveTranscriptLimit, getGeneRowCountForWidth, getVcfBlockLevel, hoveredBigBedFeature, hoveredSeqBase, hoveredVcfBlock, isAligned, isLight, isPrimaryPanel, isFlipped, isSelectedHidden, isTranscriptCompressionActive, isCompressedLayoutActive, isCustomTrackId, layout, overlayToGenomic, panelPillColor, sidebarToggleIconColor, selectedGene, seqRange, sequence, sequenceTrackLabel, showSequenceTrack, shouldForceGeneBlockView, trackOrder, trackWidth, transcriptCache, transcriptLayoutMetrics, viewEnd, viewHeight, viewSpan, viewStart, viewWidth])
+    }, [ANCHOR_ICON_BODY, REV_COMP, alignData, alignmentCoords, bpPerPx, clickedBigBedFeature, clickedVcfVariant, colors, colors.bg, colors.geneLabelText, colors.rulerBg, colors.rulerText, customTrackData, customTracksById, dimNonSelectedGenes, effectiveFocusBarPosition, effectiveHiddenStrands, effectiveRulerHeight, effectiveRulerPosition, effectiveToolbarPosition, expandedGenes, flattenTracks, genes, genomicToScreen, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackToggleY, getEffectiveTranscriptLimit, getGeneRowCountForWidth, getVcfBlockLevel, hoveredBigBedFeature, hoveredSeqBase, hoveredVcfBlock, isAligned, isLight, isPrimaryPanel, isFlipped, isSelectedHidden, isLocationFocusVisible, isTranscriptCompressionActive, isCompressedLayoutActive, isCustomTrackId, layout, overlayToGenomic, panelPillColor, sidebarToggleIconColor, selectedGene, seqRange, sequence, sequenceTrackLabel, showSequenceTrack, shouldForceGeneBlockView, trackOrder, trackWidth, transcriptCache, transcriptLayoutMetrics, viewEnd, viewHeight, viewSpan, viewStart, viewWidth])
 
     const buildPanelExportSnapshotRef = useRef(buildPanelExportSnapshot)
     useEffect(() => {
@@ -8893,7 +8987,7 @@ export default function GenomeBrowser({
 
         const footers = []
         for (const gene of genes) {
-            if (isGeneHiddenByBiotype(gene)) continue
+            if (isGeneHiddenFromTracks(gene)) continue
             const txs = transcriptCache[gene.id]
             if (!Array.isArray(txs) || txs.length < 2) continue
 
@@ -8937,7 +9031,7 @@ export default function GenomeBrowser({
             })
         }
         return footers
-    }, [genes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, isGeneHiddenByBiotype,
+    }, [genes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, isGeneHiddenFromTracks,
         transcriptCache, getDisplayTranscriptRows, genomicToScreen, effectiveHiddenStrands, layout,
         transcriptLayoutMetrics, getEffectiveTranscriptLimit, viewWidth, colors.forwardStrandBg,
         colors.reverseStrandBg])
@@ -9494,7 +9588,20 @@ export default function GenomeBrowser({
                 let nextStart = Math.min(v1, v2)
                 let nextEnd = Math.max(v1, v2)
                 if (nextEnd <= nextStart) nextEnd = nextStart + 1
-                animateToView(nextStart, nextEnd, 300)
+
+                // What the user dragged out is now the location of focus. Zoomed to
+                // slightly wider than the box so its boundary lines land inside the
+                // view instead of on its edges, and framed clear of the drawer that
+                // taking focus slides over this panel's right edge.
+                const selectedSpan = nextEnd - nextStart
+                const flank = (selectedSpan / BOX_SELECT_FILL_FRACTION - selectedSpan) / 2
+                focusLocation({
+                    chrom: selectedChrom,
+                    start: Math.round(isAligned ? overlayToGenomic(nextStart) : nextStart),
+                    end: Math.round(isAligned ? overlayToGenomic(nextEnd) : nextEnd),
+                })
+                const framedBox = frameFocusRange(nextStart - flank, nextEnd + flank, { gainingFocus: true })
+                animateToView(framedBox.start, framedBox.end, 300)
             }
             return
         }
@@ -9512,7 +9619,7 @@ export default function GenomeBrowser({
         setIsDragging(false)
         dragAxisRef.current = null
         if (!wasVertical) startMomentum()
-    }, [startMomentum, isSelectingRect, selectionRect, layout, showSequenceTrack, screenToViewCoord, animateToView])
+    }, [startMomentum, isSelectingRect, selectionRect, layout, showSequenceTrack, screenToViewCoord, animateToView, focusLocation, frameFocusRange, selectedChrom, isAligned, overlayToGenomic])
 
     // While box-selecting, keep tracking even if cursor leaves this browser.
     useEffect(() => {
@@ -9764,7 +9871,7 @@ export default function GenomeBrowser({
 
         // Check if click is on a gene
         for (const gene of genes) {
-            if (isGeneHiddenByBiotype(gene)) continue
+            if (isGeneHiddenFromTracks(gene)) continue
             if (gene.strand === '+' && effectiveHiddenStrands.forward) continue
             if (gene.strand === '-' && effectiveHiddenStrands.reverse) continue
 
@@ -9960,7 +10067,7 @@ export default function GenomeBrowser({
         getSelectedGeneTranscriptHit,
         clearTranscriptPopupDismissTimer,
         dismissClickedGeneTranscript,
-        isGeneHiddenByBiotype,
+        isGeneHiddenFromTracks,
         effectiveHiddenStrands,
     ])
 
@@ -10567,6 +10674,11 @@ export default function GenomeBrowser({
             if (selectedGene && selectedCoords && !isSelectedGeneHidden) {
                 drawFocusLine(genomicToScreen(selectedCoords.start))
                 drawFocusLine(genomicToScreen(selectedCoords.end))
+            } else if (isLocationFocusVisible && focusLocationRange) {
+                // The location of focus bounds itself, so it needs no strand or
+                // biotype test — only its own edges.
+                drawFocusLine(genomicToScreen(focusLocationRange.start))
+                drawFocusLine(genomicToScreen(focusLocationRange.end))
             }
         }
         ctx.setLineDash([])
@@ -12315,7 +12427,7 @@ export default function GenomeBrowser({
             }
         }
 
-    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, sidebarToggleIconColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight, expandedFooterGeneIds])
+    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, focusLocationRange, isLocationFocusVisible, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, sidebarToggleIconColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight, expandedFooterGeneIds])
 
     useLayoutEffect(() => {
         const anchor = verticalZoomTrackAnchorRef.current
@@ -12373,7 +12485,7 @@ export default function GenomeBrowser({
         const { FORWARD_Y, REVERSE_Y, RULER_Y } = layout
 
         for (const gene of genes) {
-            if (isGeneHiddenByBiotype(gene)) continue
+            if (isGeneHiddenFromTracks(gene)) continue
             const isForward = gene.strand === '+'
             if (isForward && effectiveHiddenStrands.forward) continue
             if (!isForward && effectiveHiddenStrands.reverse) continue
@@ -12482,7 +12594,7 @@ export default function GenomeBrowser({
             })
         }
         return { controls }
-    }, [genes, transcriptCache, getEffectiveTranscriptLimit, getDisplayTranscriptRows, getGeneTranscriptView, genomicToScreen, viewWidth, layout, effectiveHiddenStrands, selectedGene, dimNonSelectedGenes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, isGeneHiddenByBiotype, transcriptLayoutMetrics, expandedFooterPlacementByGeneId, effectiveRulerHeight])
+    }, [genes, isGeneHiddenFromTracks, transcriptCache, getEffectiveTranscriptLimit, getDisplayTranscriptRows, getGeneTranscriptView, genomicToScreen, viewWidth, layout, effectiveHiddenStrands, selectedGene, dimNonSelectedGenes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, transcriptLayoutMetrics, expandedFooterPlacementByGeneId, effectiveRulerHeight])
 
     /**
      * A speech bubble at the head of every gene the user has written about.
@@ -12502,7 +12614,7 @@ export default function GenomeBrowser({
         for (const gene of genes) {
             const count = Number(geneNoteCounts[String(gene.id)] || 0)
             if (!(count > 0)) continue
-            if (isGeneHiddenByBiotype(gene)) continue
+            if (isGeneHiddenFromTracks(gene)) continue
             const isForward = gene.strand === '+'
             if (isForward && effectiveHiddenStrands.forward) continue
             if (!isForward && effectiveHiddenStrands.reverse) continue
@@ -12553,7 +12665,7 @@ export default function GenomeBrowser({
         return { bubbles }
     }, [genes, geneNoteCounts, isTranscriptDetailZoomActive, genomicToScreen, viewWidth, layout,
         transcriptLayoutMetrics, transcriptCache, getEffectiveTranscriptLimit, effectiveHiddenStrands,
-        isGeneHiddenByBiotype, selectedGene, dimNonSelectedGenes])
+        isGeneHiddenFromTracks, selectedGene, dimNonSelectedGenes])
 
     // The SVG export builder is a callback and cannot read the memo directly.
     const geneNoteOverlayRef = useRef(geneNoteOverlay)
@@ -12815,7 +12927,9 @@ export default function GenomeBrowser({
             setSelectedGene(geneForSelection)
             setSearchInput('')
             if (onManualNavigate) onManualNavigate()
-            return true
+            // The chromosome as this panel knows it, so a caller that focuses what
+            // it jumped to records the resolved name rather than what was typed.
+            return resolvedChrom
         }
 
         // Coordinate format: chr:start-end
@@ -12825,7 +12939,14 @@ export default function GenomeBrowser({
             const chrom = coordMatch[1]
             const start = parseInt(coordMatch[2].replace(/[,\s]/g, ''), 10)
             const end = parseInt(coordMatch[3].replace(/[,\s]/g, ''), 10)
-            await jumpToRange(chrom, start, end, null)
+            // Framed like a focused gene rather than filling the view edge to edge:
+            // padded so the boundary lines are visible, and shifted clear of the
+            // drawer that focusing the location is about to slide over this panel.
+            const requestedSpan = Math.max(1, end - start)
+            const flank = Math.max(1, (requestedSpan / FOCUS_RANGE_FILL_FRACTION - requestedSpan) / 2)
+            const framedRegion = frameFocusRange(start - flank, end + flank, { gainingFocus: true })
+            const resolvedChrom = await jumpToRange(chrom, framedRegion.start, framedRegion.end, null)
+            if (resolvedChrom) focusLocation({ chrom: resolvedChrom, start, end })
             // A tutorial step about the search box cannot wait for the box to hold what
             // was typed — jumpToRange empties it — so it waits for this instead. Emitted
             // whether the user typed it or the tutorial did, which is what lets someone
@@ -12885,7 +13006,7 @@ export default function GenomeBrowser({
             const padding = Math.max(100, (match.end - match.start) * 0.5)
             await jumpToRange(match.chrom, match.start - padding, match.end + padding, match)
         }
-    }, [searchInput, regions, selectedChrom, genome, genes, onManualNavigate, onPositionChange, focusDrawerInsetOnFocus, isFlipped, emitTutorialSignal])
+    }, [searchInput, regions, selectedChrom, genome, genes, onManualNavigate, onPositionChange, focusDrawerInsetOnFocus, isFlipped, emitTutorialSignal, focusLocation, frameFocusRange])
 
     const handleRegionChange = useCallback((chrom) => {
         setSelectedChrom(chrom)
@@ -13115,24 +13236,83 @@ export default function GenomeBrowser({
         })
     }, [selectedGene, isAligned, alignData, genomicToOverlay, animateToView, centerGeneVertically, frameFocusRange])
 
+    /* "Make what I am looking at the focus."
+     *
+     * The window itself becomes the location, then the view re-frames a little
+     * wider than it — otherwise the focus boundary lines land exactly on the
+     * edges of the view, where they cannot be seen, and the drawer that slides
+     * out covers the region's right end. */
+    const focusCurrentWindow = useCallback(() => {
+        if (!selectedChrom) return
+        const start = viewStartRef.current
+        const end = viewEndRef.current
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return
+
+        focusLocation({
+            chrom: selectedChrom,
+            start: Math.round(isAligned ? overlayToGenomic(start) : start),
+            end: Math.round(isAligned ? overlayToGenomic(end) : end),
+        })
+        const span = end - start
+        const flank = (span / BOX_SELECT_FILL_FRACTION - span) / 2
+        const framed = frameFocusRange(start - flank, end + flank, { gainingFocus: true })
+        animateToView(framed.start, framed.end, 300)
+        if (onManualNavigate) onManualNavigate()
+    }, [selectedChrom, isAligned, overlayToGenomic, focusLocation, frameFocusRange, animateToView, onManualNavigate])
+
+    /* The location of focus re-frames horizontally only: there is no row to bring
+     * into view, so unlike the gene target this leaves the vertical scroll alone. */
+    const handleRecenterSelectedLocation = useCallback(() => {
+        if (!focusLocationRange) return
+        const coords = getFeatureCoordsForView(
+            focusLocationRange.start,
+            focusLocationRange.end,
+            isAligned,
+            alignData,
+            genomicToOverlay
+        )
+        if (!coords) return
+
+        const span = Math.max(1, coords.end - coords.start)
+        const paddedSpan = span / FOCUS_RANGE_FILL_FRACTION
+        const midpoint = (coords.start + coords.end) / 2
+        const framed = frameFocusRange(midpoint - paddedSpan / 2, midpoint + paddedSpan / 2)
+        animateToView(framed.start, framed.end, 1000)
+    }, [focusLocationRange, isAligned, alignData, genomicToOverlay, frameFocusRange, animateToView])
+
     // Collapsing the drawer uncovers part of the track; opening it covers that
     // part again. Rescale the window by the change in visible width and recentre
-    // the focus gene, so the gene keeps the same share of what can actually be
-    // seen. Proportional on purpose rather than a re-frame: the shift is the same
-    // percentage whether the user is on 100kb or 10Mb, so a zoomed-out view is
-    // never hauled back in just to fill the space.
+    // whichever primary focus the panel holds, so a gene or location keeps the
+    // same share of what can actually be seen. Secondary drawer layers are not
+    // part of focusDrawerInset and therefore never move the genomic window.
     const lastFocusDrawerInsetRef = useRef(null)
+    const lastLocationFocusCentreRef = useRef(null)
     useEffect(() => {
         const previous = lastFocusDrawerInsetRef.current
         lastFocusDrawerInsetRef.current = focusDrawerInset
+        const locationCoords = focusLocationRange
+            ? getFeatureCoordsForView(focusLocationRange.start, focusLocationRange.end, isAligned, alignData, genomicToOverlay)
+            : null
+        if (selectedGene) lastLocationFocusCentreRef.current = null
+        else if (locationCoords) lastLocationFocusCentreRef.current = (locationCoords.start + locationCoords.end) / 2
         if (previous === null || previous === focusDrawerInset) return
-        // Only the open/collapsed toggle. An inset appearing or disappearing
-        // because the drawer moved to another panel is not a change in how much
-        // of this panel the user can see.
-        if (!previous || !focusDrawerInset) return
-        if (!selectedGene) return
 
-        const selectedCoords = getSelectedGeneCoordsForView(selectedGene, isAligned, alignData, genomicToOverlay)
+        // A newly focused range was already framed in the action that created
+        // it. Non-zero changes are the primary drawer opening/collapsing. A
+        // disappearing location drawer is also balanced once around its last
+        // centre, so dismissing it gives the recovered track width back.
+        if (!previous) return
+        const closingLocation = !focusDrawerInset && !selectedGene && !focusLocationRange
+            && Number.isFinite(lastLocationFocusCentreRef.current)
+        if (!focusDrawerInset && !closingLocation) return
+
+        const selectedCoords = selectedGene
+            ? getSelectedGeneCoordsForView(selectedGene, isAligned, alignData, genomicToOverlay)
+            : locationCoords
+                ? locationCoords
+                : closingLocation
+                    ? {start:lastLocationFocusCentreRef.current,end:lastLocationFocusCentreRef.current}
+                    : null
         if (!selectedCoords) return
 
         const next = rebalanceRangeForInsetChange({
@@ -13148,7 +13328,8 @@ export default function GenomeBrowser({
 
         const [targetStart, targetEnd] = clampView(next.start, next.end)
         animateToView(targetStart, targetEnd, 320)
-    }, [focusDrawerInset, selectedGene, isAligned, alignData, genomicToOverlay, isFlipped, clampView, animateToView])
+        if (closingLocation) lastLocationFocusCentreRef.current = null
+    }, [focusDrawerInset, selectedGene, focusLocationRange, isAligned, alignData, genomicToOverlay, isFlipped, clampView, animateToView])
 
     // ============ Keyboard navigation ============
     //
@@ -13202,7 +13383,9 @@ export default function GenomeBrowser({
 
         if (intent.type === 'reset') {
             if (intent.scope === 'gene') {
-                handleRecenterSelectedGene()
+                // "Reset to what is focused": whichever kind of focus the panel holds.
+                if (selectedGene) handleRecenterSelectedGene()
+                else handleRecenterSelectedLocation()
                 return
             }
             if (onManualNavigate) onManualNavigate()
@@ -13216,11 +13399,15 @@ export default function GenomeBrowser({
                 setSelectedGene(null)
                 return
             }
+            if (selectedLocation) {
+                setSelectedLocation(null)
+                return
+            }
             containerRef.current?.blur()
         }
     }, [
-        viewWidth, chromLength, selectedGene, panByPx, zoomAt, animateToView, clampView,
-        onManualNavigate, captureAdaptiveScrollAnchor, handleRecenterSelectedGene,
+        viewWidth, chromLength, selectedGene, selectedLocation, panByPx, zoomAt, animateToView, clampView,
+        onManualNavigate, captureAdaptiveScrollAnchor, handleRecenterSelectedGene, handleRecenterSelectedLocation,
     ])
 
     // Published upward so GenomeBrowserView can route a wheel gesture that landed
@@ -13401,7 +13588,7 @@ export default function GenomeBrowser({
         genome: 180,
         region: 220,
         search: 220,
-        iconGroup: 188,
+        iconGroup: 226,
         coordinates: 230,
     }
 
@@ -13527,6 +13714,28 @@ export default function GenomeBrowser({
                 className="flex items-center gap-1.5 ml-0 pl-0.5 border-l border-gray-300 dark:border-gray-700 shrink-0"
                 style={{ width: `${toolbarColumnWidths.iconGroup}px` }}
             >
+
+                {/* Focus this window — the location counterpart of clicking a gene */}
+                <button
+                    data-tour-id="browser-focus-window"
+                    data-tutorial-engaged={isLocationFocusVisible ? 'true' : 'false'}
+                    onClick={focusCurrentWindow}
+                    disabled={!selectedChrom}
+                    className="p-1.5 rounded transition-opacity hover:opacity-80 disabled:opacity-50 flex items-center justify-center"
+                    style={{
+                        backgroundColor: controlAccentColor,
+                        color: '#ffffff',
+                        width: '32px', height: '28px',
+                        boxShadow: isLocationFocusVisible ? `0 0 0 2px ${isLight ? '#ffffff' : '#111827'} inset` : 'none',
+                    }}
+                    title={selectedGene
+                        ? 'Focus the current window instead of the gene of focus'
+                        : 'Make the current window the location of focus'}
+                >
+                    <svg width="19" height="19" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                        <path d={RESET_ICON_PATH_D} fill="currentColor" />
+                    </svg>
+                </button>
 
                 {/* Expand / Collapse All — single toggle */}
                 {(() => {
@@ -13712,12 +13921,16 @@ export default function GenomeBrowser({
         </div>
     )
 
-    const selectedGeneInfoBar = selectedGene && !isSelectedHidden && (
+    /* Shared by every focus bar, so a new kind of focus is a row of content rather
+     * than another copy of the bar. Only one focus is ever live in a panel, so
+     * they can all share `focusBarRef` and the layout compensation that measures it. */
+    const renderFocusBar = (kind, children) => (
         <div
             ref={focusBarRef}
             // The focus drawer aligns its header to this bar and scrolls it into
             // view when the user switches between panels' focus genes.
             data-focus-bar="true"
+            data-focus-kind={kind}
             data-browser-controls="true"
             data-focus-panel-key={screenshotTargetId || genome}
             className="flex items-center gap-4 px-3 py-1.5 flex-none text-xs"
@@ -13728,17 +13941,61 @@ export default function GenomeBrowser({
                 color: isLight ? '#1e293b' : '#ffffff',
             }}
         >
+            {children}
+        </div>
+    )
+
+    // The anchor is spelled out per kind rather than passed in, so every tour id the
+    // focus bar can render is written literally in the component that renders it.
+    const renderFocusTargetButton = (kind, onClick, title, disabled = false) => (
+        <button
+            data-tour-id={kind === 'location' ? 'browser-recenter-location' : 'browser-recenter'}
+            onClick={onClick}
+            disabled={disabled}
+            className="shrink-0 p-1.5 rounded-md transition-colors hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center"
+            title={title}
+        >
+            <svg width="27" height="27" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                <path d={RESET_ICON_PATH_D} fill={controlAccentColor} />
+            </svg>
+        </button>
+    )
+
+    const selectedLocationInfoBar = isLocationFocusVisible && focusLocationRange && renderFocusBar('location', (
+        <>
+            {renderFocusTargetButton(
+                'location',
+                handleRecenterSelectedLocation,
+                'Re-center view on location of focus'
+            )}
+            <span className="font-semibold">
+                {formatRegionCoord(
+                    chromLabel(focusLocationRange.chrom),
+                    focusLocationRange.start,
+                    focusLocationRange.end
+                )}
+            </span>
+            <span className="opacity-70">Location</span>
+            <span className="opacity-70">{formatBp(focusLocationRange.end - focusLocationRange.start)}</span>
             <button
-                data-tour-id="browser-recenter"
-                onClick={handleRecenterSelectedGene}
-                disabled={!hasGeneCoords(selectedGene)}
-                className="shrink-0 p-1.5 rounded-md transition-colors hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center"
-                title="Re-center view on selected gene"
+                onClick={() => setSelectedLocation(null)}
+                className="ml-auto opacity-50 hover:opacity-100"
+                style={{ color: colors.infoText }}
+                title="Clear the location of focus"
             >
-                <svg width="27" height="27" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                    <path d={RESET_ICON_PATH_D} fill={controlAccentColor} />
-                </svg>
+                ✕
             </button>
+        </>
+    ))
+
+    const selectedGeneInfoBar = selectedGene && !isSelectedHidden && renderFocusBar('gene', (
+        <>
+            {renderFocusTargetButton(
+                'gene',
+                handleRecenterSelectedGene,
+                'Re-center view on selected gene',
+                !hasGeneCoords(selectedGene)
+            )}
             <span className="font-semibold">{selectedGene.name || selectedGene.id}</span>
             <span className="opacity-70">{selectedGene.id}</span>
             <span className="opacity-70">{selectedGene.biotype || 'protein_coding'}</span>
@@ -13755,8 +14012,8 @@ export default function GenomeBrowser({
             >
                 ✕
             </button>
-        </div>
-    )
+        </>
+    ))
 
     const canConfirmCustomTrack = customTrackLabelInput.trim().length > 0
 
@@ -14169,7 +14426,7 @@ export default function GenomeBrowser({
             {effectiveToolbarPosition === 'top' && toolbar}
 
             {/* Selected Gene Info Bar (Top) */}
-            {effectiveFocusBarPosition === 'top' && selectedGeneInfoBar}
+            {effectiveFocusBarPosition === 'top' && (selectedGeneInfoBar || selectedLocationInfoBar)}
 
             {/* Canvas container. It has no overflow of its own — note that
                 `overflow-x-hidden` alone would silently promote overflow-y back to
@@ -14807,7 +15064,7 @@ export default function GenomeBrowser({
             </div>
 
             {/* Selected Gene Info Bar (Bottom) */}
-            {effectiveFocusBarPosition === 'bottom' && selectedGeneInfoBar}
+            {effectiveFocusBarPosition === 'bottom' && (selectedGeneInfoBar || selectedLocationInfoBar)}
 
             {/* Toolbar bottom */}
             {effectiveToolbarPosition === 'bottom' && (

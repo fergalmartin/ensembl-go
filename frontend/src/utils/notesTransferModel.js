@@ -18,6 +18,7 @@ import {
     GENERAL_NOTES_TARGET_ID,
     NOTE_TARGET_KIND_GENE,
     NOTE_TARGET_KIND_GENOME,
+    NOTE_TARGET_KIND_LOCATION,
     NOTE_TARGET_KIND_TODO,
     noteDisplayTitle,
     normalizeNoteGenomeKey,
@@ -243,7 +244,11 @@ export function buildTransferTree(notes, activeGenomes, {
     for (const note of all) {
         const kind = text(note?.target?.kind).trim()
         if (kind === NOTE_TARGET_KIND_TODO) todoNotes.push(note)
-        else if (kind === NOTE_TARGET_KIND_GENE || kind === NOTE_TARGET_KIND_GENOME) sectionNotes.push(note)
+        else if (
+            kind === NOTE_TARGET_KIND_GENE
+            || kind === NOTE_TARGET_KIND_GENOME
+            || kind === NOTE_TARGET_KIND_LOCATION
+        ) sectionNotes.push(note)
         else otherNotes.push(note)
     }
 
@@ -288,7 +293,10 @@ export function buildTransferTree(notes, activeGenomes, {
                     })
                 }
 
-                for (const geneRow of section.genes) {
+                // Genes first, then the locations written about in this genome.
+                // Both are "one target's notes", so they carry the same node type
+                // and the tree needs no new case to select or move them.
+                for (const geneRow of [...section.genes, ...section.locations]) {
                     const geneId = `${genomeId}/gene:${geneRow.geneId}`
                     children.push({
                         id: geneId,

@@ -37,6 +37,22 @@ test('genome navigation retains only selected, present cells from eligible rows'
   assert.deepEqual(selectedRangesForFragment(selection,fragment,new Set(['missing'])),[])
 })
 
+test('genome navigation includes highlighted local rows in original and layer blocks',async()=>{
+  const {selectedRangesForFragment}=await import('../src/components/alignment-explorer/layers.js')
+  const fragment=createFragment(7,0,12,['a','b'],{coverage:{a:[[0,5],[8,12]],b:[[1,11]]}})
+  assert.deepEqual(selectedRangesForFragment([],fragment,new Set(['a']),['a']),[
+    {id:'a',start:0,end:5},
+    {id:'a',start:8,end:12},
+  ])
+  assert.deepEqual(selectedRangesForFragment([],fragment,new Set(['a']),['b']),[])
+  const selection=[{fragmentId:fragment.id,start:3,end:6,rowIds:['b']}]
+  assert.deepEqual(selectedRangesForFragment(selection,fragment,new Set(['a','b']),['a']),[
+    {id:'b',start:3,end:6},
+    {id:'a',start:0,end:5},
+    {id:'a',start:8,end:12},
+  ])
+})
+
 test('genome link availability is derived from assembly rather than stored app keys',async()=>{
   const {classifyGenomeLink}=await import('../src/components/alignment-explorer/associations.js')
   const row={metadata:{assembly:'GCA_123.1',region:'1'}},local={assembly:'GCA_123.1'},other={assembly:'GCA_456.1'}

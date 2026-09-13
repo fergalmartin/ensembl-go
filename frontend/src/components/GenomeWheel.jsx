@@ -209,7 +209,7 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
       onKeyDown={event => { if (!session && (event.key === 'Enter' || event.key === ' ')) start(event, true) }}>
       Cycle
     </button>
-    {session && createPortal(<div className={`genome-wheel-overlay ${isLight ? 'light' : ''} ${phase} ${sticky ? 'hovering' : ''}`} style={{ top: session.top }} data-browser-controls="true" onContextMenu={event => event.preventDefault()}>
+    {session && createPortal(<div className={`genome-wheel-overlay genome-wheel-overlay-genome ${isLight ? 'light' : ''} ${phase} ${sticky ? 'hovering' : ''}`} style={{ top: session.top }} data-browser-controls="true" onContextMenu={event => event.preventDefault()}>
       <div className="genome-wheel-scene" ref={stage} style={{ '--wheel-position': session.initial, '--face-step': `${step}deg`, '--radius': `${radius}px`, '--face-height': `${faceHeight}px` }}>
         <div className="genome-wheel-drum">{session.entries.map((entry, index) => <div key={entry.key} className={`genome-wheel-face ${index === candidate ? 'selected' : ''}`} style={{ '--face-index': index, '--accent': entry.color }}>
           <div className="genome-wheel-caption"><i style={{ background: entry.color }} />{entry.label}<small>{entry.assembly}</small></div>

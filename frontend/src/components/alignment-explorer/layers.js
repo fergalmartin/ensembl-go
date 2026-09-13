@@ -253,10 +253,12 @@ export function resolvePicks(selection) {
   return result
 }
 
-/** Alignment-column ranges from a selection that can be projected into genomes
- * for one displayed block. Coverage masks are retained, so a merged/cut layer
- * never asks the browser to open cells that are blank in that row. */
-export function selectedRangesForFragment(selection,fragment,eligibleRows) {
+/** Alignment-column ranges from selections and highlighted rows that can be
+ * projected into genomes for one displayed block. A region selection retains
+ * its exact columns; highlighting a row contributes that row's whole present
+ * span in the block. Coverage masks are retained, so a merged/cut layer never
+ * asks the browser to open cells that are blank in that row. */
+export function selectedRangesForFragment(selection,fragment,eligibleRows,highlighted=[]) {
   if(!fragment||fragment.aggregate)return []
   const eligible=eligibleRows instanceof Set?eligibleRows:new Set(eligibleRows||[])
   const byRow=new Map()
@@ -270,6 +272,10 @@ export function selectedRangesForFragment(selection,fragment,eligibleRows) {
       const ranges=intersectRanges(cellRanges(fragment,id),start,end)
       if(ranges.length)byRow.set(id,[...(byRow.get(id)||[]),...ranges])
     }
+  }
+  for(const id of highlightedRows(highlighted)){
+    if(!eligible.has(id)||!fragment.rowIds.includes(id))continue
+    byRow.set(id,[...(byRow.get(id)||[]),...cellRanges(fragment,id)])
   }
   return [...byRow].flatMap(([id,ranges])=>unionRanges(ranges).map(([start,end])=>({id,start,end})))
 }

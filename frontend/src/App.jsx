@@ -882,7 +882,6 @@ function App() {
   // Navigation: which view is active
   const [currentView, setCurrentView] = useState('home')
   const [explorerIncoming, setExplorerIncoming] = useState(null)
-  const [explorerLocus, setExplorerLocus] = useState(null)
   const [gettingStartedOutputDirDismissed, setGettingStartedOutputDirDismissed] = useState(false)
   const [outputDirNotification, setOutputDirNotification] = useState('')
   const previousViewRef = useRef('home')
@@ -920,6 +919,10 @@ function App() {
     timeout_sec: 300,
   })
   const [browserFocusByGenome, setBrowserFocusByGenome] = useState({})
+  // genomeKey -> { chrom, start, end } asked for from outside the browser — a
+  // location note or alignment selection offering to take the reader to its
+  // region. Consumed by the panel, which focuses it the same way a search does.
+  const [browserLocationFocusByGenome, setBrowserLocationFocusByGenome] = useState({})
   const alignmentInputsRef = useRef(alignmentInputs)
   const alignmentResolveControllersRef = useRef({})
   const alignmentResolveRequestTokenRef = useRef({})
@@ -1956,6 +1959,14 @@ function App() {
 
     setBrowserFocusByGenome((prev) => updateGeneFocusMapEntry(prev, key, gene))
   }, [refGenomeKey, tgtGenomeKey, handleRefGeneSelect, handleTgtGeneSelect])
+
+  const handleGenomeFocusLocationSelect = useCallback((genomeKey, location) => {
+    const key = String(genomeKey || '').trim()
+    if (!key || !location) return
+    // A new object every time, so asking for the same region twice still
+    // reaches the panel as a fresh request.
+    setBrowserLocationFocusByGenome((prev) => ({ ...prev, [key]: { ...location } }))
+  }, [])
 
   const handleClearAllFocusedGenes = useCallback(() => {
     setBrowserRefGene(null)
@@ -5510,7 +5521,14 @@ function App() {
         const species=wanted.find(item=>getAssemblyAccession(item).toUpperCase()===String(locus?.assembly||'').trim().toUpperCase())
         return species?{...locus,genomeKey:speciesItemKey(species)}:null
       }).filter(Boolean)
-      setExplorerLocus({loci:positioned,token:Date.now()})
+      // These are regions, not synthetic genes. Using the browser's location
+      // navigation gives every panel its location focus and frames it without
+      // reserving the gene drawer width (which can magnify narrow multi-genome
+      // panels by an order of magnitude).
+      setBrowserLocationFocusByGenome(Object.fromEntries(positioned.map(locus=>[
+        locus.genomeKey,
+        {chrom:locus.chrom||locus.region,start:locus.start,end:locus.end,strand:locus.strand},
+      ])))
     }finally{suppressViewSyncRef.current=false}
   }
   const selectorSelectedSpecies = useMemo(() => (
@@ -6639,6 +6657,7 @@ function App() {
                 topBarSpecies={topBarSpecies}
                 activeSpecies={dedupeSpeciesList(config?.active_species || [])}
                 onGenomeFocusGeneSelect={handleGenomeFocusGeneSelect}
+                onGenomeFocusLocationSelect={handleGenomeFocusLocationSelect}
                 onNavigateToBrowser={() => setCurrentView('genome_browser')}
                 onAddGenome={handleSpeciesPillToggle}
                 onRedownloadGenome={() => setCurrentView('download')}
@@ -6673,7 +6692,6 @@ function App() {
           <div className="w-full h-full" style={{ display: currentView === 'genome_browser' ? 'block' : 'none' }}>
             <ErrorBoundary>
               <GenomeBrowserView
-                externalAlignmentLocus={explorerLocus}
                 listedGenomes={topBarSpecies}
                 onPromoteGenome={handleGenomeWheelPromote}
                 theme={theme}
@@ -6690,6 +6708,7 @@ function App() {
                 externalRefGene={browserRefGene}
                 externalTgtGene={browserTgtGene}
                 externalFocusGenesByGenome={focusGeneByGenome}
+                externalFocusLocationsByGenome={browserLocationFocusByGenome}
                 onGeneFocusByGenomeChange={setBrowserFocusByGenome}
                 onClearFocusedGenes={handleClearAllFocusedGenes}
                 screenshotMode={currentView === 'genome_browser' ? screenshotMode : false}

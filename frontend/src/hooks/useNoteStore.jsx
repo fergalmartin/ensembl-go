@@ -750,6 +750,12 @@ export function NoteStoreProvider({ children }) {
         [byTargetKey]
     )
 
+    /** The same selector for any other kind of target — a location, say. */
+    const notesForTarget = useCallback(
+        (kind, genomeKey, targetId) => byTargetKey[noteTargetKey(kind, genomeKey, targetId)] || EMPTY_NOTES,
+        [byTargetKey]
+    )
+
     const saveStateFor = useCallback(
         (noteId) => saveStateById[noteId] || NOTE_SAVE_STATES.IDLE,
         [saveStateById]
@@ -763,6 +769,7 @@ export function NoteStoreProvider({ children }) {
         status,
         error,
         notesForGene,
+        notesForTarget,
         geneNoteCountsForGenome: countsByGenome,
         saveStateFor,
         createNote,
@@ -774,7 +781,7 @@ export function NoteStoreProvider({ children }) {
         setNoteArchived,
         discardIfBlank,
         reload,
-    }), [notes, archivedNotes, notesById, byTargetKey, status, error, notesForGene, countsByGenome, saveStateFor,
+    }), [notes, archivedNotes, notesById, byTargetKey, status, error, notesForGene, notesForTarget, countsByGenome, saveStateFor,
         createNote, updateNoteFields, flushNote, saveNote, deleteNote, deleteNotes, setNoteArchived, discardIfBlank, reload])
 
     return <NoteStoreContext.Provider value={value}>{children}</NoteStoreContext.Provider>

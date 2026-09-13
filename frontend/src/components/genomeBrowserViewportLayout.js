@@ -231,3 +231,39 @@ export function rebalanceRangeForInsetChange({
   const nextStart = centre - centreOffsetBp
   return { start: nextStart, end: nextStart + nextSpan }
 }
+
+// How much of the track a focused range is framed to fill, so its boundary lines
+// land inside the view rather than on its edges. The gene of focus and the
+// location of focus frame themselves identically.
+export const FOCUS_RANGE_FILL_FRACTION = 0.8
+
+// A box-select is its own framing: the user drew the window they wanted, so only
+// enough slack is added to keep the focus boundary lines off the view edges.
+export const BOX_SELECT_FILL_FRACTION = 0.94
+
+/* The location of focus, normalised the way a gene's coordinate range is:
+ * whatever set it — a coordinate search, a box-select — hands over a chromosome
+ * and two coordinates, and every consumer wants them ordered and finite. */
+export function getFocusLocationRange(location) {
+  if (!location) return null
+  const chrom = String(location.chrom || '').trim()
+  if (!chrom) return null
+  const start = Number(location.start)
+  const end = Number(location.end)
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
+  const low = Math.min(start, end)
+  return { chrom, start: low, end: Math.max(start, end, low + 1) }
+}
+
+/* Region names reach the browser from several places (typed by the user, resolved
+ * by the backend, read off the region list) and differ only in the `chr` prefix
+ * and in case, so compare them the way the search box resolves them. */
+export function isSameChromToken(left, right) {
+  const normalize = (value) => {
+    const text = String(value || '').trim().toLowerCase()
+    return text.startsWith('chr') && text.length > 3 ? text.slice(3) : text
+  }
+  const a = normalize(left)
+  const b = normalize(right)
+  return Boolean(a) && a === b
+}

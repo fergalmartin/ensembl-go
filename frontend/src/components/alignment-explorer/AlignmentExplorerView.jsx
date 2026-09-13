@@ -263,11 +263,11 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
     const eligible=new Set(displayInventory.filter(row=>row.linkStatus==='topbar'&&row.linkedGenome?.files?.gff3).map(row=>row.id)),ranges=new Map()
     if(!onOpenGenome||!eligible.size)return ranges
     for(const fragment of layer.fragments){
-      const selected=selectedRangesForFragment(state.selection,fragment,eligible)
+      const selected=selectedRangesForFragment(state.selection,fragment,eligible,state.highlighted)
       if(selected.length)ranges.set(fragment.id,selected)
     }
     return ranges
-  },[displayInventory,layer.fragments,onOpenGenome,state.selection])
+  },[displayInventory,layer.fragments,onOpenGenome,state.highlighted,state.selection])
   const canvasState=useMemo(()=>({...renderState,camera:displayCamera,motifRows:motifSearch.rows,browserFragments:new Set(browserRangesByFragment.keys())}),[renderState,displayCamera,motifSearch.rows,browserRangesByFragment])
   // Original is the whole alignment however it is being looked at, so it is
   // described by the source's own totals. What a filter or a hide holds back is

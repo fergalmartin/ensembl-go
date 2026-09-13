@@ -214,3 +214,27 @@ test('the header counts only genomes that actually have notes', () => {
     assert.deepEqual(summariseNotes(sections), { notes: 3, genes: 3, genomes: 2 })
     assert.deepEqual(summariseNotes([]), { notes: 0, genes: 0, genomes: 0 })
 })
+
+test('a genome section lists the locations written about, apart from its genes', () => {
+    const locationNote = {
+        ...note('loc', {}),
+        target: {
+            kind: 'location',
+            genome_key: HUMAN,
+            id: '1:1000000-1200000',
+            label: 'Location: 1:1,000,000-1,200,000',
+            genome_selection_key: '',
+        },
+    }
+    const sections = buildNoteSections(
+        [note('gene-note'), locationNote],
+        [genome(HUMAN, 'Human')]
+    )
+    const human = sections[0]
+    assert.deepEqual(human.genes.map((row) => row.geneId), ['ENSG1'])
+    assert.deepEqual(human.locations.map((row) => row.geneId), ['1:1000000-1200000'])
+    assert.equal(human.locations[0].label, 'Location: 1:1,000,000-1,200,000')
+    // A location note counts towards the genome the way any other note does.
+    assert.equal(human.noteCount, 2)
+    assert.equal(human.activeNoteCount, 2)
+})
