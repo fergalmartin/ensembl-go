@@ -3,6 +3,8 @@ import download from './download.js'
 import genomeSelector from './genomeSelector.js'
 import customGenome from './customGenome.js'
 import genomeBrowser from './genomeBrowser.js'
+import trackManager from './trackManager.js'
+import fileBrowser from './fileBrowser.js'
 import app from './app.js'
 
 export const TUTORIAL_TARGET_VIEWS = Object.freeze([
@@ -11,6 +13,8 @@ export const TUTORIAL_TARGET_VIEWS = Object.freeze([
   download,
   genomeSelector,
   customGenome,
+  fileBrowser,
+  trackManager,
   genomeBrowser,
 ])
 

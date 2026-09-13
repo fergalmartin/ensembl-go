@@ -106,6 +106,27 @@ the tutorial is still a draft — the Tutorials view lists drafts too.
 Next, Back, Skip, Exit, Autoplay and Pause carry no data attribute — select them by their
 text inside `[data-tutorial-card]`, which is what the probe does.
 
+### A clean probe is not a working tutorial
+
+**Take a screenshot.** The Track Manager tutorial's three sweeps came back completely clean —
+44/44 forward, backward and jump-in, no runtime problems, a ring on every step — while every
+browser step was drawing no custom tracks at all and sitting at the wrong locus. The probe
+asks whether a ring exists around the step's target; it cannot ask whether the picture the
+card describes is the picture on screen.
+
+So for every step whose card makes a claim about *content* — a track being drawn, a count, a
+value, two things lining up — capture the step and look at it. Jumping to one step and
+screenshotting is cheap:
+
+```js
+// jump link -> wait -> Page.captureScreenshot
+document.querySelector('[data-tutorial-jump-step="<tutorial>:<step>"]').click()
+```
+
+The tell that this had happened was in the probe's own output and easy to read past: a ring
+whose **height** differed between directions. A ring around a canvas is the same ring whether
+the canvas has three extra tracks in it or none.
+
 ## 3. The three sweeps
 
 All three must come back clean. The number to drive to zero is **steps with nothing to point

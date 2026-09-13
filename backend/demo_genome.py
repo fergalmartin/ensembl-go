@@ -273,6 +273,70 @@ def install_demo_source_files(workspace: str) -> Dict[str, Any]:
     return {"directory": str(directory), "files": written}
 
 
+# The data tracks the Track Manager tutorial puts in front of the reader to register.
+#
+# Same idea as DEMO_SOURCE_BUNDLE above and for the same reason: the thing being taught is
+# what someone does with a folder of data files they already have, so these are laid out as
+# plain files and everything that makes them into tracks is the reader's own work, through
+# the registration wizard.
+#
+# Three files, two types, three renderings — a BigWig read as RNA-seq draws a zoned heatmap,
+# the same type read as ATAC-seq draws a signal plot, and the VCF draws density blocks that
+# become individual variants as you zoom. They are cut from real GRCh38 tracks by
+# `backend/scripts/build_demo_tracks.py` and cover 1:119,600,000-119,820,000, which is a
+# 220 kb window of the chromosome-1 slice the browser tutorial already ships.
+DEMO_TRACK_BUNDLE = (
+    ("expression", "brain_expression.bw", "brain_expression.bw"),
+    ("atac", "atac_seq_peaks.bw", "atac_seq_peaks.bw"),
+    ("variants", "variants.vcf.gz", "variants.vcf.gz"),
+    ("variantsIndex", "variants.vcf.gz.tbi", "variants.vcf.gz.tbi"),
+)
+
+DEMO_TRACK_SUBDIR = "demo_tracks"
+
+DEMO_TRACK_SOURCE_DIR_NAME = "demo_tracks"
+
+
+def demo_track_source_dir() -> Path:
+    """Where the bundled demo tracks live. Same idiom as ``demo_source_dir``."""
+    return Path(__file__).resolve().parent / "data" / DEMO_TRACK_SOURCE_DIR_NAME
+
+
+def install_demo_track_files(workspace: str) -> Dict[str, Any]:
+    """Copy the demo data tracks into a tutorial workspace, unregistered.
+
+    Inside the workspace for the same two reasons the demo genome's sources are: it is swept
+    at the start and end of every run, so a tutorial cannot leave files in the user's
+    directories; and the track registry written while a tutorial runs is the workspace's own
+    (``main._tracks_config``), which is deleted with it — so a registration must not name a
+    file that outlives the registry pointing at it.
+
+    The tabix index travels with the VCF. Without it the variant track registers and then
+    draws nothing, which looks like a broken tutorial rather than a missing file.
+    """
+    root = str(workspace or "").strip()
+    if not root:
+        raise ValueError("A tutorial workspace is needed.")
+    target = Path(root).expanduser().resolve()
+    if not _is_inside_tutorial_workspace(target):
+        raise ValueError("Demo track files may only be written inside a tutorial workspace.")
+
+    source = demo_track_source_dir()
+    directory = target / DEMO_TRACK_SUBDIR
+    directory.mkdir(parents=True, exist_ok=True)
+
+    written: Dict[str, str] = {}
+    for key, source_name, target_name in DEMO_TRACK_BUNDLE:
+        origin = source / source_name
+        if not origin.is_file():
+            raise ValueError(f"The bundled demo tracks are missing {source_name}.")
+        destination = directory / target_name
+        shutil.copyfile(origin, destination)
+        written[key] = str(destination)
+
+    return {"directory": str(directory), "files": written}
+
+
 def demo_assembly_dir(output_dir: str, genome_id: Any = None) -> Path:
     genome = bundled_genome(genome_id)
     return (
@@ -475,6 +539,12 @@ def demo_index_target(output_dir: str, genome_id: Any = None) -> Optional[tuple]
 
 _tutorial_session: Dict[str, Dict[str, Any]] = {}
 _tutorial_workspace_root: Optional[str] = None
+
+
+def is_inside_tutorial_workspace(path: Any) -> bool:
+    """Public name for the same check. `main` needs it to refuse writing a track that lives
+    inside a tutorial workspace into the user's own registry."""
+    return _is_inside_tutorial_workspace(path)
 
 
 def _is_inside_tutorial_workspace(path: Any) -> bool:

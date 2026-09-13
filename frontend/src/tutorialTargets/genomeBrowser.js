@@ -76,5 +76,23 @@ export default {
       id: 'browser.geneNote', anchorTemplate: 'browser-gene-note-{geneId}', label: 'Gene note marker', kind: 'canvas-marker',
       parameters: { geneId: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate'], safety: 'read',
     },
+
+    // ── Custom data tracks ──────────────────────────────────────────────────────
+    // Registering a track in the Track Manager and showing it in a panel are different
+    // acts in different apps, and this is the second half. Everything here takes the
+    // `recipeId` parameter `index.js` adds to every browser target, so a step addresses
+    // one genome's panel rather than the first one on the page.
+    { id: 'browser.addTrack', anchor: 'browser-add-track', label: 'Add a registered track', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    { id: 'browser.trackPicker', anchor: 'browser-track-picker', label: 'Add Registered Track dialog', kind: 'dialog', capabilities: ['spotlight'], safety: 'read' },
+    { id: 'browser.trackPickerList', anchor: 'browser-track-picker-list', label: 'Tracks available to add', kind: 'region', capabilities: ['spotlight', 'scroll'], safety: 'read' },
+    // By label, for the same reason the Track Manager's card is: the registry id is minted
+    // at registration and a portable document cannot know it.
+    {
+      id: 'browser.trackPickerRow', selectorTemplate: '[data-tutorial-picker-track="{label}"]', label: 'A track to add', kind: 'row',
+      parameters: { label: { type: 'string', required: true } },
+      capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
+    },
+    { id: 'browser.trackPickerAdd', anchor: 'browser-track-picker-add', label: 'Add the chosen tracks', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    { id: 'browser.trackPickerClose', anchor: 'browser-track-picker-close', label: 'Close the track picker', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
   ],
 }

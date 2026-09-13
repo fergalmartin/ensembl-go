@@ -57,9 +57,22 @@ Required: `id` (unique), `title`, `body`. Everything else is optional.
 **What Next does** — `autoplay.actions`, each `{ target, capability, value?, submit?,
 overwrite?, browserView? }`. Usually inferred; a `signal` advance infers **nothing**, so
 spell it out there. Runtime action types: `none`, `click` (`anchors`, `pauseMs`,
-`endPauseMs`, `skipIfFeatureFramed`, `skipIfEngaged`), `type` (`submit`, `overwrite`,
-`skipIfShowing`), `navigate`, `browserView` (`pan`, `zoom`, `locus`, `moves`, `durationMs`,
-`pauseMs`, `skipIfMoved`, `skipIfSequenceVisible`), `browserControls`, `browserScene`.
+`endPauseMs`, `skipIfFeatureFramed`, `skipIfEngaged`), `select`, `type` (`submit`,
+`overwrite`, `skipIfShowing`), `navigate`, `browserView` (`pan`, `zoom`, `locus`, `moves`,
+`durationMs`, `pauseMs`, `skipIfMoved`, `skipIfSequenceVisible`), `browserControls`,
+`browserScene`.
+
+**A `<select>` is `set-state` with a `value`**, which materialises to a `select` action.
+`activate` opens a drop-down and chooses nothing; `input` types into it. A step that asks the
+reader to choose an option and names either of those has **no action at all**, and Next walks
+past leaving the field as it found it — the same silent shape as the `signal`-advance trap.
+
+**Adding a new action type means teaching four places**, and missing one is quiet: the model's
+`ACTION_TYPES` and its validation, `materializeTutorialDocument` (capability → action),
+`refsFromStep` in the compatibility analyser (which capability the action *needs* — it assumes
+`activate` for anything that is not typing, so a `select` asked drop-downs for a capability
+none advertise and every such step was reported unavailable), and `performAction` in the
+runtime.
 
 **What finishes the step** — `advanceOn`:
 
@@ -95,6 +108,8 @@ and idempotent by construction (it sets, never toggles):
 | `pageScroll` | `target` plus `offset` px below the top of the scrolling region. Applied last |
 | `dialog` | `'playlistMembership'`, `'playlistPopover'`, `'none'`, plus `fields` |
 | `playlists` | The whole playlist set, replaced not merged. `[]` is a real instruction |
+| `trackRegistry` | The Track Manager: `registered` demo tracks, the `wizard` step, the `file` chosen, `fields`, `dataType`, `displayMode`, `genome`, and whether the file `browser` is open. `registered: []` is a real instruction |
+| `browserTracks` | Which registered tracks a panel draws: `added`, whether the `picker` is open, and what is `chosen` in it. `added: []` and `picker: 'closed'` are real instructions |
 
 A tutorial-level `defaultArrive` runs before each step's own; `browserControls` from the two
 are coalesced with the step's keys winning.
@@ -103,6 +118,9 @@ are coalesced with the step's keys winning.
 
 - `ensure`: `demo-genome-installed`, `demo-genome-active`, `slice-genome-installed`,
   `slice-genome-active`, `reg4-gene-focused`, `notifications-clear`.
+  **A precondition's result is not visible to the arrival that follows it** if it publishes
+  through React state: `ensureSliceGenomeActive` sets the override, and `overrideRef` only
+  catches up on the next render, so an arrival reading it immediately saw the old, empty list.
 - `undo`: only `unfocus-gene` and `delete-tutorial-note` remain — everything else is
   expressible as `arrive`. It lives on the step being *left*, not the step returned to.
 - **A precondition must never undo the step before it.**
@@ -134,4 +152,9 @@ are coalesced with the step's keys winning.
 4. Does a `signal` advance have an explicit action?
 5. Does a step that creates something have a predecessor declaring the empty state?
 6. Is the `arrive` order a dependency order?
-7. Does the card cover the centre of what it describes?
+7. Does the card cover the centre of what it describes? A subject larger than the card has
+   nowhere to put one, and semantic placement then falls back to the centre of the window —
+   which *is* the centre of the ring. Author a `cardPosition` on the subject's edge, and check
+   it at the smallest window, not the one you authored in.
+8. Does a browser step declare everything it needs *registered*, not just displayed? Views
+   unmount, so a step in one app cannot inherit what another app's steps set up.

@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import FileBrowserModal from './FileBrowserModal'
+import { TUTORIAL_TRACK_PRESETS } from '../utils/tutorialTrackRegistry'
 
 import { API_BASE } from '../backendRuntime'
 import { genomeKeysMatch, getGenomeKey, normalizeGenomeProvider } from '../utils/genomeIdentity'
@@ -664,6 +665,10 @@ function BigWigSettingsEditor({
     selectedDataType = '',
     requireDataTypeSelection = false,
     isLight,
+    // Anchored by the caller: the wizard and an editing track card both render this, and
+    // an anchor resolves to the first match, so only one of them may carry the ids.
+    dataTypeTourId,
+    displayModeTourId,
 }) {
     const normalized = normalizeBigWigSettings(settings)
     const hasDataTypeSelection = !requireDataTypeSelection || !!selectedDataType
@@ -714,6 +719,7 @@ function BigWigSettingsEditor({
             <div>
                 <label className={labelCls}>Data type</label>
                 <select
+                    data-tour-id={dataTypeTourId}
                     value={requireDataTypeSelection ? selectedDataType : effectiveSettings.data_type}
                     onChange={(e) => handleDataType(e.target.value)}
                     className={inputCls}
@@ -729,6 +735,7 @@ function BigWigSettingsEditor({
                     <div>
                         <label className={labelCls}>Display mode</label>
                         <select
+                            data-tour-id={displayModeTourId}
                             value={displayMode}
                             onChange={(e) => onDisplayModeChange(normalizeBigWigDisplayMode(e.target.value, effectiveSettings.data_type))}
                             className={inputCls}
@@ -941,7 +948,7 @@ function GenomeComboBox({ value, onChange, genomeOptions, isLight }) {
 
 // ── Registration Wizard ───────────────────────────────────────────────────────
 
-function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, initialBrowsePath }) {
+function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, initialBrowsePath, seed = null }) {
     const [step, setStep] = useState(1)
     const [filePath, setFilePath] = useState('')
     const [detectedType, setDetectedType] = useState(null)
@@ -961,6 +968,33 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
     const effectiveType = selectedType || detectedType
 
     const filePickedRef = useRef(false)
+
+    /* A tutorial's picture of this form. Set rather than merged, so walking back into a
+     * step that shows a file chosen and no data type yet shows exactly that, even if the
+     * reader had gone on to choose one. `seededAt` is a timestamp rather than a flag, so
+     * re-entering the same step is a fresh request — "empty" has to be re-established on
+     * the way back even though nothing about the step changed. */
+    useEffect(() => {
+        if (!seed) return
+        const detected = seed.filePath ? detectTypeFromPath(seed.filePath) : null
+        setStep(seed.step === 2 ? 2 : 1)
+        setFilePath(seed.filePath || '')
+        setDetectedType(detected)
+        setSelectedType(null)
+        setLabel(seed.label || '')
+        setBigWigDataType(seed.dataType || '')
+        setBigWigSettings(normalizeBigWigSettings(seed.dataType ? { data_type: seed.dataType } : null))
+        setDisplayMode(seed.displayMode || '')
+        setVcfSettings(normalizeVcfSettings(null))
+        setSpliceSettings(DEFAULT_SPLICE_SETTINGS)
+        setGenomeKey(seed.genomeKey || '')
+        setFileBrowserOpen(Boolean(seed.browserOpen))
+        setError('')
+        setWarning('')
+        setIndexNote('')
+    }, [seed?.seededAt])  // eslint-disable-line react-hooks/exhaustive-deps
+
+    const [indexNote, setIndexNote] = useState('')
 
     const handleFilePicked = (path) => {
         filePickedRef.current = true   // set synchronously before onClose fires
@@ -1011,7 +1045,6 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
         setDisplayMode(normalizeBigWigDisplayMode(nextDisplayMode, normalized.data_type))
     }
 
-    const [indexNote, setIndexNote] = useState('')
     const isBigWigConfigured = effectiveType !== 'bigwig' || !!bigWigDataType
 
     const handleRegister = async () => {
@@ -1079,7 +1112,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                 isOpen={fileBrowserOpen}
                 onClose={() => { setFileBrowserOpen(false) }}
                 onSelect={handleFilePicked}
-                initialPath={initialBrowsePath || '.'}
+                initialPath={seed?.browserDirectory || initialBrowsePath || '.'}
                 mode="file"
                 theme={isLight ? 'light' : 'dark'}
                 extensions={['.bw', '.bigwig', '.bb', '.bigbed', '.vcf', '.vcf.gz', '.bed', '.bed.gz', '.bam', '.SJ.out.tab']}
@@ -1087,6 +1120,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
 
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
                 <div
+                    data-tour-id="track-wizard"
                     className={`w-full max-w-lg rounded-2xl shadow-2xl border ${isLight ? 'bg-white border-gray-200' : 'bg-gray-900 border-gray-700'}`}
                     onClick={e => e.stopPropagation()}
                 >
@@ -1104,6 +1138,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                             <div className="text-center space-y-4">
                                 <p className={`text-sm ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>Select the data file you want to add as a track.</p>
                                 <button
+                                    data-tour-id="track-wizard-browse"
                                     onClick={() => {
                                         filePickedRef.current = false
                                         setFileBrowserOpen(true)
@@ -1126,7 +1161,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                 {/* File path display */}
                                 <div>
                                     <span className={labelCls}>Selected file</span>
-                                    <div className={`px-3 py-2 rounded-lg text-xs font-mono break-all ${isLight ? 'bg-gray-50 text-gray-600 border border-gray-200' : 'bg-gray-800 text-gray-300 border border-gray-700'}`}>
+                                    <div data-tour-id="track-wizard-file" className={`px-3 py-2 rounded-lg text-xs font-mono break-all ${isLight ? 'bg-gray-50 text-gray-600 border border-gray-200' : 'bg-gray-800 text-gray-300 border border-gray-700'}`}>
                                         {filePath}
                                     </div>
                                 </div>
@@ -1145,6 +1180,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                         </p>
                                     )}
                                     <select
+                                        data-tour-id="track-wizard-type"
                                         value={effectiveType || ''}
                                         onChange={e => handleTypeChange(e.target.value)}
                                         className={inputCls}
@@ -1160,6 +1196,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                 <div>
                                     <label className={labelCls}>Label</label>
                                     <input
+                                        data-tour-id="track-wizard-label"
                                         type="text"
                                         value={label}
                                         onChange={e => setLabel(e.target.value)}
@@ -1169,9 +1206,11 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                 </div>
 
                                 {effectiveType === 'bigwig' && (
-                                    <div>
+                                    <div data-tour-id="track-wizard-bigwig">
                                         <label className={labelCls}>BigWig plot settings</label>
                                         <BigWigSettingsEditor
+                                            dataTypeTourId="track-wizard-datatype"
+                                            displayModeTourId="track-wizard-display"
                                             settings={bigWigSettings}
                                             displayMode={displayMode}
                                             onSettingsChange={handleBigWigSettingsChange}
@@ -1188,6 +1227,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                     <div>
                                         <label className={labelCls}>Display mode</label>
                                         <select
+                                            data-tour-id="track-wizard-display-mode"
                                             value={displayMode}
                                             onChange={e => setDisplayMode(e.target.value)}
                                             className={inputCls}
@@ -1210,7 +1250,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                     </div>
                                 )}
                                 {effectiveType === 'vcf' && (
-                                    <div>
+                                    <div data-tour-id="track-wizard-vcf">
                                         <label className={labelCls}>VCF colors</label>
                                         <VcfSettingsEditor
                                             settings={vcfSettings}
@@ -1221,7 +1261,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                 )}
 
                                 {/* Genome */}
-                                <div>
+                                <div data-tour-id="track-wizard-genome">
                                     <label className={labelCls}>Genome association <span className={`font-normal ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>(optional)</span></label>
                                     <GenomeComboBox
                                         value={genomeKey}
@@ -1262,12 +1302,14 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                     {step === 2 && (
                         <div className={`px-6 py-4 border-t flex justify-between gap-3 ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700 bg-gray-900/50'}`}>
                             <button
+                                data-tour-id="track-wizard-back"
                                 onClick={() => { setStep(1); setFilePath('') }}
                                 className={`px-4 py-2 rounded-lg text-sm ${isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-800'}`}
                             >
                                 ← Back
                             </button>
                             <button
+                                data-tour-id="track-wizard-register"
                                 onClick={handleRegister}
                                 disabled={!effectiveType || !label.trim() || registering || !isBigWigConfigured}
                                 className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1394,7 +1436,13 @@ function TrackCard({ track, isLight, genomeOptions, onUpdate, onDelete }) {
         : track.display_mode
 
     return (
-        <div className={`h-full rounded-xl border p-4 transition-colors ${isLight ? 'bg-white border-gray-200 hover:border-blue-200' : 'bg-gray-800 border-gray-700 hover:border-blue-700/50'}`}>
+        // Anchored by label rather than by registry id: the id is minted at registration
+        // and a tutorial cannot know it, but the label is exactly what the tutorial typed.
+        <div
+            data-tour-id={`track-manager-track-${track.id}`}
+            data-tutorial-track-label={track.label || ''}
+            className={`h-full rounded-xl border p-4 transition-colors ${isLight ? 'bg-white border-gray-200 hover:border-blue-200' : 'bg-gray-800 border-gray-700 hover:border-blue-700/50'}`}
+        >
             {!editing ? (
                 <div className="flex items-start gap-3">
                     <div className="flex-1 min-w-0">
@@ -1577,11 +1625,21 @@ function HubTrackRows({ rows, renderRow, isLight }) {
 
 // ── Main View ─────────────────────────────────────────────────────────────────
 
-export default function TrackManagerView({ theme = 'dark', config, inactiveSpecies = [] }) {
+export default function TrackManagerView({
+    theme = 'dark',
+    config,
+    inactiveSpecies = [],
+    // A tutorial's `trackRegistry` arrival, reconciled below, and the way back: the
+    // arrival waits on what this reports rather than assuming registration is instant.
+    tutorialTrackRequest = null,
+    onTutorialTracksRegistered = null,
+}) {
     const isLight = theme === 'light'
     const [tracks, setTracks] = useState([])
     const [loading, setLoading] = useState(true)
     const [showWizard, setShowWizard] = useState(false)
+    // What the wizard should open showing, when a tutorial puts it in a particular state.
+    const [wizardSeed, setWizardSeed] = useState(null)
     const [searchQuery, setSearchQuery] = useState('')
     const [filterType, setFilterType] = useState('')
     const [filterGenome, setFilterGenome] = useState('')
@@ -1668,6 +1726,58 @@ export default function TrackManagerView({ theme = 'dark', config, inactiveSpeci
     }, [])
 
     useEffect(() => { loadTracks() }, [loadTracks])
+
+    /* Report what is registered, so a tutorial's arrival can wait for the work rather than
+     * assume it. Registering validates the file and may build a tabix index, which is real
+     * work; a card describing a track in the list was otherwise ringing a card that did
+     * not exist yet. */
+    useEffect(() => {
+        onTutorialTracksRegistered?.(tracks.map((track) => String(track?.label || '')))
+    }, [tracks, onTutorialTracksRegistered])
+
+    /* A tutorial's `trackRegistry` arrival, reconciled against this view.
+     *
+     * Set, never toggled: an arrival runs on every entry to a step, so walking back into
+     * the step that registers the first track has to find exactly one track registered,
+     * not a second copy of it.
+     *
+     * Registering is done here rather than in the runtime because this is where the work
+     * lives, and because the registry the tutorial writes to is chosen by the backend
+     * (`main._tracks_config`) rather than by the caller — so there is no second path that
+     * could write somewhere else. */
+    useEffect(() => {
+        const request = tutorialTrackRequest
+        if (!request) return
+        let cancelled = false
+
+        const run = async () => {
+            // The registry itself is the runtime's job, not this view's. It has to be,
+            // because a genome-browser step declares registered tracks with no Track
+            // Manager mounted — and when both reconciled, each read the same empty registry
+            // and posted the same three tracks, so the list showed six.
+            //
+            // So this only catches up with what the runtime has done.
+            await loadTracks()
+            if (cancelled) return
+
+            // Then the wizard itself, which is what most of the steps are about.
+            setShowWizard(request.wizard !== 'closed')
+            setWizardSeed(request.wizard === 'closed' ? null : {
+                step: request.wizard === 'details' ? 2 : 1,
+                filePath: request.file || '',
+                label: request.fields?.label || '',
+                dataType: request.dataType || '',
+                displayMode: request.displayMode || '',
+                genomeKey: request.genome === 'slice' ? (request.genomeKey || '') : '',
+                browserOpen: request.browser?.state === 'open',
+                browserDirectory: request.browser?.directory || '',
+                seededAt: request.requestedAt,
+            })
+        }
+
+        run()
+        return () => { cancelled = true }
+    }, [tutorialTrackRequest, loadTracks])
 
     const loadHubTracks = useCallback(async (options = {}) => {
         const refresh = options?.refresh === true
@@ -2072,15 +2182,16 @@ export default function TrackManagerView({ theme = 'dark', config, inactiveSpeci
     }, [selectedGenomesForHub, genomeOptions])
 
     return (
-        <div data-screenshot-capture="view" className={`h-full overflow-y-auto ${bg}`} style={{ minHeight: 0 }}>
+        <div data-screenshot-capture="view" data-tour-id="track-manager-view" className={`h-full overflow-y-auto ${bg}`} style={{ minHeight: 0 }}>
             {/* ── Header ── */}
-            <div className={`px-6 py-4 border-b ${borderColor} ${contentBg}`}>
+            <div data-tour-id="track-manager-header" className={`px-6 py-4 border-b ${borderColor} ${contentBg}`}>
                 <div className="flex items-center justify-between gap-4">
                     <div>
                         <h1 className={`text-xl font-bold ${textPrimary}`}>Track Manager</h1>
                         <p className={`text-sm mt-0.5 ${textSecondary}`}>Register custom data tracks to display in the Genome Browser</p>
                     </div>
                     <button
+                        data-tour-id="track-manager-add"
                         onClick={() => setShowWizard(true)}
                         className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold shadow transition-colors"
                     >
@@ -2093,8 +2204,9 @@ export default function TrackManagerView({ theme = 'dark', config, inactiveSpeci
 
                 {/* ── Controls row: search + filters ── */}
                 {tracks.length > 0 && (
-                    <div className="flex items-center gap-3 mt-4 flex-wrap">
+                    <div data-tour-id="track-manager-filters" className="flex items-center gap-3 mt-4 flex-wrap">
                         <input
+                            data-tour-id="track-manager-search"
                             type="text"
                             placeholder="Search tracks…"
                             value={searchQuery}
@@ -2121,7 +2233,7 @@ export default function TrackManagerView({ theme = 'dark', config, inactiveSpeci
             </div>
 
             {/* ── Track list ── */}
-            <div className="px-6 py-5 space-y-6">
+            <div data-tour-id="track-manager-list" className="px-6 py-5 space-y-6">
                 {loading ? (
                     <div className="flex items-center justify-center h-40">
                         <div className={`w-6 h-6 border-2 border-t-transparent rounded-full animate-spin ${isLight ? 'border-blue-500' : 'border-blue-400'}`} />
@@ -2156,7 +2268,7 @@ export default function TrackManagerView({ theme = 'dark', config, inactiveSpeci
                 )}
 
                 {/* ── Track Hub Registry discovery/import ── */}
-                <div className={`rounded-xl border p-4 ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-900/30'}`}>
+                <div data-tour-id="track-manager-hub" className={`rounded-xl border p-4 ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-900/30'}`}>
                     <div className="flex items-center justify-between gap-3 flex-wrap">
                         <div>
                             <h3 className={`text-sm font-semibold ${textPrimary}`}>Track Hub Registry</h3>
@@ -2385,9 +2497,10 @@ export default function TrackManagerView({ theme = 'dark', config, inactiveSpeci
                 <RegistrationWizard
                     isLight={isLight}
                     genomeOptions={genomeOptions}
-                    onClose={() => setShowWizard(false)}
+                    onClose={() => { setShowWizard(false); setWizardSeed(null) }}
                     onRegistered={handleRegistered}
                     initialBrowsePath={browsePath}
+                    seed={wizardSeed}
                 />
             )}
         </div>

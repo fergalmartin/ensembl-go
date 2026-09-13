@@ -6619,6 +6619,8 @@ function App() {
                 theme={theme}
                 config={config}
                 inactiveSpecies={inactiveSelectedSpecies}
+                tutorialTrackRequest={tutorialRuntime.trackRequest}
+                onTutorialTracksRegistered={tutorialRuntime.reportRegisteredTracks}
               />
             </div>
           ) : currentView === 'genome_browser' ? null : (

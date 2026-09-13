@@ -8,7 +8,7 @@
 
 import { API_BASE } from '../backendRuntime'
 import { DEMO_SPECIES_KEY } from './demoGenome.js'
-export { installTutorialDataset, installDemoSourceFiles } from './drafts.js'
+export { installTutorialDataset, installDemoSourceFiles, installDemoTrackFiles } from './drafts.js'
 
 export async function fetchDemoGenomeStatus(outputDir, genomeId = '') {
   const params = new URLSearchParams({ output_dir: String(outputDir || '') })

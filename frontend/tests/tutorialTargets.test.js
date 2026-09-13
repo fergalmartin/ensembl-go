@@ -20,11 +20,16 @@ test('the target catalogue has unique stable ids and complete contracts', () => 
   const ids = TUTORIAL_TARGETS.map((target) => target.id)
   assert.equal(new Set(ids).size, ids.length)
   // Which views are authorable, not how many modules describe each: the Genome Selector
-  // is covered by two, because the add-a-genome form, the file browser and the analysis
-  // reports are one exercise spanning three components and belong in their own module.
+  // is covered by two, because the add-a-genome form and the analysis reports are one
+  // exercise spanning several components and belong in their own module.
+  //
+  // The file browser is deliberately absent. It opens over whichever view asked for it —
+  // the add-a-genome form and the Track Manager's wizard both do — so its contracts are
+  // filed under 'app', which is the catalogue's word for "not tied to one view" and the
+  // only viewId `validateTutorialDocument` exempts from its step-view check.
   assert.deepEqual(
     [...new Set(TUTORIAL_TARGET_VIEWS.filter((view) => view.viewId !== 'app').map((view) => view.viewId))],
-    ['configuration', 'download', 'genome_selector', 'genome_browser'],
+    ['configuration', 'download', 'genome_selector', 'track_manager', 'genome_browser'],
   )
   for (const target of TUTORIAL_TARGETS) {
     assert.match(target.id, /^[a-z][A-Za-z0-9.]+$/)

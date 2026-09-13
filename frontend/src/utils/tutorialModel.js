@@ -143,7 +143,7 @@ export const ADVANCE_TYPES = Object.freeze(['manual', 'view', 'click', 'all-clic
  *  nobody would otherwise use, the step stays interactive so the user can drag and scroll
  *  the real track, and Next drives the browser's own animated move on their behalf. */
 export const ACTION_TYPES = Object.freeze([
-  'none', 'click', 'type', 'navigate', 'browserView', 'browserControls', 'browserScene',
+  'none', 'click', 'select', 'type', 'navigate', 'browserView', 'browserControls', 'browserScene',
 ])
 
 /** The subset of actions a step may perform on *arrival* rather than on Next.
@@ -158,7 +158,7 @@ export const ACTION_TYPES = Object.freeze([
  *  toggles rather than sets would flip back and forth as the user walked about. */
 export const ARRIVE_TYPES = Object.freeze([
   'browserView', 'browserControls', 'browserScene', 'selectorList', 'genomeSelection', 'pageScroll',
-  'dialog', 'playlists', 'customGenome',
+  'dialog', 'playlists', 'customGenome', 'trackRegistry', 'browserTracks',
 ])
 
 /** The state of the "add your own genome" form a step expects to find.
@@ -229,6 +229,112 @@ export function arrivalCustomGenome(arrival) {
     // id — a genome the reader created from files on disk has no recipe.
     active: Boolean(arrival.active),
   }
+}
+
+/** The demo data tracks the Track Manager tutorial registers, named symbolically.
+ *
+ *  Same reasoning as `CUSTOM_GENOME_FILES`: a portable document may not carry an absolute
+ *  path — `validateTutorialDocument` rejects one — and a path from the author's machine
+ *  would be wrong everywhere else. `demo:expression` names a file the runtime resolves
+ *  against the tutorial's own workspace. */
+export const TRACK_FILES = Object.freeze(['', 'demo:expression', 'demo:atac', 'demo:variants'])
+
+/** The three tracks, by the key the workspace installer writes them under. */
+export const TRACK_KEYS = Object.freeze(['expression', 'atac', 'variants'])
+
+/** What each demo track is actually called on disk.
+ *
+ *  The browser panel matches a registered track to one of these by the end of its path,
+ *  which is how a `browserTracks` arrival knows which registry entry it means without the
+ *  tutorial having to carry ids it cannot know. Duplicated from `DEMO_TRACK_BUNDLE` in
+ *  `backend/demo_genome.py`; a test asserts the two agree. */
+export const TRACK_FILENAMES = Object.freeze({
+  expression: 'brain_expression.bw',
+  atac: 'atac_seq_peaks.bw',
+  variants: 'variants.vcf.gz',
+})
+
+/** The registration wizard's two steps, plus not being open at all. */
+export const TRACK_WIZARD_STATES = Object.freeze(['closed', 'file', 'details'])
+
+/** The BigWig data types the wizard offers. The choice is not cosmetic and not optional:
+ *  Register stays disabled until one is made, and it decides whether the track draws as a
+ *  zoned heatmap or as a signal plot. */
+export const TRACK_DATA_TYPES = Object.freeze(['', 'rna_seq', 'atac_seq', 'chip_seq', 'custom'])
+
+/** The state of the Track Manager a step expects to find.
+ *
+ *  The same argument as `customGenome`, and for a form filled in the same way: the Track
+ *  Manager tutorial walks the registration wizard field by field, and almost every step
+ *  describes it in one particular condition — a file chosen and no data type yet, a data
+ *  type chosen and no genome, two tracks registered and a third being filled in. A step
+ *  inheriting that from the step before it shows the wrong picture the moment anyone
+ *  presses Back or jumps into the middle.
+ *
+ *  `registered: []` is a real instruction, exactly as `genomes: []` is: arrive with
+ *  nothing registered, so the step that registers the first track can be watched again.
+ *
+ *  Idempotent by construction — it sets each field rather than toggling. */
+export function arrivalTrackRegistry(arrival) {
+  if (!arrival || arrival.type !== 'trackRegistry') return null
+  const fields = arrival.fields && typeof arrival.fields === 'object' ? arrival.fields : {}
+  const browser = arrival.browser && typeof arrival.browser === 'object' ? arrival.browser : {}
+  const file = (value) => {
+    const raw = String(value || '').trim()
+    return TRACK_FILES.includes(raw) ? raw : ''
+  }
+  const wizard = String(arrival.wizard || 'closed').trim()
+  return {
+    registered: (Array.isArray(arrival.registered) ? arrival.registered : [])
+      .map((key) => String(key || '').trim())
+      .filter((key) => TRACK_KEYS.includes(key)),
+    wizard: TRACK_WIZARD_STATES.includes(wizard) ? wizard : 'closed',
+    file: file(arrival.file),
+    fields: { label: String(fields.label || '') },
+    dataType: TRACK_DATA_TYPES.includes(String(arrival.dataType || '').trim()) ? String(arrival.dataType || '').trim() : '',
+    displayMode: String(arrival.displayMode || '').trim(),
+    genome: String(arrival.genome || '').trim() === 'slice' ? 'slice' : '',
+    // `directory` is symbolic for the same reason the file field is.
+    browser: {
+      state: String(browser.state || 'closed').trim() === 'open' ? 'open' : 'closed',
+      directory: String(browser.directory || '').trim(),
+      target: String(browser.target || '').trim(),
+    },
+  }
+}
+
+/** Which registered tracks a browser panel is showing, and whether the picker is up.
+ *
+ *  Registering a track and showing it are different acts in different apps, so this is a
+ *  separate arrival from `trackRegistry` rather than a field on it. The picker is the same
+ *  case as `dialog`: until something opens it there is no element for a spotlight and no
+ *  panel for a card to talk about, so the step after "press Add a registered track" is
+ *  unreachable except by performing the step before it.
+ *
+ *  `added: []` and `picker: 'closed'` are real instructions. */
+export function arrivalBrowserTracks(arrival) {
+  if (!arrival || arrival.type !== 'browserTracks') return null
+  const keys = (value) => (Array.isArray(value) ? value : [])
+    .map((key) => String(key || '').trim())
+    .filter((key) => TRACK_KEYS.includes(key))
+  return {
+    picker: String(arrival.picker || 'closed').trim() === 'open' ? 'open' : 'closed',
+    chosen: keys(arrival.chosen),
+    added: keys(arrival.added),
+  }
+}
+
+/** Whether a tutorial needs the demo data tracks laid out for the reader to register.
+ *
+ *  Inferred from the steps rather than declared, exactly as `tutorialNeedsDemoSource` is,
+ *  so it cannot be forgotten: a tutorial that puts the Track Manager in a particular state
+ *  is a tutorial about registering data files, and it needs some data files to register.
+ *  Every other tutorial copies nothing. */
+export function tutorialNeedsDemoTracks(tutorial) {
+  const steps = Array.isArray(tutorial?.steps) ? tutorial.steps : []
+  const arrivalsOf = (step) => (Array.isArray(step?.arrive) ? step.arrive : (step?.arrive ? [step.arrive] : []))
+  const declared = [...steps.flatMap(arrivalsOf), ...arrivalsOf(tutorial)]
+  return declared.some((arrival) => arrival?.type === 'trackRegistry' || arrival?.type === 'browserTracks')
 }
 
 /** Where a step wants the page scrolled to before its card is read.
@@ -1101,6 +1207,14 @@ export function validateTutorial(tutorial, options = {}) {
       if (action.skipIfShowing !== undefined && !String(action.skipIfShowing || '').trim()) {
         problems.push(`${where}: skipIfShowing needs a chr:start-end to compare against.`)
       }
+    } else if (action.type === 'select') {
+      // A drop-down, which is neither a click nor typing: clicking one opens it and types
+      // nothing, so the wizard's data-type and display-mode choices had no action at all
+      // and Next walked past them leaving the field unset.
+      if (!anchorSelector(action.anchor)) problems.push(`${where}: a select action needs an anchor.`)
+      if (typeof action.value !== 'string' || !action.value) {
+        problems.push(`${where}: a select action needs the option value to choose.`)
+      }
     } else if (action.type === 'navigate') {
       if (!String(action.view || '').trim()) problems.push(`${where}: a navigate action needs a view.`)
       else if (knownViews && !knownViews.has(String(action.view))) {
@@ -1108,7 +1222,7 @@ export function validateTutorial(tutorial, options = {}) {
       }
     }
     if (action.type === 'click') actionAnchors(action).forEach((a) => checkAnchor(a, `${where} action`))
-    else if (action.type === 'type') checkAnchor(action.anchor, `${where} action`)
+    else if (action.type === 'type' || action.type === 'select') checkAnchor(action.anchor, `${where} action`)
 
     for (const arrival of stepArrivals(step)) {
       if (!ARRIVE_TYPES.includes(arrival.type)) {
@@ -1177,6 +1291,52 @@ export function validateTutorial(tutorial, options = {}) {
         }
         if (arrival.reports?.annotation === 'ready' && !String(arrival.fields?.annotation || '').trim()) {
           problems.push(`${where} arrive: customGenome declares an annotation report but no annotation to have analysed.`)
+        }
+      } else if (arrival.type === 'trackRegistry') {
+        // A literal path is the mistake this catches, same as customGenome above: the
+        // document validator would reject it anyway, but this names the field.
+        const file = String(arrival.file || '').trim()
+        if (file && !TRACK_FILES.includes(file)) {
+          problems.push(
+            `${where} arrive: trackRegistry file must be one of ${TRACK_FILES.filter(Boolean).join(', ')} — `
+            + 'a file the tutorial lays down, not a path from this machine.'
+          )
+        }
+        for (const key of (Array.isArray(arrival.registered) ? arrival.registered : [])) {
+          if (!TRACK_KEYS.includes(String(key || '').trim())) {
+            problems.push(`${where} arrive: trackRegistry does not know the track "${String(key || '')}".`)
+          }
+        }
+        const wizard = String(arrival.wizard || 'closed').trim()
+        if (wizard && !TRACK_WIZARD_STATES.includes(wizard)) {
+          problems.push(`${where} arrive: trackRegistry wizard must be ${TRACK_WIZARD_STATES.join(', ')}.`)
+        }
+        const dataType = String(arrival.dataType || '').trim()
+        if (dataType && !TRACK_DATA_TYPES.includes(dataType)) {
+          problems.push(`${where} arrive: trackRegistry dataType must be ${TRACK_DATA_TYPES.filter(Boolean).join(', ')}.`)
+        }
+        // The wizard's second step describes a file that has been chosen. Declaring the
+        // details step with no file is the same incoherence as an analysis report for a
+        // file that was never picked.
+        if (wizard === 'details' && !file) {
+          problems.push(`${where} arrive: trackRegistry is on the details step but names no file to describe.`)
+        }
+        // Nothing can be filled in while the wizard is shut.
+        if (wizard === 'closed' && (file || dataType || String(arrival.genome || '').trim())) {
+          problems.push(`${where} arrive: trackRegistry declares wizard fields while the wizard is closed.`)
+        }
+      } else if (arrival.type === 'browserTracks') {
+        for (const field of ['added', 'chosen']) {
+          for (const key of (Array.isArray(arrival[field]) ? arrival[field] : [])) {
+            if (!TRACK_KEYS.includes(String(key || '').trim())) {
+              problems.push(`${where} arrive: browserTracks ${field} does not know the track "${String(key || '')}".`)
+            }
+          }
+        }
+        // Choosing happens inside the picker, so a closed picker holding a selection is a
+        // step describing something nobody can see.
+        if (String(arrival.picker || 'closed').trim() !== 'open' && (Array.isArray(arrival.chosen) ? arrival.chosen : []).length) {
+          problems.push(`${where} arrive: browserTracks chooses tracks while the picker is closed.`)
         }
       } else if (arrival.type === 'selectorList') {
         if (!anchorSelector(arrival.anchor)) {

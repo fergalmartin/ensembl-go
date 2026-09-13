@@ -6,9 +6,9 @@
 // form, the row clicked is in the dialog, and the result lands back in the form — so
 // splitting them across modules would put one exercise in three places.
 //
-// The file browser is listed here rather than in a module of its own because this is the
-// only flow that drives it. If Configuration or the export path ever needs to be taught,
-// lift `files.*` out into its own module rather than growing this one.
+// The file browser used to be listed here, because this was the only flow that drove it.
+// The Track Manager tutorial drives it too, so `files.*` now lives in `fileBrowser.js`
+// under `viewId: 'app'` — a dialog that opens over any view cannot belong to one of them.
 export default {
   viewId: 'genome_selector',
   label: 'Add a genome',
@@ -66,17 +66,5 @@ export default {
       capabilities: ['spotlight'], safety: 'read',
     },
 
-    // ── The file browser ────────────────────────────────────────────────────────
-    { id: 'files.dialog', anchor: 'file-browser', label: 'File browser', kind: 'dialog', capabilities: ['spotlight'], safety: 'read' },
-    { id: 'files.path', anchor: 'file-browser-path', label: 'Current directory', kind: 'group', capabilities: ['spotlight'], safety: 'read' },
-    { id: 'files.list', anchor: 'file-browser-list', label: 'Directory listing', kind: 'region', capabilities: ['spotlight', 'scroll'], safety: 'read' },
-    // Parameterised on the file's *name*, not its path: a portable document may not carry
-    // an absolute path, and the name is what the card tells the reader to look for.
-    {
-      id: 'files.entry', anchorTemplate: 'file-browser-entry-{name}', label: 'File or folder', kind: 'row',
-      parameters: { name: { type: 'string', required: true } },
-      capabilities: ['spotlight', 'activate'], safety: 'read',
-    },
-    { id: 'files.close', anchor: 'file-browser-close', label: 'Close the file browser', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
   ],
 }

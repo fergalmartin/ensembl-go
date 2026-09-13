@@ -1,0 +1,2730 @@
+{
+  "format": "ensembl-go-tutorial",
+  "schemaVersion": 1,
+  "id": "track-manager",
+  "revision": 1,
+  "title": "Adding your own data tracks",
+  "blurb": "Register coverage, peak and variant files in the Track Manager, then read them in the genome browser beside the annotation. Runs on a small demo data set and leaves your own tracks untouched.",
+  "estimatedMinutes": 10,
+  "usesDemoGenome": true,
+  "completionBody": "You can now bring your own data into Ensembl Go and read it beside the genes. Your own registered tracks were never touched, and the tutorial's temporary data has been cleared away.",
+  "author": "",
+  "createdAt": "2026-09-13T00:00:00Z",
+  "updatedAt": "2026-09-13T00:00:00Z",
+  "datasets": [],
+  "defaultArrive": [
+    {
+      "type": "browserControls",
+      "detail": false,
+      "flatten": false,
+      "expanded": false,
+      "biotypes": "all"
+    }
+  ],
+  "steps": [
+    {
+      "id": "welcome",
+      "section": "Getting started",
+      "placement": "center",
+      "title": "Bringing your own data",
+      "body": "Ensembl Go can draw your own data files beside a genome's annotation — coverage, peaks, variants. This tutorial registers three of them from a small demo set, then reads each one in the browser. Next advances each step if you would rather read than do.",
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-track-manager",
+      "section": "Getting started",
+      "view": "track_manager",
+      "placement": "right",
+      "align": "start",
+      "title": "Open the Track Manager",
+      "body": "Everything you add starts here. Press Track Manager — or press Next and the tutorial will press it for you.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "track_manager"
+          }
+        }
+      },
+      "advanceOn": {
+        "type": "view",
+        "view": "track_manager"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "track_manager"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "what-it-is",
+      "section": "The Track Manager",
+      "view": "track_manager",
+      "placement": "bottom",
+      "align": "start",
+      "interactive": false,
+      "title": "What it is for",
+      "body": "A track is a data file the browser draws under the genes. Registering one records where it lives, what kind of data it holds and which genome it belongs to — it does not copy or move the file.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.header",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "add-button",
+      "section": "The Track Manager",
+      "view": "track_manager",
+      "placement": "bottom",
+      "align": "end",
+      "interactive": false,
+      "title": "Add Track",
+      "body": "This is the one control that starts a registration. It opens a short wizard: choose a file, say what it is, and it joins the list below.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.add",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "the-hub",
+      "section": "The Track Manager",
+      "view": "track_manager",
+      "placement": "top",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "The Track Hub Registry",
+      "body": "Below your own tracks, the app looks your active genomes up in the Track Hub Registry. Where a hub publishes data for one of them, it can be imported from here without your having to find and download the files.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "tracks.hub",
+            "version": 1
+          },
+          "center": true
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.hub",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-wizard",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "bottom",
+      "align": "end",
+      "title": "Start a registration",
+      "body": "We have put three demo data files in the tutorial's own folder. Press Add Track to register the first of them — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.add",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "tracks.add",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "tracks.add",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.add",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "the-wizard",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "left",
+      "interactive": false,
+      "title": "The registration wizard",
+      "body": "Two steps: find the file, then describe it. Nothing is written until you press Register at the end, so you can change your mind about any of it.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "file",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizard",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "browse",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "left",
+      "title": "Find the file",
+      "body": "Press Browse for file to open the app's file browser — or press Next and the tutorial will open it for you.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "file",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardBrowse",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "tracks.wizardBrowse",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "tracks.wizardBrowse",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.wizardBrowse",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "file-browser",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "left",
+      "align": "start",
+      "interactive": false,
+      "cardPosition": {
+        "x": 0.015,
+        "y": 0.03
+      },
+      "title": "The demo data folder",
+      "body": "The browser has opened in the tutorial's own folder, which holds the three demo files. It lists only the types a track can be made from, so anything you can see here is something the app can draw.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "file",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "open",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "files.dialog",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "pick-expression",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "right",
+      "title": "Pick the expression file",
+      "body": "‘brain_expression.bw’ is RNA-seq coverage from brain tissue. Choose it — or press Next and the tutorial will choose it for you.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "file",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "open",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "brain_expression.bw"
+          }
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "brain_expression.bw"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "brain_expression.bw"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "brain_expression.bw"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "detected",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "left",
+      "interactive": false,
+      "title": "What it found",
+      "body": "The file is in, and the type was read off its extension — BigWig, a compressed signal format. The label has been filled in from the filename, and everything below it describes how the track will be drawn.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "details",
+          "file": "demo:expression",
+          "fields": {
+            "label": "brain_expression"
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardFile",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "tracks.wizardType",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "label",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "left",
+      "title": "Name it",
+      "body": "The label is what you will see in the browser's left-hand panel and in the list of tracks to add, so it is worth making it readable. Type ‘Brain expression’ — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "details",
+          "file": "demo:expression",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardLabel",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "tracks.wizardLabel",
+              "version": 1
+            },
+            "capability": "input",
+            "value": "Brain expression",
+            "overwrite": true,
+            "submit": false
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "input",
+        "target": {
+          "id": "tracks.wizardLabel",
+          "version": 1
+        },
+        "value": "Brain expression",
+        "ms": 400
+      },
+      "copy": "Brain expression",
+      "copyTarget": {
+        "id": "tracks.wizardLabel",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.wizardLabel",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "data-type",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "left",
+      "title": "What kind of data",
+      "body": "A BigWig is just numbers along a chromosome, so the app cannot tell coverage from accessibility. Telling it this is RNA-seq is what picks a sensible way to draw it. Choose RNA-seq — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "details",
+          "file": "demo:expression",
+          "fields": {
+            "label": "Brain expression"
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardDataType",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "tracks.wizardDataType",
+              "version": 1
+            },
+            "capability": "set-state",
+            "value": "rna_seq"
+          }
+        ]
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.wizardDataType",
+              "version": 1
+            },
+            "capabilities": [
+              "set-state"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "display-mode",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "left",
+      "interactive": false,
+      "title": "Zoned heatmap",
+      "body": "RNA-seq brings Zoned Heatmap with it. Expression spans orders of magnitude, so the track is banded rather than plotted: four bands at 100, 1,000, 10,000 and 100,000, each with its own colour.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "details",
+          "file": "demo:expression",
+          "fields": {
+            "label": "Brain expression"
+          },
+          "dataType": "rna_seq",
+          "displayMode": "zoned_heatmap",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardBigWig",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "genome",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "left",
+      "title": "Which genome",
+      "body": "This is the field to get right, and we have filled it in with the demo slice. A track left with no genome is registered and then never drawn — the browser only offers tracks belonging to the genome in front of you.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "interactive": false,
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "details",
+          "file": "demo:expression",
+          "fields": {
+            "label": "Brain expression"
+          },
+          "dataType": "rna_seq",
+          "displayMode": "zoned_heatmap",
+          "genome": "slice",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardGenome",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "register",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "left",
+      "align": "end",
+      "title": "Register it",
+      "body": "Press Register Track. The file is checked and, for formats that need one, an index is built beside it — so this can take a moment. Or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [],
+          "wizard": "details",
+          "file": "demo:expression",
+          "fields": {
+            "label": "Brain expression"
+          },
+          "dataType": "rna_seq",
+          "displayMode": "zoned_heatmap",
+          "genome": "slice",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardRegister",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "tracks.wizardRegister",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "settleMs": 20000,
+      "holdMs": 1200,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.wizardRegister",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "in-the-list",
+      "section": "Registering a track",
+      "view": "track_manager",
+      "placement": "bottom",
+      "align": "start",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "It is in the list",
+      "body": "The wizard has closed and the track is on the page, under a heading for the genome it belongs to. The badge is its file type, and the line beneath tells you how it will be drawn.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "tracks.list",
+            "version": 1
+          },
+          "offset": 90
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.card",
+          "version": 1,
+          "params": {
+            "label": "Brain expression"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "second-track",
+      "section": "The other two tracks",
+      "view": "track_manager",
+      "placement": "left",
+      "title": "The ATAC-seq track",
+      "body": "The second file, ‘atac_seq_peaks.bw’, is also a BigWig — open chromatin from adrenal gland. Same two steps: find it, describe it. Press Next to fill the file step in.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression"
+          ],
+          "wizard": "file",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "open",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "atac_seq_peaks.bw"
+          }
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "atac_seq_peaks.bw"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "atac_seq_peaks.bw"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "atac_seq_peaks.bw"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "atac-data-type",
+      "section": "The other two tracks",
+      "view": "track_manager",
+      "placement": "left",
+      "title": "A different kind of signal",
+      "body": "The same file type, and a different answer here changes the picture completely: ATAC-seq brings Signal Plot instead, because peaks are read by their shape rather than their order of magnitude. Choose ATAC-seq — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression"
+          ],
+          "wizard": "details",
+          "file": "demo:atac",
+          "fields": {
+            "label": "ATAC-seq peaks"
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardBigWig",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "tracks.wizardDataType",
+              "version": 1
+            },
+            "capability": "set-state",
+            "value": "atac_seq"
+          }
+        ]
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.wizardDataType",
+              "version": 1
+            },
+            "capabilities": [
+              "set-state"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "register-atac",
+      "section": "The other two tracks",
+      "view": "track_manager",
+      "placement": "left",
+      "align": "end",
+      "title": "Register it too",
+      "body": "Genome chosen, label set. Press Register Track — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression"
+          ],
+          "wizard": "details",
+          "file": "demo:atac",
+          "fields": {
+            "label": "ATAC-seq peaks"
+          },
+          "dataType": "atac_seq",
+          "displayMode": "signal_plot",
+          "genome": "slice",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardRegister",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "tracks.wizardRegister",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "settleMs": 20000,
+      "holdMs": 1200,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.wizardRegister",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "third-track",
+      "section": "The other two tracks",
+      "view": "track_manager",
+      "placement": "right",
+      "title": "The variant track",
+      "body": "The last file is ‘variants.vcf.gz’ — 81,830 variants across this region, from Ensembl. Choose it — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac"
+          ],
+          "wizard": "file",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "open",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "variants.vcf.gz"
+          }
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "variants.vcf.gz"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "files.entry",
+          "version": 1,
+          "params": {
+            "name": "variants.vcf.gz"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "files.entry",
+              "version": 1,
+              "params": {
+                "name": "variants.vcf.gz"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "vcf-settings",
+      "section": "The other two tracks",
+      "view": "track_manager",
+      "placement": "left",
+      "interactive": false,
+      "title": "A VCF needs an index",
+      "body": "A VCF is read in pieces rather than all at once, so it needs a tabix index beside it. Ours came with one; where it has not, the app builds it when you register. The two colours separate variants inside a gene from those between genes.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac"
+          ],
+          "wizard": "details",
+          "file": "demo:variants",
+          "fields": {
+            "label": "Variants"
+          },
+          "dataType": "",
+          "displayMode": "density_lollipop",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardVcf",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "three-registered",
+      "section": "The other two tracks",
+      "view": "track_manager",
+      "placement": "top",
+      "align": "start",
+      "interactive": false,
+      "deferUntilReady": true,
+      "cardPosition": {
+        "x": 0.015,
+        "y": 0.015
+      },
+      "title": "Three registered",
+      "body": "All three are on the page now, grouped under the genome they belong to. Registering them is as far as the Track Manager goes — none of them is on screen in the browser yet.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "tracks.list",
+            "version": 1
+          },
+          "offset": 90
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.list",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-browser",
+      "section": "Into the browser",
+      "view": "genome_browser",
+      "placement": "right",
+      "align": "start",
+      "title": "Open the Genome Browser",
+      "body": "Press Genome Browser — or press Next. The demo slice is already active, so it opens on a region of human chromosome 1.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_browser"
+          }
+        }
+      },
+      "advanceOn": {
+        "type": "view",
+        "view": "genome_browser"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_browser"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "add-track-button",
+      "section": "Into the browser",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "interactive": false,
+      "title": "Registering is not showing",
+      "body": "This button in the genome's own toolbar is how a registered track gets onto the panel. Keeping the two apart means a track you rarely want is registered once and added only when you need it.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": []
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.addTrack",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "open-picker",
+      "section": "Into the browser",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "title": "Open the picker",
+      "body": "Press it — or press Next and the tutorial will press it for you.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": []
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.addTrack",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.addTrack",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "browser.addTrack",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.addTrack",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "the-picker",
+      "section": "Into the browser",
+      "view": "genome_browser",
+      "placement": "left",
+      "align": "start",
+      "interactive": false,
+      "title": "What is available",
+      "body": "Only tracks registered against this genome are offered, which is the genome field from the wizard doing its work. Each row shows the type, the label you gave it and where the file is.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "open",
+          "chosen": [],
+          "added": []
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.trackPicker",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "choose-three",
+      "section": "Into the browser",
+      "view": "genome_browser",
+      "placement": "left",
+      "align": "start",
+      "title": "Choose all three",
+      "body": "Tick the three tracks and press Add — or press Next and the tutorial will do it.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "open",
+          "chosen": [],
+          "added": []
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.trackPickerList",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.trackPickerRow",
+              "version": 1,
+              "params": {
+                "label": "Brain expression"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "browser.trackPickerRow",
+              "version": 1,
+              "params": {
+                "label": "ATAC-seq peaks"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "browser.trackPickerRow",
+              "version": 1,
+              "params": {
+                "label": "Variants"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "browser.trackPickerAdd",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "browser.trackPickerAdd",
+          "version": 1
+        }
+      },
+      "holdMs": 1600,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.trackPickerRow",
+              "version": 1,
+              "params": {
+                "label": "Brain expression"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.trackPickerRow",
+              "version": 1,
+              "params": {
+                "label": "ATAC-seq peaks"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.trackPickerRow",
+              "version": 1,
+              "params": {
+                "label": "Variants"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.trackPickerAdd",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "three-drawn",
+      "section": "Into the browser",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "Three new tracks",
+      "body": "They are drawn under the genes, in the order they were added, and each is marked CT in the left-hand panel. We are looking at PHGDH and HMGCS2, about 115 kb of chromosome 1.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "expression-bands",
+      "section": "Reading expression",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "Orders of magnitude",
+      "body": "The expression track is banded, not plotted. Each band is a decade — 100, 1,000, 10,000, 100,000 — so how many are filled tells you the order of magnitude, and the colour says it again from yellow through orange to red.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "expression-exons",
+      "section": "Reading expression",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "title": "Down to the exons",
+      "body": "Press Next to travel in to two of PHGDH's exons. You can also drag the track sideways or use the arrow keys, and zoom with the wheel or + and −.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          },
+          "capability": "set-locus",
+          "value": "1:119,725,500-119,728,500",
+          "browserView": {
+            "durationMs": 1000,
+            "pauseMs": 600,
+            "skipIfShowing": "1:119,725,500-119,728,500"
+          }
+        }
+      },
+      "holdMs": 1800,
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "pan"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "zoom"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "expression-result",
+      "section": "Reading expression",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "Where the reads are",
+      "body": "The signal sits on the exons and drops between them — this is RNA, so it follows what was transcribed rather than the DNA underneath. Over the exon on the right it reaches 1,440, filling three of the four bands.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,725,500-119,728,500"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "atac-plot",
+      "section": "Reading open chromatin",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "A plot of peaks",
+      "body": "The ATAC-seq track is drawn as an ordinary signal plot, one height per position. ATAC-seq marks chromatin loose enough for proteins to reach, so its peaks tend to fall where genes are switched on rather than along their length.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,630,000-119,670,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "atac-promoter",
+      "section": "Reading open chromatin",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "title": "A shared promoter",
+      "body": "Press Next to travel to the tallest peak in this region. It is worth a look for where it lands rather than for its height.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,630,000-119,670,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          },
+          "capability": "set-locus",
+          "value": "1:119,646,500-119,650,000",
+          "browserView": {
+            "durationMs": 1000,
+            "pauseMs": 600,
+            "skipIfShowing": "1:119,646,500-119,650,000"
+          }
+        }
+      },
+      "holdMs": 1800,
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "pan"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "zoom"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "atac-result",
+      "section": "Reading open chromatin",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "Between two genes",
+      "body": "ZNF697 ends here and PHGDH begins, pointing opposite ways, and the peak sits in the gap between them — one stretch of open chromatin serving both. Reading two tracks together is the point of having them side by side.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,646,500-119,650,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "vcf-density",
+      "section": "Reading variants",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "Blocks, not variants",
+      "body": "At this width there are far too many variants to draw one by one, so the track counts them into blocks — each one 500 bases here — and shades the block by how many it holds.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,620,000-119,780,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "vcf-closer",
+      "section": "Reading variants",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "title": "The blocks get finer",
+      "body": "Press Next to zoom in. The track redraws at a finer grain as you go — five levels of detail in all, chosen from how much of the chromosome is on screen.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,620,000-119,780,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          },
+          "capability": "set-locus",
+          "value": "1:119,720,000-119,740,000",
+          "browserView": {
+            "durationMs": 1000,
+            "pauseMs": 600,
+            "skipIfShowing": "1:119,720,000-119,740,000"
+          }
+        }
+      },
+      "holdMs": 1800,
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "pan"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "zoom"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "vcf-hundred",
+      "section": "Reading variants",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "A hundred bases a block",
+      "body": "Twenty kilobases on screen, and the blocks are a hundred bases each. Still counts rather than variants — but the shape of where variation clusters is already readable.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,720,000-119,740,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "vcf-bases",
+      "section": "Reading variants",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "title": "All the way in",
+      "body": "Press Next to go to the bases. Below about five kilobases the track stops counting and draws every variant as its own mark.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,720,000-119,740,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          },
+          "capability": "set-locus",
+          "value": "1:119,726,950-119,727,250",
+          "browserView": {
+            "durationMs": 1200,
+            "pauseMs": 800,
+            "skipIfShowing": "1:119,726,950-119,727,250"
+          }
+        }
+      },
+      "holdMs": 2200,
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "pan"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "zoom"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "vcf-detail",
+      "section": "Reading variants",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "One mark each",
+      "body": "Three hundred bases, and 129 variants in them — mostly single-base changes, with five deletions and an insertion among them. The sequence is drawn underneath, and PHGDH's exon runs through the middle.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,726,950-119,727,250"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "vcf-click",
+      "section": "Reading variants",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "title": "Try one",
+      "body": "Hover a mark to pick it out, and click it for its identifier, its type and its alleles. A deletion is worth clicking: it keeps one anchor base and highlights every base it removes, so you can see its extent on the sequence below.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,726,950-119,727,250"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "manual"
+      },
+      "autoplayMs": 11000
+    },
+    {
+      "id": "the-gutter",
+      "section": "Managing tracks",
+      "view": "genome_browser",
+      "placement": "right",
+      "interactive": false,
+      "title": "The left-hand panel",
+      "body": "Every track has a switch here, custom ones marked CT. Clicking one turns that track off without removing it, and a track can be dragged up or down to sit next to whatever you are comparing it with.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.trackGutter",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "where-they-stop",
+      "section": "Managing tracks",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "Where the demo data stops",
+      "body": "These three files cover 220 kb around PHGDH, rather than the whole slice, so that they are small enough to ship with the app. Pan far enough either way and the tracks run out while the genes carry on — your own files will have their own edges.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "review",
+      "section": "Wrapping up",
+      "placement": "center",
+      "title": "What you have done",
+      "body": "We registered three files in the Track Manager — naming each one, saying what kind of data it held and which genome it belonged to — then added them to a browser panel and read all three: banded expression over PHGDH's exons, an ATAC-seq peak in a shared promoter, and a variant track from counted blocks down to single bases.",
+      "interactionPolicy": {
+        "targets": []
+      }
+    }
+  ]
+}

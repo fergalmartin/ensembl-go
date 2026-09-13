@@ -117,6 +117,20 @@ export async function installDemoSourceFiles(request) {
   return payload(response, 'Could not lay out the tutorial\u2019s demo files')
 }
 
+/** Lay the demo data tracks out in the tutorial workspace, unregistered.
+ *
+ *  The companion to `installDemoSourceFiles`, for the tutorial that teaches registering
+ *  data files rather than importing a genome. Nothing is registered — that is the
+ *  exercise. */
+export async function installDemoTrackFiles(request) {
+  const response = await fetch(`${API_BASE}/api/tutorial/demo-tracks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  return payload(response, 'Could not lay out the tutorial\u2019s demo tracks')
+}
+
 export async function installTutorialDataset(request) {
   const response = await fetch(`${API_BASE}/api/tutorial/datasets/install`, {
     method: 'POST',

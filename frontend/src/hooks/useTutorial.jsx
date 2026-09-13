@@ -22,6 +22,7 @@ import {
   fetchTutorialGenomeRecords,
   installDemoGenome,
   installDemoSourceFiles,
+  installDemoTrackFiles,
   installTutorialDataset,
   registerTutorialGenome,
   resetTutorialWorkspace,
@@ -47,6 +48,10 @@ import {
   arrivalDialog,
   arrivalCustomGenome,
   tutorialNeedsDemoSource,
+  tutorialNeedsDemoTracks,
+  TRACK_KEYS,
+  arrivalTrackRegistry,
+  arrivalBrowserTracks,
   arrivalDialogFields,
   arrivalPlaylists,
   arrivalScrollOffset,
@@ -75,6 +80,7 @@ import {
   tutorialProgressLabel,
 } from '../utils/tutorialModel'
 import { importLocalGenome } from '../utils/customGenomeImport'
+import { reconcileTutorialTracks } from '../utils/tutorialTrackRegistry'
 import { visibleElementRect, viewportRect } from '../utils/overlayGeometry'
 import { targetRefSelector } from '../tutorialTargets/index.js'
 import { materializeTutorialDocument, tutorialDatasetStartsActive } from '../utils/tutorialDocument.js'
@@ -144,6 +150,13 @@ const REGISTER_TIMEOUT_MS = 30000
 // And how long it waits for one to go again. Removing is only a config change, so this is
 // short — but it is not instant, and the page's height depends on it.
 const REMOVE_TIMEOUT_MS = 3000
+/** How long a step's target may still be arriving before it counts as missing.
+ *
+ *  Not zero, which is what it used to be: an anchored row inside a panel that fetches its
+ *  own contents — the file browser's directory listing is the case — is absent for as long
+ *  as that request takes, and reporting a runtime problem for it told the reader a step was
+ *  broken when it was merely a moment early. */
+const ANCHOR_RENDER_GRACE_MS = 2500
 // How many times a step's arrival re-checks that its target is on screen. More than one
 // because the app may still be scrolling when the step lands; few enough that a target
 // which simply cannot be shown does not hold the step up.
@@ -192,13 +205,20 @@ function writeStoredProgress(progress) {
  *  the component's onChange runs. */
 export function setNativeInputValue(node, value) {
   if (!node) return false
-  const prototype = node.tagName === 'TEXTAREA'
-    ? window.HTMLTextAreaElement.prototype
-    : window.HTMLInputElement.prototype
+  const isSelect = node.tagName === 'SELECT'
+  const prototype = isSelect
+    ? window.HTMLSelectElement.prototype
+    : node.tagName === 'TEXTAREA'
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype
   const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
   if (setter) setter.call(node, value)
   else node.value = value
   node.dispatchEvent(new Event('input', { bubbles: true }))
+  // React derives a drop-down's `onChange` from `change`, not from `input`, so a select
+  // set without this takes the value and tells nobody — the field shows the new option and
+  // the component never hears about it.
+  if (isSelect) node.dispatchEvent(new Event('change', { bubbles: true }))
   return true
 }
 
@@ -334,6 +354,18 @@ export function TutorialProvider({ children }) {
   // `dialogRequest`: null means the form is the reader's business, and the Genome Selector
   // reconciles a request against its own state rather than the tutorial reaching into it.
   const [customGenomeRequest, setCustomGenomeRequest] = useState(null)
+  // What the Track Manager and a browser panel should be showing. Published rather than
+  // owned: the views reconcile these against their own state, the same way the playlist
+  // dialog does, so nothing in the component tree has to know a tutorial exists.
+  const [trackRequest, setTrackRequest] = useState(null)
+  const [browserTracksRequest, setBrowserTracksRequest] = useState(null)
+  // What the Track Manager last reported it has registered. The arrival no longer waits on
+  // this — it does the registering itself, through `tutorialTrackRegistry` — but the view
+  // still reports so the runtime can tell whether a reader has been registering by hand.
+  const registeredTrackLabelsRef = useRef(new Set())
+  const reportRegisteredTracks = useCallback((labels) => {
+    registeredTrackLabelsRef.current = new Set(Array.isArray(labels) ? labels : [])
+  }, [])
   // The step whose arrival work, including scrolling its anchor into view, has settled.
   // Kept separately from `busy`: most steps deliberately show their card while busy,
   // while a small number defer their whole presentation until this id matches.
@@ -389,6 +421,14 @@ export function TutorialProvider({ children }) {
   // files symbolically — `demo:fasta` — because the document cannot carry a path that only
   // exists on the author's machine; this is what turns the symbol into the real thing.
   const demoDataFilesRef = useRef(null)
+  // Where this run's copy of the demo data tracks landed. A `trackRegistry` arrival names
+  // them symbolically (`demo:expression`); this is what those names resolve against.
+  const demoTrackFilesRef = useRef(null)
+  // The slice genome, as soon as the precondition has it. `overrideRef` is only refreshed
+  // on render, so an arrival that runs straight after `slice-genome-active` still saw the
+  // old, empty list — and every demo track was then registered against no genome, which is
+  // the one mistake that leaves a track registered and never drawn.
+  const sliceGenomeRef = useRef(null)
   const rememberDatasetGenomes = useCallback((datasets, genomes) => {
     const remembered = new Map()
     for (const [index, dataset] of (datasets || []).entries()) {
@@ -788,6 +828,12 @@ export function TutorialProvider({ children }) {
           .then((result) => ({ directory: result?.directory || '', ...(result?.files || {}) }))
           .catch(() => null)
         : null
+      // And a tutorial about registering data tracks needs some tracks to register.
+      demoTrackFilesRef.current = tutorialNeedsDemoTracks(next)
+        ? await installDemoTrackFiles({ output_dir: root, workspace })
+          .then((result) => ({ directory: result?.directory || '', ...(result?.files || {}) }))
+          .catch(() => null)
+        : null
       const datasets = (next.datasets || []).filter((dataset) => dataset?.embedded && dataset?.recipeId)
       const installedGenomes = []
       for (const dataset of datasets) {
@@ -837,6 +883,8 @@ export function TutorialProvider({ children }) {
     setCustomGenomeRequest(null)
     datasetGenomesRef.current = new Map()
     demoDataFilesRef.current = null
+    demoTrackFilesRef.current = null
+    sliceGenomeRef.current = null
     cursorRef.current = null
     holdUntilRef.current = 0
     setSettledStepId('')
@@ -921,6 +969,12 @@ export function TutorialProvider({ children }) {
           .then((result) => ({ directory: result?.directory || '', ...(result?.files || {}) }))
           .catch(() => null)
         : null
+      // And a tutorial about registering data tracks needs some tracks to register.
+      demoTrackFilesRef.current = tutorialNeedsDemoTracks(document)
+        ? await installDemoTrackFiles({ output_dir: root, workspace })
+          .then((result) => ({ directory: result?.directory || '', ...(result?.files || {}) }))
+          .catch(() => null)
+        : null
       const genomes = []
       for (const dataset of datasets) {
         const installed = await installTutorialDataset({
@@ -978,6 +1032,8 @@ export function TutorialProvider({ children }) {
     setDialogRequest({ dialog: 'none', requestedAt: Date.now() })
     setCustomGenomeRequest(null)
     demoDataFilesRef.current = null
+    demoTrackFilesRef.current = null
+    sliceGenomeRef.current = null
     setTutorialSandboxActive(false)
     setBrowserInteraction('all')
     datasetGenomesRef.current = new Map()
@@ -1048,7 +1104,11 @@ export function TutorialProvider({ children }) {
     const workspace = overrideRef.current?.output_dir
     if (!workspace) return null
     const already = overrideRef.current?.active_species || []
-    if (already.some((entry) => String(entry?.species_key || '') === SLICE_SPECIES_KEY)) return already
+    const existing = already.find((entry) => String(entry?.species_key || '') === SLICE_SPECIES_KEY)
+    if (existing) {
+      sliceGenomeRef.current = existing
+      return already
+    }
     let record = await fetchDemoGenomeRecord(workspace, SLICE_SPECIES_KEY)
     if (!record) {
       await installDemoGenome(workspace, SLICE_GENOME_ID)
@@ -1056,6 +1116,8 @@ export function TutorialProvider({ children }) {
     }
     if (!record) return null
     await registerTutorialGenome(record)
+    // Before the state update, so anything running in the same turn can already see it.
+    sliceGenomeRef.current = record
     setConfigOverride((previous) => ({ ...(previous || {}), active_species: [record] }))
     return record
   }, [])
@@ -1521,6 +1583,70 @@ export function TutorialProvider({ children }) {
    *  does not have an opinion about. `requestedAt` makes re-entering the same step a fresh
    *  request, so "empty" has to be re-established on the way back even though nothing
    *  about the step changed. */
+  const applyTrackRegistryArrival = useCallback(async (arrival) => {
+    const wanted = arrivalTrackRegistry(arrival)
+    if (!wanted) return
+    const files = demoTrackFilesRef.current || {}
+    // `demo:expression` names the file the install laid down under the key `expression`.
+    // The prefix says, in the document, that this is a file the tutorial provides rather
+    // than a path — which is the distinction the document format cares about.
+    const resolve = (symbol) => {
+      const key = String(symbol || '').replace(/^demo:/, '')
+      return key ? String(files[key] || '') : ''
+    }
+    // Which genome the tracks belong to. A track registered against nothing is registered
+    // and then never drawn — the quietest failure in the whole flow — and the key has to be
+    // the one the *app's catalogue* lists, not the installer's, for the same reason the
+    // playlists tutorial's pills came adrift from their own rows.
+    const sliceGenome = (overrideRef.current?.active_species || [])
+      .find((entry) => String(entry?.species_key || '') === SLICE_SPECIES_KEY)
+      || sliceGenomeRef.current
+    // The registry first, then the request. The Track Manager reloads its list when the
+    // request changes, so publishing it before the tracks existed had the view read an
+    // empty registry and draw "No tracks registered yet" on the step whose card says all
+    // three are there.
+    //
+    // Registering happens here rather than only in the Track Manager, and that is the whole
+    // reason the work was lifted into `tutorialTrackRegistry`: views unmount when they are
+    // not active, so a genome-browser step declaring three registered tracks has no Track
+    // Manager to reach. It is also why only one caller does it — when both did, each read
+    // the same empty registry and posted the same three tracks, and the list showed six.
+    //
+    // Real work, too: the backend validates each file and can build an index.
+    await reconcileTutorialTracks({
+      files: Object.fromEntries(TRACK_KEYS.map((key) => [key, String(files[key] || '')])),
+      wanted: wanted.registered,
+      genomeKey: sliceGenome ? getGenomeKey(sliceGenome) : '',
+    })
+
+    setTrackRequest({
+      genomeKey: sliceGenome ? getGenomeKey(sliceGenome) : '',
+      registered: wanted.registered,
+      files: Object.fromEntries(TRACK_KEYS.map((key) => [key, String(files[key] || '')])),
+      wizard: wanted.wizard,
+      file: resolve(wanted.file),
+      fields: wanted.fields,
+      dataType: wanted.dataType,
+      displayMode: wanted.displayMode,
+      genome: wanted.genome,
+      browser: {
+        ...wanted.browser,
+        directory: wanted.browser.directory === 'demo' ? String(files.directory || '') : '',
+      },
+      requestedAt: Date.now(),
+    })
+    await nextFrame()
+    await nextFrame()
+  }, [])
+
+  const applyBrowserTracksArrival = useCallback(async (arrival) => {
+    const wanted = arrivalBrowserTracks(arrival)
+    if (!wanted) return
+    setBrowserTracksRequest({ ...wanted, requestedAt: Date.now() })
+    await nextFrame()
+    await nextFrame()
+  }, [])
+
   const applyCustomGenomeArrival = useCallback(async (arrival) => {
     const wanted = arrivalCustomGenome(arrival)
     if (!wanted) return
@@ -1882,6 +2008,13 @@ export function TutorialProvider({ children }) {
       })
       if (engagedAlready) return false
     }
+    if (action.type === 'select') {
+      // Already showing the option the step asks for: the reader has done it, and pressing
+      // it again would be the tutorial ignoring them.
+      const target = findAnchor(action.anchor)
+      if (String(target?.value || '') === String(action.value || '')) return false
+    }
+
     if (action.type === 'type') {
       const target = findAnchor(action.anchor)
       const existing = String(target?.value || '').trim()
@@ -1981,6 +2114,11 @@ export function TutorialProvider({ children }) {
     await pressCursor()
     setPulseAnchor(null)
     hideCursor()
+    if (action.type === 'select') {
+      // Through the same guard-lifting path as every other press the tutorial makes: the
+      // live step's policy describes what the *reader* may do, not what the tutorial must.
+      actAsTutorial(() => setNativeInputValue(node, action.value))
+    }
     if (action.type === 'type') {
       if (typeof node.focus === 'function') node.focus()
       // Normally the tutorial fills an empty field and leaves anything the user typed
@@ -2001,8 +2139,8 @@ export function TutorialProvider({ children }) {
     }
     return true
   }, [
-    clickAsTutorial, hideCursor, moveCursorTo, navigateToView, paced, pressCursor, runBrowserView,
-    setBrowserControls, typeInto, applyGenomeSelectionArrival,
+    actAsTutorial, clickAsTutorial, hideCursor, moveCursorTo, navigateToView, paced, pressCursor,
+    runBrowserView, setBrowserControls, typeInto, applyGenomeSelectionArrival,
   ])
 
   /** Put the card's offered value into the field the step named, for the reader who
@@ -2149,6 +2287,8 @@ export function TutorialProvider({ children }) {
         if (arrival.type === 'selectorList') await applySelectorListArrival(arrival, { center: !positionsThePage })
         if (arrival.type === 'genomeSelection') await applyGenomeSelectionArrival(arrival)
         if (arrival.type === 'customGenome') await applyCustomGenomeArrival(arrival)
+        if (arrival.type === 'trackRegistry') await applyTrackRegistryArrival(arrival)
+        if (arrival.type === 'browserTracks') await applyBrowserTracksArrival(arrival)
       }
       // After the selection, which is the set the dialog opens for.
       for (const arrival of arrivals) {
@@ -2250,6 +2390,8 @@ export function TutorialProvider({ children }) {
             if (arrival.type === 'selectorList') await applySelectorListArrival(arrival, { center: !positionsThePage })
             if (arrival.type === 'genomeSelection') await applyGenomeSelectionArrival(arrival)
             if (arrival.type === 'customGenome') await applyCustomGenomeArrival(arrival)
+            if (arrival.type === 'trackRegistry') await applyTrackRegistryArrival(arrival)
+            if (arrival.type === 'browserTracks') await applyBrowserTracksArrival(arrival)
           }
           // After the selection: the dialog opens for the selected genomes, so a step
           // that establishes both has to establish them in that order.
@@ -2292,8 +2434,20 @@ export function TutorialProvider({ children }) {
         // A step that authored its own view position has already been framed; the
         // rescue scroll would only re-centre the target and lose the composition.
         if (!cancelled && !positionsThePage) await bringAnchorIntoView(step)
-        if (!cancelled && step.anchor && !findAnchor(step.anchor)) {
-          setRuntimeProblem(`The registered target for “${step.title}” did not render after preparation.`)
+        // Asked for again over a short budget rather than once. A target can be a moment
+        // behind its step through no fault of the tutorial: the file browser blanks its
+        // list to a spinner while it fetches a directory, so an anchored row is genuinely
+        // absent for as long as that request takes, and a single synchronous look declared
+        // a perfectly good step broken. Everything else about the arrival has already
+        // settled by here, so this only ever waits for something still arriving.
+        if (!cancelled && step.anchor) {
+          const deadline = Date.now() + paced(ANCHOR_RENDER_GRACE_MS)
+          while (!cancelled && !findAnchor(step.anchor) && Date.now() < deadline) {
+            await sleep(paced(SETTLE_MS))
+          }
+          if (!cancelled && !findAnchor(step.anchor)) {
+            setRuntimeProblem(`The registered target for “${step.title}” did not render after preparation.`)
+          }
         }
       } finally {
         if (!cancelled) {
@@ -2627,6 +2781,9 @@ export function TutorialProvider({ children }) {
     selectorListPresentation,
     dialogRequest,
     customGenomeRequest,
+    trackRequest,
+    browserTracksRequest,
+    reportRegisteredTracks,
     registerLocalGenome,
     pulseAnchor,
     cursor,
@@ -2672,7 +2829,7 @@ export function TutorialProvider({ children }) {
     authoringEnabled, builderAuthoringEnabled, autoplay, autoplayRun, back, busy, configOverride, cursor,
     currentView, dismiss, editStepPosition, editStepSize, editStepText, emitSignal, exit, isRunning, navigateToView, next,
     fillCopyValue, notifyTheme, notifyView, paced, prepareBuilderPreview, prepareBuilderStep, pulseAnchor, registerHost, skip, speedIndex, start,
-    readyStepId, runtimeProblem, dialogRequest, customGenomeRequest, registerLocalGenome, settledStepId, selectorListPresentation, state, step, stored,
+    readyStepId, runtimeProblem, dialogRequest, customGenomeRequest, trackRequest, browserTracksRequest, reportRegisteredTracks, registerLocalGenome, settledStepId, selectorListPresentation, state, step, stored,
     theme, toggleTutorialGenome, tutorial,
     selectedDatasetRecipeIds, scenePlaylists, stopBuilderPreview, updateSandboxConfig,
   ])

@@ -30,6 +30,7 @@ import {
   tutorialViewIds,
   stepCopyTarget,
   validateTutorial,
+  tutorialNeedsDemoTracks,
 } from '../src/utils/tutorialModel.js'
 
 const tutorial = {
@@ -668,4 +669,60 @@ test("a hidden transcript is a state a step can arrive in", () => {
   assert.deepEqual(validateTutorial(step({ transcript: 'ENST1', hidden: false }), known), [])
   assert.ok(validateTutorial(step({ hidden: true }), known).some((p) => p.includes('needs a transcript id')))
   assert.ok(validateTutorial(step({ transcript: 'ENST1' }), known).some((p) => p.includes('must be true or false')))
+})
+
+
+test('the Track Manager is a state a step can arrive in', () => {
+  const known = { knownViews: ['track_manager'], knownAnchors: [] }
+  const step = (arrive) => ({
+    id: 't', title: 'T', steps: [{ id: 's', title: 'T', body: 'B', view: 'track_manager', arrive }],
+  })
+
+  // The shape the tutorial actually authors.
+  assert.deepEqual(validateTutorial(step({
+    type: 'trackRegistry', registered: ['expression'], wizard: 'details',
+    file: 'demo:atac', fields: { label: 'ATAC-seq peaks' }, dataType: 'atac_seq', genome: 'slice',
+  }), known), [])
+
+  // Nothing registered yet is a real instruction, not an omission.
+  assert.deepEqual(validateTutorial(step({ type: 'trackRegistry', registered: [] }), known), [])
+
+  // A path from the author's machine is the mistake worth naming.
+  assert.ok(validateTutorial(step({ type: 'trackRegistry', file: '/Users/me/atac.bw', wizard: 'details' }), known)
+    .some((p) => p.includes('not a path from this machine')))
+  assert.ok(validateTutorial(step({ type: 'trackRegistry', registered: ['methylation'] }), known)
+    .some((p) => p.includes('does not know the track "methylation"')))
+  assert.ok(validateTutorial(step({ type: 'trackRegistry', wizard: 'details', dataType: 'rna_seq' }), known)
+    .some((p) => p.includes('names no file to describe')))
+  assert.ok(validateTutorial(step({ type: 'trackRegistry', wizard: 'closed', file: 'demo:expression' }), known)
+    .some((p) => p.includes('wizard fields while the wizard is closed')))
+})
+
+test('which custom tracks a panel shows is a state a step can arrive in', () => {
+  const known = { knownViews: ['genome_browser'], knownAnchors: [] }
+  const step = (arrive) => ({
+    id: 't', title: 'T', steps: [{ id: 's', title: 'T', body: 'B', view: 'genome_browser', arrive }],
+  })
+
+  assert.deepEqual(validateTutorial(step({
+    type: 'browserTracks', picker: 'closed', added: ['expression', 'atac', 'variants'],
+  }), known), [])
+  assert.deepEqual(validateTutorial(step({ type: 'browserTracks', picker: 'open', chosen: [] }), known), [])
+
+  assert.ok(validateTutorial(step({ type: 'browserTracks', added: ['coverage'] }), known)
+    .some((p) => p.includes('does not know the track "coverage"')))
+  // Choosing happens inside the picker, so a shut picker holding a selection describes
+  // something nobody can see.
+  assert.ok(validateTutorial(step({ type: 'browserTracks', picker: 'closed', chosen: ['atac'] }), known)
+    .some((p) => p.includes('chooses tracks while the picker is closed')))
+})
+
+test('a tutorial that states the Track Manager needs the demo tracks laid down', () => {
+  const withArrive = (arrive) => ({ id: 't', title: 'T', steps: [{ id: 's', title: 'T', body: 'B', arrive }] })
+
+  assert.equal(tutorialNeedsDemoTracks(withArrive({ type: 'trackRegistry', registered: [] })), true)
+  assert.equal(tutorialNeedsDemoTracks(withArrive({ type: 'browserTracks', added: ['atac'] })), true)
+  // Every other tutorial copies nothing.
+  assert.equal(tutorialNeedsDemoTracks(withArrive({ type: 'browserView', locus: '1:1-2' })), false)
+  assert.equal(tutorialNeedsDemoTracks({ id: 't', title: 'T', steps: [] }), false)
 })

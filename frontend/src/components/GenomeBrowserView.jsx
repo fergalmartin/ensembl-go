@@ -296,7 +296,7 @@ export default function GenomeBrowserView({
     // Taken from the context rather than threaded as a prop, the way DownloadView does
     // it: the tutorial provider sits above App, so every view can reach the runtime
     // without anything in between having to pass it along.
-    const { emitSignal: emitTutorialSignal, isRunning: tutorialRunning } = useTutorial()
+    const { emitSignal: emitTutorialSignal, isRunning: tutorialRunning, browserTracksRequest } = useTutorial()
     const [lockPan, setLockPan] = useState(false)
     const [lockZoom, setLockZoom] = useState(false)
 
@@ -2390,6 +2390,16 @@ export default function GenomeBrowserView({
         refreshRegisteredTracks()
     }, [isActive, refreshRegisteredTracks])
 
+    /* A tutorial that has just registered tracks has changed what is available, and this
+     * view only ever asked on mount and on becoming active. Jumping straight into a browser
+     * step therefore found the list it had fetched before the tutorial existed — empty —
+     * so the panel had nothing to match the step's `browserTracks` arrival against and drew
+     * no custom tracks at all. */
+    useEffect(() => {
+        if (!browserTracksRequest) return
+        refreshRegisteredTracks()
+    }, [browserTracksRequest, refreshRegisteredTracks])
+
     useEffect(() => {
         if (!isActive) return
         const handleVisible = () => {
@@ -3066,6 +3076,7 @@ export default function GenomeBrowserView({
                                             customTrackBrowsePath={trackBrowsePath}
                                             availableTracks={availableTracksByPanel[panelKey] || []}
                                             refreshAvailableTracks={refreshRegisteredTracks}
+                                            tutorialTracksRequest={browserTracksRequest}
                                             onTrackVisibilityChange={(hiddenStrands, meta) => handlePanelTrackVisibilityChange(panelKey, hiddenStrands, meta)}
                                             forceTracksVisibility={forceTracksVisibility}
                                             hideInactiveTracks={hideInactiveMode}

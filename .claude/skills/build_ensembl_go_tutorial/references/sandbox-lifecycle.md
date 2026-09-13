@@ -68,11 +68,35 @@ Each of the following leaked at least once and had to be handled separately:
 | The browser's own controls — Detail, Flatten, the gene-class filter, the track master switch | `preTutorialViewRef` in `GenomeBrowserView.jsx` snapshots on the way in and restores on the way out |
 | The focused gene | Lives in App state, not config. `preTutorialBrowserFocusRef` in `App.jsx` |
 | Anything derived from a focused gene | Focusing pushes the name into the comparison-view inputs, which look it up against the user's reference genome |
+| The custom track registry | `/api/tracks` resolves its store from `load_config()`. `main._tracks_config` swaps the workspace in — **and that alone was not enough**, see below |
 
 **The rule for anything new:** snapshot and restore if it is the user's, or suppress while
 the sandbox is up if it is meaningless during a tutorial. **Assume a new surface is in this
 category until shown otherwise** — in particular, anything that reaches for `load_config()`
 rather than for the frontend's configuration.
+
+### Swapping the store is a third-kind guard. Add a fourth.
+
+The Track Manager tutorial added `_tracks_config`, exactly copying `_notes_config`, and the
+tracks it registered **still leaked into the user's real registry**. A write that landed a
+moment after the run ended found no tutorial session registered, so the swap did not happen,
+so the track went to the user's file — pointing at a workspace that was then deleted.
+
+Every guard that depends on *when* something runs is in the first three categories above.
+They are worth having and they are not sufficient. Whenever a tutorial can write somewhere
+new, add a refusal that cannot be raced — for tracks, `register_track` refuses to put a file
+living inside a tutorial workspace into any store that is not that workspace's own:
+
+```python
+if is_inside_tutorial_workspace(path) and not is_inside_tutorial_workspace(store_path):
+    raise HTTPException(status_code=400, detail="…")
+```
+
+It needs no knowledge of whether a tutorial is running, which is the whole point.
+
+**And check the file, not the UI.** This was found by `shasum` on the registry before and
+after a run, not by looking at the app — where the two extra tracks were invisible, because
+the sandbox was correctly hiding the user's own registry at the time.
 
 ## What leaving does
 

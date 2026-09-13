@@ -12,6 +12,7 @@ Everything a shipped tutorial can install lives under `backend/data/`:
 | --- | --- | --- |
 | `backend/data/demo_genome/` | *Ensemblus welcomus* — 22 kb, two contigs, six genes (Welcome, To, Ensembl, Go, Have, Fun) | 40 K |
 | `backend/data/grch38_reg4/` | The real chromosome-1 slice the browser tutorial runs on — 1.65 Mb of real sequence in a 1.68 Mb declared window | 1.0 M |
+| `backend/data/demo_tracks/` | The three data tracks the Track Manager tutorial registers — a 220 kb window of real GRCh38 coverage, peaks and variants | 988 K |
 | `backend/data/tutorials/<tutorial-id>/datasets/<recipe-id>/` | Per-tutorial dataset recipes, written by promotion | 1.6 M today |
 
 The first two are `BundledGenome` records in `backend/demo_genome.py`, listed by
@@ -49,6 +50,7 @@ What exists today:
 | `grch38_reg4` | Real chr1 slice, REG4/PHGDH/HMGCS2/TBX15 | Anything about real annotation: transcripts, gene classes, notes, sequence |
 | `slice-f2b4e46327a2` etc. (4) | Human Ensembl, human RefSeq, mouse, rat around SAMD11 | Multi-genome comparison, region and gene linking |
 | `tmnt-*-v1` (8) | Synthetic 36 kb genomes — four turtles, Splinter, April, Rocksteady, Bebop | Anything needing *several* genomes where the sequence is irrelevant: selection, playlists, pills |
+| `demo_tracks/` (3 files) | Real brain RNA-seq, ATAC-seq and variants over `1:119,600,000-119,820,000` | Anything about custom data tracks: they are read against `grch38_reg4`, which they do not duplicate |
 
 Reuse is not only about bytes. A reader who has done another tutorial already knows these
 genomes, and a tutorial that teaches a new concept on familiar data is teaching one thing
@@ -111,6 +113,19 @@ How to stay inside that:
   the handoff entry.
 - Everything is **deterministic** — regenerate and commit rather than editing files by hand,
   the way `backend/scripts/build_demo_genome.py` is used.
+
+**A single file can blow the whole budget, and a VCF is the one that will.** The Track Manager
+tutorial wanted the browser tutorial's whole 1.68 Mb window; the same window of a dbSNP dump is
+648,191 variants and **7.08 MB bgzipped** — four times the budget for one file, where the two
+BigWigs beside it came to 0.70 MB for the same window. Cut to 220 kb it is 0.91 MB. Measure the
+expensive file *first* and let it choose the window, rather than picking the window and
+discovering afterwards.
+
+**Sub-setting the tracks does not mean sub-setting the genome.** Reusing `grch38_reg4`
+unchanged and cutting only the tracks added no genome bytes at all. The cost is that the tracks
+stop before the genes do — say so in a card rather than letting a reader who pans out think the
+app is broken.
+
 
 ## Bundling: the step that is easy to miss
 

@@ -235,6 +235,7 @@ hierarchy does not disappear halfway through.
 | --- | --- | --- |
 | `none` | `{ type: 'none' }` | Just advance. |
 | `click` | `{ type: 'click', anchor }` | Pulse, then click it. `anchors: [...]` clicks several controls in order; `pauseMs` sets the viewing pause between them and `endPauseMs` holds the final result. `skipIfFeatureFramed` can name a genomic feature whose already-framed state means the user has done it themselves; `skipIfEngaged` skips a target already publishing `data-tutorial-engaged="true"`. |
+| `select` | `{ type: 'select', anchor, value }` | Pulse, then set a drop-down to that option value. Neither a click nor typing: `activate` opens a `<select>` and chooses nothing, `input` types into it. Does nothing when the control already shows that option. |
 | `type` | `{ type: 'type', anchor, value }` | Pulse, then type. Submits with Enter unless `submit: false`, because these fields act on Enter. Leaves what the user typed alone unless `overwrite: true`. `skipIfShowing: '<locus>'` does nothing at all when the browser is already there — the user has done the step themselves and typing over it would be rude. |
 | `navigate` | `{ type: 'navigate', view }` | Switch app. |
 | `browserView` | `{ type: 'browserView', pan }`, `{ …, zoom }`, `{ …, locus }` | Move the genome browser: `pan` in windows, `zoom` as a factor on the span, `locus` as `chr:start-end`. `durationMs` controls one continuous move; `moves: [...]` performs several distinct moves in turn; `pauseMs` holds the result. `skipIfMoved` leaves any manually changed view alone, while `skipIfSequenceVisible` specifically treats a rendered base-level sequence lane as completion. |
@@ -350,6 +351,8 @@ about:
 | `dialog` | Which dialog or popover is open: `'playlistMembership'`, `'playlistPopover'`, or `'none'` for closed. `fields` states what the dialog's own inputs hold. |
 | `playlists` | Which playlists exist, named and described as the tutorial asks the user to name them, with members as embedded dataset recipe ids. `selected` names the one being shown. `playlists: []` is a real instruction: none created yet. |
 | `customGenome` | The state of the Genome Selector's add-a-genome form: `panel`, the six `fields`, which analysis `reports` are showing, whether the file `browser` is open and where it is pointed, and whether the genome has been `registered` and made `active`. |
+| `trackRegistry` | The state of the Track Manager: which demo tracks are `registered`, the registration `wizard` (`closed`, `file`, `details`), the `file` chosen, the `fields` typed, the BigWig `dataType` and `displayMode`, whether a `genome` is associated, and whether the file `browser` is open. |
+| `browserTracks` | Which registered tracks a browser panel is showing: `added`, whether the `picker` is open, and what is `chosen` in it but not yet added. |
 
 `genomeSelection` is what lets a step talk about the *result* of a selection the user made
 one step earlier. Selecting four genomes is the previous step's task, so a step whose card
@@ -1285,6 +1288,12 @@ Two other forms:
 | `tutorial-card-${tutorial.id}` | [TutorialsView.jsx](../frontend/src/components/TutorialsView.jsx) |
 | `manual-add-panel`, `manual-add-toggle`, `manual-labels`, `manual-genome-label`, `manual-assembly-label`, `manual-accession`, `manual-index`, `manual-index-path`, `manual-index-browse`, `manual-add-genome` | [GenomeSelectorView.jsx](../frontend/src/components/GenomeSelectorView.jsx) — the add-a-genome form |
 | `manual-fasta`, `manual-annotation`, `manual-homology` and their `-browse` / `-analyse` buttons | `ManualPathRow`, through `tourId` / `analyseTourId` / `browseTourId` props |
+| `track-manager-view`, `track-manager-header`, `track-manager-add`, `track-manager-filters`, `track-manager-search`, `track-manager-list`, `track-manager-hub` | [TrackManagerView.jsx](../frontend/src/components/TrackManagerView.jsx) — the view and its two halves |
+| `track-wizard`, `track-wizard-browse`, `track-wizard-file`, `track-wizard-type`, `track-wizard-label`, `track-wizard-bigwig`, `track-wizard-vcf`, `track-wizard-genome`, `track-wizard-register`, `track-wizard-back`, `track-wizard-display-mode` | TrackManagerView.jsx — the registration wizard |
+| `track-wizard-datatype`, `track-wizard-display` | `BigWigSettingsEditor`, through `dataTypeTourId` / `displayModeTourId` props — the wizard and an editing track card both render it, and an anchor resolves to the first match |
+| `track-manager-track-${track.id}`, `data-tutorial-track-label` | TrackManagerView.jsx — one registered track's card, addressed by the label the tutorial typed because the registry id is minted at registration |
+| `browser-add-track`, `browser-track-picker`, `browser-track-picker-list`, `browser-track-picker-add`, `browser-track-picker-close` | [GenomeBrowser.jsx](../frontend/src/components/GenomeBrowser.jsx) — showing a registered track on a panel |
+| `browser-track-picker-row-${registeredTrack.id}`, `data-tutorial-picker-track` | GenomeBrowser.jsx — one row of the picker, addressed by label for the same reason |
 | `file-browser`, `file-browser-path`, `file-browser-list`, `file-browser-entry-${name}`, `file-browser-close` | [FileBrowserModal.jsx](../frontend/src/components/FileBrowserModal.jsx) |
 | `validation-report-${kind}`, `validation-genome-*`, `validation-annotation-*` | [ValidationReportPanel.jsx](../frontend/src/components/ValidationReportPanel.jsx) |
 
@@ -1567,6 +1576,12 @@ example. The override is a *frontend configuration* fact. It does not reach:
   file and stayed there. `main._notes_config` swaps in the tutorial's workspace while a
   session is registered, and the global store is dropped from the merge so the user's
   notes are not visible inside the tutorial either.
+- **The custom track registry.** The same shape again: `/api/tracks` resolved its store from
+  `load_config()`, so the three tracks the Track Manager tutorial asks the reader to register
+  landed in the user's own `track_registry.json` and outlived the run, by then pointing into a
+  deleted workspace. `main._tracks_config` swaps the workspace in, and — because that swap is
+  timing-dependent like every other one here — `register_track` also **refuses outright** to
+  put a file that lives inside a tutorial workspace into any other store.
 - **The browser's own controls.** Detail, Flatten, the gene-class filter and the track
   master switch all live in `GenomeBrowserView`'s state. A tutorial that unticked three
   gene classes handed the session back with them unticked, and the user would find their
@@ -1854,6 +1869,13 @@ manual JSON editing:
   already in that state when a reader has partly completed an exercise.
 - **Locked-bar message:** choose the brief message shown when a reader tries a genome
   toolbar held inactive by that step's interaction policy.
+- **Track Manager on arrival:** state the Track Manager for a step — which demo tracks are
+  already registered, where the registration wizard is, the file and label and BigWig data
+  type it holds, whether the file browser is up, and whether a genome has been associated.
+  Files are offered as the tutorial's own demo copies rather than as paths, because a
+  portable document may not carry one.
+- **Custom tracks on the panel:** which registered tracks a browser panel draws, whether the
+  track picker is open, and what is ticked in it but not yet added.
 - **Add-a-genome form on arrival:** state the Genome Selector's import form for a step —
   the labels, which files are chosen, which analysis reports are open, whether the file
   browser is up and what it is choosing, and whether the genome has been added and activated.
@@ -1966,3 +1988,128 @@ card explains why Producer comes back blank.
   `center: true` instead, and the runtime clamps every authored offset to what the window
   can actually show — an offset that framed the step in a 1100px-tall window put the same
   button's ring around fourteen visible pixels in a 900px one.
+
+## Registering your own data tracks (September 2026)
+
+**Adding your own data tracks** is the sixth shipped tutorial: 44 steps in 10 sections, in
+`frontend/src/tutorials/generated/track-manager.tutorial.json`. It teaches the Track Manager —
+registering a data file so the browser will draw it — and then reads the result: a banded
+expression track over PHGDH's exons, an ATAC-seq peak in a shared promoter, and a variant
+track from counted blocks down to individual variants.
+
+It ships no dataset recipes. It runs on `grch38_reg4`, the chromosome-1 slice the browser
+tutorial already bundles, reached through `ensure: ['slice-genome-active']` — so a reader who
+has done that tutorial already knows the region, and no genome bytes are added. What it does
+add is three **data tracks**, laid into `<workspace>/demo_tracks/` by
+`install_demo_track_files` (`POST /api/tutorial/demo-tracks`) for the reader to browse to and
+register, exactly as the custom-genome tutorial lays out its raw genome files.
+
+The three are cut from real GRCh38 tracks by
+[`backend/scripts/build_demo_tracks.py`](../backend/scripts/build_demo_tracks.py) and cover
+`1:119,600,000-119,820,000` — 220 kb, 988 K on disk. **Not the slice's whole 1.68 Mb**: the
+same window of the source VCF holds 648,191 variants and comes to 7.08 MB bgzipped, which is
+four times the entire existing tutorial data budget for one file. At 220 kb it is 0.91 MB.
+The consequence is stated in a card rather than left to be discovered — the tracks stop while
+the genes carry on.
+
+**Two file types, three renderings**, which is the lesson the registration wizard forces:
+a BigWig read as RNA-seq draws a **zoned heatmap**, the same type read as ATAC-seq draws a
+**signal plot**, and the VCF draws density blocks that become individual variants as you zoom.
+Register stays disabled until a BigWig's data type is chosen, so that choice earns its own step.
+
+### What had to be built first
+
+`TrackManagerView.jsx` carried **no** `data-tour-id` between its header, its list, its
+registration wizard and the Track Hub Registry, and neither did the browser's Add Custom Track
+button or its track picker.
+
+| Built | Where |
+| --- | --- |
+| 27 target contracts | `frontend/src/tutorialTargets/trackManager.js`, plus custom-track targets in `genomeBrowser.js` |
+| `files.*` lifted out | `frontend/src/tutorialTargets/fileBrowser.js` under `viewId: 'app'` — see below |
+| The `trackRegistry` arrival | Which demo tracks are registered, and the wizard's own state |
+| The `browserTracks` arrival | Which registered tracks a panel is showing, and whether the picker is up |
+| A `select` action | `tutorialModel.js`, `tutorialDocument.js`, `useTutorial.jsx` — see below |
+| Shared registration | `frontend/src/utils/tutorialTrackRegistry.js`, lifted out of the view so the runtime can register from a step in another app |
+| Demo tracks in the workspace | `install_demo_track_files`, `POST /api/tutorial/demo-tracks` |
+| **The tracks sandbox guard** | `main._tracks_config`, and a refusal in `register_track` |
+| Builder editor sections | **Track Manager on arrival** and **Custom tracks on the panel** |
+
+### The sandbox did not cover the track registry
+
+`GET`/`POST /api/tracks` resolved their store through `_load_track_registry(load_config())` —
+the *real* configuration on disk, with no tutorial awareness. A reader registering the three
+demo tracks wrote three entries into their own `track_registry.json`, pointing at files inside
+a workspace that is deleted when the tutorial ends.
+
+`main._tracks_config` is the fix, and it is `_notes_config` copied exactly: while a tutorial
+session is registered the tracks endpoints resolve their store against the tutorial's
+workspace, and `_track_registry_store_paths_for_config` returns *only* that sidecar, so the
+user's own tracks are not listed inside the tutorial either.
+
+**That was not enough, and the reason is the general one.** Everything about the swap is
+timing-dependent — the frontend override, whether a session happens to be registered, the
+order a step's arrivals run in — and a write that landed a moment *after* a run ended slipped
+past all of it and put two tracks in the real registry. So `register_track` now **refuses
+outright** to register a file that sits inside a tutorial workspace unless the store being
+written is that workspace's own. That is the guard of the fourth kind the sandbox section
+describes: the one that cannot be raced. Anything else a tutorial can write needs one like it.
+
+### `select` — a drop-down is neither a click nor typing
+
+The wizard's data type and display mode are `<select>` elements. `activate` opens one and
+chooses nothing; `input` types into it. Neither had a materialisation path, so the step that
+asks the reader to choose RNA-seq had **no action at all** and Next walked straight past it
+leaving the field unset — the same silent shape as the `signal`-advance trap above.
+
+`set-state` with a `value` now materialises to `{ type: 'select', anchor, value }`.
+`setNativeInputValue` grew a `SELECT` branch, and it dispatches **`change` as well as
+`input`**, because React derives a drop-down's `onChange` from `change` — a select set without
+it takes the value and tells nobody. Next does nothing when the drop-down already shows what
+the step asks for, like every other action.
+
+Teaching one layer is not enough: `refsFromStep` maps a runtime action to `activate` unless it
+is typing, so a `select` step asked its target for a capability no drop-down advertises and
+`analyseTutorialCompatibility` reported both steps unavailable. **A new action type has to be
+taught to the model, the document materialiser, the compatibility analyser and the runtime.**
+
+### The file browser belongs to no view
+
+`files.*` used to live in `customGenome.js`, which said to move it the moment a second flow
+needed the dialog. This is that flow. It now lives in `fileBrowser.js` under **`viewId: 'app'`**,
+which is the catalogue's word for "not tied to one view" and the only viewId
+`validateTutorialDocument` exempts from its step-view check — without that, the same contract
+used from the Track Manager is rejected as belonging to the Genome Selector.
+
+### Things this tutorial found, which are not about tutorials
+
+- **A step's target was declared missing without ever being asked for twice.** The check after
+  preparation was a single synchronous `findAnchor`, so a row inside a panel that fetches its
+  own contents — the file browser blanks its list to a spinner while it lists a directory — was
+  genuinely absent for the length of that request and the step was reported broken.
+  `ANCHOR_RENDER_GRACE_MS` gives it a short budget first.
+- **`GenomeBrowserView` only asked which tracks were registered on mount and on becoming
+  active.** A tutorial that registers tracks mid-session had therefore changed nothing it could
+  see, so jumping into a browser step drew no custom tracks at all. It now refreshes when a
+  `browserTracks` request arrives.
+- **A precondition's result is not visible to the arrival that follows it.**
+  `ensureSliceGenomeActive` publishes the genome through `setConfigOverride`, and `overrideRef`
+  only catches up on the next render — so an arrival running straight afterwards read an empty
+  active-genome list and registered every demo track against **no genome**, which leaves a
+  track registered and never drawn. The precondition now also writes a ref synchronously.
+- **Two reconcilers are one too many.** While both the runtime and `TrackManagerView` brought
+  the registry to the declared set, each read the same empty registry and posted the same three
+  tracks — and the list showed six. The runtime owns it; the view only reloads.
+- **Order matters between establishing state and publishing it.** Publishing the track request
+  before the tracks existed had the view read an empty registry and draw *No tracks registered
+  yet* on the step whose card says all three are there. Register first, then publish.
+
+### Card placement where the subject is larger than the card
+
+Two steps spotlight a region no card can clear — the file browser dialog (780x512, centred,
+with 366px of margin either side at 1512 wide) and the whole registered-track list (1476x502).
+Semantic placement has nowhere to put the card and falls back to the centre of the window,
+which is the centre of the ring. Both now carry an authored `cardPosition` on the subject's
+top-left edge, which is peripheral at both 1600x1100 and 1512x900. **This is invisible at the
+authoring size**: at 1600x1100 the list step fitted its card above the ring by twelve pixels
+and only failed at 900.

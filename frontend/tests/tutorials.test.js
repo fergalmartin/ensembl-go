@@ -38,6 +38,8 @@ import {
   stepUndo,
   tutorialAnchorIds,
   validateTutorial,
+  TRACK_FILENAMES,
+  stepAdvance,
 } from '../src/utils/tutorialModel.js'
 
 const srcDir = new URL('../src/', import.meta.url)
@@ -630,6 +632,20 @@ test('the bundled genome identifiers agree with the backend', () => {
   }
 })
 
+test('the demo track filenames agree with the backend', () => {
+  // Same argument as the genome identifiers above, and the same failure: the browser
+  // matches a registered track to one of these by the end of its path, so a rename on
+  // either side leaves a `browserTracks` arrival silently adding nothing at all.
+  const backend = readFileSync(new URL('../../backend/demo_genome.py', import.meta.url), 'utf8')
+  for (const filename of Object.values(TRACK_FILENAMES)) {
+    assert.ok(backend.includes(`"${filename}"`), `backend/demo_genome.py does not mention "${filename}"`)
+  }
+  // And the keys are what the workspace installer writes them under.
+  for (const key of Object.keys(TRACK_FILENAMES)) {
+    assert.ok(backend.includes(`("${key}",`), `DEMO_TRACK_BUNDLE has no "${key}" entry`)
+  }
+})
+
 test('steps that point inside a collapsible section say how to open it', () => {
   // Otherwise the step waits forever on an anchor that exists but is hidden.
   const byId = Object.fromEntries(gettingStarted.steps.map((step) => [step.id, step]))
@@ -844,4 +860,55 @@ test('the custom-genome tutorial centres the button that registers the genome', 
   assert.ok(scroll, 'the add step should frame its own view')
   assert.equal(arrivalScrollCenter(scroll), true, 'the add step should centre its button')
   assert.equal(scroll.offset, undefined, 'centred and placed at an offset are different instructions')
+})
+
+
+test('every browser step of the track tutorial establishes the registry, not just the panel', () => {
+  // Views unmount when they are not active, so a genome-browser step cannot inherit the
+  // registry from the Track Manager steps that registered the tracks — walking backward or
+  // jumping in found an empty registry, drew no custom tracks, and left every card in the
+  // last three sections describing something that was not there.
+  //
+  // The order is a dependency order: a track cannot be added to a panel before it exists.
+  const tutorial = getTutorial('track-manager')
+  assert.ok(tutorial, 'the track-manager tutorial should be registered')
+
+  for (const step of tutorial.steps) {
+    if (step.view !== 'genome_browser') continue
+    const arrivals = stepArrivals(step)
+    const types = arrivals.map((arrival) => arrival.type)
+    assert.ok(types.includes('trackRegistry'), `${step.id} does not establish the registry`)
+    const panelAt = types.indexOf('browserTracks')
+    if (panelAt >= 0) {
+      assert.ok(types.indexOf('trackRegistry') < panelAt, `${step.id} adds tracks before registering them`)
+    }
+  }
+})
+
+test('the track tutorial associates every demo track with a genome', () => {
+  // A track registered against nothing is registered and then never drawn, because the
+  // browser only offers tracks belonging to the genome in front of you. The step that
+  // presses Register must therefore arrive with the genome already chosen.
+  const tutorial = getTutorial('track-manager')
+  const byId = Object.fromEntries(tutorial.steps.map((step) => [step.id, step]))
+
+  for (const id of ['register', 'register-atac']) {
+    const registry = stepArrivals(byId[id]).find((arrival) => arrival.type === 'trackRegistry')
+    assert.ok(registry, `${id} states no track registry`)
+    assert.equal(registry.genome, 'slice', `${id} registers against no genome`)
+  }
+  // And the step that presses it declares the job not yet done, or coming Back finds it done.
+  const before = stepArrivals(byId['register']).find((arrival) => arrival.type === 'trackRegistry')
+  assert.deepEqual(before.registered, [], 'the first Register step must arrive with nothing registered')
+})
+
+test('the track tutorial never asserts a variant panel it cannot open', () => {
+  // The VCF metadata panel opens on a canvas click, which no target contract can drive. The
+  // step therefore invites the click rather than claiming the panel is open — a card may only
+  // describe state its own `arrive` establishes.
+  const tutorial = getTutorial('track-manager')
+  const step = tutorial.steps.find((entry) => entry.id === 'vcf-click')
+  assert.ok(step, 'the vcf-click step should exist')
+  assert.equal(stepAdvance(step).type, 'manual', 'it is an invitation, so Next continues')
+  assert.equal(stepAction(step).type, 'none', 'the tutorial must not click a variant for the reader')
 })

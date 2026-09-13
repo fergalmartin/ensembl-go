@@ -21,6 +21,9 @@ import {
     getVcfDetailVariantLayout,
     shouldRenderActiveAnchorBase,
 } from '../utils/vcfDetailGeometry'
+// Pure data: which file each of the tutorial's demo tracks is, so a `browserTracks`
+// arrival can name them without carrying registry ids it cannot know.
+import { TRACK_FILENAMES } from '../utils/tutorialModel'
 import {
     VCF_BLOCK_LEVELS,
     buildVcfOverviewWarmupKey,
@@ -1600,6 +1603,7 @@ export default function GenomeBrowser({
     customTrackBrowsePath = '.',
     availableTracks = [],  // all registered tracks from Track Manager API
     refreshAvailableTracks = null,  // callback to re-fetch registered tracks
+    tutorialTracksRequest = null,  // a tutorial's `browserTracks` arrival, reconciled below
     dimNonSelectedGenes = true,
     hideInactiveTracks = false,
     compressTranscripts = false,
@@ -13659,6 +13663,7 @@ export default function GenomeBrowser({
 
                 {/* Add Custom Track — opens Track Picker (shows registered tracks) */}
                 <button
+                    data-tour-id="browser-add-track"
                     onClick={() => {
                         refreshAvailableTracks?.()
                         setSelectedTrackPickerIds([])
@@ -13781,6 +13786,45 @@ export default function GenomeBrowser({
         }
         return nextTrack
     }, [])
+
+    /* A tutorial's `browserTracks` arrival, reconciled against this panel.
+     *
+     * Set, never toggled, because an arrival runs on every entry to a step — walking back
+     * into a step that shows three tracks must show the same three, not add them again.
+     *
+     * Registry ids are minted when a track is registered, so a portable document cannot
+     * name one. The arrival names the demo tracks by key and they are matched here by the
+     * end of their path, which is stable and is what the tutorial actually laid down. */
+    useEffect(() => {
+        if (!tutorialTracksRequest) return
+        const wanted = Array.isArray(tutorialTracksRequest.added) ? tutorialTracksRequest.added : []
+        const registered = Array.isArray(availableTracks) ? availableTracks : []
+        const matching = (key) => registered.find((track) =>
+            String(track?.path || '').endsWith(TRACK_FILENAMES[key] || '\u0000')
+        )
+        const wantedTracks = wanted.map(matching).filter(Boolean)
+
+        setCustomTracks((prev) => {
+            const keep = wantedTracks.map((registeredTrack) => {
+                const existing = prev.find((ct) =>
+                    String(ct.registryTrackId || '') === String(registeredTrack.id || '')
+                    || String(ct.path || '') === String(registeredTrack.path || '')
+                )
+                // Kept rather than rebuilt, so a reader's own visibility switch survives a
+                // step that merely re-states which tracks are on the panel.
+                return existing ? { ...existing, visible: true } : buildCustomTrackFromRegistered(registeredTrack)
+            })
+            const same = keep.length === prev.length
+                && keep.every((track, index) => track === prev[index])
+            return same ? prev : keep
+        })
+
+        setSelectedTrackPickerIds(
+            (Array.isArray(tutorialTracksRequest.chosen) ? tutorialTracksRequest.chosen : [])
+                .map(matching).filter(Boolean).map((track) => String(track.id || ''))
+        )
+        setIsTrackPickerOpen(String(tutorialTracksRequest.picker || 'closed') === 'open')
+    }, [tutorialTracksRequest, availableTracks, buildCustomTrackFromRegistered])
 
     const addSelectedRegisteredTracksToBrowser = useCallback(() => {
         if (!Array.isArray(selectedTrackPickerIds) || selectedTrackPickerIds.length === 0) return
@@ -13921,6 +13965,7 @@ export default function GenomeBrowser({
                     onClick={closeTrackPicker}
                 >
                     <div
+                        data-tour-id="browser-track-picker"
                         className={`w-full max-w-lg rounded-2xl shadow-2xl border flex flex-col max-h-[80vh] ${isLight ? 'bg-white border-gray-200' : 'bg-gray-900 border-gray-700'}`}
                         onClick={(e) => e.stopPropagation()}
                     >
@@ -13941,7 +13986,7 @@ export default function GenomeBrowser({
                             >✕</button>
                         </div>
                         {/* Track list */}
-                        <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+                        <div data-tour-id="browser-track-picker-list" className="flex-1 overflow-y-auto p-3 space-y-1.5">
                             {availableTracks.length === 0 ? (
                                 <div className={`text-center py-10 text-sm ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
                                     <p>Open <strong>Track Manager</strong> → click <strong>Add Track</strong> → register your data files.</p>
@@ -13965,6 +14010,8 @@ export default function GenomeBrowser({
                                 return (
                                     <div
                                         key={registeredTrack.id}
+                                        data-tour-id={`browser-track-picker-row-${registeredTrack.id}`}
+                                        data-tutorial-picker-track={registeredTrack.label || ''}
                                         onClick={() => {
                                             if (alreadyAdded) return
                                             setSelectedTrackPickerIds((prev) =>
@@ -14076,6 +14123,7 @@ export default function GenomeBrowser({
                         {/* Footer action */}
                         <div className={`px-5 py-3 border-t flex justify-end items-center gap-2 flex-none ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-800 bg-gray-900/50'}`}>
                             <button
+                                data-tour-id="browser-track-picker-add"
                                 onClick={addSelectedRegisteredTracksToBrowser}
                                 disabled={selectedTrackPickerIds.length === 0}
                                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${selectedTrackPickerIds.length === 0
@@ -14086,6 +14134,7 @@ export default function GenomeBrowser({
                                 Add{selectedTrackPickerIds.length > 0 ? ` (${selectedTrackPickerIds.length})` : ''}
                             </button>
                             <button
+                                data-tour-id="browser-track-picker-close"
                                 onClick={closeTrackPicker}
                                 className={`px-3 py-1.5 rounded-lg text-xs ${isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-800'}`}
                             >Close</button>

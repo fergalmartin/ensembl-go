@@ -75,6 +75,8 @@ from demo_genome import (
     demo_install_statuses,
     install_demo_genome,
     install_demo_source_files,
+    install_demo_track_files,
+    is_inside_tutorial_workspace,
     reset_tutorial_workspace,
     set_tutorial_session_genome,
     tutorial_session_species,
@@ -8477,6 +8479,27 @@ async def post_tutorial_demo_source(request: TutorialDemoSourceRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.post("/api/tutorial/demo-tracks")
+async def post_tutorial_demo_tracks(request: TutorialDemoSourceRequest):
+    """Lay the demo data tracks out in the workspace for a reader to register by hand.
+
+    The Track Manager tutorial teaches registering data files you already have, so it has
+    to put some files somewhere the reader can browse to. Nothing is registered here — that
+    is the reader's job, through the wizard the tutorial is about.
+
+    Guarded exactly as ``/api/tutorial/demo-source`` is: the workspace must be the one
+    belonging to the output directory given, so this cannot write anywhere else.
+    """
+    expected_workspace = tutorial_workspace(request.output_dir).resolve()
+    supplied_workspace = Path(request.workspace).expanduser().resolve()
+    if supplied_workspace != expected_workspace:
+        raise HTTPException(status_code=400, detail="Demo files may only be written in the active tutorial workspace.")
+    try:
+        return await run_in_threadpool(install_demo_track_files, request.workspace)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.delete("/api/tutorial/session")
 async def delete_tutorial_session():
     """Forget it again, when the tutorial ends."""
@@ -15261,7 +15284,9 @@ async def structure_variants(payload: StructureVariantsRequest):
         strand = str(context.get("strand") or "+")
         dna = _cds_dna_from_layout(_get_browse_fasta(genome), chrom, strand, layout)
 
-        config = load_config()
+        # Tutorial-aware, like every other reader of the registry: during a tutorial the
+        # only VCF tracks in scope are the tutorial's own.
+        config = _tracks_config()
         registry = _load_track_registry(config)
         by_id = {str(item.get("id") or ""): item for item in registry.get("tracks", [])}
 
@@ -19473,6 +19498,27 @@ def _detect_long_read_bam(path: str) -> bool:
     return any(k in lower for k in ("long_read", "longreads", "ont", "pacbio", "isoseq", "nanopore", "minimap", "flair"))
 
 
+def _tracks_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The configuration the track registry should be resolved against.
+
+    Normally the user's own. While a tutorial is running it is that configuration with its
+    output directory swapped for the tutorial's workspace, so a track registered during a
+    tutorial is written into the scratch directory and swept away with it.
+
+    This has to happen here rather than in the frontend's config override. The override is
+    a frontend fact; every tracks endpoint resolves its store from the configuration *on
+    disk*, so without this the three demo tracks the Track Manager tutorial asks the reader
+    to register land in the user's own ``track_registry.json`` and outlive the tutorial —
+    pointing, by then, at files inside a workspace that has been deleted. Same shape as
+    ``_notes_config`` and ``_browsable_active_species``, and for the same reason.
+    """
+    cfg = dict(config or load_config())
+    workspace = tutorial_session_workspace()
+    if workspace:
+        cfg["output_dir"] = workspace
+    return cfg
+
+
 def _output_dir_track_registry_store_path(output_dir: Any) -> Optional[Path]:
     output_dir_text = str(output_dir or "").strip()
     if not output_dir_text:
@@ -19490,6 +19536,12 @@ def _track_registry_store_paths_for_config(config: Optional[Dict[str, Any]] = No
     sidecar = _output_dir_track_registry_store_path(cfg.get("output_dir")) if use_output_sidecar else None
     if sidecar:
         paths.append(sidecar)
+    if sidecar and TUTORIAL_WORKSPACE_DIR in sidecar.parts:
+        # A tutorial's tracks are its own. Falling back to the global registry would list
+        # the user's real tracks inside the tutorial — pointing at genomes the sandbox has
+        # hidden — and, because the registry is written back out, could copy them into a
+        # scratch directory that is about to be deleted.
+        return [sidecar]
     paths.append(TRACK_REGISTRY_FILE)
 
     out: List[Path] = []
@@ -19521,7 +19573,7 @@ def _load_track_registry_from_path(path: Path) -> Optional[Dict[str, Any]]:
 
 
 def _load_track_registry(config: Optional[Dict[str, Any]] = None) -> Dict:
-    cfg = config or load_config()
+    cfg = config or _tracks_config()
     empty_registry: Optional[Dict[str, Any]] = None
     for path in _track_registry_store_paths_for_config(cfg):
         registry = _load_track_registry_from_path(path)
@@ -21148,7 +21200,7 @@ class TrackRegistryUpdateEntry(BaseModel):
 @app.get("/api/tracks")
 async def list_tracks(genome_key: Optional[str] = None):
     """Return all registered tracks, optionally filtered by genome_key."""
-    config = load_config()
+    config = _tracks_config()
     registry = _load_track_registry(config)
     _ensure_track_registry_sidecar(config)
     tracks = [_hydrate_track_genome_label(_hydrate_track_defaults(t), config) for t in registry.get("tracks", [])]
@@ -21370,6 +21422,21 @@ async def register_track(entry: TrackRegistryEntry):
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
+    # A file inside a tutorial workspace may only ever be registered into that workspace's
+    # own registry. Everything else about this is timing-dependent — the frontend override,
+    # the tutorial session, the order arrivals happen to run in — and a write that lands a
+    # moment after a tutorial ends would otherwise put a track in the user's real registry
+    # pointing at a directory that is about to be deleted. That happened, which is why this
+    # is here: it is the one refusal that cannot be raced.
+    config = _tracks_config()
+    if is_inside_tutorial_workspace(path) and not is_inside_tutorial_workspace(
+        _primary_track_registry_store_path(config)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="A tutorial's data track cannot be registered outside its own workspace.",
+        )
+
     # Auto-detect type
     detected_type = entry.type or _detect_track_type(path)
 
@@ -21477,7 +21544,6 @@ async def register_track(entry: TrackRegistryEntry):
         "index_note": index_note,
     }
 
-    config = load_config()
     with _track_registry_lock:
         registry = _load_track_registry(config)
         registry.setdefault("tracks", []).append(new_track)
@@ -21489,7 +21555,7 @@ async def register_track(entry: TrackRegistryEntry):
 @app.put("/api/tracks/{track_id}")
 async def update_track(track_id: str, entry: TrackRegistryUpdateEntry):
     """Update label, display_mode, or genome_key for an existing track."""
-    config = load_config()
+    config = _tracks_config()
     with _track_registry_lock:
         registry = _load_track_registry(config)
         tracks = registry.get("tracks", [])
@@ -21561,7 +21627,7 @@ async def update_track(track_id: str, entry: TrackRegistryUpdateEntry):
 @app.delete("/api/tracks/{track_id}")
 async def delete_track(track_id: str):
     """Remove a track registration (does not delete the file)."""
-    config = load_config()
+    config = _tracks_config()
     with _track_registry_lock:
         registry = _load_track_registry(config)
         tracks = registry.get("tracks", [])

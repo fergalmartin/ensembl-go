@@ -388,6 +388,14 @@ function BuilderChevronGlyph({ pointsRight, size = 20 }) {
   )
 }
 
+// The tutorial's three demo tracks, as the two editor sections below name them. The two
+// BigWigs differ only in what you tell the app the data is, which is the lesson.
+const DEMO_TRACK_CHOICES = [
+  ['expression', 'Brain expression (BigWig)'],
+  ['atac', 'ATAC-seq peaks (BigWig)'],
+  ['variants', 'Variants (VCF)'],
+]
+
 export default function TutorialBuilderOverlay() {
   const tutorial = useTutorial()
   const { prepareBuilderPreview, prepareBuilderStep, stopBuilderPreview } = tutorial
@@ -1309,6 +1317,8 @@ export default function TutorialBuilderOverlay() {
   const dialogArrival = arrivalOf(selectedStep, 'dialog')
   const playlistsArrival = arrivalOf(selectedStep, 'playlists')
   const customGenomeArrival = arrivalOf(selectedStep, 'customGenome')
+  const trackRegistryArrival = arrivalOf(selectedStep, 'trackRegistry')
+  const browserTracksArrival = arrivalOf(selectedStep, 'browserTracks')
   const arrivalPlaylistNames = arrivalPlaylists(playlistsArrival).map((playlist) => playlist.name)
   // The step's own highlighted target is what an authored view position is measured
   // against: the author scrolls until this step looks right, and what "right" means is
@@ -2293,6 +2303,230 @@ export default function TutorialBuilderOverlay() {
                         <strong> Add genome</strong>, or coming Back to that step finds the job already done.
                         Adding the genome converts and indexes its annotation, so a step declaring it added
                         waits for that rather than assuming.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </details>
+              <details className={`${wideField} rounded-md border border-gray-700 p-2.5`} open={Boolean(trackRegistryArrival)}>
+                <summary className="cursor-pointer text-xs font-semibold text-gray-200">Track Manager on arrival</summary>
+                <div className="mt-2 space-y-2">
+                  <label className="flex cursor-pointer items-start gap-2 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-100">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(trackRegistryArrival)}
+                      onChange={(event) => updateArrival('trackRegistry', event.target.checked ? {
+                        registered: [],
+                        wizard: 'closed',
+                        file: '',
+                        fields: { label: '' },
+                        dataType: '',
+                        displayMode: '',
+                        genome: '',
+                        browser: { state: 'closed', directory: 'demo' },
+                      } : null)}
+                      className="mt-0.5"
+                    />
+                    <span>State the Track Manager on arrival</span>
+                  </label>
+                  {trackRegistryArrival && (
+                    <>
+                      <div>
+                        <label className={label}>Already registered</label>
+                        <div className="mt-1 space-y-1">
+                          {DEMO_TRACK_CHOICES.map(([key, name]) => (
+                            <label key={key} className="flex cursor-pointer items-center gap-2 text-xs text-gray-200">
+                              <input
+                                type="checkbox"
+                                checked={(trackRegistryArrival.registered || []).includes(key)}
+                                onChange={(event) => updateArrival('trackRegistry', {
+                                  registered: event.target.checked
+                                    ? [...(trackRegistryArrival.registered || []), key]
+                                    : (trackRegistryArrival.registered || []).filter((entry) => entry !== key),
+                                })}
+                              />
+                              <span>{name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className={label}>Registration wizard</label>
+                          <select
+                            className={textInput}
+                            value={trackRegistryArrival.wizard || 'closed'}
+                            onChange={(event) => updateArrival('trackRegistry', {
+                              wizard: event.target.value,
+                              ...(event.target.value === 'closed'
+                                ? { file: '', dataType: '', displayMode: '', genome: '', browser: { state: 'closed', directory: 'demo' } }
+                                : {}),
+                            })}
+                          >
+                            <option value="closed">Closed</option>
+                            <option value="file">Open, on the file step</option>
+                            <option value="details">Open, on the details step</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className={label}>File chosen</label>
+                          <select
+                            className={textInput}
+                            value={trackRegistryArrival.file || ''}
+                            onChange={(event) => updateArrival('trackRegistry', { file: event.target.value })}
+                          >
+                            <option value="">None</option>
+                            {DEMO_TRACK_CHOICES.map(([key, name]) => (
+                              <option key={key} value={`demo:${key}`}>{name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className={label}>Label typed</label>
+                          <input
+                            className={textInput}
+                            placeholder="Brain expression"
+                            value={trackRegistryArrival.fields?.label || ''}
+                            onChange={(event) => updateArrival('trackRegistry', {
+                              fields: { ...trackRegistryArrival.fields, label: event.target.value },
+                            })}
+                          />
+                        </div>
+                        <div>
+                          <label className={label}>BigWig data type</label>
+                          <select
+                            className={textInput}
+                            value={trackRegistryArrival.dataType || ''}
+                            onChange={(event) => updateArrival('trackRegistry', {
+                              dataType: event.target.value,
+                              displayMode: event.target.value === 'rna_seq' ? 'zoned_heatmap' : event.target.value ? 'signal_plot' : '',
+                            })}
+                          >
+                            <option value="">Not chosen</option>
+                            <option value="rna_seq">RNA-seq (zoned heatmap)</option>
+                            <option value="atac_seq">ATAC-seq (signal plot)</option>
+                            <option value="chip_seq">ChIP-seq (signal plot)</option>
+                            <option value="custom">Custom</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className={label}>File browser</label>
+                          <select
+                            className={textInput}
+                            value={trackRegistryArrival.browser?.state === 'open' ? 'open' : ''}
+                            onChange={(event) => updateArrival('trackRegistry', {
+                              browser: { state: event.target.value ? 'open' : 'closed', directory: 'demo' },
+                            })}
+                          >
+                            <option value="">Closed</option>
+                            <option value="open">Open, in the demo tracks folder</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className={label}>Genome association</label>
+                          <select
+                            className={textInput}
+                            value={trackRegistryArrival.genome || ''}
+                            onChange={(event) => updateArrival('trackRegistry', { genome: event.target.value })}
+                          >
+                            <option value="">Not chosen</option>
+                            <option value="slice">The tutorial&rsquo;s genome</option>
+                          </select>
+                        </div>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-gray-400">
+                        Files are named symbolically, never as paths: the tutorial lays its own copy of the
+                        demo tracks inside the sandbox and the runtime fills in where they landed.
+                        <strong> Nothing registered</strong> is a real instruction &mdash; give it to the step
+                        that registers the first track, or coming Back finds the job already done.
+                        Registering validates the file and may build an index, so a step declaring a track
+                        registered waits for that rather than assuming. Leaving the genome unchosen is also
+                        real: it is what makes a track register and then never draw.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </details>
+              <details className={`${wideField} rounded-md border border-gray-700 p-2.5`} open={Boolean(browserTracksArrival)}>
+                <summary className="cursor-pointer text-xs font-semibold text-gray-200">Custom tracks on the panel</summary>
+                <div className="mt-2 space-y-2">
+                  <label className="flex cursor-pointer items-start gap-2 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-100">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(browserTracksArrival)}
+                      onChange={(event) => updateArrival('browserTracks', event.target.checked
+                        ? { picker: 'closed', chosen: [], added: [] }
+                        : null)}
+                      className="mt-0.5"
+                    />
+                    <span>State which tracks the panel is showing</span>
+                  </label>
+                  {browserTracksArrival && (
+                    <>
+                      <div>
+                        <label className={label}>Drawn on the panel</label>
+                        <div className="mt-1 space-y-1">
+                          {DEMO_TRACK_CHOICES.map(([key, name]) => (
+                            <label key={key} className="flex cursor-pointer items-center gap-2 text-xs text-gray-200">
+                              <input
+                                type="checkbox"
+                                checked={(browserTracksArrival.added || []).includes(key)}
+                                onChange={(event) => updateArrival('browserTracks', {
+                                  added: event.target.checked
+                                    ? [...(browserTracksArrival.added || []), key]
+                                    : (browserTracksArrival.added || []).filter((entry) => entry !== key),
+                                })}
+                              />
+                              <span>{name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className={label}>Track picker</label>
+                        <select
+                          className={textInput}
+                          value={browserTracksArrival.picker === 'open' ? 'open' : ''}
+                          onChange={(event) => updateArrival('browserTracks', {
+                            picker: event.target.value ? 'open' : 'closed',
+                            ...(event.target.value ? {} : { chosen: [] }),
+                          })}
+                        >
+                          <option value="">Closed</option>
+                          <option value="open">Open</option>
+                        </select>
+                      </div>
+                      {browserTracksArrival.picker === 'open' && (
+                        <div>
+                          <label className={label}>Ticked in the picker, not yet added</label>
+                          <div className="mt-1 space-y-1">
+                            {DEMO_TRACK_CHOICES.map(([key, name]) => (
+                              <label key={key} className="flex cursor-pointer items-center gap-2 text-xs text-gray-200">
+                                <input
+                                  type="checkbox"
+                                  checked={(browserTracksArrival.chosen || []).includes(key)}
+                                  onChange={(event) => updateArrival('browserTracks', {
+                                    chosen: event.target.checked
+                                      ? [...(browserTracksArrival.chosen || []), key]
+                                      : (browserTracksArrival.chosen || []).filter((entry) => entry !== key),
+                                  })}
+                                />
+                                <span>{name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <p className="text-[11px] leading-relaxed text-gray-400">
+                        Registering a track and showing it are different acts in different apps; this is the
+                        second. <strong>Nothing drawn</strong> and <strong>picker closed</strong> are real
+                        instructions &mdash; give them to the step that opens the picker, or coming Back
+                        leaves it sitting over the button the reader is being asked to press. Tracks already
+                        on the panel keep whatever the reader switched them to.
                       </p>
                     </>
                   )}

@@ -43,6 +43,8 @@ checkpoints are in-session snapshots.
 | View position on arrival | `arrive` `pageScroll` — **Use current position** |
 | Dialog on arrival | `arrive` `dialog` with `fields` |
 | Playlists on arrival | `arrive` `playlists` |
+| Track Manager on arrival | `arrive` `trackRegistry` — which demo tracks are registered, and the registration wizard's own state |
+| Custom tracks on the panel | `arrive` `browserTracks` — which registered tracks a panel draws, and the track picker |
 | Tutorial datasets | `datasets[]`, `settings.genomeColors`, `settings.showInactivePills`, **Initially active genomes** |
 | Locked-bar message | `blockedControlMessage` |
 
@@ -76,7 +78,14 @@ playback, not in the builder.
 ## Target contracts
 
 `frontend/src/tutorialTargets/` is the stable catalogue — `app.js`, `configuration.js`,
-`download.js`, `genomeSelector.js`, `genomeBrowser.js`, assembled by `index.js`.
+`download.js`, `genomeSelector.js`, `customGenome.js`, `fileBrowser.js`, `trackManager.js`,
+`genomeBrowser.js`, assembled by `index.js`.
+
+**A surface that opens over more than one view belongs under `viewId: 'app'`.** The file
+browser is the case: `validateTutorialDocument` rejects a step whose `view` disagrees with its
+target's `viewId`, and `'app'` is the only value exempt from that check — so `files.*` filed
+under `genome_selector` made the same dialog unusable from the Track Manager. There is a test
+pinning which views are authorable; adding a module means updating it.
 
 A contract has a stable `id`, `contractVersion`, human `label`, control kind, `viewId`,
 optional validated `parameters`, `capabilities` and a safety class. Selectors and

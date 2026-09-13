@@ -146,9 +146,16 @@ function refsFromStep(step) {
     const ref = targetRefFromAnchor(anchor)
     const isTypedAction = field === 'action' && step?.action?.type === 'type'
     const isInputAdvance = field === 'advanceOn' && step?.advanceOn?.type === 'input'
+    // A drop-down is driven by setting its value, not by pressing it. Without this a
+    // `select` action asked its target for `activate`, which no drop-down contract
+    // advertises, and the step was reported unavailable — the compatibility report saying,
+    // correctly, that a capability it needed was missing.
+    const isSelectAction = field === 'action' && step?.action?.type === 'select'
     const capability = field === 'prefill' || isTypedAction || isInputAdvance
       ? 'input'
-      : (field === 'action' || field === 'advanceOn' ? 'activate' : 'spotlight')
+      : isSelectAction
+        ? 'set-state'
+        : (field === 'action' || field === 'advanceOn' ? 'activate' : 'spotlight')
     if (ref) add(ref, capability, field)
     else if (anchor) refs.push({ missingAnchor: anchor, capability: 'spotlight', field })
   }
@@ -373,6 +380,15 @@ export function materializeTutorialDocument(document) {
           value: String(first.value || ''),
           submit: first.submit !== false,
           ...(first.overwrite !== undefined ? { overwrite: Boolean(first.overwrite) } : {}),
+          ...(step.autoplay?.options || {}),
+        }
+      } else if (first.capability === 'set-state' && first.value !== undefined) {
+        // A drop-down. `activate` would open it and choose nothing, and `input` types,
+        // so a select needs its own action or Next leaves the field as it found it.
+        step.action = {
+          type: 'select',
+          anchor: targetRefAnchor(first.target),
+          value: String(first.value || ''),
           ...(step.autoplay?.options || {}),
         }
       } else if (first.capability === 'set-locus') {
