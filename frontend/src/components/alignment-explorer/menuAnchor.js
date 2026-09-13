@@ -2,27 +2,22 @@ import { useEffect } from 'react'
 
 /** Where to put a menu hanging off a control-bar button, and when to close it.
  *
- * The bar scrolls sideways, so a menu cannot live inside it without being
- * clipped: it is drawn over the page and pinned to the button it belongs to.
+ * Menus are drawn over the page and pinned to the control they belong to.
  *
- * The position is taken when the menu opens rather than watched, because the
- * bar does not move while a menu is open - it is what the pointer is busy with
- * - and measuring in an effect would mean a second render for every open.
- *
- * `side` picks which edge is pinned. A button near the right of the bar hangs
- * its menu leftward from its own right edge, which is what keeps it on screen;
- * one in the middle hangs rightward from its left edge for the same reason, and
- * is pulled back from the window edge if the menu would not otherwise fit.
+ * Clamp the full menu to the viewport and keep a connector aimed at its button.
+ * Moving the toolbar or resizing the window dismisses the menu; internal menu
+ * scrolling leaves it open.
  */
 export const MENU_WIDTH = 400
 
-export function menuPosition(element, side = 'left') {
+export function menuPosition(element, width = MENU_WIDTH) {
   const rect = element?.getBoundingClientRect()
   if (!rect) return { top: 0, left: 8 }
-  const top = Math.round(rect.bottom + 6)
-  return side === 'right'
-    ? { top, right: Math.round(Math.max(8, window.innerWidth - rect.right)) }
-    : { top, left: Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - MENU_WIDTH - 8))) }
+  const actualWidth = Math.min(width, window.innerWidth - 16)
+  const left = Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - actualWidth - 8)))
+  return { top: Math.round(rect.bottom + 9), left, width: actualWidth,
+    '--al-menu-max-height': `${Math.max(120, window.innerHeight - rect.bottom - 17)}px`,
+    '--al-menu-pointer': `${Math.max(14, Math.min(actualWidth - 14, rect.left + rect.width / 2 - left))}px` }
 }
 
 /** Close on Escape, or on a press anywhere but the menu and its own button.
@@ -33,14 +28,28 @@ export function menuPosition(element, side = 'left') {
 export function useMenuDismiss(open, close, button, menuClass) {
   useEffect(() => {
     if (!open) return
+    // One toolbar menu at a time, including keyboard-opened menus.
+    window.dispatchEvent(new Event('alignment-menu-open'))
     const away = event => {
       const target = event.target
       if (!target?.closest?.(`.${menuClass}`) && !button.current?.contains(target)) close()
     }
-    const key = event => { if (event.key === 'Escape') close() }
+    const key = event => { if (event.key === 'Escape') {
+      close()
+      const trigger = button.current?.matches('button') ? button.current : button.current?.querySelector('[aria-expanded]')
+      trigger?.focus()
+    } }
+    const moved = event => { if (!event.target?.closest?.(`.${menuClass}`)) close() }
     window.addEventListener('pointerdown', away, true)
     window.addEventListener('keydown', key)
-    return () => { window.removeEventListener('pointerdown', away, true); window.removeEventListener('keydown', key) }
+    window.addEventListener('alignment-menu-open', close)
+    window.addEventListener('resize', close)
+    window.addEventListener('scroll', moved, true)
+    return () => {
+      window.removeEventListener('pointerdown', away, true); window.removeEventListener('keydown', key)
+      window.removeEventListener('alignment-menu-open', close); window.removeEventListener('resize', close)
+      window.removeEventListener('scroll', moved, true)
+    }
   }, [open, close, button, menuClass])
 }
 

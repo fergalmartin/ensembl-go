@@ -93,6 +93,15 @@ export default {
       capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
     },
     { id: 'browser.trackPickerAdd', anchor: 'browser-track-picker-add', label: 'Add the chosen tracks', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    // One custom track's switch in the gutter. An invisible button over the canvas-drawn
+    // control, calling the same setter, so there is still one code path for the switch —
+    // the same trick as the GF/GR/SL toggles above. By label, because the registry id is
+    // minted at registration.
+    {
+      id: 'browser.trackSwitch', selectorTemplate: '[data-tutorial-track-switch="{label}"]', label: 'A custom track switch', kind: 'toggle',
+      parameters: { label: { type: 'string', required: true } },
+      capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write',
+    },
     { id: 'browser.trackPickerClose', anchor: 'browser-track-picker-close', label: 'Close the track picker', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
   ],
 }

@@ -48,14 +48,52 @@ Text inputs: MAF, aligned FASTA, XMFA, Stockholm, Clustal and PHYLIP, including 
 
 Run layer-model tests with `node --test frontend/tests/alignmentExplorer.test.js` and backend tests with `python3 -m unittest discover -s backend/tests -p test_alignment_explorer.py`. Browser acceptance covers rectangular extraction, a second connected region, exact bases, header movement, path highlighting, both overlap choices, undo, cycling and the Original overlay.
 
-The alignment workspace now has a single compact toolbar: Pan, Select, Columns,
-Auto arrange, zoom mode, block navigation, the filter flag, and Cycle. The flag
+The alignment workspace now has a single compact toolbar: block navigation
+stacked over Auto arrange, then Pan, Select, Columns, zoom mode, the filter
+flag, and Cycle.
+
+Block navigation is not Original's alone. In a layer the same field and arrows
+walk the blocks that layer actually holds - neither contiguous nor complete -
+so typing a block number in the layer jumps to it and the arrows step between
+them; a number that is not on the sheet says so rather than moving. Which block
+the window is over is decided differently in the two: Original's blocks run
+along one line, so the nearest one sideways is the one being read, while a
+layer's chunks are placed in two dimensions and `layerViewAnchor` measures from
+the middle of the view in both axes. A block that has been cut into several
+chunks is framed as a whole.
+
+Every control is as wide as its own longest value and no wider, and they share
+out whatever width is left over, so the bar fills its space without a pool of
+dead room at one end. None of them may shrink below that natural width: when the
+window is too narrow for all of them the bar scrolls sideways instead of
+wrapping, since a second row pushed the alignment down and put half the controls
+below the fold. Because the platform's overlay scrollbar only appears once a
+scroll is already under way, the edge with controls behind it is faded and
+carries the same chevron the block navigator uses. Cycle stays last: its wheel
+opens on a rail centred under the button, which needs the room to the right.
+
+The **Select** and **Zoom** menus have no Apply. Each offers one choice among a
+handful, so picking one takes effect where the pick was made and closes the
+menu; Close is there for a menu opened to look rather than to change. **Colour**
+keeps Apply, being several settings edited together, one of which starts a motif
+search. Block navigation and Auto arrange share one control's height because they
+are never both live — Auto arrange is dead in Original, the only place the block
+navigator appears — and side by side they were what pushed the bar to a second
+row. Cycle carries its name alone rather than the active layer's, as in the
+genome browser; the layer is named in the sidebar and in the button's tooltip. The flag
 switches the filter on and off; the filter itself is kept until it is explicitly
 cleared. Neither switch carries its counts in the bar — a wide one pushed Cycle
 off the end and left the bar needing a sideways scroll to reach its own buttons.
 What is being held back is a line under the totals on the **Original alignment**
 card (`Showing 56 of 140 blocks · 2 of 32 sequences`), and each switch repeats it
-in its tooltip. **Hide** opens a menu: *What* hides
+in its tooltip. **Hide** is a split control, and which half is pressed decides
+what happens. Off, either half opens the menu, since there is nothing yet to
+switch. On, the face is the way off - the press lands on the word saying it is
+on, rather than a menu away from it - and the arrow opens the menu to change
+what is hidden. On, it also wears the same accent Filter does, so a narrowed
+sheet says so from the bar rather than only from the sidebar's counts.
+
+The menu behind it: *What* hides
 blocks, sequences or both, and *Condition* combines the picks where blocks are
 being hidden — *Or* keeps the blocks picked out and every block the picked
 sequences run through, *And* keeps only blocks holding everything picked, among
@@ -68,7 +106,39 @@ through it. Hiding sequences
 takes the blocks they leave empty with them, so no bare headers are left standing
 between the blocks that still hold something. *Previous* repeats the last hide from the picks it used.
 **Show** brings everything back. If nothing satisfies the conditions, nothing is
-hidden and the view says so. Loading,
+hidden and the view says so.
+
+Hide belongs to the sheet being read, not to the alignment. The filter is the
+narrowing of the alignment behind every view; Hide is the quick way to read one
+sheet down to what has been picked out on it, and each layer keeps its own,
+Original keeps its own, and Show everything puts back only the one in front of
+you. A hide applied in a layer therefore stays in that layer and does not move
+the view - it used to force `original:true` and drop the reader onto Original's
+whole-file sheet, having resolved their picks against Original's fragments,
+where a pick made in a layer matched no fragment at all and so contributed
+nothing.
+
+The two sheets answer a hide differently because they are different kinds of
+thing. Original asks the server which blocks hold the picked sequences, since a
+sequence runs the length of the file and most of its blocks are not loaded, then
+fetches the survivors' layout and packs them shoulder to shoulder: its
+arrangement is the file's. A layer answers from its own chunks, which are the
+whole truth about which of its blocks carry which sequences, and moves nothing -
+its arrangement is the reader's work. Chunks that go are simply not drawn, rows
+keep their slots so the rows shared across chunks still line up, and Auto
+arrange is there when the gaps want closing.
+
+*Rows*, offered in a layer wherever sequences are being hidden, decides where
+the survivors sit. **Compact**, the default, gives them one line each in the
+layer's row order - the same numbering `tidyLayer` gives a whole layer - so they
+rise to the top of every chunk while a sequence shared by two chunks stays on
+one line across both. Renumbering each chunk on its own would also close the
+gaps, but it would put that shared sequence on a different line in each chunk,
+and those lines are what the connection strings are drawn along. **Keep
+positions** leaves every survivor where it was, gap above it and all, for a
+layer whose vertical arrangement means something. Original does not offer it:
+its row placement is recomputed from the narrowed set anyway, and the sidebar's
+*Sequence rows* already says how. Loading,
 selection actions, display options and workspace export live in collapsible
 sidebar sections, under a header row carrying the Layers title, ＋ and the drawer
 chevron that collapses the sidebar to the left; dragging selected cells

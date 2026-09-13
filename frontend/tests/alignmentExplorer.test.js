@@ -1511,3 +1511,120 @@ test('hiding sequences takes the blocks they leave empty with them',async()=>{
   // statement about sequences, and the blocks follow from where they are.
   assert.deepEqual(hideResult({blocks:[8],rows:['g']},membership,{what:'sequences'}).blocks,[7,9])
 })
+
+test('a layer walks the blocks it holds, and names the one the window is over', async () => {
+  const {layerViewAnchor,createFragment}=await import('../src/components/alignment-explorer/layers.js')
+  // Three chunks arranged across the sheet rather than along one line: block 4
+  // sits far to the right on the top row, block 9 below it on the left.
+  const at=(block,x,y)=>({...createFragment(block,0,100,['a','b']),x,y})
+  const fragments=[at(2,0,0),at(4,4000,0),at(9,0,40)]
+  const view={width:1000,height:600}
+  // Parked on the first chunk, that is the block being read.
+  assert.equal(layerViewAnchor(fragments,{x:0,y:0,scale:1,plane:1},view).sourceBlock,2)
+  // Scrolled down to the second row, the answer is the chunk below - not block 4,
+  // which is nearer sideways but a long way up. This is the whole reason a layer
+  // cannot reuse Original's anchor, whose blocks only ever run left to right.
+  assert.equal(layerViewAnchor(fragments,{x:0,y:40*26,scale:1,plane:1},view).sourceBlock,9)
+  // Panned right along the top row, onto the chunk that is actually there.
+  assert.equal(layerViewAnchor(fragments,{x:4000,y:0,scale:1,plane:1},view).sourceBlock,4)
+  assert.equal(layerViewAnchor([],{x:0,y:0,scale:1,plane:1},view),null,'an empty layer anchors nowhere')
+})
+
+test('a layer answers its own hide, from its own chunks', async () => {
+  const {layerMembership,hideLayerFragments,hideResult}=await import('../src/components/alignment-explorer/hiding.js')
+  const {createFragment}=await import('../src/components/alignment-explorer/layers.js')
+  const chunk=(block,rows,x)=>({...createFragment(block,0,50,rows),x,y:0})
+  // Block 4 is one chunk holding a and b; block 7 has been cut into two chunks,
+  // one holding a and one holding c; block 9 holds c alone.
+  const fragments=[chunk(4,['a','b'],0),chunk(7,['a'],60),chunk(7,['c'],120),chunk(9,['c'],180)]
+
+  // Membership is read off the chunks, with a block's pieces unioned under it.
+  assert.deepEqual(layerMembership(fragments,['a','c']),
+    [{block:4,ids:['a']},{block:7,ids:['a','c']},{block:9,ids:['c']}])
+  // A block holding none of the picks is absent, not present-and-empty: under
+  // Or, an entry's presence is what adds its block.
+  assert.deepEqual(layerMembership(fragments,['b']),[{block:4,ids:['b']}])
+  assert.deepEqual(layerMembership(fragments,[]),[],'nothing picked asks nothing')
+
+  // Or keeps every block a pick runs through; And wants them all in one block,
+  // which only the two halves of block 7 satisfy between them.
+  const picks={blocks:[],rows:['a','c']}
+  assert.deepEqual(hideResult(picks,layerMembership(fragments,picks.rows),{what:'blocks',mode:'or'}).blocks,[4,7,9])
+  assert.deepEqual(hideResult(picks,layerMembership(fragments,picks.rows),{what:'blocks',mode:'and'}).blocks,[7])
+})
+
+test('keeping positions leaves the survivors on the lines they were on', async () => {
+  const {hideLayerFragments}=await import('../src/components/alignment-explorer/hiding.js')
+  const {createFragment,rowCount}=await import('../src/components/alignment-explorer/layers.js')
+  const fragments=[
+    {...createFragment(4,0,50,['a','b','c']),x:0,y:0,slots:[0,1,2]},
+    {...createFragment(7,0,50,['a','c']),x:600,y:3,slots:[0,2]},
+    {...createFragment(9,0,50,['b']),x:900,y:0},
+  ]
+  const kept=hideLayerFragments(fragments,{blocks:[4,7],rows:['a','c'],rowLayout:'keep'},['a','b','c'])
+  assert.deepEqual(kept.map(f=>f.sourceBlock),[4,7],'block 9 is not among the survivors')
+  // The reader arranged this sheet, so hiding leaves every survivor where it was.
+  assert.deepEqual(kept.map(f=>f.x),[0,600])
+  assert.deepEqual(kept.map(f=>f.y),[0,3])
+  // Keep positions leaves every survivor on the line it was on, gaps and all.
+  assert.deepEqual(kept[0].rowIds,['a','c'])
+  assert.deepEqual(kept[0].slots,[0,2])
+  assert.deepEqual(kept[1].slots,[0,2])
+  // A chunk left holding nothing goes rather than standing empty.
+  assert.deepEqual(hideLayerFragments(fragments,{blocks:[4,9],rows:['a'],rowLayout:'keep'}).map(f=>f.sourceBlock),[4])
+  // No hide is the layer itself, not a copy of it.
+  assert.equal(hideLayerFragments(fragments,null),fragments)
+  assert.equal(rowCount(hideLayerFragments(fragments,{blocks:[4],rows:['a','b']},['a','b','c'])[0]),2,
+    'a chunk shrinks to the rows it still shows')
+})
+
+test('a layer workspace carries each layer\'s hide separately', async () => {
+  const {validateLayerWorkspace,createLayer,createFragment,emptyWorkspace}=await import('../src/components/alignment-explorer/layers.js')
+  const chunk=(block,rows)=>({...createFragment(block,0,50,rows),x:0,y:0})
+  const one={...createLayer('One',0,[chunk(4,['a','b'])]),id:'l1',
+    hidden:{blocks:[4],rows:['a'],what:'both',mode:'or',choice:{blocks:[4],rows:['a']}}}
+  const two={...createLayer('Two',1,[chunk(7,['b'])]),id:'l2'}
+  const value={...emptyWorkspace(),version:2,layers:[one,two],active:'l1',original:false}
+  const back=validateLayerWorkspace(value,['a','b'])
+  assert.deepEqual(back.layers[0].hidden.blocks,[4])
+  assert.deepEqual(back.layers[0].hidden.rows,['a'])
+  assert.equal(back.layers[0].hidden.what,'both')
+  // The other layer never hid anything, and says so by having nothing to say.
+  assert.ok(!('hidden' in back.layers[1]))
+  // Original's own hide is still the workspace's, and is not any layer's.
+  assert.equal(back.hidden,null)
+  // A hide naming nothing is not a hide.
+  const empty=validateLayerWorkspace({...value,layers:[{...one,hidden:{blocks:[],rows:[]}},two]},['a','b'])
+  assert.ok(!('hidden' in empty.layers[0]))
+})
+
+test('compacting lifts the survivors to the top, together across chunks', async () => {
+  const {hideLayerFragments}=await import('../src/components/alignment-explorer/hiding.js')
+  const {createFragment}=await import('../src/components/alignment-explorer/layers.js')
+  const order=['a','b','c','d']
+  const fragments=[
+    {...createFragment(4,0,50,['a','b','c','d']),x:0,y:0,slots:[0,1,2,3]},
+    {...createFragment(7,0,50,['b','d']),x:600,y:0,slots:[1,3]},
+  ]
+  // The reported case: one sequence survives, and it should be at the top of
+  // every chunk rather than parked on the line it used to occupy.
+  const one=hideLayerFragments(fragments,{blocks:[4,7],rows:['d'],rowLayout:'compact'},order)
+  assert.deepEqual(one.map(f=>f.slots),[[0],[0]])
+  assert.deepEqual(hideLayerFragments(fragments,{blocks:[4,7],rows:['d'],rowLayout:'keep'},order).map(f=>f.slots),
+    [[3],[3]],'keep positions is the same hide left where it was')
+
+  // Two survivors: they take the top two lines, in the layer's row order, and
+  // 'd' is on the same line in both chunks - renumbering each chunk on its own
+  // would have put it on line 1 in the first and line 0 in the second.
+  const two=hideLayerFragments(fragments,{blocks:[4,7],rows:['b','d'],rowLayout:'compact'},order)
+  assert.deepEqual(two.map(f=>f.rowIds),[['b','d'],['b','d']])
+  assert.deepEqual(two.map(f=>f.slots),[[0,1],[0,1]])
+
+  // A chunk holding only the later survivor keeps its line, so the two chunks
+  // still read across: 'd' is on line 1 whether or not 'b' is beside it.
+  const uneven=hideLayerFragments([fragments[0],{...createFragment(9,0,50,['d']),x:900,y:0,slots:[3]}],
+    {blocks:[4,9],rows:['b','d'],rowLayout:'compact'},order)
+  assert.deepEqual(uneven.map(f=>f.slots),[[0,1],[1]])
+  // Compact is what a hide with no say in the matter gets.
+  assert.deepEqual(hideLayerFragments(fragments,{blocks:[4,7],rows:['d']},order).map(f=>f.slots),[[0],[0]])
+})

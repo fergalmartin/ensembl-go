@@ -109,7 +109,7 @@ and idempotent by construction (it sets, never toggles):
 | `dialog` | `'playlistMembership'`, `'playlistPopover'`, `'none'`, plus `fields` |
 | `playlists` | The whole playlist set, replaced not merged. `[]` is a real instruction |
 | `trackRegistry` | The Track Manager: `registered` demo tracks, the `wizard` step, the `file` chosen, `fields`, `dataType`, `displayMode`, `genome`, and whether the file `browser` is open. `registered: []` is a real instruction |
-| `browserTracks` | Which registered tracks a panel draws: `added`, whether the `picker` is open, and what is `chosen` in it. `added: []` and `picker: 'closed'` are real instructions |
+| `browserTracks` | Which registered tracks a panel draws: `added`, which are `visible` (absent means all), `hideInactive`, whether the `picker` is open, and what is `chosen` in it. `added: []` and `picker: 'closed'` are real instructions |
 
 A tutorial-level `defaultArrive` runs before each step's own; `browserControls` from the two
 are coalesced with the step's keys winning.
@@ -158,3 +158,12 @@ are coalesced with the step's keys winning.
    it at the smallest window, not the one you authored in.
 8. Does a browser step declare everything it needs *registered*, not just displayed? Views
    unmount, so a step in one app cannot inherit what another app's steps set up.
+9. Does one step press several controls *and then a different, final one*? That is two steps.
+   The reader who does the several cannot reach the final one under the same highlight, and
+   pressing Next re-runs the whole action — which, for anything that toggles, undoes exactly
+   the work they just did. Split it, use `all-clicks` with `desiredEngaged` on the several, and
+   give the final press its own step.
+10. Does every control a step asks the reader to *use* have a capability the interaction guard
+    accepts for the events that control needs? A `<select>` needs `mousedown` and `change`; the
+    guard maps capabilities to event types and a mismatch is silent — Next works and the
+    reader's hands do not.

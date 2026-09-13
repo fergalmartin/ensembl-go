@@ -31,7 +31,7 @@ Explicit user decisions:
 
 ## Current interaction
 
-The toolbar provides Pan, Select, Columns, Auto arrange, Original block navigation, Reset and Cycle. The sidebar contains Layers, Selection, Alignment & loading, Display & annotations, and Workspace & export.
+The toolbar provides Original block navigation stacked over Auto arrange, then Pan, Select, Columns, Reset and Cycle. The sidebar contains Layers, Selection, Alignment & loading, Display & annotations, and Workspace & export.
 
 Wheel behaviour follows the configured Genome Browser scheme. Arrow keys pan and plus/minus zoom. Space-drag pans. The panel starts front-facing; the 3D setting tilts it and exposes the layer stack. Canvas fallback preserves editing without WebGL.
 

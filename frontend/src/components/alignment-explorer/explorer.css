@@ -164,7 +164,7 @@
 /* The box takes a number typed or stepped with the arrows beside it; the
    browser's own spinners inside it were a third pair of arrows saying the same
    thing, in a control that has to stay narrow. */
-.al-source-nav input { width:58px; padding:3px!important; appearance:textfield; -moz-appearance:textfield; }
+.al-source-nav input { width:46px; padding:3px!important; appearance:textfield; -moz-appearance:textfield; }
 .al-source-nav input::-webkit-outer-spin-button,.al-source-nav input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
 .al-section>.al-row-mode { display:flex; flex-direction:column; align-items:stretch; gap:6px; }
 .al-row-mode select { width:100%; }
@@ -366,7 +366,8 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-motif-delete { font-size:18px!important; padding:0 6px!important; }
 .al-motif-error { color:var(--al-error,#e05e64)!important; overflow-wrap:anywhere; }
 .al-motif-preview { padding:20px; border-radius:6px; font-family:'IBM Plex Mono',monospace; overflow-wrap:anywhere; }
-.al-menu-actions { position:sticky; bottom:-11px; display:flex; justify-content:flex-end; gap:8px; padding:10px 0 0; background:var(--al-panel); border-top:1px solid var(--al-border); }
+.al-menu-actions small { margin-right:auto; line-height:1.4; }
+.al-menu-actions { position:sticky; bottom:-11px; display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:10px 0 0; background:var(--al-panel); border-top:1px solid var(--al-border); }
 .al-motif-working { position:fixed; right:24px; bottom:30px; z-index:80; padding:12px; border:1px solid var(--al-border); border-radius:8px; background:var(--al-panel); box-shadow:0 8px 30px #0006; font-size:12px; }
 .al-motif-working button { margin-left:12px; }
 .al-motif-progress .al-modal { max-width:480px; }
@@ -387,6 +388,112 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-colour-button .al-swatch { width:26px; height:9px; }
 .al-swatch i { flex:1; display:block; }
 .al-menu-check { display:flex; align-items:center; gap:6px; font-size:11px; }
+
+/* The bar fills the width it is given. Every control grows from the width its
+   own longest value needs, so spare room is shared out between them instead of
+   pooling in one gap, and none may shrink below that width - squeezed to a few
+   pixels their labels spilled over their neighbours, and a row of half-drawn
+   words reads as one jumble rather than as controls. Past the cap they stop
+   growing: a control the width of a paragraph is not easier to hit.
+   When the window is narrower than the natural widths the bar scrolls sideways
+   rather than wrapping. A second row pushed the alignment down and put half the
+   controls below the fold, which is what this bar kept doing. */
+.al-toolbar { min-height:59px; gap:7px; justify-content:flex-start; padding:5px 8px; flex-wrap:nowrap;
+  overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; scrollbar-color:var(--al-border) transparent; }
+.al-toolbar > .al-toolbar-group { display:flex; align-items:center; flex-wrap:nowrap; gap:7px; min-width:0; }
+.al-toolbar > .al-toolbar-context { margin-left:auto; }
+/* Grow factors are control counts, so a control in one group takes the same
+   share of the spare width as a control in the other. */
+.al-toolbar > .al-toolbar-group { flex:5 0 auto; }
+.al-toolbar > .al-toolbar-context { flex:3 0 auto; }
+.al-toolbar .al-tools { flex:2 0 auto; flex-wrap:nowrap; gap:7px; }
+.al-toolbar .al-control,.al-toolbar .al-split {
+  flex:1 0 var(--al-w); min-width:var(--al-w); max-width:calc(var(--al-w) + 90px); box-sizing:border-box; }
+/* The stack is the one control whose content really changes width: a grouped
+   overview names a range of blocks where a single block names a number. It
+   sizes to whichever it is showing, and never falls below the single-block width. */
+.al-toolbar-stack { flex:1 0 auto; min-width:var(--al-w); max-width:calc(var(--al-w) + 90px); box-sizing:border-box; }
+
+/* Scrolling has to be visible to be reachable: a bar that silently drops its
+   last control looks like a bar that has lost it. The thumb only shows once a
+   scroll is under way, so the edge with more behind it is faded and carries the
+   same arrow the block navigator uses. The fades sit on the rail rather than on
+   the bar, because inside a scroll container they would scroll away with the
+   controls they are meant to be covering. */
+.al-toolbar-rail { position:relative; flex-shrink:0; min-width:0; }
+.al-toolbar-rail::before,.al-toolbar-rail::after { content:''; position:absolute; top:0; bottom:1px; width:34px;
+  display:flex; align-items:center; z-index:2; pointer-events:none; opacity:0; transition:opacity .14s ease-out;
+  color:var(--al-muted); font-size:17px; line-height:1; }
+.al-toolbar-rail::before { content:'\2039'; left:0; justify-content:flex-start; padding-left:3px;
+  background:linear-gradient(to right,var(--al-bg) 34%,color-mix(in srgb,var(--al-bg) 62%,transparent) 68%,transparent); }
+.al-toolbar-rail::after { content:'\203A'; right:0; justify-content:flex-end; padding-right:3px;
+  background:linear-gradient(to left,var(--al-bg) 34%,color-mix(in srgb,var(--al-bg) 62%,transparent) 68%,transparent); }
+.al-toolbar-rail[data-overflow=left]::before,.al-toolbar-rail[data-overflow=both]::before { opacity:1; }
+.al-toolbar-rail[data-overflow=right]::after,.al-toolbar-rail[data-overflow=both]::after { opacity:1; }
+.al-toolbar::-webkit-scrollbar { height:7px; }
+.al-toolbar::-webkit-scrollbar-track { background:transparent; }
+.al-toolbar::-webkit-scrollbar-thumb { background:var(--al-border); border-radius:4px; }
+.al-toolbar::-webkit-scrollbar-thumb:hover { background:var(--al-muted); }
+
+.al-toolbar .al-control { display:inline-flex; align-items:center; justify-content:space-between; gap:9px; height:46px; padding:6px 10px; text-align:left; }
+.al-toolbar .al-control:disabled { opacity:.6; }
+.al-control-label { display:flex; flex-direction:column; align-items:stretch; gap:3px; min-width:0; flex:1; }
+.al-control-name { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--al-muted); font-size:10px; font-weight:400; line-height:12px; white-space:nowrap; }
+.al-control-value { display:block; color:var(--al-text); font-size:12px; font-weight:600; line-height:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.al-control-active { color:var(--al-accent); font-size:9px; font-weight:600; }
+/* Both halves of every split control in the bar: a face that acts, and an arrow
+   that opens the menu behind it. */
+.al-toolbar .al-split { height:46px; }
+.al-toolbar .al-split-main { flex:1; min-width:0; text-align:left; padding:5px 9px!important; }
+.al-toolbar .al-split-arrow { width:30px; flex-shrink:0; display:flex; align-items:center; justify-content:center; border-left:1px solid var(--al-border)!important; }
+.al-toolbar .al-split button:disabled { opacity:.6; }
+
+/* Natural widths: each is its own longest value measured in the bar's own type,
+   plus a couple of pixels so a subpixel difference cannot start an ellipsis.
+   Changing a label means re-measuring the one it belongs to. */
+.al-control-pan { --al-w:85px; }
+.al-control-select { --al-w:123px; }
+.al-control-zoom { --al-w:115px; }
+.al-control-colour { --al-w:119px; }
+.al-control-filter { --al-w:64px; }
+.al-control-hide { --al-w:110px; }
+.al-control-layer { --al-w:71px; }
+.al-toolbar .al-control-layer { gap:7px; justify-content:center; font-weight:600; cursor:ns-resize; }
+.al-toolbar-stack { --al-w:134px; }
+
+/* Block navigation and Auto arrange are each half a control tall, so the pair
+   takes one control's worth of the bar rather than pushing it onto a second row.
+   They are never both in use - Auto arrange is dead in Original, which is the
+   only place the block navigator appears - so neither loses anything by sharing.
+   The outline is the one every other control wears: two rows of bare inner
+   buttons read as loose parts of the bar rather than as one grouped control. */
+.al-toolbar-stack { display:flex; flex-direction:column; height:46px; overflow:hidden;
+  border:1px solid var(--al-border); border-radius:5px; background:var(--al-panel); }
+.al-toolbar-stack > * { flex:1; min-height:0; }
+.al-toolbar-stack .al-source-nav { padding:0 5px; gap:4px; border-bottom:1px solid var(--al-border); }
+.al-toolbar-stack .al-source-nav label { flex:1; min-width:0; }
+.al-toolbar-stack .al-source-nav input { height:18px; box-sizing:border-box; padding:0 4px!important; }
+.al-toolbar-stack .al-source-nav button,.al-toolbar-stack > button {
+  border:0!important; border-radius:0!important; background:transparent!important; padding:0 7px!important; }
+.al-toolbar-stack .al-source-nav button:hover:not(:disabled),.al-toolbar-stack > button:hover:not(:disabled) {
+  background:color-mix(in srgb,var(--al-accent) 12%,transparent)!important; }
+
+/* One drop-down mark, drawn rather than typed, at a size that reads as an
+   arrow. The glyph it replaced was a five-pixel smudge at this font size. */
+.al-control-chevron { flex-shrink:0; color:var(--al-muted); font-size:12px; transition:transform .12s; }
+.al-toolbar .menu-open { border-color:var(--al-accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--al-accent) 28%,transparent); }
+.al-toolbar .menu-open .al-control-chevron { transform:rotate(180deg); color:var(--al-accent); }
+.al-toolbar button:hover:not(:disabled) .al-control-chevron { color:var(--al-text); }
+.al-toolbar button:focus-visible { outline:2px solid var(--al-accent); outline-offset:3px; }
+.al-control.selected .al-control-value,.al-split.selected .al-control-value { color:var(--al-accent); }
+
+.al-anchored-menu { position:fixed; z-index:40; }
+.al-anchored-menu::before { content:''; position:absolute; left:var(--al-menu-pointer); top:-6px; width:11px; height:11px; transform:translateX(-50%) rotate(45deg); background:var(--al-panel); border-top:1px solid var(--al-accent); border-left:1px solid var(--al-accent); z-index:1; pointer-events:none; }
+.al-anchored-menu > .al-tool-menu { position:relative; width:100%; min-width:0; max-width:none; max-height:var(--al-menu-max-height); overflow-y:auto; box-sizing:border-box; border-color:var(--al-accent); animation:none; }
+.al-menu-heading { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:4px 12px; padding-bottom:9px; border-bottom:1px solid var(--al-border); }
+.al-menu-heading strong { font-size:13px; }
+.al-menu-heading span { font-size:10px; color:var(--al-muted); }
+.al-hide-menu .al-menu-check { flex-direction:row; align-items:center; font-weight:400; }
 
 /* The key, in the menu and optionally over the alignment as well. */
 .al-legend-inline { position:static; max-width:none; box-shadow:none; pointer-events:auto; }

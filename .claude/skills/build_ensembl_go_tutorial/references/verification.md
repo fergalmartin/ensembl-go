@@ -127,6 +127,30 @@ The tell that this had happened was in the probe's own output and easy to read p
 whose **height** differed between directions. A ring around a canvas is the same ring whether
 the canvas has three extra tracks in it or none.
 
+### Do the step by hand before trusting it
+
+A probe presses Next. **Next is the path most likely to work**, because the tutorial performs
+the action through `clickAsTutorial`, which the interaction guard ignores entirely. Everything
+the *reader* would do goes through that guard instead, and a capability that does not match the
+events a control actually needs fails silently and only for them.
+
+The author's first read of the Track Manager tutorial found three of these in one sitting: a
+drop-down that would not open, a button outside its step's highlight, and a multi-press step
+that undid the reader's own work when Next was pressed. All three sweeps had been clean.
+
+So for every step that asks for something, do it by hand:
+
+```js
+// does the guard let the reader's own event through?
+const el = document.querySelector('[data-tour-id="…"]')
+const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+el.dispatchEvent(ev)
+ev.defaultPrevented   // true means the reader cannot use the control at all
+```
+
+And check the *partial* case, which is the one nobody authors for: do half the step by hand,
+then press Next, and confirm it completes the rest rather than starting again.
+
 ## 3. The three sweeps
 
 All three must come back clean. The number to drive to zero is **steps with nothing to point

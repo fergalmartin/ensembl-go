@@ -73,6 +73,76 @@ export function hideResult(choice,membership=[],{what='blocks',mode='or'}={}) {
   return {blocks:blocks.filter(block=>holds.has(block)),rows}
 }
 
+/** Which of a layer's blocks hold each picked sequence.
+ *
+ * Original has to ask the server this: a sequence runs the length of the file
+ * and the blocks it visits are mostly not loaded. A layer neither can nor needs
+ * to. It holds only the chunks taken into it, and those chunks are the whole
+ * truth about which of its blocks carry which sequences - a block the layer
+ * does not have is not a block the layer can keep.
+ *
+ * A block can be several chunks once pieces of it have been moved separately,
+ * so what each of them holds is unioned under the one block number, and a block
+ * holding none of the picks is left out entirely: `keptBlocks` reads an entry's
+ * presence as "this block carries a pick" when it takes the union.
+ */
+export function layerMembership(fragments=[],rows=[]) {
+  if(!rows.length)return []
+  const wanted=new Set(rows),byBlock=new Map()
+  for(const fragment of fragments){
+    if(fragment.aggregate)continue
+    const held=fragment.rowIds.filter(id=>wanted.has(id))
+    if(!held.length)continue
+    if(!byBlock.has(fragment.sourceBlock))byBlock.set(fragment.sourceBlock,new Set())
+    for(const id of held)byBlock.get(fragment.sourceBlock).add(id)
+  }
+  return [...byBlock].map(([block,ids])=>({block,ids:[...ids]})).sort((a,b)=>a.block-b.block)
+}
+
+/** A layer's hide, applied where the layer is read rather than to the layer.
+ *
+ * Original answers a hide by fetching the survivors' layout and packing them
+ * shoulder to shoulder, because its arrangement is the file's and the file's
+ * order is all it has. A layer's arrangement is the reader's own work, so
+ * hiding must not move anything: the chunks that go are simply not drawn, and
+ * the ones that stay are exactly where they were left. Auto arrange is there
+ * for closing the gaps, and it is a separate decision.
+ *
+ * Rows are a separate question, and `rowLayout` answers it. Compact, the
+ * default, gives the survivors one slot each in the layer's row order - the
+ * same numbering `tidyLayer` gives a whole layer - so they rise to the top of
+ * every chunk and a row shared by two chunks still lines up with itself across
+ * them. Renumbering each chunk on its own would also close the gaps, but it
+ * would put that shared row on a different line in each chunk it appears in,
+ * and those lines are what the connection strings are drawn along. Keep leaves
+ * every survivor on the slot it had, gaps and all, for a layer whose vertical
+ * arrangement means something.
+ *
+ * `layoutRows` is dropped either way, so a chunk whose lowest rows all went
+ * hidden shrinks to what it is still showing.
+ */
+export function hideLayerFragments(fragments=[],hidden,rowOrder=[]) {
+  if(!hidden)return fragments
+  const blocks=hidden.blocks?.length?new Set(hidden.blocks):null
+  const rows=hidden.rows?.length?new Set(hidden.rows):null
+  if(!blocks&&!rows)return fragments
+  const kept=[]
+  for(const fragment of fragments){
+    if(blocks&&!blocks.has(fragment.sourceBlock))continue
+    if(!rows){kept.push(fragment);continue}
+    const slots=[],ids=[]
+    fragment.rowIds.forEach((id,index)=>{
+      if(!rows.has(id))return
+      ids.push(id);slots.push(fragment.slots?.[index]??index)
+    })
+    if(!ids.length)continue
+    kept.push({...fragment,rowIds:ids,slots,layoutRows:null})
+  }
+  if(!rows||hidden.rowLayout==='keep')return kept
+  const order=[...new Set(kept.flatMap(f=>f.rowIds))].sort((a,b)=>rowOrder.indexOf(a)-rowOrder.indexOf(b))
+  return kept.map(fragment=>({...fragment,slots:fragment.rowIds.map(id=>order.indexOf(id))}))
+}
+
 /** The gap the file layout leaves between blocks, read off the blocks
  *  themselves rather than assumed: it is a server-side constant and the client
  *  has no business hard-coding a second copy of it. */

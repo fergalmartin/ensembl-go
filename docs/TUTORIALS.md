@@ -352,7 +352,7 @@ about:
 | `playlists` | Which playlists exist, named and described as the tutorial asks the user to name them, with members as embedded dataset recipe ids. `selected` names the one being shown. `playlists: []` is a real instruction: none created yet. |
 | `customGenome` | The state of the Genome Selector's add-a-genome form: `panel`, the six `fields`, which analysis `reports` are showing, whether the file `browser` is open and where it is pointed, and whether the genome has been `registered` and made `active`. |
 | `trackRegistry` | The state of the Track Manager: which demo tracks are `registered`, the registration `wizard` (`closed`, `file`, `details`), the `file` chosen, the `fields` typed, the BigWig `dataType` and `displayMode`, whether a `genome` is associated, and whether the file `browser` is open. |
-| `browserTracks` | Which registered tracks a browser panel is showing: `added`, whether the `picker` is open, and what is `chosen` in it but not yet added. |
+| `browserTracks` | Which registered tracks a browser panel is showing: `added`, which of them are `visible` (absent means all), whether the whole set is `hideInactive`, whether the `picker` is open, and what is `chosen` in it but not yet added. |
 
 `genomeSelection` is what lets a step talk about the *result* of a selection the user made
 one step earlier. Selecting four genomes is the previous step's task, so a step whose card
@@ -1293,6 +1293,7 @@ Two other forms:
 | `track-wizard-datatype`, `track-wizard-display` | `BigWigSettingsEditor`, through `dataTypeTourId` / `displayModeTourId` props — the wizard and an editing track card both render it, and an anchor resolves to the first match |
 | `track-manager-track-${track.id}`, `data-tutorial-track-label` | TrackManagerView.jsx — one registered track's card, addressed by the label the tutorial typed because the registry id is minted at registration |
 | `browser-add-track`, `browser-track-picker`, `browser-track-picker-list`, `browser-track-picker-add`, `browser-track-picker-close` | [GenomeBrowser.jsx](../frontend/src/components/GenomeBrowser.jsx) — showing a registered track on a panel |
+| `browser-toggle-track-${trackId}`, `data-tutorial-track-switch` | GenomeBrowser.jsx — one custom track's gutter switch, an invisible button over the canvas-drawn control calling the same setter. Drawn whenever a tutorial is running, not only for a genome from an embedded recipe |
 | `browser-track-picker-row-${registeredTrack.id}`, `data-tutorial-picker-track` | GenomeBrowser.jsx — one row of the picker, addressed by label for the same reason |
 | `file-browser`, `file-browser-path`, `file-browser-list`, `file-browser-entry-${name}`, `file-browser-close` | [FileBrowserModal.jsx](../frontend/src/components/FileBrowserModal.jsx) |
 | `validation-report-${kind}`, `validation-genome-*`, `validation-annotation-*` | [ValidationReportPanel.jsx](../frontend/src/components/ValidationReportPanel.jsx) |
@@ -2103,6 +2104,44 @@ used from the Track Manager is rejected as belonging to the Genome Selector.
 - **Order matters between establishing state and publishing it.** Publishing the track request
   before the tracks existed had the view read an empty registry and draw *No tracks registered
   yet* on the step whose card says all three are there. Register first, then publish.
+
+### What a first read by the author found
+
+Four things, and only one of them was about the tutorial's wording.
+
+**The Register button hung off the bottom of the screen.** Not a `pageScroll` problem — the
+registration wizard is a `fixed` modal, so nothing scrolls the page to it. It simply had no
+maximum height, and a BigWig's settings made it taller than a 900px laptop window, putting its
+footer past the bottom edge with no way to reach it. **That affects anyone registering a
+BigWig, tutorial or not.** The dialog now bounds itself at `88vh` with its middle scrolling and
+its header and footer pinned, exactly as the browser's own track picker already did.
+
+**A drop-down the reader was asked to use would not open.** A native `<select>` opens on
+*mousedown* and reports on *change*, and the interaction guard permitted neither for
+`set-state` — only for `activate`, `input`, `pan` and `scroll`. So the step could spotlight the
+control, the card could ask for it, and the box was dead in the reader's hands while Next
+worked perfectly, which is the signature failure this document keeps returning to.
+`set-state` now permits `mousedown`, `click` and `change`: it is the capability that says *the
+reader may put this control in a state*, and for a drop-down that means opening it.
+
+**A multi-press step that the reader had partly done was undone by Next.** The step ticked
+three picker rows *and* pressed Add, with the highlight over only the rows — so a reader who
+ticked all three could not reach Add, and pressing Next re-ran the whole action, unticking the
+three rows it had just been given. It is now two steps: `all-clicks` over the three rows, with
+`desiredEngaged: true` so a row already ticked is left alone, and then a step whose subject is
+the Add button. **A step whose action presses several controls and then a final, different one
+is two steps.** The picker rows publish `data-tutorial-engaged` so the skip can read them.
+
+**The left-hand panel was one look-only card.** It is now six steps that use it: switch two
+tracks off, see the rows go blank but keep their place, press Hide, see the space close up,
+press Show, and see nothing was lost. Switching a track off and hiding it are different ideas
+and the section now distinguishes them.
+
+That last one needed the gutter's custom-track switches to become authorable, which needed the
+invisible-button trick already used for GF/GR/SL — **and a gating fix**: those buttons were
+drawn only when `tutorialRecipeId` was set, which is true only for a genome installed from an
+embedded dataset recipe. A tutorial running on one of the *bundled* genomes had no id, so the
+gutter carried no anchors at all. They are now drawn whenever a tutorial is running.
 
 ### Card placement where the subject is larger than the card
 

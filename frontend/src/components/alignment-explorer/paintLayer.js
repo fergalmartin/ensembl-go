@@ -518,6 +518,13 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   // Both ends of a skipped link, and any path leaving the loaded window: a
   // chevron on the block edge and the block at the other end, drawn after the
   // panels so nothing buries them. Clicking one opens that block.
+  //
+  // Drawn after the gutter as well, so in Original they are held to the sheet's
+  // side of it: panning sideways used to slide a jump label out over the names
+  // and leave two pieces of text on top of each other. Clipped here, the label
+  // passes under the name column the way the alignment itself does.
+  ctx.save()
+  if(state.original){ctx.beginPath();ctx.rect(MARGIN_X,0,Math.max(0,size.width-MARGIN_X),size.height);ctx.clip()}
   ctx.font='10px "IBM Plex Mono", monospace'
   for(const marker of blockJumpMarkers(connections,offWindow,drawnRects,buried)){
     const f=fragmentById.get(marker.fragmentId)
@@ -554,9 +561,12 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       ctx.strokeStyle=selected?'#d9a638':colors.border;ctx.lineWidth=1;rounded(ctx,labelX+.5,y-6.5,width-1,13,4);ctx.stroke()
       ctx.fillStyle=selected?'#d9a638':colors.muted;ctx.fillText(label,labelX+4,y+3)
     }
-    hits.push({kind:'blockjump',rowId:marker.rowId,block:marker.block,fragmentId:f.id,
-      x:Math.min(anchor,labelX),y:y-9,width:Math.abs(labelX+width/2-anchor)+width/2+4,height:18})
+    const hitX=Math.min(anchor,labelX),hitRight=hitX+Math.abs(labelX+width/2-anchor)+width/2+4
+    const clipped=state.original?Math.max(hitX,MARGIN_X):hitX
+    if(hitRight>clipped)hits.push({kind:'blockjump',rowId:marker.rowId,block:marker.block,fragmentId:f.id,
+      x:clipped,y:y-9,width:hitRight-clipped,height:18})
   }
+  ctx.restore()
   // Where a dragged row would land, drawn over everything so the answer is
   // visible whichever block the cursor happens to be over.
   if(reorder){

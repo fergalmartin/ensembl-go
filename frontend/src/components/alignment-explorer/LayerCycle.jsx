@@ -70,9 +70,9 @@ export default function LayerCycle({layers,active,onChoose,dataset,inventory,lig
 
   const selected=session?Math.round(session.position):0
   const step=layers.length>1?360/layers.length:360,radius=layers.length>2?322/(2*Math.tan(Math.PI/layers.length)):0
-  return <><button ref={button} aria-label="Cycle layers" aria-expanded={!!session}
-    title="Drag to preview layers and release to choose, or click once to leave the wheel following the cursor."
-    onPointerDown={open}>◈ Cycle</button>
+  return <><button ref={button} className={`al-control al-control-layer ${session?'menu-open':''}`} aria-label={`Cycle layers: ${layers.find(l=>l.id===active)?.name||'Original alignment'}`} aria-expanded={!!session}
+    title={`Layer: ${layers.find(l=>l.id===active)?.name||'Original alignment'}. Drag to preview layers and release to choose, or click once to leave the wheel following the cursor.`}
+    onPointerDown={open}><span className="al-control-chevron" aria-hidden="true">◈</span>Cycle</button>
     {session&&createPortal(<div className={`genome-wheel-overlay al-wheel ${light?'light':''} ${session.sticky?'sticky':''}`}
       onWheel={e=>{const s=sessionRef.current;update({...s,position:clamp(s.position+e.deltaY/160,0,layers.length-1)})}}>
       <div className="genome-wheel-scene"><div className="genome-wheel-drum" style={{'--face-height':'322px','--radius':`${radius}px`,'--face-step':`${step}deg`,'--wheel-position':session.position}}>

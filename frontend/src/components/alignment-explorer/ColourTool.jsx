@@ -1,5 +1,7 @@
-import { useCallback, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useId, useRef, useState } from 'react'
+import ControlLabel from './ControlLabel'
+import ControlChevron from './ControlChevron'
+import ControlMenu from './ControlMenu'
 import { menuPosition, useMenuDismiss } from './menuAnchor'
 import { COLOUR_SCHEMES, SHADING_MODES, schemeById } from './colourSchemes'
 import { palettesOfKind, basePalette, defaultPalette } from './palettes'
@@ -26,7 +28,7 @@ export default function ColourTool({ scheme, palette, shading, legendOverlay, co
   motifs, motifsSaved, config, hideUnmatched, onApply, disabled }) {
   const [anchor, setAnchor] = useState(null), [draft, setDraft] = useState(null)
   const [pickerOpen, setPickerOpen] = useState(false)
-  const button = useRef(null)
+  const button = useRef(null), menuId = useId()
   const close = useCallback(() => { setAnchor(null); setDraft(null) }, [])
   useMenuDismiss(!!anchor && !pickerOpen, close, button, 'al-tool-menu')
   const open = () => {
@@ -39,13 +41,12 @@ export default function ColourTool({ scheme, palette, shading, legendOverlay, co
   const chosen = active.palettes ? (draft?.palette ?? palette)?.[active.id] || defaultPalette(active.palettes) : null
   const legend = active.id === 'motif' ? motifLegend(draft?.motifs ?? motifs) : active.legend?.(light, scale, chosen, draft?.shading ?? shading)
   return <>
-    <div className="al-split" ref={button}>
-      <button className="al-split-main" disabled={disabled} aria-label={`Colour: ${schemeById(scheme).label}. Open colour options.`}
-        title="Choose colouring and apply changes" onClick={open}>Colour</button>
-      <button className="al-split-arrow" disabled={disabled} aria-label="Colour options" aria-expanded={!!anchor}
-        title="Choose a scheme, its palette and its key" onClick={open}>▾</button>
-    </div>
-    {anchor && draft && root && createPortal(<div className={`al-tool-menu al-colour-menu ${active.id === 'motif' ? 'al-motif-menu' : ''}`} role="dialog" aria-label="Colour" style={{...anchor, maxHeight: `calc(100vh - ${anchor.top + 12}px)`}}>
+    <button ref={button} className={`al-control al-control-colour ${anchor ? 'menu-open' : ''}`} disabled={disabled}
+      aria-label={`Colour: ${schemeById(scheme).label}. Colour options`} aria-haspopup="dialog" aria-expanded={!!anchor} aria-controls={anchor ? menuId : undefined}
+      title="Choose colouring and apply changes" onClick={open}>
+      <ControlLabel label="Colour" value={schemeById(scheme).label}/><ControlChevron/>
+    </button>
+    {draft && <ControlMenu id={menuId} root={root} anchor={draft ? anchor : null} title="Colour" current={schemeById(scheme).label} className="al-colour-menu">
       <div className="al-menu-tabs" role="tablist" aria-label="What a cell's colour means">
         {COLOUR_SCHEMES.map(option => <button key={option.id} type="button" role="tab"
           aria-selected={option.id === active.id} className={option.id === active.id ? 'selected' : ''}
@@ -77,7 +78,8 @@ export default function ColourTool({ scheme, palette, shading, legendOverlay, co
         <label className="al-menu-check"><input type="checkbox" checked={!!draft.legendOverlay}
           onChange={event => edit({ legendOverlay: event.target.checked })} />Show this key on the alignment</label>
       </div>
+      <small>Changes take effect with Apply.</small>
       <div className="al-menu-actions"><button onClick={close}>Cancel</button><button className="primary" onClick={() => { onApply(draft); close() }}>Apply</button></div>
-    </div>, root)}
+    </ControlMenu>}
   </>
 }

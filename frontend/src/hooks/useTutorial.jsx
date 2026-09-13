@@ -741,7 +741,12 @@ export function TutorialProvider({ children }) {
       // React never hears that the box was ticked. That is what left the gene-class step
       // advancing without unticking anything. The selector's checkboxes escaped it only
       // because they are readOnly and driven from onClick.
-      if (event.type === 'change') return caps.includes('input') || caps.includes('activate')
+      // `set-state` is how a step says the reader may put a control in a state, and for a
+      // drop-down that means opening it and choosing. A native `<select>` opens on
+      // *mousedown* and reports on *change*, so a step allowing only `set-state` left the
+      // box refusing to drop down at all — the reader could see the control the card was
+      // asking them to use and could not use it.
+      if (event.type === 'change') return caps.includes('input') || caps.includes('activate') || caps.includes('set-state')
       if (['input', 'beforeinput'].includes(event.type)) return caps.includes('input')
       if (event.type === 'wheel') return caps.includes('zoom') || caps.includes('scroll')
       if (event.type === 'keydown') {
@@ -751,9 +756,10 @@ export function TutorialProvider({ children }) {
         if (caps.includes('scroll') && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return true
       }
       if (['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mouseup'].includes(event.type)) {
-        return caps.includes('activate') || caps.includes('pan') || caps.includes('scroll') || caps.includes('input')
+        return caps.includes('activate') || caps.includes('pan') || caps.includes('scroll')
+          || caps.includes('input') || caps.includes('set-state')
       }
-      if (event.type === 'click') return caps.includes('activate') || caps.includes('input')
+      if (event.type === 'click') return caps.includes('activate') || caps.includes('input') || caps.includes('set-state')
       return false
     }
     const guard = (event) => {

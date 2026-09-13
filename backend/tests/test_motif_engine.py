@@ -95,6 +95,36 @@ class EngineTests(unittest.TestCase):
         with patch('motif_engine.engine.search_spans', side_effect=AssertionError('render searched')):
             self.assertIsNotNone(self.cache.region('one', composition_key(motifs), 1024, 2048))
 
+    def test_timeout_does_not_commit_the_current_sequence(self):
+        with patch('motif_engine.engine.search_spans', side_effect=[search_spans('ATGC', 'GC'), TimeoutError()]):
+            with self.assertRaises(TimeoutError):
+                self.cache.prepare('partial', lambda: 'ATGC', [motif('ATG'), motif('GC')])
+        with self.cache.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM searches').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT count(*) FROM prepared').fetchone()[0], 0)
+
+    def test_background_jobs_from_other_views_do_not_cancel_each_other(self):
+        manager = MotifJobs(); entered = threading.Event(); release = threading.Event()
+        store = AlignmentStore(Path(self.temp.name) / 'alignment'); store.initialize()
+        store.add_block([{'source': 'one', 'sequence': 'ATGC'}])
+        original = MotifCache.prepare
+        def paused(cache, *args, **kwargs):
+            entered.set(); release.wait(5)
+            return original(cache, *args, **kwargs)
+        try:
+            with patch.object(MotifCache, 'prepare', paused):
+                first = manager.start('dataset', store, [motif('ATG')])
+                self.assertTrue(entered.wait(5))
+                second = manager.start('dataset', store, [motif('GC')])
+                self.assertEqual(manager.status(second['id'])['status'], 'queued')
+                self.assertFalse(manager.jobs[first['id']]['_cancel'].is_set())
+                manager.cancel(second['id']); release.set()
+                manager.pool.shutdown(wait=True)
+            self.assertEqual(manager.status(first['id'])['status'], 'ready')
+            self.assertEqual(manager.status(second['id'])['status'], 'cancelled')
+        finally:
+            release.set(); manager.pool.shutdown(wait=True)
+
     def test_adapter_prepares_all_rows_filters_and_reuses_cache(self):
         store = AlignmentStore(Path(self.temp.name) / 'alignment'); store.initialize()
         for seq in ['ATGC', 'CCCC', 'A-TG']:

@@ -1121,11 +1121,15 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
                 <div
                     data-tour-id="track-wizard"
-                    className={`w-full max-w-lg rounded-2xl shadow-2xl border ${isLight ? 'bg-white border-gray-200' : 'bg-gray-900 border-gray-700'}`}
+                    // Bounded, with the middle scrolling, the way the browser's track picker
+                    // already is. Unbounded, a BigWig's settings made the dialog taller than a
+                    // 900px laptop window and Register was simply off the bottom of the screen
+                    // with no way to reach it — the modal is `fixed`, so nothing scrolls it.
+                    className={`w-full max-w-lg rounded-2xl shadow-2xl border flex flex-col max-h-[88vh] ${isLight ? 'bg-white border-gray-200' : 'bg-gray-900 border-gray-700'}`}
                     onClick={e => e.stopPropagation()}
                 >
                     {/* Header */}
-                    <div className={`px-6 py-4 border-b flex items-center justify-between ${isLight ? 'border-gray-100' : 'border-gray-700'}`}>
+                    <div className={`px-6 py-4 border-b flex items-center justify-between flex-none ${isLight ? 'border-gray-100' : 'border-gray-700'}`}>
                         <div>
                             <h2 className={`text-base font-semibold ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>Register Track</h2>
                             <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Step {step} of 2</p>
@@ -1133,7 +1137,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                         <button onClick={onClose} className={`p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>✕</button>
                     </div>
 
-                    <div className="px-6 py-5 space-y-4">
+                    <div className="px-6 py-5 space-y-4 flex-1 overflow-y-auto min-h-0">
                         {step === 1 && (
                             <div className="text-center space-y-4">
                                 <p className={`text-sm ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>Select the data file you want to add as a track.</p>
@@ -1300,7 +1304,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
 
                     {/* Footer */}
                     {step === 2 && (
-                        <div className={`px-6 py-4 border-t flex justify-between gap-3 ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700 bg-gray-900/50'}`}>
+                        <div className={`px-6 py-4 border-t flex justify-between gap-3 flex-none ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700 bg-gray-900/50'}`}>
                             <button
                                 data-tour-id="track-wizard-back"
                                 onClick={() => { setStep(1); setFilePath('') }}

@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { getGenomeKey, genomeKeyCandidates, genomeKeyDisplayLabels } from '../../utils/genomeIdentity'
 import DrawerChevron from '../DrawerChevron'
 import LayerCanvas from './LayerCanvas'
@@ -7,6 +6,9 @@ import LayerCycle from './LayerCycle'
 import ColourLegend from './ColourLegend'
 import SelectTool from './SelectTool'
 import ColourTool from './ColourTool'
+import ControlLabel from './ControlLabel'
+import ControlMenu from './ControlMenu'
+import { menuPosition, useMenuDismiss } from './menuAnchor'
 import useMotifs from './useMotifs'
 import useMotifPreparation from '../motifs/useMotifPreparation'
 import MotifProgress from '../motifs/MotifProgress'
@@ -15,15 +17,17 @@ import { loadMotifs, saveMotifs, motifLegend } from './motifs'
 import ZoomTool from './ZoomTool'
 import ImportProgress from './ImportProgress'
 import { layoutOriginal, blockRowLines, centreOnRow } from './originalLayout'
-import { hiddenSelection, canHide, hideResult, packBlocks, packedExtent } from './hiding'
+import { hiddenSelection, canHide, hideResult, packBlocks, packedExtent, layerMembership, hideLayerFragments } from './hiding'
 import useOriginalBlocks from './useOriginalBlocks'
+import ControlChevron from './ControlChevron'
+import useScrollEdges from './toolbarScroll'
 import useLayerData from './useLayerData'
 import { exactGenomeLinks } from './associations'
 import FilterPanel from './FilterPanel'
 import GenomeColorPicker from '../GenomeColorPicker'
 import { genomeColorPalette } from '../../genomeColorSchemes'
 import { api, download, demoAlignment } from './data'
-import { toggleHighlights, emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRowBefore, reorderFragmentRow, resolvePicks, addHighlight, unlightRow, removeFragment, removeRowFromLayer, removeHighlight, planeViewport, enterPanelZoom, exitPanelZoom, PANEL_ZOOM_HINT_ATTEMPTS, ZOOM_HINT_MS } from './layers'
+import { toggleHighlights, emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRowBefore, reorderFragmentRow, resolvePicks, addHighlight, unlightRow, removeFragment, removeRowFromLayer, removeHighlight, planeViewport, enterPanelZoom, exitPanelZoom, PANEL_ZOOM_HINT_ATTEMPTS, ZOOM_HINT_MS, layerViewAnchor } from './layers'
 import { NUCLEOTIDE_LETTER_THRESHOLD } from '../../utils/nucleotideStyle'
 import { schemeById } from './colourSchemes'
 import { cohortOf } from './conservationPlan'
@@ -40,14 +44,15 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   // survive are fetched by number and laid out shoulder to shoulder, so the
   // file's own coordinates no longer describe the sheet and the loader that
   // reads them is stood down for the duration.
-  const [hiddenLayout,setHiddenLayout]=useState(null),[hideMenu,setHideMenu]=useState(false),[hideDraft,setHideDraft]=useState(null),[menuAnchor,setMenuAnchor]=useState({top:0,right:8})
+  const [hiddenLayout,setHiddenLayout]=useState(null),[hideMenu,setHideMenu]=useState(false),[hideDraft,setHideDraft]=useState(null),[menuAnchor,setMenuAnchor]=useState(null)
   // Layers folds like the other sections, but its title lives on the sidebar's
   // header row rather than inside the section, so a <details> cannot hold the
   // state. A selection drag opens it whatever the user left it at, or there
   // would be nothing to drop onto.
   const [layersExpanded,setLayersExpanded]=useState(true)
   const layersOpen=layersExpanded||!!selectionDrag
-  const explorerRoot=useRef(null)
+  const explorerRoot=useRef(null), hideMenuId=useId(), toolbar=useRef(null)
+  const barEdges=useScrollEdges(toolbar)
   // Which of the two ways of selecting the bar's one button offers. A completed
   // selection puts the mode back to Pan, so the choice has to outlive the mode.
   const [selectKind,setSelectKind]=useState('rectangle')
@@ -72,6 +77,9 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     const byId=new Map(inventory.map(r=>[r.id,r]))
     return order.map(id=>byId.get(id)).filter(Boolean)
   },[inventory,state.rowOrder])
+  // The layer row order, declared beside the order it is taken from: the layer
+  // being drawn needs it to compact a hide, long before the toolbar does.
+  const ids=useMemo(()=>orderedInventory.map(r=>r.id),[orderedInventory])
   // Both data paths are asked about the viewport plane zoom opens up rather than
   // the window itself. Shrinking the sheet really does put more of the file on
   // screen, and the block layout and the sequence tiles have to be told so, or
@@ -82,6 +90,8 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const filterOn=!!state.filter&&!state.filterOff
   const activeFilter=filterOn?state.filter:null
   const sourceView=useMemo(()=>planeViewport(size,state.camera),[size,state.camera])
+  // Original's hide. It alone drives the layout fetch and the repack below: a
+  // layer's hide never reaches the server and never rearranges Original.
   const hiddenBlocks=state.hidden?.blocks,hiddenRows=state.hidden?.rows
   const [motifSnapshot,setMotifSnapshot]=useState(null)
   const datasetRef=useRef(dataset);datasetRef.current=dataset
@@ -146,7 +156,16 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const original=useMemo(()=>({id:'original',name:'Original alignment',color:'#b9c5d9',fragments:originalFragments,packed:!!packedFragments,rowExtent:Math.max(inventory.length,2*(dataset?.max_source_rows||0)+3),extent:packedFragments?packedExtent(packedFragments):dataset?.layout_end||source?.layout_end||source?.length||1}),[originalFragments,packedFragments,dataset?.layout_end,source?.layout_end,source?.length,inventory.length,dataset?.max_source_rows])
   const allLayers=useMemo(()=>[original,...state.layers],[original,state.layers])
   const active=state.original?original:state.layers.find(l=>l.id===state.active)||original
-  const layer=useMemo(()=>motifBlockIds&&!state.original?{...active,fragments:active.fragments.filter(f=>motifBlockIds.has(f.sourceBlock))}:active,[active,motifBlockIds,state.original])
+  // What is actually drawn: the active layer, narrowed by its own hide and then
+  // by the motif filter. Both are read here rather than written into the layer,
+  // so Show everything is a matter of dropping the note, not rebuilding it.
+  const layer=useMemo(()=>{
+    if(state.original)return active
+    let fragments=active.fragments
+    if(active.hidden)fragments=hideLayerFragments(fragments,active.hidden,ids)
+    if(motifBlockIds)fragments=fragments.filter(f=>motifBlockIds.has(f.sourceBlock))
+    return fragments===active.fragments?active:{...active,fragments}
+  },[active,motifBlockIds,state.original,ids])
   const previousMotifBlocks=useRef(null)
   useEffect(()=>{
     if(motifBlocks.blocks&&previousMotifBlocks.current!==motifBlocks.blocks&&state.original){
@@ -187,7 +206,6 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   const {tiles,annotations,connections,offWindow,counts,pending,warnings,conservation,gaps,displayCamera}=useLayerData(dataset,layer,renderState.camera,renderView,state.annotations,revision,setError,false,cohort)
   const motifSearch=useMotifs(snapshot,layer,displayCamera,renderView,scheme.id==='motif')
   const canvasState=useMemo(()=>({...renderState,camera:displayCamera,motifRows:motifSearch.rows}),[renderState,displayCamera,motifSearch.rows])
-  const ids=useMemo(()=>orderedInventory.map(r=>r.id),[orderedInventory])
   // Original is the whole alignment however it is being looked at, so it is
   // described by the source's own totals. What a filter or a hide holds back is
   // a second line under them, close enough to read against.
@@ -313,18 +331,32 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   },[dataset,source?.block,state.sourceBlock])
   // Hide keeps what is picked out and packs it; Show puts the file back as it
   // was, on the view it was left at.
-  const hideChoice=useMemo(()=>hiddenSelection(state.selection,state.highlighted,originalFragments),[state.selection,state.highlighted,originalFragments])
+  // Picks are resolved against the sheet they were made on. Reading a layer's
+  // picks against Original's fragments found no fragment for them at all, so a
+  // pick in a layer never contributed the block it was in.
+  const hideChoice=useMemo(()=>hiddenSelection(state.selection,state.highlighted,state.original?originalFragments:active.fragments),[state.selection,state.highlighted,state.original,originalFragments,active.fragments])
+  // The hide in force on what is being looked at. Original keeps its own; each
+  // layer keeps its own, because hiding is a way of reading one sheet rather
+  // than a narrowing of the alignment - that is what the filter is for.
+  const viewHidden=state.original?state.hidden:active.hidden
+  const viewTotals=useMemo(()=>state.original
+    ?{blocks:blocks.total||0,rows:inventory.length}
+    :{blocks:new Set(active.fragments.map(f=>f.sourceBlock)).size,rows:new Set(active.fragments.flatMap(f=>f.rowIds)).size},
+    [state.original,blocks.total,inventory.length,active.fragments])
   // The rule in force: what produced the sheet on screen, or what the next Hide
   // will use. A rule that keeps nothing never becomes the rule in force, so the
   // control snaps back to the one the reader is actually looking at.
   const hideWhat=hideMenu?(hideDraft?.what||state.hideWhat||'blocks'):(state.hideWhat||'blocks'),hideMode=hideMenu?(hideDraft?.mode||state.hideMode||'or'):(state.hideMode||'or')
-  const hiding=!!(hiddenBlocks?.length||hiddenRows?.length)
+  // Where the survivors sit once the rest are gone. Original has the sidebar's
+  // own row mode for this; a layer keeps it with the hide that caused it.
+  const hideRows=hideMenu?(hideDraft?.rows||state.hideRows||'compact'):(state.hideRows||'compact')
+  const hiding=!!(viewHidden?.blocks?.length||viewHidden?.rows?.length)
   const hidingSummary=useMemo(()=>{
     const parts=[]
-    if(hiddenBlocks?.length)parts.push(`${hiddenBlocks.length.toLocaleString()} of ${(blocks.total||0).toLocaleString()} blocks`)
-    if(hiddenRows?.length)parts.push(`${hiddenRows.length.toLocaleString()} of ${inventory.length.toLocaleString()} sequences`)
+    if(viewHidden?.blocks?.length)parts.push(`${viewHidden.blocks.length.toLocaleString()} of ${viewTotals.blocks.toLocaleString()} blocks`)
+    if(viewHidden?.rows?.length)parts.push(`${viewHidden.rows.length.toLocaleString()} of ${viewTotals.rows.toLocaleString()} sequences`)
     return parts.join(' · ')
-  },[hiddenBlocks,hiddenRows,blocks.total,inventory.length])
+  },[viewHidden,viewTotals])
   // What the view is holding back, said once, beside the totals it is measured
   // against. Both counts used to sit in the control bar next to the switch that
   // set them, which is the obvious place for them until a wide one pushes Cycle
@@ -332,43 +364,66 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
   // switches keep them in their tooltips; the sidebar card gives them a line
   // that is always in view and never competes for width.
   const narrowedSummary=hiding?`Showing ${hidingSummary}`:hiddenSummary
-  // The control bar scrolls sideways, so the menu cannot live inside it without
-  // being clipped; it is anchored to the button and drawn over the page.
-  useEffect(()=>{
-    if(!hideMenu)return
-    const rect=hideButton.current?.getBoundingClientRect()
-    if(rect)setMenuAnchor({top:Math.round(rect.bottom+6),right:Math.round(Math.max(8,window.innerWidth-rect.right))})
-    const away=event=>{if(!event.target?.closest?.('.al-hide-menu')&&event.target!==hideButton.current)setHideMenu(false)}
-    const key=event=>{if(event.key==='Escape')setHideMenu(false)}
-    window.addEventListener('pointerdown',away,true)
-    window.addEventListener('keydown',key)
-    return()=>{window.removeEventListener('pointerdown',away,true);window.removeEventListener('keydown',key)}
-  },[hideMenu])
-  async function applyHide(choice,{what,mode}){
+  const closeHideMenu=useCallback(()=>setHideMenu(false),[])
+  useMenuDismiss(hideMenu,closeHideMenu,hideButton,'al-tool-menu')
+  const hideMenuChoice=hideDraft?.previous?state.hideMemory?.choice:canHide(hideChoice)?hideChoice:viewHidden?.choice
+  const hideValue=hiding?({blocks:'Blocks',sequences:'Sequences',both:'Both'}[viewHidden?.what||state.hideWhat]||'On'):'Off'
+  const openHideMenu=()=>{
+    if(hideMenu){closeHideMenu();return}
+    setHideDraft({what:viewHidden?.what||state.hideWhat||'blocks',mode:viewHidden?.mode||state.hideMode||'or',rows:viewHidden?.rowLayout||state.hideRows||'compact',previous:false})
+    setMenuAnchor(menuPosition(hideButton.current,320));setHideMenu(true)
+  }
+  const hideRefusal=(kept,what,mode)=>kept.length?null:(mode==='and'&&what!=='sequences'
+    ?'No block satisfies the conditions.'
+    :'Nothing picked out is in a block to keep.')
+  /** Hiding inside a layer, which the layer answers on its own.
+   *
+   * It needs no server and no repack: the layer's chunks already say which of
+   * its blocks carry which sequences, and its arrangement is the reader's, not
+   * the file's. The result is a note on the layer, so every layer narrows
+   * separately and Original is left alone - hiding is a way of reading one
+   * sheet, where the filter is a narrowing of the alignment behind all of them.
+   */
+  function hideInLayer(choice,{what,mode,rows:rowLayout}){
+    const {blocks:kept,rows}=hideResult(choice,layerMembership(active.fragments,choice.rows),{what,mode})
+    const refusal=hideRefusal(kept,what,mode)
+    if(refusal){setNotice(refusal);return}
+    const hidden={blocks:kept,rows,camera:active.hidden?.camera??state.camera,what,mode,rowLayout,choice}
+    const survivors=hideLayerFragments(active.fragments,hidden,ids)
+    setHideMenu(false)
+    commit(s=>({...s,hideWhat:what,hideMode:mode,hideRows:rowLayout,hideMemory:{choice,what,mode,rowLayout},
+      layers:s.layers.map(l=>l.id===s.active?{...l,hidden}:l),
+      camera:survivors.length?fitCamera({fragments:survivors},size.width,size.height):s.camera}))
+  }
+  async function applyHide(choice,{what,mode,rows:rowLayout}){
     if(!canHide(choice))return
+    if(what!=='blocks'&&!choice.rows.length){setNotice('No sequences are picked to keep.');return}
+    if(choice.rows.length>5000){setNotice('Too many sequences are picked to ask about at once.');return}
+    if(!state.original){hideInLayer(choice,{what,mode,rows:rowLayout});return}
     setBusy(true)
     try{
-      if(what!=='blocks'&&!choice.rows.length){setNotice('No sequences are picked to keep.');return}
-      if(choice.rows.length>5000){setNotice('Too many sequences are picked to ask about at once.');return}
       // A picked sequence runs the length of the file, and most of the blocks it
       // visits are not loaded, so the server is asked which hold it.
       const membership=choice.rows.length
         ?(await api(`/datasets/${dataset.id}/blocks-with`,{ids:choice.rows})).blocks||[]
         :[]
       const {blocks:kept,rows}=hideResult(choice,membership,{what,mode})
-      if(!kept.length){setNotice(mode==='and'&&what!=='sequences'
-        ?'No block satisfies the conditions.'
-        :'Nothing picked out is in a block to keep.');return}
+      const refusal=hideRefusal(kept,what,mode)
+      if(refusal){setNotice(refusal);return}
       hideFit.current=kept.join(',')
       setHideMenu(false)
       // What was hidden, and what asked for it: the settings outlive the hide so
       // the same narrowing can be put back without building the picks again.
-      commit(s=>({...s,original:true,hideWhat:what,hideMode:mode,
-        hidden:{blocks:kept,rows,camera:s.hidden?.camera??s.camera,what,mode,choice},
-        hideMemory:{choice,what,mode}}))
+      commit(s=>({...s,hideWhat:what,hideMode:mode,hideRows:rowLayout,
+        hidden:{blocks:kept,rows,camera:s.hidden?.camera??s.camera,what,mode,rowLayout,choice},
+        hideMemory:{choice,what,mode,rowLayout}}))
     }catch(error){setError(error.message)}finally{setBusy(false)}
   }
-  function showEverything(){commit(s=>({...s,hidden:null,camera:s.hidden?.camera||s.camera}))}
+  // Show everything puts back whichever sheet is being read, and only that one.
+  function showEverything(){commit(s=>s.original
+    ?{...s,hidden:null,camera:s.hidden?.camera||s.camera}
+    :{...s,layers:s.layers.map(l=>l.id===s.active?{...l,hidden:null}:l),
+      camera:s.layers.find(l=>l.id===s.active)?.hidden?.camera||s.camera})}
   async function sourceBlock(id,rowId){
     // On a packed sheet a block's place is not its place in the file, so the
     // fragment already laid out is what the camera is fitted to.
@@ -553,6 +608,30 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
     const kept=originalFragments.map(f=>f.sourceBlock),at=kept.indexOf(visibleSourceBlock)
     return kept[(at<0?0:at)+delta]??null
   }
+  // Block navigation is not Original's alone. A layer holds a subset of the
+  // file's blocks, in an order its own arrangement decides, so it walks the
+  // blocks it actually has rather than counting through block numbers that are
+  // not on this sheet.
+  const layerNavFragments=useMemo(()=>state.original?[]:layer.fragments.filter(f=>!f.aggregate&&f.sourceBlock!=null),[state.original,layer.fragments])
+  const layerBlocks=useMemo(()=>[...new Set(layerNavFragments.map(f=>f.sourceBlock))].sort((a,b)=>a-b),[layerNavFragments])
+  const layerBlock=useMemo(()=>layerViewAnchor(layerNavFragments,renderState.camera,renderView)?.sourceBlock??null,[layerNavFragments,renderState.camera,renderView])
+  // A block can be several chunks once pieces of it have been moved separately,
+  // so the camera is fitted to all of them rather than to whichever comes first.
+  function layerBlockTo(id){
+    const wanted=layerNavFragments.filter(f=>f.sourceBlock===Number(id))
+    if(!wanted.length){setNotice(`Block ${id} is not in ${layer.name}. Open it in Original, or move it into a layer first.`);return}
+    patch({camera:fitCamera({fragments:wanted},size.width,size.height)})
+  }
+  const stepLayerBlock=delta=>{const at=layerBlocks.indexOf(layerBlock);return layerBlocks[(at<0?0:at)+delta]??null}
+  // The two navigators differ in what they walk, not in how they are worked.
+  const blockNavigator=state.original
+    ? {label:sourceRange?.grouped?`Blocks ${sourceRange.first}\u2013${sourceRange.last}`:'Block',
+       grouped:!!sourceRange?.grouped,value:visibleSourceBlock,min:1,max:blocks.total,ready:blocks.total>0,
+       go:id=>{if(id>=1&&id<=blocks.total)sourceBlock(id)},step:stepBlock,onStep:sourceBlock,
+       title:sourceRange?.grouped?'This overview groups source blocks. Enter a block number to open one.':'Jump to a source block, or step to the one either side.'}
+    : {label:'Block',grouped:false,value:layerBlock,min:layerBlocks[0],max:layerBlocks.at(-1),ready:layerBlocks.length>0,
+       go:layerBlockTo,step:stepLayerBlock,onStep:layerBlockTo,
+       title:layerBlocks.length?`${layer.name} holds ${plural(layerBlocks.length,'block','blocks')}. Jump to one of them, or step between them.`:'This layer has no blocks yet. Move a selection into it first.'}
   const selectableFragments=useMemo(()=>coordinateFragments(layer),[layer])
   const selectedFragment=selectableFragments.find(f=>f.id===range.fragment)||selectableFragments[0]
   const rowChoices=useMemo(()=>{
@@ -605,20 +684,30 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
         onNewLayer={layerFromFilter}
         onApplyToOriginal={value=>patch({filter:value,filterOff:false,original:true})}
         onClearFilter={()=>patch({filter:null,filterOff:false})}/>}
-      <main className="al-main"><div className="al-toolbar" data-alignment-control-bar><div className="al-tools"><button className={state.mode==='pan'?'selected':''} aria-pressed={state.mode==='pan'} title="Drag to move the sheet. Space does this from any mode." onClick={()=>patch({mode:'pan'})}>Pan</button>
+      <main className="al-main"><div className="al-toolbar-rail" data-overflow={barEdges}><div className="al-toolbar" ref={toolbar} data-alignment-control-bar><div className="al-toolbar-group"><div className="al-toolbar-stack"><div className="al-source-nav" title={blockNavigator.title}><label>{blockNavigator.label} <input aria-label={state.original?"Jump to source block":"Jump to a block in this layer"} type="number" min={blockNavigator.min} max={blockNavigator.max} disabled={!blockNavigator.ready} placeholder={blockNavigator.grouped?'#':undefined} key={blockNavigator.grouped?'grouped':`${layer.id}:${blockNavigator.value}`} defaultValue={blockNavigator.grouped?'':blockNavigator.value??''} onKeyDown={e=>{if(e.key==='Enter'){const id=Number(e.currentTarget.value);if(Number.isInteger(id))blockNavigator.go(id)}}}/></label><button aria-label="Previous block" disabled={!!blockNavigator.grouped||blockNavigator.step(-1)==null} onClick={()=>blockNavigator.onStep(blockNavigator.step(-1))}>‹</button><button aria-label="Next block" disabled={!!blockNavigator.grouped||blockNavigator.step(1)==null} onClick={()=>blockNavigator.onStep(blockNavigator.step(1))}>›</button></div><button disabled={state.original||!active.fragments.length} onClick={()=>commit(s=>{const tidied=tidyLayer(active,ids,chunkGap(active.fragments,size.width)),view=fitCamera(tidied,size.width,size.height);return {...s,layers:s.layers.map(l=>l.id===active.id?{...tidied,camera:view}:l),camera:view}})}>Auto arrange</button></div><div className="al-tools" role="group" aria-label="Pointer tool"><button className={`al-control al-control-pan ${state.mode==='pan'?'selected':''}`} aria-pressed={state.mode==='pan'} title="Drag to move the sheet. Space does this from any mode." onClick={()=>patch({mode:'pan'})}><ControlLabel label="Pan" value="Move view" active={state.mode==='pan'}/></button>
       <SelectTool mode={state.mode} kind={selectKind} picked={state.selection.length} rows={selectionRows} root={explorerRoot.current}
-        onMode={mode=>patch({mode})} onKind={setSelectKind} onClear={()=>patch({selection:[],highlighted:[]})}/></div><button disabled={state.original||!active.fragments.length} onClick={()=>commit(s=>{const tidied=tidyLayer(active,ids,chunkGap(active.fragments,size.width)),view=fitCamera(tidied,size.width,size.height);return {...s,layers:s.layers.map(l=>l.id===active.id?{...tidied,camera:view}:l),camera:view}})}>Auto arrange</button><ZoomTool panel={!!state.planeZoom} plane={renderState.camera.plane} root={explorerRoot.current} onMode={zoomMode}/><ColourTool scheme={state.colourScheme} palette={state.palette} shading={state.shading} legendOverlay={!!state.legendOverlay}
+        onMode={mode=>patch({mode})} onKind={setSelectKind} onClear={()=>patch({selection:[],highlighted:[]})}/></div><ZoomTool panel={!!state.planeZoom} plane={renderState.camera.plane} root={explorerRoot.current} onMode={zoomMode}/><ColourTool scheme={state.colourScheme} palette={state.palette} shading={state.shading} legendOverlay={!!state.legendOverlay}
         cohort={cohort} scale={conservation?.scale} light={theme==='light'} root={explorerRoot.current}
         motifs={motifs} motifsSaved={motifsSaved} config={config} disabled={motifOperation.running}
-        hideUnmatched={!!state.hideUnmatchedMotifBlocks} onApply={applyColour}/>{state.original&&<div className="al-source-nav" title={sourceRange?.grouped?'This overview groups source blocks. Enter a block number to open one.':undefined}><label>{sourceRange?.grouped?`Blocks ${sourceRange.first}–${sourceRange.last}`:'Block'} <input aria-label="Jump to source block" type="number" min="1" max={blocks.total} placeholder={sourceRange?.grouped?'Block…':undefined} key={sourceRange?.grouped?'grouped':visibleSourceBlock} defaultValue={sourceRange?.grouped?'':visibleSourceBlock} onKeyDown={e=>{if(e.key==='Enter'){const id=Number(e.currentTarget.value);if(Number.isInteger(id)&&id>=1&&id<=blocks.total)sourceBlock(id)}}}/></label><button aria-label="Previous source block" disabled={!!sourceRange?.grouped||stepBlock(-1)==null} onClick={()=>sourceBlock(stepBlock(-1))}>‹</button><button aria-label="Next source block" disabled={!!sourceRange?.grouped||stepBlock(1)==null} onClick={()=>sourceBlock(stepBlock(1))}>›</button></div>}<button className={`al-filter-flag ${filterOn?'selected':''}`} disabled={!state.filter}
+        hideUnmatched={!!state.hideUnmatchedMotifBlocks} onApply={applyColour}/></div><div className="al-toolbar-group al-toolbar-context"><button className={`al-control al-control-filter ${filterOn?'selected':''}`} disabled={!state.filter}
   aria-pressed={filterOn}
   title={!state.filter?'No filter is set. Build one in the sidebar.':filterOn?`Original is filtered to ${(state.filter.sequences||[]).length.toLocaleString()} sequences and ${(state.filter.blocks||[]).length.toLocaleString()} blocks. Click to turn it off; the filter is kept and the source is unchanged.`:'The filter is set but not applied. Click to turn it back on.'}
-  onClick={()=>patch({filterOff:filterOn})}>Filter</button>
-<button ref={hideButton} className={`al-hide-flag ${hiding?'selected':''}`} disabled={busy||(!hiding&&!canHide(hideChoice)&&!state.hideMemory)}
-  aria-pressed={hiding} aria-expanded={hiding?undefined:hideMenu}
-  title={hiding?`Showing ${hidingSummary}. Click to bring back everything hidden.`:canHide(hideChoice)||state.hideMemory?'Choose what to hide':'Select sequences and/or blocks to then hide blocks with no highlighted regions'}
-  onClick={()=>{if(hiding)showEverything();else{setHideDraft({what:state.hideWhat||'blocks',mode:state.hideMode||'or'});setHideMenu(open=>!open)}}}>{hiding?'Show':'Hide'}</button>
-<LayerCycle layers={allLayers} active={layer.id} onChoose={switchLayer} dataset={dataset} inventory={displayInventory} light={theme==='light'} revision={revision}/></div>
+  onClick={()=>patch({filterOff:filterOn})}><ControlLabel label="Filter" value={!state.filter?'Not set':filterOn?'On':'Off'}/></button>
+<div ref={hideButton} className={`al-split al-control-hide ${hiding?'selected':''} ${hideMenu?'menu-open':''}`}>
+  {/* On, the face of the control is the way off: the press lands where the word
+      that says it is on is, rather than a menu away from it. Off, there is
+      nothing to switch, so the same press opens the menu that sets it. */}
+  <button className="al-split-main" disabled={busy||(!hiding&&!canHide(hideChoice)&&!state.hideMemory)}
+    aria-pressed={hiding}
+    aria-haspopup={hiding?undefined:'dialog'} aria-expanded={hiding?undefined:hideMenu} aria-controls={!hiding&&hideMenu?hideMenuId:undefined}
+    title={hiding?`Showing ${hidingSummary}. Click to show everything.`:canHide(hideChoice)||state.hideMemory?'Choose what to hide':'Select sequences and/or blocks to choose what to hide'}
+    onClick={()=>{if(hiding){showEverything();closeHideMenu()}else openHideMenu()}}><ControlLabel label="Hide" value={hideValue}/></button>
+  <button className="al-split-arrow" disabled={busy||(!hiding&&!canHide(hideChoice)&&!state.hideMemory)}
+    aria-label="Hide options" aria-haspopup="dialog" aria-expanded={hideMenu} aria-controls={hideMenu?hideMenuId:undefined}
+    title={hiding?'Change what is hidden, or show everything':'Choose what to hide'}
+    onClick={openHideMenu}><ControlChevron/></button>
+</div>
+<LayerCycle layers={allLayers} active={layer.id} onChoose={switchLayer} dataset={dataset} inventory={displayInventory} light={theme==='light'} revision={revision}/></div></div></div>
         <div className="al-stage">{!!zoomHint&&state.planeZoom&&<div className="al-zoom-hint" role="status" key={zoomHint}><span>Panel zoom is at full size. Switch to <strong>Alignment</strong> for sequence-level zoom.</span><button className="primary" onClick={()=>zoomMode(false)}>Switch</button><button aria-label="Dismiss zoom hint" onClick={dismissZoomHint}>×</button></div>}
         {!!state.legendOverlay&&(!!scheme.legend||scheme.id==='motif')&&<ColourLegend legend={scheme.id==='motif'?motifLegend(snapshot?.settings.motifs||[]):scheme.legend(theme==='light',conservation?.scale,state.palette?.[scheme.id],state.shading)}
           cohort={scheme.cohort?cohort:null} onDismiss={()=>patch({legendOverlay:false})}/>}
@@ -629,8 +718,8 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
         {!!warnings.length&&<div className="al-annotation-warning">Annotations unavailable for {warnings.length} visible rows: {warnings[0].message}</div>}
       </main>
     </div>}
-    {hideMenu&&!hiding&&explorerRoot.current&&createPortal(<div className="al-hide-menu" role="dialog" aria-label="Hide options"
-      style={{top:menuAnchor.top,right:menuAnchor.right}} onPointerDown={e=>e.stopPropagation()}>
+    <ControlMenu id={hideMenuId} root={explorerRoot.current} anchor={hideMenu?menuAnchor:null} title="Hide" current={hideValue} className="al-hide-menu">
+      {hiding&&<small>Showing {hidingSummary}.</small>}
       <label>What<select aria-label="What to hide" value={hideWhat} onChange={e=>setHideDraft(v=>({...v,what:e.target.value}))}>
         <option value="blocks">Blocks</option><option value="sequences">Sequences</option><option value="both">Both</option>
       </select><small>{hideWhat==='sequences'?'Keep the picked sequences, and the blocks still holding one.'
@@ -641,12 +730,18 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],in
       </select><small>{hideMode==='and'
         ?'Every picked sequence has to be in a block for it to stay, and picked blocks are the only ones considered.'
         :'The picked blocks, and every block the picked sequences run through.'}</small></label>}
-      <div className="al-hide-actions"><button onClick={()=>setHideMenu(false)}>Cancel</button>
-        <button className="primary" disabled={busy||!canHide(hideChoice)} onClick={()=>applyHide(hideChoice,{what:hideWhat,mode:hideMode})}>Apply</button>
-        {!!state.hideMemory&&<button disabled={busy} title="Hide to the last set of picks, with the settings it used"
-          onClick={()=>applyHide(state.hideMemory.choice,{what:state.hideMemory.what,mode:state.hideMemory.mode})}>Previous</button>}
+      {!state.original&&hideWhat!=='blocks'&&<label>Rows<select aria-label="Where surviving rows sit" value={hideRows} onChange={e=>setHideDraft(v=>({...v,rows:e.target.value}))}>
+        <option value="compact">Compact</option><option value="keep">Keep positions</option>
+      </select><small>{hideRows==='keep'
+        ?'Every surviving sequence stays on the line it is on, leaving a gap where each hidden one was.'
+        :'Surviving sequences rise to the top of each chunk, keeping the lines they share across chunks.'}</small></label>}
+      {!!state.hideMemory&&<label className="al-menu-check"><input type="checkbox" checked={!!hideDraft?.previous} onChange={e=>setHideDraft(v=>({...v,previous:e.target.checked,...(e.target.checked?{what:state.hideMemory.what,mode:state.hideMemory.mode,rows:state.hideMemory.rowLayout||'compact'}:{})}))}/>Use previous picks</label>}
+      <small>Changes take effect with Apply.</small>
+      {hiding&&<button onClick={()=>{showEverything();closeHideMenu()}}>Show everything</button>}
+      <div className="al-menu-actions"><button onClick={closeHideMenu}>Cancel</button>
+        <button className="primary" disabled={busy||!hideMenuChoice||!canHide(hideMenuChoice)} onClick={()=>applyHide(hideMenuChoice,{what:hideWhat,mode:hideMode,rows:hideRows})}>Apply</button>
       </div>
-    </div>,explorerRoot.current)}
+    </ControlMenu>
     {selectionDrag&&<><div className="al-selection-dim"/><div className="al-selection-ghost" role="status" style={{left:selectionDrag.x+16,top:selectionDrag.y+16}}><strong>{selectionRows} sequences · {state.selection.length} regions</strong><small>{selectionDrag.target==='new'?'Release to create a new layer':selectionDrag.target?`Release to ${state.original?'place in':'move to'} ${state.layers.find(l=>l.id===selectionDrag.target)?.name}`:'Drop on a sidebar layer or ＋ New layer · Esc cancels'}</small></div></>}
     {merge&&<div className="al-modal-shade"><div className="al-modal" role="dialog" aria-modal="true" aria-label="Overlapping chunks"><h3>These layers contain overlapping chunks</h3><p>Combine overlapping source intervals into one chunk with both sets of sequences, or preserve each chunk separately. Unselected cells remain blank.</p><button className="primary" onClick={()=>finishMerge(merge.from,merge.to,true)}>Combine overlapping chunks</button><button onClick={()=>finishMerge(merge.from,merge.to,false)}>Keep chunks separate</button><button onClick={()=>setMerge(null)}>Cancel</button></div></div>}
     {dialog&&<div className="al-modal-shade"><div className="al-modal" role="dialog" aria-modal="true" aria-label={typeof dialog==='string'?dialog:'Rename layer'}><button className="al-close" aria-label="Close dialog" onClick={()=>setDialog(null)}>×</button>

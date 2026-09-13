@@ -1015,6 +1015,47 @@
       }
     },
     {
+      "id": "atac-settings",
+      "section": "The other two tracks",
+      "view": "track_manager",
+      "placement": "left",
+      "interactive": false,
+      "title": "Set, and different",
+      "body": "Signal Plot, and a colour of its own. The same two files would be drawn the same way if we had answered the same way twice — the picture follows the answer, not the format. Label and genome are filled in, so this one is ready.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression"
+          ],
+          "wizard": "details",
+          "file": "demo:atac",
+          "fields": {
+            "label": "ATAC-seq peaks"
+          },
+          "dataType": "atac_seq",
+          "displayMode": "signal_plot",
+          "genome": "slice",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.wizardBigWig",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
       "id": "register-atac",
       "section": "The other two tracks",
       "view": "track_manager",
@@ -1506,6 +1547,10 @@
       },
       "interactionPolicy": {
         "targets": []
+      },
+      "cardPosition": {
+        "x": 0.6733,
+        "y": 0.0155
       }
     },
     {
@@ -1514,8 +1559,8 @@
       "view": "genome_browser",
       "placement": "left",
       "align": "start",
-      "title": "Choose all three",
-      "body": "Tick the three tracks and press Add — or press Next and the tutorial will do it.",
+      "title": "Tick all three",
+      "body": "Tick each of the three — or press Next and the tutorial will tick whichever you have not. Nothing is added until the button below, so this is only a choice.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -1588,24 +1633,38 @@
               }
             },
             "capability": "activate"
+          }
+        ],
+        "options": {
+          "desiredEngaged": true
+        }
+      },
+      "advanceOn": {
+        "type": "all-clicks",
+        "targets": [
+          {
+            "id": "browser.trackPickerRow",
+            "version": 1,
+            "params": {
+              "label": "Brain expression"
+            }
           },
           {
-            "target": {
-              "id": "browser.trackPickerAdd",
-              "version": 1
-            },
-            "capability": "activate"
+            "id": "browser.trackPickerRow",
+            "version": 1,
+            "params": {
+              "label": "ATAC-seq peaks"
+            }
+          },
+          {
+            "id": "browser.trackPickerRow",
+            "version": 1,
+            "params": {
+              "label": "Variants"
+            }
           }
         ]
       },
-      "advanceOn": {
-        "type": "click",
-        "target": {
-          "id": "browser.trackPickerAdd",
-          "version": 1
-        }
-      },
-      "holdMs": 1600,
       "interactionPolicy": {
         "targets": [
           {
@@ -1643,7 +1702,82 @@
             "capabilities": [
               "activate"
             ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "add-them",
+      "section": "Into the browser",
+      "view": "genome_browser",
+      "placement": "left",
+      "align": "end",
+      "title": "Add them",
+      "body": "Press Add — or press Next. The count on the button is how many are ticked.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
           },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "open",
+          "chosen": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "added": []
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.trackPickerAdd",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.trackPickerAdd",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "browser.trackPickerAdd",
+          "version": 1
+        }
+      },
+      "holdMs": 1600,
+      "interactionPolicy": {
+        "targets": [
           {
             "target": {
               "id": "browser.trackPickerAdd",
@@ -2605,7 +2739,7 @@
       "placement": "right",
       "interactive": false,
       "title": "The left-hand panel",
-      "body": "Every track has a switch here, custom ones marked CT. Clicking one turns that track off without removing it, and a track can be dragged up or down to sit next to whatever you are comparing it with.",
+      "body": "Every track has a switch here, the custom ones marked CT. A track can also be dragged up or down from here, to sit next to whatever you are comparing it with.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -2642,6 +2776,524 @@
             "expression",
             "atac",
             "variants"
+          ],
+          "visible": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.trackGutter",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "switch-two-off",
+      "section": "Managing tracks",
+      "view": "genome_browser",
+      "placement": "right",
+      "title": "Switch two off",
+      "body": "Turn the ATAC-seq and variant tracks off with their switches, leaving the expression one on — or press Next and the tutorial will do it.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "visible": [
+            "expression",
+            "atac",
+            "variants"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.trackGutter",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.trackSwitch",
+            "version": 1,
+            "params": {
+              "label": "ATAC-seq peaks"
+            }
+          },
+          "ring": true
+        },
+        {
+          "target": {
+            "id": "browser.trackSwitch",
+            "version": 1,
+            "params": {
+              "label": "Variants"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.trackSwitch",
+              "version": 1,
+              "params": {
+                "label": "ATAC-seq peaks"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "browser.trackSwitch",
+              "version": 1,
+              "params": {
+                "label": "Variants"
+              }
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "desiredEngaged": false
+        }
+      },
+      "advanceOn": {
+        "type": "all-clicks",
+        "targets": [
+          {
+            "id": "browser.trackSwitch",
+            "version": 1,
+            "params": {
+              "label": "ATAC-seq peaks"
+            }
+          },
+          {
+            "id": "browser.trackSwitch",
+            "version": 1,
+            "params": {
+              "label": "Variants"
+            }
+          }
+        ]
+      },
+      "holdMs": 1600,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.trackSwitch",
+              "version": 1,
+              "params": {
+                "label": "ATAC-seq peaks"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.trackSwitch",
+              "version": 1,
+              "params": {
+                "label": "Variants"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "switched-off",
+      "section": "Managing tracks",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "Off, but still there",
+      "body": "Both rows have gone blank and kept their place — the switch stops a track being drawn, it does not take it off the panel. The expression track carries on, and nothing has been unregistered.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "visible": [
+            "expression"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "cardPosition": {
+        "x": 0.2417,
+        "y": 0.0155
+      }
+    },
+    {
+      "id": "the-hide-button",
+      "section": "Managing tracks",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "start",
+      "title": "Hide",
+      "body": "Hide, in the bar that applies to every genome, takes the empty rows away as well. Press it — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "visible": [
+            "expression"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.hideInactive",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.hideInactive",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "holdMs": 1800,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.hideInactive",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "hidden",
+      "section": "Managing tracks",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "The space comes back",
+      "body": "The two switched-off rows are gone entirely and the panel has closed up around what is left. Useful once a genome has more tracks than you are reading at once.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "visible": [
+            "expression"
+          ],
+          "hideInactive": true
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "show-again",
+      "section": "Managing tracks",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "start",
+      "title": "And back",
+      "body": "The same button reads Show while it is on. Press it to bring the empty rows back — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "visible": [
+            "expression"
+          ],
+          "hideInactive": true
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.hideInactive",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.hideInactive",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "holdMs": 1800,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.hideInactive",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "shown-again",
+      "section": "Managing tracks",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "Nothing was lost",
+      "body": "All three rows are back, with the two still switched off. Hiding and switching off are both about what you are looking at; neither touches what is registered.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "visible": [
+            "expression"
           ]
         }
       ],
@@ -2703,6 +3355,11 @@
             "expression",
             "atac",
             "variants"
+          ],
+          "visible": [
+            "expression",
+            "atac",
+            "variants"
           ]
         }
       ],
@@ -2721,7 +3378,7 @@
       "section": "Wrapping up",
       "placement": "center",
       "title": "What you have done",
-      "body": "We registered three files in the Track Manager — naming each one, saying what kind of data it held and which genome it belonged to — then added them to a browser panel and read all three: banded expression over PHGDH's exons, an ATAC-seq peak in a shared promoter, and a variant track from counted blocks down to single bases.",
+      "body": "We registered three files in the Track Manager — naming each one, saying what kind of data it held and which genome it belonged to — then added them to a browser panel and read all three: banded expression over PHGDH's exons, an ATAC-seq peak in a shared promoter, and a variant track from counted blocks down to single bases. Then we switched two off from the left-hand panel and used Hide to close the space up.",
       "interactionPolicy": {
         "targets": []
       }

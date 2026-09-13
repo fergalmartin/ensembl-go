@@ -317,10 +317,17 @@ export function arrivalBrowserTracks(arrival) {
   const keys = (value) => (Array.isArray(value) ? value : [])
     .map((key) => String(key || '').trim())
     .filter((key) => TRACK_KEYS.includes(key))
+  const added = keys(arrival.added)
   return {
     picker: String(arrival.picker || 'closed').trim() === 'open' ? 'open' : 'closed',
     chosen: keys(arrival.chosen),
-    added: keys(arrival.added),
+    added,
+    // Which of the added tracks are switched *on*. Being on the panel and being drawn are
+    // different things, which is the whole of the managing-tracks section: a track switched
+    // off keeps its row and its switch, and Hide is what takes the row away as well.
+    // Absent means "all of them", so a step that does not care need not say.
+    visible: arrival.visible === undefined ? added : keys(arrival.visible),
+    hideInactive: Boolean(arrival.hideInactive),
   }
 }
 
@@ -1326,7 +1333,7 @@ export function validateTutorial(tutorial, options = {}) {
           problems.push(`${where} arrive: trackRegistry declares wizard fields while the wizard is closed.`)
         }
       } else if (arrival.type === 'browserTracks') {
-        for (const field of ['added', 'chosen']) {
+        for (const field of ['added', 'chosen', 'visible']) {
           for (const key of (Array.isArray(arrival[field]) ? arrival[field] : [])) {
             if (!TRACK_KEYS.includes(String(key || '').trim())) {
               problems.push(`${where} arrive: browserTracks ${field} does not know the track "${String(key || '')}".`)
@@ -1337,6 +1344,12 @@ export function validateTutorial(tutorial, options = {}) {
         // step describing something nobody can see.
         if (String(arrival.picker || 'closed').trim() !== 'open' && (Array.isArray(arrival.chosen) ? arrival.chosen : []).length) {
           problems.push(`${where} arrive: browserTracks chooses tracks while the picker is closed.`)
+        }
+        // A track cannot be switched on unless it is on the panel at all.
+        for (const key of (Array.isArray(arrival.visible) ? arrival.visible : [])) {
+          if (!(Array.isArray(arrival.added) ? arrival.added : []).includes(key)) {
+            problems.push(`${where} arrive: browserTracks shows "${key}" without adding it.`)
+          }
         }
       } else if (arrival.type === 'selectorList') {
         if (!anchorSelector(arrival.anchor)) {

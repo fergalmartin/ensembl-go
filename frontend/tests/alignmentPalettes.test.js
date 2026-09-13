@@ -145,14 +145,24 @@ test('the selection kinds are one setting with a remembered choice',async()=>{
 test('a menu is pinned to its button and pulled back from the window edge',async()=>{
   const {menuPosition,MENU_WIDTH}=await import('../src/components/alignment-explorer/menuAnchor.js')
   const previous=globalThis.window
-  globalThis.window={innerWidth:1000}
+  globalThis.window={innerWidth:1000,innerHeight:800}
   try{
-    const at=(left,right)=>({getBoundingClientRect:()=>({left,right,bottom:40})})
-    assert.deepEqual(menuPosition(at(120,200)),{top:46,left:120},'hangs from the left edge of its button')
+    const at=(left,right)=>({getBoundingClientRect:()=>({left,right,width:right-left,bottom:40})})
+    const left=menuPosition(at(120,200))
+    assert.equal(left.left,120,'hangs from the left edge of its button')
+    assert.equal(left.top,49,'leaves space for the connector below the button')
+    assert.equal(left.left+parseFloat(left['--al-menu-pointer']),160,'connector points at the button centre')
     // Near the right of the bar the menu would run off the window, so it is
     // pulled back by its own width rather than being clipped.
-    assert.deepEqual(menuPosition(at(900,980)),{top:46,left:1000-MENU_WIDTH-8})
-    assert.deepEqual(menuPosition(at(900,980),'right'),{top:46,right:20},'the other side pins the right edge')
+    const right=menuPosition(at(900,980))
+    assert.equal(right.left,1000-MENU_WIDTH-8)
+    assert.equal(right.left+parseFloat(right['--al-menu-pointer']),940,'clamping preserves the connection to the originating button')
+    assert.ok(right.top+parseFloat(right['--al-menu-max-height'])<=window.innerHeight-8)
+    assert.equal(menuPosition(at(900,980),320).width,320,'menus can request their own width')
+    window.innerWidth=320
+    const narrow=menuPosition(at(230,300))
+    assert.ok(narrow.left>=8&&narrow.left+narrow.width<=312,'narrow windows keep the whole menu on screen')
+    assert.equal(narrow.left+parseFloat(narrow['--al-menu-pointer']),265)
     assert.deepEqual(menuPosition(null),{top:0,left:8},'no button yet is not a crash')
   } finally { globalThis.window=previous }
 })

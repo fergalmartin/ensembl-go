@@ -761,7 +761,10 @@ function hideSettings(value) {
   return {choice:{blocks:picks.blocks.filter(b=>Number.isInteger(b)&&b>0).slice(0,4000),
     rows:picks.rows.filter(id=>typeof id==='string').slice(0,5000)},
     what:['blocks','sequences','both'].includes(value.what)?value.what:'blocks',
-    mode:value.mode==='and'?'and':'or'}
+    mode:value.mode==='and'?'and':'or',
+    // Compact is the default because a row left standing where a hidden one
+    // used to be reads as a gap in the alignment rather than as a hidden row.
+    rowLayout:value.rowLayout==='keep'?'keep':'compact'}
 }
 /** What a hide did: the blocks and rows left standing, and the view to return to. */
 function hiddenState(value) {
@@ -771,7 +774,8 @@ function hiddenState(value) {
   if(!blocks?.length&&!rows?.length)return null
   const settings=hideSettings(value)
   return {blocks,rows,camera:value.camera?{...defaultCamera(),...value.camera}:null,
-    what:settings?.what||(blocks?.length?'blocks':'sequences'),mode:settings?.mode||'or',choice:settings?.choice||null}
+    what:settings?.what||(blocks?.length?'blocks':'sequences'),mode:settings?.mode||'or',
+    rowLayout:value.rowLayout==='keep'?'keep':'compact',choice:settings?.choice||null}
 }
 
 export function validateLayerWorkspace(value,ids) {
@@ -788,7 +792,12 @@ export function validateLayerWorkspace(value,ids) {
       if(f.coverage)for(const id of f.rowIds){if(!Array.isArray(f.coverage[id])||f.coverage[id].some(([a,b])=>!Number.isInteger(a)||!Number.isInteger(b)||a<f.start||b>f.end||b<=a))throw new Error('Invalid fragment coverage')}
       return {...f,rowIds:[...new Set(f.rowIds)]}
     })
-    return {...l,camera:{x:Number(l.camera?.x)||0,y:Number(l.camera?.y)||0,scale:clamp(Number(l.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(l.camera)},name:String(l.name||`Layer ${i+1}`).slice(0,120),color:/^#[\da-f]{6}$/i.test(l.color)?l.color:PALETTE[i%PALETTE.length],fragments}
+    // A layer carries its own hide, validated the way the workspace's is. The
+    // key is left off entirely when there is none, so a layer that never hid
+    // anything round-trips as the object it was.
+    const {hidden:rawHidden,...rest}=l
+    const layerHidden=hiddenState(rawHidden)
+    return {...rest,...(layerHidden?{hidden:layerHidden}:{}),camera:{x:Number(l.camera?.x)||0,y:Number(l.camera?.y)||0,scale:clamp(Number(l.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(l.camera)},name:String(l.name||`Layer ${i+1}`).slice(0,120),color:/^#[\da-f]{6}$/i.test(l.color)?l.color:PALETTE[i%PALETTE.length],fragments}
   })
   // A hidden set is a list of block numbers and the view to come back to.
   const hidden=hiddenState(value.hidden),hideMemory=hideSettings(value.hideMemory)
@@ -983,6 +992,25 @@ export function chunkFasta(fragment,rows) {
 
 export function sourceViewAnchor(fragments,camera) {
   const distance=f=>Math.max(f.x-camera.x,0,camera.x-(f.x+f.end-f.start))
+  return fragments.reduce((best,f)=>!best||distance(f)<distance(best)?f:best,null)
+}
+/** Which chunk of a layer the window is over.
+ *
+ * Original's anchor only has to look sideways: its blocks run along one line,
+ * so the nearest one horizontally is the one being read. A layer's chunks are
+ * placed in two dimensions, where the block nearest horizontally can be several
+ * screens above or below the window, so distance here is taken from the middle
+ * of the view in both axes. The viewport passed in is the plane-corrected one,
+ * so this reads the same under panel zoom as at normal size.
+ */
+export function layerViewAnchor(fragments,camera,view) {
+  if(!fragments.length)return null
+  const midX=camera.x+Math.max(40,view.width-MARGIN_X-24)/2/Math.max(Number.EPSILON,camera.scale)
+  const midY=camera.y+Math.max(40,view.height-MARGIN_Y)/2
+  const away=(lo,hi,at)=>Math.max(lo-at,0,at-hi)
+  const distance=f=>Math.hypot(
+    away(f.x,f.x+f.end-f.start,midX)*camera.scale,
+    away(f.y*ROW_HEIGHT,(f.y+rowCount(f))*ROW_HEIGHT,midY))
   return fragments.reduce((best,f)=>!best||distance(f)<distance(best)?f:best,null)
 }
 /** Which source blocks the Original view is actually showing. Zoomed in, the

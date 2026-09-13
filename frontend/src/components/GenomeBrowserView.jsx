@@ -3053,6 +3053,7 @@ export default function GenomeBrowserView({
                                             isActive={isActive}
                                             genome={panel.genomeParam}
                                             tutorialRecipeId={panel.species.tutorial_dataset_id || ''}
+                                            tutorialActive={tutorialRunning}
                                             geneNoteCounts={noteCountsByPanel[panelKey] || EMPTY_NOTE_COUNTS}
                                             onOpenGeneNotes={(geneId) => handleOpenGeneNotes(panelKey, geneId)}
                                             alignmentRole={panel.alignmentRole}
@@ -3077,6 +3078,7 @@ export default function GenomeBrowserView({
                                             availableTracks={availableTracksByPanel[panelKey] || []}
                                             refreshAvailableTracks={refreshRegisteredTracks}
                                             tutorialTracksRequest={browserTracksRequest}
+                                            onTutorialHideInactive={setHideInactiveMode}
                                             onTrackVisibilityChange={(hiddenStrands, meta) => handlePanelTrackVisibilityChange(panelKey, hiddenStrands, meta)}
                                             forceTracksVisibility={forceTracksVisibility}
                                             hideInactiveTracks={hideInactiveMode}
@@ -3155,6 +3157,7 @@ export default function GenomeBrowserView({
                                         listShift={detailListShiftByPanel[panelKey] || 0}
                                         genome={panel.genomeParam}
                                             tutorialRecipeId={panel.species.tutorial_dataset_id || ''}
+                                            tutorialActive={tutorialRunning}
                                         detailTranscriptId={detailTranscriptByPanel[panelKey] || ''}
                                         onDetailTranscriptChange={(id) => handleDetailTranscriptChange(panelKey, id)}
                                         notesEnabled={Boolean(notesGenomeKeyFor(panel))}

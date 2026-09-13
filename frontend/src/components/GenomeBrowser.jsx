@@ -1574,6 +1574,8 @@ export default function GenomeBrowser({
     isActive = true,
     genome = 'reference',
     tutorialRecipeId = '',
+    tutorialActive = false,   // a tutorial is running, whatever this panel's genome came from
+    onTutorialHideInactive = null,  // Hide lives in the bar above, so the request is passed up
     alignmentRole = '',
     reloadEpoch = 0,
     theme = 'dark',
@@ -2268,6 +2270,10 @@ export default function GenomeBrowser({
             fetchingTranscriptIdsRef.current.clear()
         }
     }, [genome, dataEpoch, selectedChrom])
+
+    // Whether this panel should carry the tutorial's invisible gutter buttons. Either the
+    // panel's genome came from an embedded recipe, or a tutorial is simply running on it.
+    const tutorialAnchorsActive = Boolean(tutorialRecipeId) || Boolean(tutorialActive)
 
     const customTracksById = useMemo(() => {
         const map = new Map()
@@ -13804,16 +13810,25 @@ export default function GenomeBrowser({
         )
         const wantedTracks = wanted.map(matching).filter(Boolean)
 
+        // Which of them are switched on. Absent means all, so a step that is not about
+        // visibility need not say — and the section that *is* about it can put two tracks
+        // off and leave the third on, on every entry, however the step was reached.
+        const shown = Array.isArray(tutorialTracksRequest.visible)
+            ? tutorialTracksRequest.visible
+            : wanted
+        const shouldShow = (key) => shown.includes(key)
+
         setCustomTracks((prev) => {
-            const keep = wantedTracks.map((registeredTrack) => {
+            const keep = wanted.map((key) => {
+                const registeredTrack = matching(key)
+                if (!registeredTrack) return null
                 const existing = prev.find((ct) =>
                     String(ct.registryTrackId || '') === String(registeredTrack.id || '')
                     || String(ct.path || '') === String(registeredTrack.path || '')
                 )
-                // Kept rather than rebuilt, so a reader's own visibility switch survives a
-                // step that merely re-states which tracks are on the panel.
-                return existing ? { ...existing, visible: true } : buildCustomTrackFromRegistered(registeredTrack)
-            })
+                const base = existing || buildCustomTrackFromRegistered(registeredTrack)
+                return base.visible === shouldShow(key) ? base : { ...base, visible: shouldShow(key) }
+            }).filter(Boolean)
             const same = keep.length === prev.length
                 && keep.every((track, index) => track === prev[index])
             return same ? prev : keep
@@ -13824,7 +13839,8 @@ export default function GenomeBrowser({
                 .map(matching).filter(Boolean).map((track) => String(track.id || ''))
         )
         setIsTrackPickerOpen(String(tutorialTracksRequest.picker || 'closed') === 'open')
-    }, [tutorialTracksRequest, availableTracks, buildCustomTrackFromRegistered])
+        onTutorialHideInactive?.(Boolean(tutorialTracksRequest.hideInactive))
+    }, [tutorialTracksRequest, availableTracks, buildCustomTrackFromRegistered, onTutorialHideInactive])
 
     const addSelectedRegisteredTracksToBrowser = useCallback(() => {
         if (!Array.isArray(selectedTrackPickerIds) || selectedTrackPickerIds.length === 0) return
@@ -14012,6 +14028,12 @@ export default function GenomeBrowser({
                                         key={registeredTrack.id}
                                         data-tour-id={`browser-track-picker-row-${registeredTrack.id}`}
                                         data-tutorial-picker-track={registeredTrack.label || ''}
+                                        // Ticked, or already on the panel. A tutorial step that asks the reader to
+                                        // choose several rows reads this to leave alone the ones they have already
+                                        // done — without it, pressing Next after ticking two of three unticked
+                                        // those two on its way past.
+                                        data-tutorial-engaged={(selectedForAdd || alreadyAdded) ? 'true' : 'false'}
+                                        aria-pressed={selectedForAdd || alreadyAdded}
                                         onClick={() => {
                                             if (alreadyAdded) return
                                             setSelectedTrackPickerIds((prev) =>
@@ -14268,7 +14290,16 @@ export default function GenomeBrowser({
                     />
                 )}
 
-                {tutorialRecipeId && [
+                {/* Invisible buttons over the canvas-drawn gutter switches, so a tutorial can
+                    point at one and a reader can press it. The click goes to the same setter
+                    the canvas hit-test uses, so there is still one code path for the control.
+
+                    Gated on a tutorial running rather than on `tutorialRecipeId`: that id is
+                    only set for a genome installed from an embedded dataset recipe, and a
+                    tutorial running on one of the *bundled* genomes — which is how the Track
+                    Manager tutorial reaches the chromosome-1 slice — had no id, so none of
+                    these existed and the gutter was unanchored. */}
+                {tutorialAnchorsActive && [
                     ['forward', layout.FORWARD_Y + layout.forwardBgHeight / 2, layout.forwardBgHeight > 0],
                     ['reverse', layout.REVERSE_Y + layout.reverseBgHeight / 2, layout.reverseBgHeight > 0],
                     ['sequence', layout.SEQUENCE_Y + layout.seqBgHeight / 2, showSequenceTrack && layout.SEQUENCE_Y >= 0],
@@ -14281,6 +14312,31 @@ export default function GenomeBrowser({
                         className="absolute rounded-full"
                         style={{ left: LHS_WIDTH - 25, top: y - 12, width: 24, height: 24, background: 'transparent' }} />
                 ))}
+                {/* The same again for each custom track. Addressed by the track's label rather
+                    than by its registry id, which is minted when the track is registered and
+                    cannot be written into a portable document. */}
+                {tutorialAnchorsActive && Object.entries(layout.customTrackLayouts || {}).map(([trackId, trackLayout]) => {
+                    const track = customTracksById.get(trackId)
+                    if (!track) return null
+                    const y = getCustomTrackToggleY(trackLayout)
+                    if (!Number.isFinite(y)) return null
+                    return (
+                        <button key={trackId}
+                            data-tour-id={`browser-toggle-track-${trackId}`}
+                            data-tutorial-track-switch={track.label || ''}
+                            aria-label={`Toggle ${track.label || 'custom'} track`} aria-pressed={track.visible !== false}
+                            data-tutorial-engaged={track.visible !== false ? 'true' : 'false'}
+                            onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                                event.stopPropagation()
+                                setCustomTracks((prev) => prev.map((entry) => (
+                                    entry.id === trackId ? { ...entry, visible: !entry.visible } : entry
+                                )))
+                            }}
+                            className="absolute rounded-full"
+                            style={{ left: LHS_WIDTH - 25, top: y - 12, width: 24, height: 24, background: 'transparent' }} />
+                    )
+                })}
                 {sidebarTooltip && (
                     <div
                         className="pointer-events-none fixed z-30 px-2 py-1 text-[11px] rounded shadow-md"

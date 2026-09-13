@@ -40,6 +40,7 @@ import {
   validateTutorial,
   TRACK_FILENAMES,
   stepAdvance,
+  anchorSelector,
 } from '../src/utils/tutorialModel.js'
 
 const srcDir = new URL('../src/', import.meta.url)
@@ -532,11 +533,16 @@ test('a step that clicks several things waits for the last of them', () => {
         // The stronger form of the same rule, and the right one when the order the user
         // presses them in is their own: it waits for every press rather than for the last
         // to be queued. What it must not do is leave one of its own clicks unwaited for.
-        const waitedFor = new Set(step.advanceOn.anchors || [])
+        //
+        // Compared by selector rather than by identity: an anchor is a tour id *or* a
+        // `{ selector }` object, and a target built from a `selectorTemplate` gives a fresh
+        // object each time — so two anchors naming the same element were never the same Set
+        // member, and a correct step failed.
+        const waitedFor = new Set((step.advanceOn.anchors || []).map(anchorSelector))
         for (const anchor of anchors) {
           assert.ok(
-            waitedFor.has(anchor),
-            `${tutorial.id}/${step.id} clicks "${anchor}" but does not wait for it`
+            waitedFor.has(anchorSelector(anchor)),
+            `${tutorial.id}/${step.id} clicks "${anchorSelector(anchor)}" but does not wait for it`
           )
         }
         continue
@@ -911,4 +917,55 @@ test('the track tutorial never asserts a variant panel it cannot open', () => {
   assert.ok(step, 'the vcf-click step should exist')
   assert.equal(stepAdvance(step).type, 'manual', 'it is an invitation, so Next continues')
   assert.equal(stepAction(step).type, 'none', 'the tutorial must not click a variant for the reader')
+})
+
+
+test('a step that presses several controls and then a final one is two steps', () => {
+  // One step ticked three picker rows *and* pressed Add, with the highlight over only the
+  // rows — so a reader who ticked all three could not reach Add, and pressing Next re-ran
+  // the whole action and unticked the rows it had just been given. The rows and the button
+  // are now separate steps.
+  const tutorial = getTutorial('track-manager')
+  const byId = Object.fromEntries(tutorial.steps.map((step) => [step.id, step]))
+
+  const ticking = byId['choose-three']
+  const adding = byId['add-them']
+  assert.ok(ticking && adding, 'ticking and adding should be separate steps')
+
+  const tickAnchors = actionAnchors(stepAction(ticking)).map(anchorSelector)
+  assert.equal(tickAnchors.length, 3, 'the ticking step presses only the rows')
+  assert.ok(
+    !tickAnchors.some((anchor) => anchor.includes('picker-add')),
+    'the ticking step must not also press Add',
+  )
+  assert.equal(stepAdvance(ticking).type, 'all-clicks', 'it waits for every row')
+  // A row the reader has already ticked is left alone.
+  assert.equal(stepAction(ticking).desiredEngaged, true)
+
+  assert.equal(actionAnchors(stepAction(adding)).length, 1, 'the adding step presses one button')
+})
+
+test('a step that asks the reader to switch tracks off leaves the ones already off alone', () => {
+  // Pressing a switch that is already off turns it back on, which reads as the tutorial
+  // undoing the reader's work and then moving on.
+  const step = getTutorial('track-manager').steps.find((entry) => entry.id === 'switch-two-off')
+  assert.ok(step)
+  assert.equal(stepAdvance(step).type, 'all-clicks')
+  assert.equal(stepAction(step).desiredEngaged, false)
+})
+
+test('every control a track-tutorial step asks the reader to use permits its own events', () => {
+  // The guard maps capabilities to event types, and a mismatch is silent: Next goes through
+  // `clickAsTutorial` and works, while the reader's own mousedown is cancelled. A `<select>`
+  // needs `set-state` (which now covers mousedown/click/change); a button needs `activate`.
+  const tutorial = getTutorial('track-manager')
+  for (const step of tutorial.steps) {
+    const action = stepAction(step)
+    if (action.type === 'none') continue
+    const allowed = (step.allow || []).map((entry) => entry.capability)
+    if (!step.interactive || !allowed.length) continue
+    if (action.type === 'select') {
+      assert.ok(allowed.includes('set-state'), `${step.id} drives a drop-down without allowing set-state`)
+    }
+  }
 })
