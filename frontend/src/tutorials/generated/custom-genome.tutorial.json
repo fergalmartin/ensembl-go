@@ -4,7 +4,7 @@
   "id": "custom-genome",
   "revision": 1,
   "title": "Adding your own genome",
-  "blurb": "Register a genome and annotation from files on disk: name it, check both files with Analyse, import it, and browse the result. Runs on a small demo genome and leaves your own setup untouched.",
+  "blurb": "Ensembl Go supports the addition of custom genomes and annotations. This tutorial covers how you add these genomes, what metadata is needed and how to view them in the genome browser.",
   "estimatedMinutes": 9,
   "usesDemoGenome": true,
   "completionBody": "You can now bring your own genome into Ensembl Go and know what is in it before you commit. Real genomes work the same way; they just take longer to read. Nothing of yours was changed, and the tutorial's temporary data has been cleared away.",

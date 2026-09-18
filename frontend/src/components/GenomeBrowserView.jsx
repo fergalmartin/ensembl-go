@@ -5,6 +5,7 @@ import { registerBrowserNotes, describeBrowserViewport, browserViewportControls 
 import { linkedGeneFraming } from '../utils/linkedGeneFraming'
 import GenomeBrowser from './GenomeBrowser'
 import GenomeWheel from './GenomeWheel'
+import BrowserScrollRail from './BrowserScrollRail'
 import { registerTutorialBrowserHost } from '../utils/tutorialBrowserScene.js'
 import FocusGeneDrawer, { FOCUS_DRAWER_DETAIL_WIDTH, FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from './FocusGeneDrawer'
 import FocusLocationDrawer, { LOCATION_DRAWER_DETAIL_WIDTH } from './FocusLocationDrawer'
@@ -20,6 +21,7 @@ import useScreenshotTargets from '../hooks/useScreenshotTargets'
 import { rasterizeSvgMarkup } from '../utils/screenshotExport'
 import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch } from '../utils/genomeIdentity'
 import { cycleBottomSpacer } from '../utils/genomeWheel'
+import { findScrollHost, stickyControlsInset, panelAlignmentAnchor } from '../utils/browserScrollRail'
 import { LOCKED_ICON_PATH, UNLOCKED_ICON_PATH } from '../utils/lockIcons'
 import {
     DEFAULT_NOTE_SORT_MODE,
@@ -142,36 +144,9 @@ function speciesItemKey(species) {
     return getGenomeKey(species)
 }
 
-// The app's scroll container. `findPanelScroller` also insists the content
-// already overflows, which is the wrong question for the alignment below: the
-// whitespace under the last panel exists precisely to create that overflow.
-function findScrollHost(from) {
-    let node = from
-    while (node && node !== document.body) {
-        const overflowY = window.getComputedStyle(node).overflowY
-        if (overflowY === 'auto' || overflowY === 'scroll') return node
-        node = node.parentElement
-    }
-    return null
-}
-
-// How much of the top of the page the general control bar is covering. Zero
-// while it is locked into the page; once unlocked it floats over the top of the
-// scroller, and a genome has to be parked under it rather than behind it.
-function stickyControlsInset(root) {
-    const bar = root?.querySelector('[data-browser-global-controls="true"]')
-    if (!bar || window.getComputedStyle(bar).position !== 'sticky') return 0
-    return Math.round(bar.getBoundingClientRect().height)
-}
-
-// The control bar a genome is aligned by — the row carrying its pill, which is
-// what the reader sees meet the app's top bar.
-function panelAlignmentAnchor(host, panelKey) {
-    const wrapper = panelKey
-        ? host?.querySelector(`[data-focus-panel-wrapper="${CSS.escape(panelKey)}"]`)
-        : [...(host?.querySelectorAll('[data-focus-panel-wrapper]') || [])].pop()
-    return wrapper?.querySelector('[data-browser-toolbar="true"]') || wrapper || null
-}
+// `findScrollHost`, `stickyControlsInset` and `panelAlignmentAnchor` are shared
+// with the left-hand scroll rail, which has to put a genome's dot at exactly the
+// scroll position this file's alignment scrolls to.
 
 function dedupeSpeciesList(speciesList) {
     const out = []
@@ -919,6 +894,17 @@ export default function GenomeBrowserView({
         // so the scroll is the whole of what the jump does.
         alignPanelToTop(panelKey)
     }, [onPromoteGenome, alignPanelToTop])
+
+    // What the left-hand scroll rail draws: one dot per genome actually on the
+    // page, in page order. Genomes that are merely listed in the top bar are
+    // left off — unlike the Cycle wheel, the rail is a map of what is there to
+    // scroll through, not a way of choosing something else.
+    const scrollRailStops = useMemo(() => panels.map((panel) => ({
+        key: panel.key,
+        label: panel.genomePillLabel || panel.label,
+        color: resolveGenomeColor(panel.species),
+        tourId: panel.species?.tutorial_dataset_id || panel.key,
+    })), [panels, resolveGenomeColor])
 
     // The last genome has nothing under it to scroll into, so it alone could
     // never reach the top bar. This is the missing distance, kept as empty page
@@ -2978,10 +2964,15 @@ export default function GenomeBrowserView({
                 </div>
             )}
 
+            {/* `data-tutorial-occluder` while it follows the scroll: the bar then floats
+                over the panels instead of scrolling with them, and a tutorial spotlight on
+                whatever slides underneath has to stop at its edge rather than paint over
+                the buttons the step is not talking about. */}
             <div
                 data-browser-controls="true"
                 data-browser-global-controls="true"
                 data-tour-id="browser-global-controls"
+                data-tutorial-occluder={controlsFollowScroll ? 'true' : undefined}
                 className="flex items-center justify-between px-4 py-2 border-b flex-none"
                 style={{
                     backgroundColor: isLight ? '#f1f3f5' : '#1E2938',
@@ -3249,9 +3240,21 @@ export default function GenomeBrowserView({
                         onPromote={handleCyclePromote}
                         isActive={isActive && !screenshotMode}
                         isLight={isLight}
+                        held={tutorialRunning}
                     />}
                 </div>
             </div>
+
+            {/* Portalled to the page, so it floats in the app's left-hand padding
+                rather than scrolling away with the panels it is steering. */}
+            <BrowserScrollRail
+                panels={scrollRailStops}
+                hostRef={screenshotPanelsRef}
+                overlayRef={screenshotOverlayRootRef}
+                onJump={alignPanelToTop}
+                isActive={isActive && !screenshotMode && hasPanels}
+                isLight={isLight}
+            />
 
             <div
                 ref={screenshotPanelsRef}

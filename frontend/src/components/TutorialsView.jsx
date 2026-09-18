@@ -12,7 +12,7 @@ import {
   scanTutorialPackage,
   TUTORIAL_DRAFTS_CHANGED_EVENT,
 } from '../tutorials/drafts.js'
-import { stepCount, tutorialSections, tutorialViewIds } from '../utils/tutorialModel.js'
+import { sectionCount, stepCount, tutorialSections, tutorialViewIds } from '../utils/tutorialModel.js'
 import { analyseTutorialCompatibility } from '../utils/tutorialDocument.js'
 import { OPEN_TUTORIAL_BUILDER_EVENT } from './TutorialBuilderOverlay.jsx'
 
@@ -42,6 +42,7 @@ export default function TutorialsView({ theme = 'dark', config = null, onOpenCon
   const [showImportBrowser, setShowImportBrowser] = useState(false)
   const [showAddTutorialMenu, setShowAddTutorialMenu] = useState(false)
   const [pendingImport, setPendingImport] = useState(null)
+  const [openStepLists, setOpenStepLists] = useState(() => new Set())
 
   // A tutorial runs in a scratch directory inside the user's own output directory, so it
   // needs one to exist first. That is no bad thing to insist on: it is the setting the
@@ -106,10 +107,13 @@ export default function TutorialsView({ theme = 'dark', config = null, onOpenCon
           Tutorials
         </h1>
         <p className={`mt-1.5 max-w-3xl text-sm leading-relaxed ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>
-          Guided walkthroughs that run inside the app itself. The rest of the screen dims and
-          each step points at the one thing to do next — press Next and the tutorial does it
-          for you, or do it yourself. Nothing you already have is changed: a tutorial runs on
-          its own temporary data and hands your session back untouched when you leave.
+          The Tutorials view gives you access to a number of tutorials, with more due to be
+          added with time. Each tutorial is broken into sections, with sections broken into
+          individual steps. Tutorials are interactive, but an autoplay option is also present
+          to automatically complete interactive steps. Each tutorial is a self contained
+          environment, often with demo data. Exiting or completing a tutorial will return you
+          to your current session and configuration.
+          {builderAvailable && ' A tutorial builder is available at the bottom of the list, and existing tutorials can be cloned to subsequently edit within the builder.'}
         </p>
 
         {draftStatus && <p className={`mt-2 text-xs ${isLight ? 'text-red-700' : 'text-red-300'}`}>{draftStatus}</p>}
@@ -173,11 +177,19 @@ export default function TutorialsView({ theme = 'dark', config = null, onOpenCon
           </div>
         )}
 
-        <div className="mt-6 grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+        <div className={`mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2 ${
+          // Equal-height rows line the chips, the step count and the estimate up along a
+          // shared floor. An expanded step list is half a card taller than its neighbour
+          // though, and stretching that neighbour to match strands its footer under a
+          // screenful of nothing — so the row goes back to natural heights while any list
+          // is open.
+          openStepLists.size ? 'items-start' : 'items-stretch'
+        }`}>
           {catalogueTutorials.map(({ tutorial, isDraft }) => {
             const done = completedIds.includes(tutorial.id)
             const compatibility = analyseTutorialCompatibility(tutorial)
             const unavailableCount = compatibility.unavailableStepIds.length
+            const sections = sectionCount(tutorial)
             return (
               <section
                 key={tutorial.id}
@@ -238,21 +250,31 @@ export default function TutorialsView({ theme = 'dark', config = null, onOpenCon
                   </div>
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-center gap-2">
+                <div className="mt-auto flex flex-wrap items-center gap-2 pt-4">
                   {tutorialViewIds(tutorial).map((viewId) => (
                     <AppChip key={viewId} viewId={viewId} isLight={isLight} />
                   ))}
                 </div>
 
                 <div className={`mt-3 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                  {stepCount(tutorial)} steps
+                  {sections ? `${sections} section${sections === 1 ? '' : 's'}` : `${stepCount(tutorial)} steps`}
                   {tutorial.estimatedMinutes ? ` · about ${tutorial.estimatedMinutes} minutes` : ''}
-                  {tutorial.usesDemoGenome ? ' · installs a small demo genome' : ''}
                 </div>
 
                 <details
-                  className={`mt-auto border-t pt-3 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
+                  className={`mt-3 border-t pt-3 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
                   data-tutorial-step-list={tutorial.id}
+                  onToggle={(event) => {
+                    // Read the state here: React has blanked `currentTarget` by the time
+                    // the updater below runs, and a null read takes the whole view down.
+                    const isOpen = event.target.open
+                    setOpenStepLists((current) => {
+                      const next = new Set(current)
+                      if (isOpen) next.add(tutorial.id)
+                      else next.delete(tutorial.id)
+                      return next
+                    })
+                  }}
                 >
                   <summary
                     className={`cursor-pointer select-none text-xs font-semibold ${

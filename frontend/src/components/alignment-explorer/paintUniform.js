@@ -20,12 +20,20 @@ export function uniformRuns(start, end, row, data, detail) {
   if (detail && row?.sequence != null) {
     for (let column = start; column < end; column++) add(column, column + 1, row.sequence[column - data.start] === '-')
   } else if (row?.bins?.length && data?.bin_size) {
-    row.bins.forEach((bin, i) => {
-      const binStart = data.start + i * data.bin_size
+    const size = data.bin_size, origin = data.start
+    // Only the bins the span reaches. Walking the whole tile and discarding
+    // what fell outside was free while a span was a whole tile, and is anything
+    // but once a collapsed block hands this one span per kept run: a block cut
+    // into four thousand runs walked the tile's bins four thousand times over
+    // to draw each of them once.
+    const first = Math.max(0, Math.floor((start - origin) / size))
+    const last = Math.min(row.bins.length, Math.ceil((end - origin) / size))
+    for (let i = first; i < last; i++) {
+      const bin = row.bins[i], binStart = origin + i * size
       let total = 0
-      for (const count of Object.values(bin)) total += count
-      add(Math.max(start, binStart), Math.min(end, Math.min(data.end, binStart + data.bin_size)), bin['-'] === total)
-    })
+      for (const key in bin) total += bin[key]
+      add(Math.max(start, binStart), Math.min(end, data.end, binStart + size), bin['-'] === total)
+    }
   } else {
     add(start, end, false)
   }

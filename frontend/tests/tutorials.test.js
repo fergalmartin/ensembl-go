@@ -315,12 +315,63 @@ test('the browser tutorial is divided into coherent narrative sections', () => {
     'Focusing on a gene',
     'Browsing a gene in detail',
     'Adding notes',
+    'Focusing on a location',
     'Wrapping up',
   ])
   assert.deepEqual(runs.map((run) => run.ids[0]), [
     'welcome', 'global-controls', 'moving-about', 'deep-genes', 'gene-classes',
-    'find-reg4', 'drawer', 'notes-section', 'finish',
+    'find-reg4', 'drawer', 'notes-section', 'location-window', 'finish',
   ])
+})
+
+test('every location step states the region it describes and the classes it counts', () => {
+  // The location drawer lists exactly what the track draws, so a gene class switched off
+  // in the filter section is a row missing from the list — which is what makes "four
+  // genes" either true or wrong depending on a step fifteen places earlier. Both the
+  // region and the filter therefore belong to every step in the section rather than being
+  // inherited from the one before it.
+  const section = browserInDepth.steps.filter((step) => step.section === 'Focusing on a location')
+  assert.ok(section.length >= 10, 'the location section has gone missing')
+  for (const step of section) {
+    const controls = [step.arrive].flat().filter(Boolean).find((entry) => entry.type === 'browserControls')
+    // The last step of the section has handed the browser back to a gene of focus, so it
+    // is the one step that states no location.
+    if (step.id === 'location-to-gene') {
+      assert.equal(controls, undefined, step.id)
+      continue
+    }
+    assert.ok(controls, `${step.id} declares no location state`)
+    assert.ok(controls.locationFocus, `${step.id} does not say which region is in focus`)
+    assert.deepEqual(controls.biotypes, ['proteinCoding', 'pseudogene', 'smallNonCoding'], step.id)
+  }
+})
+
+test('the step that focuses a window arrives with nothing focused', () => {
+  // "Focus this window" sets rather than toggles, so a second press focuses the padded
+  // window the first one produced and the region quietly grows. Walking back into the
+  // step has to find the job undone, or there is nothing left to demonstrate.
+  const byId = Object.fromEntries(browserInDepth.steps.map((step) => [step.id, step]))
+  for (const id of ['location-window', 'focus-window']) {
+    const controls = [byId[id].arrive].flat().find((entry) => entry.type === 'browserControls')
+    assert.equal(controls.locationFocus, 'none', id)
+  }
+  assert.equal(byId['focus-window'].action.skipIfEngaged, true)
+  // And no hold afterwards: the bar, the drawer and the boundary lines are there the
+  // moment the button is pressed, and the next step is the one describing them. A pause
+  // only leaves this card sitting over a result it is no longer talking about.
+  assert.equal(byId['focus-window'].holdMs, undefined)
+})
+
+test('the location section hands the browser back to a gene of focus', () => {
+  // The jump finishes on the gene arriving rather than on the press, because the drawer,
+  // the bar and the whole window change and none of it happens beside the button. The
+  // step after it is the result card, and it is the one that has to put the gene back
+  // when the tutorial is walked in reverse.
+  const byId = Object.fromEntries(browserInDepth.steps.map((step) => [step.id, step]))
+  assert.deepEqual(byId['location-jump-gene'].advanceOn, { type: 'signal', name: 'browser.geneFocused' })
+  assert.ok(byId['location-jump-gene'].action, 'a signal advance infers no action')
+  assert.ok(byId['location-to-gene'].ensure.includes('reg4-gene-focused'))
+  assert.equal(byId['location-to-gene'].undo, 'unfocus-gene')
 })
 
 test('a step that presses a browser switch says which way it expects to find it', () => {

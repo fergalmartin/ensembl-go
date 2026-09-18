@@ -57,6 +57,7 @@ import NotesView from './components/NotesView'
 import MultiAlignmentSidebar from './components/MultiAlignmentSidebar'
 import MultiAlignmentPanel from './components/MultiAlignmentPanel'
 const AlignmentExplorerView = React.lazy(() => import('./components/alignment-explorer/AlignmentExplorerView'))
+const SequenceView = React.lazy(() => import('./components/sequence-view/SequenceView'))
 import SaveAlignmentModal from './components/SaveAlignmentModal'
 import LoadAlignmentModal from './components/LoadAlignmentModal'
 import AppButtonIcon from './components/AppButtonIcon'
@@ -881,6 +882,10 @@ function App() {
 
   // Navigation: which view is active
   const [currentView, setCurrentView] = useState('home')
+  // What the sequence view should open on when another view hands off to it. A
+  // fresh object each time, so asking for the same gene twice still arrives as a
+  // new request -- the same contract as browserLocationFocusByGenome.
+  const [sequenceViewEntry, setSequenceViewEntry] = useState(null)
   const [explorerIncoming, setExplorerIncoming] = useState(null)
   const [gettingStartedOutputDirDismissed, setGettingStartedOutputDirDismissed] = useState(false)
   const [outputDirNotification, setOutputDirNotification] = useState('')
@@ -3332,6 +3337,7 @@ function App() {
     'home',
     'feature_explorer',
     'alignment',
+    'sequence',
     'alignment_explorer',
     'neighbourhood',
     'structural_variation',
@@ -3377,6 +3383,7 @@ function App() {
     genome_browser: 'Genome Browser',
     feature_explorer: 'Feature Explorer',
     alignment: 'Alignment',
+    sequence: 'Sequence',
     alignment_explorer: 'Alignment Explorer',
     neighbourhood: 'Neighbourhood',
     structural_variation: 'Structural Variation',
@@ -3396,6 +3403,7 @@ function App() {
     genome_browser: 'Navigate gene annotations across chromosomes',
     feature_explorer: 'Inspect transcript-level features for a selected gene in an active genome',
     alignment: 'Comparative genomic annotation visualisation',
+    sequence: 'Read sequence base by base, from a whole region down to a single exon',
     alignment_explorer: 'Explore alignment blocks and connected sequence paths in named layers',
     neighbourhood: 'Explore gene neighbourhood context',
     structural_variation: 'Inspect structural variation and chain-based syntenic mappings between two genomes',
@@ -6477,6 +6485,8 @@ function App() {
               </div>
               </div>
             </ErrorBoundary>
+          ) : currentView === 'sequence' ? (
+            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Sequence…</div>}><SequenceView theme={theme} genomes={config?.active_species || []} incoming={sequenceViewEntry} onIncomingConsumed={() => setSequenceViewEntry(null)} onFocusLocationSelect={handleGenomeFocusLocationSelect} onNavigateToBrowser={() => setCurrentView('genome_browser')} /></React.Suspense></ErrorBoundary>
           ) : currentView === 'alignment_explorer' ? (
             <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Alignment Explorer…</div>}><AlignmentExplorerView theme={theme} config={config} genomes={config?.active_species || []} topBarGenomes={topBarSpecies} onAddGenome={handleSpeciesPillToggle} incoming={explorerIncoming} onIncomingConsumed={() => setExplorerIncoming(null)} onOpenGenome={handleOpenAlignmentExplorerLoci} /></React.Suspense></ErrorBoundary>
           ) : currentView === 'neighbourhood' ? (

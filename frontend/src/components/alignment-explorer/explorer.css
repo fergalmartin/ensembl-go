@@ -428,7 +428,6 @@ label.al-filter-range input { width:100%; padding:3px!important; }
    share of the spare width as a control in the other. */
 .al-toolbar > .al-toolbar-group { flex:5 0 auto; }
 .al-toolbar > .al-toolbar-context { flex:3 0 auto; }
-.al-toolbar .al-tools { flex:2 0 auto; flex-wrap:nowrap; gap:7px; }
 .al-toolbar .al-control,.al-toolbar .al-split {
   flex:1 0 var(--al-w); min-width:var(--al-w); max-width:calc(var(--al-w) + 90px); box-sizing:border-box; }
 /* The stack is the one control whose content really changes width: a grouped
@@ -473,15 +472,15 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 /* Natural widths: each is its own longest value measured in the bar's own type,
    plus a couple of pixels so a subpixel difference cannot start an ellipsis.
    Changing a label means re-measuring the one it belongs to. */
-.al-control-pan { --al-w:85px; }
-.al-control-select { --al-w:123px; }
+.al-control-cursor { --al-w:116px; }
 .al-control-zoom { --al-w:115px; }
 .al-control-colour { --al-w:119px; }
 .al-control-filter { --al-w:64px; }
-.al-control-hide { --al-w:110px; }
+.al-control-hide { --al-w:98px; }
+.al-control-gaps { --al-w:88px; }
 .al-control-layer { --al-w:71px; }
 .al-toolbar .al-control-layer { gap:7px; justify-content:center; font-weight:600; cursor:ns-resize; }
-.al-toolbar-stack { --al-w:134px; }
+.al-toolbar-stack { --al-w:120px; }
 
 /* Block navigation and Auto arrange are each half a control tall, so the pair
    takes one control's worth of the bar rather than pushing it onto a second row.
@@ -529,3 +528,126 @@ label.al-filter-range input { width:100%; padding:3px!important; }
   display:flex; align-items:center; justify-content:center; border-radius:50%!important; font-size:12px;
   line-height:1; opacity:0; transition:opacity 90ms ease-out; }
 .al-legend-overlay:hover .al-legend-close,.al-legend-close:focus-visible { opacity:1; }
+
+/* Block context: one block, read against an explicit comparison.
+   The bar sits between the toolbar and the sheet because it says what the sheet
+   is now showing, and every control on it changes that. It is a lens, so the
+   accent it carries is the one the toolbar uses for a narrowed sheet. */
+.al-context-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:6px 12px; border-bottom:1px solid var(--al-accent); background:var(--al-head); color:var(--al-text); font-size:11px; }
+.al-context-id { display:flex; flex-direction:column; line-height:1.35; }
+.al-context-id strong { font-weight:600; }
+.al-context-id small { color:var(--al-muted); }
+.al-context-bar label { display:flex; align-items:center; gap:5px; color:var(--al-muted); white-space:nowrap; }
+.al-context-bar select { max-width:30ch; }
+.al-context-reference select { max-width:30ch; }
+.al-context-spacer { flex:1; }
+.al-context-close { margin-left:auto; font-size:11px; white-space:nowrap; }
+/* Its own line, and the whole width of the bar: a fallback or a missing
+   comparison is a statement about what is being read, not a label on a control. */
+.al-context-note { flex-basis:100%; margin:0; color:var(--al-muted); }
+/* Scrolls rather than growing: a block can be a thousand rows deep and the bar
+   must not push the alignment off the bottom of the window. */
+.al-context-rows { flex-basis:100%; max-height:210px; overflow:auto; display:flex; flex-direction:column; gap:2px; padding:6px 0 2px; border-top:1px solid var(--al-border); }
+.al-context-rows>div { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,16ch) auto auto auto; align-items:center; gap:8px; padding:2px 4px; border-radius:4px; }
+.al-context-rows>div.is-reference { background:var(--al-panel); outline:1px solid var(--al-accent); }
+.al-context-rows>div>small { color:var(--al-muted); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.al-context-rows button { padding:1px 7px; }
+.al-context-rows>div>button:first-child { justify-self:start; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; max-width:100%; }
+
+/* The genomic half of block context. Below the sheet, because it answers a
+   question the sheet raises, and never above it. */
+.al-genomic { display:flex; flex-direction:column; min-height:0; border-top:1px solid var(--al-border); background:var(--al-background); }
+.al-genomic-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:5px 12px; font-size:11px; color:var(--al-muted); }
+.al-genomic-bar strong { color:var(--al-text); font-weight:600; }
+.al-genomic-bar label { display:flex; align-items:center; gap:4px; }
+.al-genomic-bar input { width:8ch; }
+.al-genomic-spacer { flex:1; }
+.al-genomic-tracks { overflow:auto; min-height:0; }
+.al-genomic-tracks canvas { display:block; }
+.al-genomic .al-context-note { padding:0 12px 6px; font-size:10px; }
+
+/* What a band is saying, beside the bands. */
+.al-context-key { flex-basis:100%; display:flex; align-items:center; flex-wrap:wrap; gap:4px 14px; color:var(--al-muted); }
+.al-context-key span { display:inline-flex; align-items:center; gap:5px; }
+.al-context-key i { width:11px; height:7px; border-radius:2px; }
+/* The numbers for one selected feature, across every row being compared. */
+.al-context-measure { flex-basis:100%; max-height:180px; overflow:auto; display:flex; flex-direction:column; gap:5px; padding:7px 0 3px; border-top:1px solid var(--al-border); }
+.al-context-transcripts { flex-basis:100%; max-height:200px; overflow:auto; }
+.al-context-transcripts summary { cursor:pointer; }
+.al-context-transcripts>div { padding:5px 0; border-top:1px solid var(--al-border); }
+.al-context-transcripts label { flex-wrap:wrap; padding:3px 0; }
+.al-genomic { flex:0 1 320px; min-height:160px; }
+.al-context-measure table { border-collapse:collapse; font-size:10px; }
+.al-context-measure th, .al-context-measure td { padding:2px 9px 2px 0; text-align:right; white-space:nowrap; }
+.al-context-measure thead th { color:var(--al-muted); font-weight:500; }
+.al-context-measure tbody th { text-align:left; font-weight:400; }
+.al-context-measure tr.is-active { outline:1px solid var(--al-accent); }
+.al-context-measure button { align-self:flex-start; }
+/* These controls edit or navigate the underlying sheet, not the context lens. */
+.al-main.is-context .al-toolbar-stack,
+.al-main.is-context .al-toolbar-context { display:none; }
+
+/* The two settings a collapse takes, on one line and on one baseline. The
+   switch comes first because the threshold mainly governs how many marks the
+   switch draws, and the field is only wide enough for a column count - it has
+   no stepper to leave room for, since a threshold is typed and applied rather
+   than walked to one column at a time. */
+.al-collapse-settings { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:2px 0; }
+.al-collapse-settings label { margin:0; flex-direction:row; align-items:center; gap:6px; font-weight:400; }
+.al-collapse-settings input[type=text] { width:48px; padding:2px 5px; font-size:11px; text-align:right; }
+
+/* The settings belong to one of the two answers above them, so they are a
+   fieldset: choosing to show the columns greys them and takes them out of the
+   tab order in one attribute, rather than leaving live controls for a state
+   they do not describe. The browser's own border and inset would box them off
+   from the choice they hang from, so only the grouping is kept, and the heading
+   is an ordinary flex item rather than a legend, which no two browsers lay out
+   the same way inside a flex fieldset. */
+.al-gap-settings { border:0; padding:0; margin:6px 0 2px; min-width:0; }
+.al-gap-settings-title { flex-basis:100%; font-size:10px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--al-muted); }
+.al-gap-settings small { flex-basis:100%; }
+.al-gap-settings[disabled] { opacity:.45; }
+
+/* The threshold reads as one statement with a number in it, and the slider is
+   under the sentence it changes rather than beside a figure in a box: the
+   reader is choosing a share of something, which is a position on a range and
+   not a quantity to type. The count of sequences it works out to sits at the
+   end of the line, where it updates as the handle moves. */
+.al-collapse-settings .al-gap-share { flex-basis:100%; flex-direction:column; align-items:stretch; gap:3px; }
+.al-gap-share > span { display:block; }
+.al-gap-share strong { font-variant-numeric:tabular-nums; }
+.al-gap-share small { color:var(--al-muted); white-space:nowrap; }
+/* Drawn rather than left to the browser's own range widget, which keeps the
+   handle a good ten pixels short of each end of its track: at 100% the reader
+   sees bar left over past the handle and reasonably concludes there is more to
+   drag to. With the appearance off, the handle's travel is the track's width
+   less its own, so its edges finish flush with the ends - the top of the range
+   looks like the top of the range. The filled side is painted on the track from
+   `--al-fill`, which the control sets from the value, since taking the
+   appearance off takes `accent-color` with it. */
+.al-gap-share input[type=range] { -webkit-appearance:none; -moz-appearance:none; appearance:none;
+  width:100%; height:12px; margin:0; padding:0; background:transparent; cursor:pointer; }
+.al-gap-share input[type=range]:focus-visible { outline:2px solid var(--al-accent); outline-offset:3px; border-radius:2px; }
+.al-gap-share input[type=range]::-webkit-slider-runnable-track { height:4px; border-radius:2px;
+  background:linear-gradient(to right,var(--al-accent) 0 var(--al-fill,100%),var(--al-border) var(--al-fill,100%) 100%); }
+.al-gap-share input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; appearance:none;
+  width:12px; height:12px; margin-top:-4px; border:0; border-radius:50%; background:var(--al-accent); }
+.al-gap-share input[type=range]::-moz-range-track { height:4px; border-radius:2px;
+  background:linear-gradient(to right,var(--al-accent) 0 var(--al-fill,100%),var(--al-border) var(--al-fill,100%) 100%); }
+.al-gap-share input[type=range]::-moz-range-thumb { width:12px; height:12px; border:0; border-radius:50%; background:var(--al-accent); }
+
+/* Only shown once the work has outlasted a reader's patience for a blank wait. */
+.al-collapse-progress { display:flex; flex-direction:column; gap:4px; }
+.al-progress-track { height:4px; border-radius:2px; background:var(--al-border); overflow:hidden; }
+.al-progress-fill { height:100%; background:var(--al-accent); transition:width .2s ease; }
+
+/* The same bar over the sheet, where a reader who has just pressed Apply and
+   watched the menu close is actually looking. */
+.al-collapse-progress-bar { position:absolute; left:50%; bottom:34px; transform:translateX(-50%); z-index:6;
+  min-width:240px; padding:8px 12px; border:1px solid var(--al-border); border-radius:8px;
+  background:var(--al-panel); box-shadow:0 6px 18px #0004; }
+.al-progress-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.al-progress-foot button { padding:2px 8px; font-size:10px; }
+
+.al-menu-warn { color:var(--al-accent); }

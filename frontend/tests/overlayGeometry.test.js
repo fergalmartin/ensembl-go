@@ -16,6 +16,7 @@ import {
   expandRect,
   nonOverlappingRects,
   placeCard,
+  rectClearOfOccluders,
   unionRect,
   visibleElementRect,
 } from '../src/utils/overlayGeometry.js'
@@ -94,6 +95,50 @@ test('a partially clipped anchor is measured only where the user can see it', ()
     () => ({ overflowX: 'hidden', overflowY: 'auto' })
   )
   assert.deepEqual(actual, { left: 850, top: 300, width: 24, height: 14 })
+})
+
+const elementAt = (rect, extra = {}) => ({
+  getBoundingClientRect: () => rect,
+  contains: () => false,
+  ...extra,
+})
+
+test('a panel scrolled under the sticky control bar is measured from below it', () => {
+  // The bar covers the panel rather than clipping it, so nothing in the ancestor walk
+  // knows about it: without this the spotlight paints its ring across the bar and lights
+  // up buttons the step is not talking about.
+  const bar = elementAt(viewportRectOf({ left: 24, top: 188, width: 1334, height: 53 }))
+  const panel = viewportRectOf({ left: 813, top: 174, width: 551, height: 594 })
+  assert.deepEqual(rectClearOfOccluders(panel, null, [bar]), {
+    left: 813, top: 241, right: 1364, bottom: 768, width: 551, height: 527,
+  })
+})
+
+test('chrome trims only the edge it buries', () => {
+  const footer = elementAt(viewportRectOf({ left: 0, top: 700, width: 1000, height: 60 }))
+  const list = viewportRectOf({ left: 100, top: 300, width: 500, height: 420 })
+  const trimmed = rectClearOfOccluders(list, null, [footer])
+  assert.equal(trimmed.top, 300)
+  assert.equal(trimmed.bottom, 700)
+})
+
+test('a target that is the chrome, or lives inside it, is left whole', () => {
+  const barRect = viewportRectOf({ left: 24, top: 188, width: 1334, height: 53 })
+  const bar = elementAt(barRect, { contains: (node) => node === 'inside' })
+  assert.deepEqual(rectClearOfOccluders(barRect, bar, [bar]), {
+    left: 24, top: 188, right: 1358, bottom: 241, width: 1334, height: 53,
+  })
+  const button = viewportRectOf({ left: 40, top: 196, width: 80, height: 32 })
+  assert.equal(rectClearOfOccluders(button, 'inside', [bar]).top, 196)
+})
+
+test('chrome beside a target, or covering it completely, is handled', () => {
+  const bar = elementAt(viewportRectOf({ left: 24, top: 188, width: 200, height: 53 }))
+  const panel = viewportRectOf({ left: 813, top: 174, width: 551, height: 594 })
+  // No horizontal overlap at all: the target keeps its own top.
+  assert.equal(rectClearOfOccluders(panel, null, [bar]).top, 174)
+  const blanket = elementAt(viewportRectOf({ left: 0, top: 0, width: 1400, height: 900 }))
+  assert.equal(rectClearOfOccluders(panel, null, [blanket]), null)
 })
 
 test('a fixed dialog is not clipped by whatever scrolls behind it', () => {

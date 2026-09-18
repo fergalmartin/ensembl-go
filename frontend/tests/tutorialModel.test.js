@@ -27,6 +27,7 @@ import {
   tutorialAnchorIds,
   tutorialProgressLabel,
   tutorialSections,
+  sectionCount,
   tutorialViewIds,
   stepCopyTarget,
   validateTutorial,
@@ -112,6 +113,19 @@ test('narrative sections group consecutive steps without losing their absolute i
     { title: 'First', steps: [{ step: sectioned.steps[0], stepIndex: 0 }, { step: sectioned.steps[1], stepIndex: 1 }] },
     { title: 'Second', steps: [{ step: sectioned.steps[2], stepIndex: 2 }] },
   ])
+})
+
+test('the catalogue counts named chapters, not the steps or the unsectioned remainder', () => {
+  const sectioned = {
+    steps: [
+      { id: 'a', section: 'First' },
+      { id: 'b', section: 'First' },
+      { id: 'c', section: 'Second' },
+    ],
+  }
+  assert.equal(sectionCount(sectioned), 2)
+  assert.equal(sectionCount({ steps: [{ id: 'a' }, { id: 'b' }] }), 0)
+  assert.equal(sectionCount({}), 0)
 })
 
 test('a step override and its default browser controls are applied as one state change', () => {

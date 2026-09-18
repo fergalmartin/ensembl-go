@@ -490,7 +490,14 @@ export default function FocusLocationDrawer({
                                 if (!selection) return null
                                 const collapsed = Boolean(collapsedSections[section.id])
                                 return (
-                                    <div key={section.id} className="py-1 border-t" style={{ borderColor: dividerColor }}>
+                                    <div
+                                        key={section.id}
+                                        // One feature section, named so a tutorial can
+                                        // spotlight the list rather than its fold button.
+                                        data-location-drawer-section={section.id}
+                                        className="py-1 border-t"
+                                        style={{ borderColor: dividerColor }}
+                                    >
                                         <div className="flex items-center gap-2 px-2 pt-1 pb-0.5">
                                             <h3 className={`flex-none text-[11px] font-semibold tracking-wide uppercase ${subTextClass}`}>
                                                 {section.label}
@@ -677,6 +684,7 @@ export default function FocusLocationDrawer({
                                 className="px-2 pt-2 pb-3 border-t"
                                 style={{ borderColor: dividerColor }}
                                 data-focus-drawer-notes="true"
+                                data-location-drawer-notes="true"
                             >
                                 <div className="flex items-center gap-2 pb-1">
                                     <h3 className={`flex-none inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase ${subTextClass}`}>

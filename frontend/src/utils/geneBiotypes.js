@@ -39,6 +39,23 @@ export const BIOTYPE_CLASS = {
     Mt_rRNA: 'smallNonCoding', Mt_tRNA: 'smallNonCoding',
     ribozyme: 'smallNonCoding', tRNA: 'smallNonCoding',
 }
+// What to call each class in a list, where there is no room for a sentence. The
+// browser's own checkboxes spell "Long non-coding" out in full because they have
+// the width for it; lncRNA is the same thing and is what a reader scanning a
+// list of genes is looking for.
+export const BIOTYPE_CLASS_LABELS = {
+    proteinCoding: 'Protein-coding',
+    lncRNA: 'lncRNA',
+    smallNonCoding: 'Small non-coding',
+    pseudogene: 'Pseudogene',
+}
+
+/** A gene's class as a reader would name it, falling back to its raw biotype. */
+export function biotypeLabel(biotype) {
+    const group = classifyBiotype(biotype)
+    return BIOTYPE_CLASS_LABELS[group] || String(biotype || '').replace(/_/g, ' ') || 'gene'
+}
+
 export function classifyBiotype(biotype) {
     if (!biotype) return 'proteinCoding'
     const direct = BIOTYPE_CLASS[biotype]

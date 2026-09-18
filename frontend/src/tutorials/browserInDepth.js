@@ -1,6 +1,8 @@
 import {
   DEEP_GENES_REGION,
   HAO2_REGION,
+  LOCATION_FOCUS_VIEW,
+  LOCATION_REGION,
   OPENING_REGION,
   REG4,
   REG4_GENE_REGION,
@@ -84,6 +86,30 @@ const REG4_TRANSCRIPT_SHOWN = {
 }
 const COLLAPSE_TBX15 = { type: 'browserControls', geneTranscripts: { gene: TBX15.id, expanded: false } }
 
+// ── The location half ───────────────────────────────────────────────────────────────
+//
+// A location of focus is the same idea as a gene of focus, for a region nobody annotated:
+// the window itself becomes the thing in focus, with its own boundary lines, its own bar
+// and its own drawer. The section reads as the gene sections do on purpose — that is the
+// point being made — so it reuses their shape and spends its words on what differs.
+//
+// The gene-class filter matters here in a way it does not elsewhere: the drawer lists
+// exactly what the track draws, so a class switched off is a row that is not in the list.
+// Every step below therefore declares the filter as well as the region, which is where
+// the tutorial's own filter section leaves it, and is what makes "four genes" true.
+const LOCATION_CLASSES = ['proteinCoding', 'pseudogene', 'smallNonCoding']
+/** The location in focus, the view padded around it, and the filter the count assumes. */
+const AT_LOCATION = (detail) => [
+  {
+    type: 'browserControls',
+    locationFocus: LOCATION_REGION,
+    biotypes: LOCATION_CLASSES,
+    ...(detail === undefined ? {} : { locationDetail: detail }),
+  },
+  at(LOCATION_FOCUS_VIEW),
+]
+const SHOW_LOCATION_DRAWER = { anchor: { selector: '[data-location-drawer="true"]' } }
+
 // Chapters are part of the tutorial's authored narrative rather than inferred from the
 // controls a step happens to use. Keeping the labels here makes the boundaries explicit,
 // keeps repeated wording consistent, and lets the overlay and catalogue share one source.
@@ -96,16 +122,17 @@ const SECTION = Object.freeze({
   focus: 'Focusing on a gene',
   detail: 'Browsing a gene in detail',
   notes: 'Adding notes',
+  location: 'Focusing on a location',
   finish: 'Wrapping up',
 })
 
 export default {
   id: 'browser-in-depth',
   title: 'The Genome Browser',
-  blurb: 'Tracks, panning, zooming down to the bases, transcript layout, gene-class '
-    + 'filters, the focus drawer and notes — on a real slice of human chromosome 1. Runs on '
-    + 'temporary data and leaves your own setup untouched.',
-  estimatedMinutes: 10,
+  blurb: 'This is a detailed examination of the Genome Browser view, which focuses on '
+    + 'navigation, controls and exploring information associated with the main browser '
+    + 'track. It’s run on a small slice of human chromosome 1 on the GRCh38 assembly.',
+  estimatedMinutes: 13,
   usesDemoGenome: true,
   // The state every step assumes, established on arrival at each of them. Zooming and
   // expanding transcripts change how tall the tracks are, and a step that inherited a
@@ -1040,6 +1067,223 @@ export default {
       advanceOn: { type: 'click' },
     },
 
+    // ── Focusing on a location ──────────────────────────────────────────────────────
+    // Deliberately the gene sections again, one surface along. The reader has just spent
+    // fifteen steps on a gene of focus, its drawer and its notes; everything here is the
+    // same shape, so the cards say what differs and nothing else.
+    {
+      id: 'location-window',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: ABOVE_THE_BROWSER,
+      placement: 'top',
+      placeAgainst: ABOVE_THE_BROWSER,
+      ensure: SLICE,
+      // No location in focus, and the filter the count in the next few cards assumes.
+      // Without the first of these, walking back into this step finds the job done and
+      // the button it is travelling towards already pressed.
+      arrive: [
+        { type: 'browserControls', locationFocus: 'none', biotypes: LOCATION_CLASSES },
+        at(REG4_REGION),
+      ],
+      title: 'Zoom out for a region',
+      body: 'In addition to focusing on genes, we can also focus on regions. This works '
+        + 'similarly to gene focus, but with some unique aspects that we\'ll examine over the '
+        + 'next few steps.',
+      action: {
+        type: 'browserView',
+        locus: LOCATION_REGION,
+        durationMs: 1000,
+        pauseMs: 700,
+        // Somebody who has already found their own window keeps it; the step after this
+        // one states the region it describes, so nothing downstream depends on this move.
+        skipIfMoved: true,
+      },
+    },
+    {
+      id: 'focus-window',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: 'browser-focus-window',
+      placement: 'bottom',
+      align: 'end',
+      reveal: SHOW_BROWSER_TRACK,
+      ensure: SLICE,
+      arrive: [
+        { type: 'browserControls', locationFocus: 'none', biotypes: LOCATION_CLASSES },
+        at(LOCATION_REGION),
+      ],
+      title: 'Focus this window',
+      body: 'There are a few ways to focus on a region. You could enter the location in the '
+        + 'search box, you could use the selection tool to manually select a region, but '
+        + 'we\'re going to use the window focus button. This button puts whatever is in the '
+        + 'current window as the location focus. Try clicking it now.',
+      // Set rather than toggled, so a second press would focus the *padded* window this
+      // one produces and quietly grow the region. The button publishes whether a location
+      // is in focus, which is what lets a reader who has pressed it keep their own.
+      action: { type: 'click', anchor: 'browser-focus-window', skipIfEngaged: true },
+      advanceOn: { type: 'click' },
+      // No hold: the bar, the drawer and the boundary lines appear the moment the button
+      // is pressed, and the very next step is about them. A pause here only leaves this
+      // card sitting over the result it is no longer describing.
+
+    },
+    {
+      id: 'location-focused',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: { selector: '[data-location-focus-bar="true"]' },
+      placement: 'top',
+      cardPosition: { x: 0.0164, y: 0.0155 },
+      reveal: SHOW_BROWSER_TRACK,
+      interactive: false,
+      ensure: SLICE,
+      arrive: AT_LOCATION(),
+      title: 'The location in focus',
+      body: 'As you can see below, it has a similar presentation to gene focus. There is a '
+        + 'location focus bar (highlighted below), a location drawer and red boundary lines '
+        + 'have been put at the edges of the region. The region is now centered in the window '
+        + 'with a little bit of flanking region in view on either side of the red boundary '
+        + 'lines.',
+    },
+    {
+      id: 'location-drawer',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: SHOW_LOCATION_DRAWER.anchor,
+      placement: 'left',
+      interactive: false,
+      ensure: SLICE,
+      arrive: AT_LOCATION('none'),
+      title: 'The location drawer',
+      body: 'The location drawer is similar to the gene drawer in layout. The main differences '
+        + 'are that there is a location section at the top, then a section of any genes '
+        + 'overlapping the location and finally a notes section.',
+    },
+    {
+      id: 'location-info',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: 'location-info',
+      placement: 'left',
+      ensure: SLICE,
+      arrive: AT_LOCATION('none'),
+      title: 'The region itself',
+      body: 'The location section has an information button that can be used to access more '
+        + 'information about the regions including the sequence. Try clicking it now.',
+      action: { type: 'click', anchor: 'location-info' },
+      advanceOn: { type: 'click' },
+      holdMs: 1800,
+    },
+    {
+      id: 'location-sequence',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: { selector: '[data-location-sequence-panel="true"]' },
+      placement: 'left',
+      interactive: false,
+      ensure: SLICE,
+      arrive: AT_LOCATION('sequence'),
+      title: 'Its sequence',
+      body: 'The sequence for the whole region, forward or reverse complement, with Copy '
+        + 'writing it out as FASTA. A long one opens as a preview until you ask for the '
+        + 'rest; copying takes all of it either way.',
+    },
+    {
+      id: 'location-genes',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: { selector: '[data-location-drawer-section="genes"]' },
+      placement: 'left',
+      interactive: false,
+      ensure: SLICE,
+      arrive: AT_LOCATION('none'),
+      title: 'The genes inside it',
+      body: 'Every gene the region holds, five prime to three prime, with a strand filter '
+        + 'above them. Four here — and PHGDH, whose tail is on the track just outside the '
+        + 'boundary, is not one of them.',
+    },
+    {
+      id: 'location-gene-info',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: `location-gene-info-${REG4.id}`,
+      placement: 'left',
+      ensure: SLICE,
+      arrive: AT_LOCATION('none'),
+      title: 'Look a gene up',
+      body: 'Each row carries three controls: details, a jump to the gene, and an eye that '
+        + 'hides it from the track. Open REG4\'s details with the information mark, or press '
+        + 'Next.',
+      action: { type: 'click', anchor: `location-gene-info-${REG4.id}` },
+      advanceOn: { type: 'click' },
+      holdMs: 1800,
+    },
+    {
+      id: 'location-gene-detail',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: { selector: '[data-location-gene-detail]' },
+      placement: 'left',
+      interactive: false,
+      ensure: SLICE,
+      arrive: AT_LOCATION({ gene: REG4.id }),
+      title: 'What the panel holds',
+      body: 'The same slot the sequence was in, now holding REG4: its identifier, biotype, '
+        + 'coordinates, strand and description, and each of its transcripts with its own '
+        + 'metadata beside it.',
+    },
+    {
+      id: 'location-notes',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: { selector: '[data-location-drawer-notes="true"]' },
+      placement: 'left',
+      interactive: false,
+      ensure: SLICE,
+      arrive: AT_LOCATION('none'),
+      title: 'Notes on a region',
+      body: 'Notes work here exactly as they did on REG4, with the same editor behind the '
+        + 'plus. What differs is what they are filed under: these belong to the coordinates '
+        + 'rather than to any one gene.',
+    },
+    {
+      id: 'location-jump-gene',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: `location-gene-focus-${REG4.id}`,
+      placement: 'left',
+      reveal: SHOW_BROWSER_TRACK,
+      ensure: SLICE,
+      arrive: AT_LOCATION('none'),
+      title: 'Jump to a gene',
+      body: 'The crosshair beside a gene travels to it and focuses it. Click REG4\'s, or press '
+        + 'Next — a panel focuses one thing at a time, so the location gives way to the gene.',
+      action: { type: 'click', anchor: `location-gene-focus-${REG4.id}` },
+      // The gene arriving is what finishes this, not the press: the drawer, the bar and
+      // the whole window change, and none of it happens next to the button.
+      advanceOn: { type: 'signal', name: 'browser.geneFocused' },
+      holdMs: 2500,
+    },
+    {
+      id: 'location-to-gene',
+      section: SECTION.location,
+      view: 'genome_browser',
+      anchor: { selector: '[data-focus-bar]' },
+      placement: 'top',
+      reveal: SHOW_BROWSER_TRACK,
+      interactive: false,
+      // The step before this one focuses REG4, so the precondition brings about what that
+      // step produced rather than undoing it — and Back clears it again on the way out.
+      ensure: FOCUSED,
+      undo: 'unfocus-gene',
+      arrive: at(REG4_REGION),
+      title: 'The gene has taken over',
+      body: 'REG4 is the gene of focus again, with its own bar and drawer, and the location '
+        + 'bar has gone with it. Both kinds of focus share the browser, and only one of them '
+        + 'holds it at a time.',
+    },
+
     {
       id: 'finish',
       section: SECTION.finish,
@@ -1048,7 +1292,9 @@ export default {
       body: 'You should now have a good grasp on the basics of browsing the genome, how to '
         + 'look at and compact transcripts, focusing on a gene, the gene drawers, how to '
         + 'manipulate what transcript are displayed, how to quickly fetch transcript sequences '
-        + 'and how to add notes. It\'s actually quite a lot of stuff.',
+        + 'and how to add notes. You have also focused a region rather than a gene, and read '
+        + 'its sequence, its genes and its notes from the location drawer. It\'s actually '
+        + 'quite a lot of stuff.',
     },
   ],
 }

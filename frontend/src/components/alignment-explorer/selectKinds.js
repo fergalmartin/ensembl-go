@@ -15,3 +15,18 @@ export const SELECT_KINDS = [
 export const isSelectMode = mode => SELECT_KINDS.some(kind => kind.mode === mode)
 export const selectKind = (mode, fallback) =>
   SELECT_KINDS.find(kind => kind.mode === mode) || SELECT_KINDS.find(kind => kind.mode === fallback) || SELECT_KINDS[0]
+
+/** Move view, and the two ways of drawing a selection, as one list.
+ *
+ * They were two controls in the bar: Pan, which had no settings at all, and
+ * Select, which carried the shape. But the reader is choosing one thing - what
+ * the pointer does - and a press on one of them silently turned the other off,
+ * which is the definition of a single choice among three. As two buttons it
+ * cost two slots to say that, and neither of them said it.
+ */
+export const PAN_MODE = {
+  mode: 'pan', label: 'Move view',
+  hint: 'Drag to move the sheet. Space does this from any mode, whichever is chosen here.',
+}
+export const CURSOR_MODES = [PAN_MODE, ...SELECT_KINDS]
+export const cursorMode = mode => CURSOR_MODES.find(item => item.mode === mode) || PAN_MODE

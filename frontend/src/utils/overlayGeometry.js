@@ -70,18 +70,44 @@ export function visibleElementRect(
   let visible = element.getBoundingClientRect()
   if (!(visible?.width > 0 && visible?.height > 0)) return null
 
-  const intersect = (rect, clip, clipX = true, clipY = true) => {
-    if (!rect || !clip) return null
-    const left = clipX ? Math.max(rect.left, clip.left) : rect.left
-    const top = clipY ? Math.max(rect.top, clip.top) : rect.top
-    const right = clipX ? Math.min(rect.right, clip.right) : rect.right
-    const bottom = clipY ? Math.min(rect.bottom, clip.bottom) : rect.bottom
-    if (!(right > left && bottom > top)) return null
-    return { left, top, right, bottom, width: right - left, height: bottom - top }
-  }
-
-  visible = intersect(visible, containerRect)
+  visible = intersectRects(visible, containerRect)
   if (!visible) return null
+
+  visible = clipRectToClippingAncestors(visible, element, readStyle)
+  if (!visible) return null
+
+  // Last, and in viewport coordinates: the sticky control bar covers the target rather
+  // than clipping it, so nothing in the ancestor walk can see it.
+  visible = rectClearOfOccluders(visible, element)
+  if (!visible) return null
+
+  return clipRectToContainer(visible, containerRect)
+}
+
+function intersectRects(rect, clip, clipX = true, clipY = true) {
+  if (!rect || !clip) return null
+  const left = clipX ? Math.max(rect.left, clip.left) : rect.left
+  const top = clipY ? Math.max(rect.top, clip.top) : rect.top
+  const right = clipX ? Math.min(rect.right, clip.right) : rect.right
+  const bottom = clipY ? Math.min(rect.bottom, clip.bottom) : rect.bottom
+  if (!(right > left && bottom > top)) return null
+  return { left, top, right, bottom, width: right - left, height: bottom - top }
+}
+
+/** A rect cut back to what every clipping ancestor of `element` actually shows of it.
+ *
+ *  Split out of the measurement above because a padded rect has to be put through the
+ *  same walk: growing a spotlight by a few pixels for breathing room is what pushes its
+ *  ring outside the panel that owns it, onto the page behind. */
+export function clipRectToClippingAncestors(
+  rect,
+  element,
+  readStyle = (node) => window.getComputedStyle(node)
+) {
+  if (!rect || !element) return rect || null
+  let visible = rect.right === undefined || rect.bottom === undefined
+    ? { ...rect, right: rect.left + rect.width, bottom: rect.top + rect.height }
+    : rect
 
   const styleOf = (node) => {
     try {
@@ -109,7 +135,7 @@ export function visibleElementRect(
     const containsPaint = String(style?.contain || '').split(/\s+/).includes('paint')
     const holdsFixed = holdsFixedChildren(style)
     if ((clipsX || clipsY || containsPaint) && (!escapesScrolling || holdsFixed)) {
-      visible = intersect(
+      visible = intersectRects(
         visible,
         ancestor.getBoundingClientRect?.(),
         clipsX || containsPaint,
@@ -124,7 +150,60 @@ export function visibleElementRect(
     ancestor = ancestor.parentElement
   }
 
-  return clipRectToContainer(visible, containerRect)
+  return visible
+}
+
+/** The app chrome a spotlight has to stay clear of.
+ *
+ *  The genome browser's general control bar is sticky: it holds its place at the top of
+ *  the scroller while the panels and drawers a step points at slide underneath it. Their
+ *  rectangles stay perfectly valid — nothing clips them, they are simply covered — so a
+ *  spotlight measured from one paints its ring across the control bar and lights up
+ *  buttons the step is not talking about. Anything that floats over scrolling content
+ *  like that marks itself with `data-tutorial-occluder`. */
+export function overlayOccluders(root = (typeof document === 'undefined' ? null : document)) {
+  if (!root?.querySelectorAll) return []
+  return Array.from(root.querySelectorAll('[data-tutorial-occluder="true"]'))
+}
+
+// How much of a rect's width a piece of chrome has to cover before it is treated as lying
+// across it rather than beside it. A sticky bar spans the whole scroller; this keeps a
+// narrower floating control from trimming a panel it merely overlaps at one corner.
+const OCCLUDER_COVERAGE = 0.5
+
+/** Pull a rect out from under the chrome covering it.
+ *
+ *  Only a buried top or bottom edge moves, and only to the near edge of the chrome: a
+ *  panel scrolled half under the control bar keeps everything of it that can be seen.
+ *  A target that *is* the chrome — a step pointing at the control bar itself — and one
+ *  that lives inside it are left alone, or a spotlight would trim itself away. Returns
+ *  null when nothing of the rect is left visible. */
+export function rectClearOfOccluders(rect, element = null, occluders = overlayOccluders()) {
+  if (!rect) return null
+  let { left, top } = rect
+  let right = rect.right ?? rect.left + rect.width
+  let bottom = rect.bottom ?? rect.top + rect.height
+  for (const node of occluders) {
+    if (!node?.getBoundingClientRect) continue
+    if (element && (node === element || node.contains?.(element) || element.contains?.(node))) continue
+    const chrome = node.getBoundingClientRect()
+    if (!(chrome.width > 0 && chrome.height > 0)) continue
+    const overlap = Math.min(chrome.right, right) - Math.max(chrome.left, left)
+    if (!(overlap > 0 && overlap >= (right - left) * OCCLUDER_COVERAGE)) continue
+    if (!(chrome.bottom > top && chrome.top < bottom)) continue
+    const coversTop = chrome.top <= top
+    const coversBottom = chrome.bottom >= bottom
+    if (coversTop && coversBottom) return null
+    if (coversTop) top = Math.min(bottom, chrome.bottom)
+    else if (coversBottom) bottom = Math.max(top, chrome.top)
+    // A band lying wholly inside the rect cannot be cut out of a rectangle, so the edge
+    // it is nearest gives way. In practice that is the top: the bar sticks to the top of
+    // the scroller and a padded rect can start a few pixels above it.
+    else if (chrome.top - top <= bottom - chrome.bottom) top = chrome.bottom
+    else bottom = chrome.top
+  }
+  if (!(right > left && bottom > top)) return null
+  return { left, top, right, bottom, width: right - left, height: bottom - top }
 }
 
 export function areSizesEqual(a, b) {

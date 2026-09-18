@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, visibleRequest, requestKey } from './data'
+import { api, visibleRequests, requestKey } from './data'
 import { layerConnections, offWindowLinks } from './layers'
 import { TileScheduler } from './tileScheduler'
 import { datasetTiles } from './tileService'
@@ -11,7 +11,7 @@ import { recordPerformance } from './performance'
 
 /** Independent, persistent tile requests. A slow block never prevents another
  * block rendering and camera movement never waits for the data pipeline. */
-export default function useLayerData(dataset,layer,camera,size,showAnnotations,revision,onError,preview=false,cohort=null) {
+export default function useLayerData(dataset,layer,camera,size,showAnnotations,revision,onError,preview=false,cohort=null,focusOf=null) {
   const [tick,repaint]=useState(0),error=useRef(onError),owner=useRef(Symbol('alignment')),level=useRef(null),motion=useRef(null)
   error.current=onError
   const service=useMemo(()=>datasetTiles(dataset?.id||'empty'),[dataset?.id])
@@ -29,10 +29,13 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   const dx=previous?camera.x-previous.x:0
   const lookahead=previous&&now-previous.time<Math.min(600,Math.max(200,cache.latency))&&Math.abs(dx)<size.width/camera.scale*2?(Math.sign(dx)||previous.direction||0):0
   if(!previous||previous.x!==camera.x)motion.current={x:camera.x,time:now,direction:Math.sign(dx)}
-  const requests=useMemo(()=>layer?.fragments.map(f=>({id:f.id,request:visibleRequest(f,camera,size),x:f.x})).filter(x=>x.request)||[],[layer,camera,size])
+  // Several per fragment where its rows are read against different comparators,
+  // one otherwise. Flattened here so everything downstream keeps working over a
+  // list of requests rather than learning about comparators.
+  const requests=useMemo(()=>layer?.fragments.flatMap(f=>visibleRequests(f,camera,size,focusOf).map(request=>({id:f.id,request,x:f.x})))||[],[layer,camera,size,focusOf])
   const signature=useMemo(()=>JSON.stringify(requests),[requests])
   const selectedLevel=level.current
-  const plans=useMemo(()=>(layer?.fragments||[]).flatMap(f=>planTiles(f,camera,size,selectedLevel,lookahead)),[layer,camera,size,selectedLevel,lookahead])
+  const plans=useMemo(()=>(layer?.fragments||[]).flatMap(f=>planTiles(f,camera,size,selectedLevel,lookahead,focusOf)),[layer,camera,size,selectedLevel,lookahead,focusOf])
   const planSignature=useMemo(()=>JSON.stringify(plans),[plans])
   useEffect(()=>{
     const tasks=dataset?JSON.parse(planSignature).map(({request,priority,coarse})=>({key:dataset.id+requestKey(request),priority:priority+(preview?10:0),coarse,label:`Block ${request.block}`,run:async signal=>service.ingest({data:await api(`/datasets/${dataset.id}/region`,request,signal),request})})):[]
@@ -47,7 +50,13 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   },[cache,coarseCache,tick]) // eslint-disable-line react-hooks/exhaustive-deps
   for(const {id,request} of requests){
     const sources=(byBlock.get(`${request.block}:${request.focus}`)||[]).filter(data=>data.end>request.start&&data.start<request.end)
-    if(sources.length)tiles[id]={data:sources.find(data=>data.detail)||sources[0],sources}
+    if(!sources.length)continue
+    // A fragment whose rows are read against different comparators gathers the
+    // tiles of all of them. Each row picks its own out by comparator in
+    // `rowCoverage`; a sequence tile serves every row in it whatever it was
+    // requested alongside.
+    const merged=tiles[id]?[...tiles[id].sources,...sources]:sources
+    tiles[id]={data:merged.find(data=>data.detail)||merged[0],sources:merged}
   }
   for(const {request,priority,coarse} of plans){
     if(priority>1)continue
@@ -112,8 +121,10 @@ export default function useLayerData(dataset,layer,camera,size,showAnnotations,r
   const offWindow=useMemo(()=>layer&&neighbours?offWindowLinks({...layer,fragments:solid},neighbours):[],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [layer,neighbours])
+  const annotated=new Set()
   for(const {id,request} of requests){
-    if(!showAnnotations||request.summary||!tiles[id]?.data.detail)continue
+    if(!showAnnotations||request.summary||!tiles[id]?.data.detail||annotated.has(id))continue
+    annotated.add(id)
     const key=`annotations:${dataset?.id}:${requestKey(request)}:${revision}`,value=extraCache.get(key)
     if(value){annotations[id]=value.rows;warnings.push(...value.warnings)}
     extraTasks.push({key,run:signal=>api(`/datasets/${dataset.id}/annotations`,request,signal)})

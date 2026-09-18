@@ -279,6 +279,37 @@ export default function HelpView({ theme = 'dark' }) {
           </p>
         </SectionCard>
 
+        <SectionCard id="sequence" title="Sequence view" icon={<AppButtonIcon buttonId="sequence" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
+          <p>
+            The Sequence view shows sequence the way a file does: sixty bases to a row, with the coordinate
+            of the first and last base of each row down either margin. Hovering a base names its exact
+            coordinate, and what the annotation says it is.
+          </p>
+          <p>
+            The panel on the right is a stack of four levels of focus &mdash; a <span className="font-semibold">location</span>,
+            a <span className="font-semibold">gene</span> on it, a <span className="font-semibold">transcript</span> of that gene,
+            and one of that transcript&rsquo;s <span className="font-semibold">exons or introns</span>. The level you are reading is
+            the one expanded; the list inside it is what you can drill into, and the levels above it are how you come back out.
+            Stepping up keeps what you chose below, so going back down lands where you left off.
+          </p>
+          <p>
+            Each level paints the bases differently. A location marks which stretches are genic, and ticking a gene in the list
+            marks where it begins and ends. A gene is described by all of its isoforms at once, so a base is coding, UTR,
+            non-coding, intronic, or <span className="font-semibold">mixed</span> where the isoforms that cover it disagree. A transcript
+            shows its own UTRs, splice sites and start and stop codons, and shades its coding sequence one codon at a time so the
+            reading frame is visible without counting. The colours are the Alignment view&rsquo;s.
+          </p>
+          <p>
+            The cog on the level you are reading chooses which of those to highlight, and how much flanking sequence to include
+            &mdash; a hundred bases either side of a transcript by default, ten either side of an exon or intron. Beside it,
+            one button copies what you are looking at as plain FASTA, and another opens the same region in the Genome Browser.
+          </p>
+          <p>
+            Dragging across the sequence selects a stretch of it, which appears at the foot of the panel and can be copied or
+            opened in the browser like anything else. It is not part of the chain, so it goes when you move to another gene.
+          </p>
+        </SectionCard>
+
         <SectionCard id="alignment" title="Alignment view" icon={<AppButtonIcon buttonId="alignment" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
           <p>
             Alignment runs a multiple sequence alignment of genic regions from two or more active genomes. Genes selected in Genome Browser

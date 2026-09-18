@@ -13534,8 +13534,40 @@ export default function GenomeBrowser({
                 bounds: browsableRange,
                 tracks: Object.fromEntries(Object.entries(hiddenStrands).map(([key, hidden]) => [key, !hidden])),
                 focus: selectedGene?.name || selectedGene?.id || '',
+                // The location of focus, so an arrival can tell "already right" from
+                // "needs setting" rather than re-focusing on every visit to a step.
+                locationFocus: isLocationFocusVisible && focusLocationRange
+                    ? { ...focusLocationRange }
+                    : null,
                 ready: Boolean(selectedChrom && regions.length),
             }),
+            // The location of focus, set the way the gene of focus is: through the panel's
+            // own handler rather than behind it, so the drawer, the focus bar, the boundary
+            // lines and the gene that gives way to it all stay in step.
+            //
+            // Deliberately not "press the Focus this window button": that control focuses
+            // whatever the window happens to be showing, so a step wanting a particular
+            // region would have to travel there first and then be moved back — a journey
+            // and a correction, which is exactly what docs/TUTORIALS.md says a tutorial
+            // must not do. This leaves the view alone; the step's own `browserView`
+            // arrival puts it where the card describes, in one move.
+            setLocationFocus: (range) => {
+                if (!range) {
+                    if (!selectedLocation) return false
+                    focusLocation(null)
+                    return true
+                }
+                const wanted = getFocusLocationRange(range)
+                if (!wanted) return false
+                if (!isSameChromToken(wanted.chrom, selectedChrom)) return false
+                const current = focusLocationRange
+                if (current
+                    && isSameChromToken(current.chrom, wanted.chrom)
+                    && Math.round(current.start) === Math.round(wanted.start)
+                    && Math.round(current.end) === Math.round(wanted.end)) return false
+                focusLocation(wanted)
+                return true
+            },
             panByWindows: (fraction, ms) => {
                 const shift = span() * (Number(fraction) || 0)
                 if (!shift) return false
@@ -13571,7 +13603,7 @@ export default function GenomeBrowser({
                 return true
             },
         })
-    }, [animateToView, browsableRange, chromDisplayMap, frameFocusRange, genome, screenshotTargetId, selectedChrom, tutorialRecipeId, hiddenStrands, selectedGene, regions.length])
+    }, [animateToView, browsableRange, chromDisplayMap, frameFocusRange, genome, screenshotTargetId, selectedChrom, tutorialRecipeId, hiddenStrands, selectedGene, regions.length, focusLocation, focusLocationRange, isLocationFocusVisible, selectedLocation])
 
     // ============ Render ============
 
@@ -13931,6 +13963,10 @@ export default function GenomeBrowser({
             // view when the user switches between panels' focus genes.
             data-focus-bar="true"
             data-focus-kind={kind}
+            // Written out rather than derived from `data-focus-kind`, so the bar the
+            // location tutorial points at is a single attribute a target contract can
+            // name — a compound selector is invisible to the binding test.
+            data-location-focus-bar={kind === 'location' ? 'true' : undefined}
             data-browser-controls="true"
             data-focus-panel-key={screenshotTargetId || genome}
             className="flex items-center gap-4 px-3 py-1.5 flex-none text-xs"

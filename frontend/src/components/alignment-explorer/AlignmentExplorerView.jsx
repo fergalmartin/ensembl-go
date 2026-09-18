@@ -5,7 +5,7 @@ import DrawerChevron from '../DrawerChevron'
 import LayerCanvas from './LayerCanvas'
 import LayerCycle from './LayerCycle'
 import ColourLegend from './ColourLegend'
-import SelectTool from './SelectTool'
+import CursorTool from './CursorTool'
 import ColourTool from './ColourTool'
 import ControlLabel from './ControlLabel'
 import ControlMenu from './ControlMenu'
@@ -19,28 +19,41 @@ import ZoomTool from './ZoomTool'
 import ImportProgress from './ImportProgress'
 import { layoutOriginal, blockRowLines, centreOnRow } from './originalLayout'
 import { hiddenSelection, canHide, hideResult, packBlocks, packedExtent, layerMembership, hideLayerFragments } from './hiding'
+import useGapCollapse from './useGapCollapse'
+import GapTool from './GapTool'
 import useOriginalBlocks from './useOriginalBlocks'
 import ControlChevron from './ControlChevron'
 import useScrollEdges from './toolbarScroll'
 import useLayerData from './useLayerData'
+import useBlockContext from './useBlockContext'
+import BlockContextGenomic from './BlockContextGenomic'
+import { BAND_KINDS } from './comparisonBands'
+import { annotationLaneCounts } from './contextModelLayout'
 import { classifyGenomeLink, exactGenomeLinks, genomeDisplayName } from './associations'
 import FilterPanel from './FilterPanel'
 import GenomeColorPicker from '../GenomeColorPicker'
 import { genomeColorPalette } from '../../genomeColorSchemes'
-import { api, download, demoAlignment } from './data'
-import { toggleHighlights, emptyWorkspace, createLayer, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRowBefore, reorderFragmentRow, resolvePicks, expandRowPicks, pickedRowIds, selectedRangesForFragment, addHighlight, unlightRow, removeFragment, removeRowFromLayer, removeHighlight, planeViewport, enterPanelZoom, exitPanelZoom, PANEL_ZOOM_HINT_ATTEMPTS, ZOOM_HINT_MS, layerViewAnchor } from './layers'
+import { api, download, demoAlignment, MARGIN_X } from './data'
+import { toggleHighlights, emptyWorkspace, createLayer, nextLayerName, createFragment, moveSelection, mergeLayers, layerOverlap, tidyLayer, fitCamera, validateLayerWorkspace, constrainCamera, chunkGap, chunkFasta, workspaceForSave, coordinateFragments, visibleSourceRange, resolveRowOrder, moveRowBefore, reorderFragmentRow, resolvePicks, expandRowPicks, pickedRowIds, selectedRangesForFragment, addHighlight, unlightRow, removeFragment, removeRowFromLayer, removeHighlight, planeViewport, enterPanelZoom, exitPanelZoom, PANEL_ZOOM_HINT_ATTEMPTS, ZOOM_HINT_MS, layerViewAnchor, sourceViewAnchor } from './layers'
 import { NUCLEOTIDE_LETTER_THRESHOLD } from '../../utils/nucleotideStyle'
 import { schemeById } from './colourSchemes'
 import { cohortOf } from './conservationPlan'
-import { litRows } from './layers'
+import { litRows, DEFAULT_COLLAPSE_MIN, DEFAULT_GAP_PERCENT, gapPercent } from './layers'
+import { createDetail, detailLayer, detailRestricted, restrictRows, comparatorFor, activePair, setReference, setMode, moveRow as moveDetailRow, pickTranscript, COMPARISON_MODES } from './detail'
 import './explorer.css'
 
 export default function AlignmentExplorerView({theme='dark',config,genomes=[],topBarGenomes=genomes,onAddGenome,onOpenGenome,incoming,onIncomingConsumed}) {
   const [motifs,setMotifs]=useState(loadMotifs),[motifsSaved,setMotifsSaved]=useState(true)
   const [dataset,setDataset]=useState(null),[inventory,setInventory]=useState([]),[blocks,setBlocks]=useState({blocks:[],total:0}),[source,setSource]=useState(null)
   const [state,setState]=useState(emptyWorkspace),[size,setSize]=useState({width:900,height:500}),[job,setJob]=useState(null),[opening,setOpening]=useState(''),[cancelling,setCancelling]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('')
-  const [dialog,setDialog]=useState(null),[path,setPath]=useState(''),[merge,setMerge]=useState(null),[layerName,setLayerName]=useState(''),[target,setTarget]=useState('new'),[inspect,setInspect]=useState(null),[fallback,setFallback]=useState(false),[revision,setRevision]=useState(0)
+  const [dialog,setDialog]=useState(null),[path,setPath]=useState(''),[merge,setMerge]=useState(null),[layerName,setLayerName]=useState(''),[inspect,setInspect]=useState(null),[fallback,setFallback]=useState(false),[revision,setRevision]=useState(0)
   const [selectionDrag,setSelectionDrag]=useState(null),[filterOpen,setFilterOpen]=useState(false),[colorTarget,setColorTarget]=useState(null)
+  // Block context is a lens, never a layer and never part of the workspace. It
+  // is held outside `state` so that nothing about it can be committed, undone or
+  // saved: a lens onto a block is not a statement about the alignment, and a
+  // saved one could name a block, a row or a transcript that has since gone.
+  const [blockContext,setBlockContext]=useState(null),[contextBusy,setContextBusy]=useState(false)
+  const [contextRows,setContextRows]=useState(false)
   // Hiding replaces Original's layout rather than filtering it: the blocks that
   // survive are fetched by number and laid out shoulder to shoulder, so the
   // file's own coordinates no longer describe the sheet and the loader that
@@ -56,7 +69,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   const barEdges=useScrollEdges(toolbar)
   // Which of the two ways of selecting the bar's one button offers. A completed
   // selection puts the mode back to Pan, so the choice has to outlive the mode.
-  const [selectKind,setSelectKind]=useState('rectangle')
+  const [cursorShape,setCursorShape]=useState('rectangle')
   const [rowQuery,setRowQuery]=useState(''),[selectRows,setSelectRows]=useState([]),[range,setRange]=useState({fragment:'',start:1,end:100}),[link,setLink]=useState({row:'',assembly:'',region:'',strand:'+'})
   const [localGenomes,setLocalGenomes]=useState([]),[localGenomesLoading,setLocalGenomesLoading]=useState(false),[linkReport,setLinkReport]=useState(null),[linkImporting,setLinkImporting]=useState(false),[addingAssembly,setAddingAssembly]=useState('')
   // 'auto' asks the server to read the file's own signature. Any other value
@@ -183,7 +196,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
     hideFit.current=null
     patch({camera:fitCamera({fragments:packedFragments},size.width,size.height)})
   },[packedKey]) // eslint-disable-line react-hooks/exhaustive-deps
-  const sourceFragments=useOriginalBlocks(dataset,source,state.camera,sourceView,blocks.total,state.original&&!hiddenBlocks?.length&&!motifBlockIds,setError,revision,!!state.planeZoom)
+  const sourceFragments=useOriginalBlocks(dataset,source,state.camera,sourceView,blocks.total,state.original&&!blockContext&&!hiddenBlocks?.length&&!motifBlockIds,setError,revision,!!state.planeZoom)
   const laidOut=packedFragments||sourceFragments
   const originalFragments=useMemo(()=>layoutOriginal(laidOut,orderedInventory.map(r=>r.id),state.originalRows||'aligned',state.blockRows||{},dataset?.max_source_rows,viewFilter),[laidOut,orderedInventory,state.originalRows,state.blockRows,dataset?.max_source_rows,viewFilter])
   const original=useMemo(()=>({id:'original',name:'Original alignment',color:'#b9c5d9',fragments:originalFragments,packed:!!packedFragments,rowExtent:Math.max(inventory.length,2*(dataset?.max_source_rows||0)+3),extent:packedFragments?packedExtent(packedFragments):dataset?.layout_end||source?.layout_end||source?.length||1}),[originalFragments,packedFragments,dataset?.layout_end,source?.layout_end,source?.length,inventory.length,dataset?.max_source_rows])
@@ -192,13 +205,48 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   // What is actually drawn: the active layer, narrowed by its own hide and then
   // by the motif filter. Both are read here rather than written into the layer,
   // so Show everything is a matter of dropping the note, not rebuilding it.
-  const layer=useMemo(()=>{
+  const contextLayer=useMemo(()=>blockContext?detailLayer(blockContext):null,[blockContext])
+  const shownLayer=useMemo(()=>{
+    if(contextLayer)return contextLayer
     if(state.original)return active
     let fragments=active.fragments
     if(active.hidden)fragments=hideLayerFragments(fragments,active.hidden,ids)
     if(motifBlockIds)fragments=fragments.filter(f=>motifBlockIds.has(f.sourceBlock))
     return fragments===active.fragments?active:{...active,fragments}
-  },[active,motifBlockIds,state.original,ids])
+  },[active,motifBlockIds,state.original,ids,contextLayer])
+  // Last of the narrowings, and the only one that is about columns rather than
+  // about blocks and sequences. It goes after the others on purpose: what is
+  // uninformative is decided by the rows that survived them, so hiding a
+  // sequence can empty a column and showing it again fills it, with no state in
+  // between to keep consistent.
+  const collapse=useGapCollapse(dataset,shownLayer,!!state.collapseGaps&&!contextLayer,state.collapseMin||DEFAULT_COLLAPSE_MIN,gapPercent(state.collapsePercent),setError,!!state.original)
+  const layer=collapse.layer
+  // Packing moves the blocks; this moves the camera with them.
+  //
+  // Closing the channels shifts every block after a collapsed one to the left,
+  // and a reader halfway down the file would otherwise find the sheet had slid
+  // out from under them - on switching the option, and again each time an
+  // answer arrives for a block behind them or a block behind them is unloaded.
+  // The block nearest the camera is watched: while it is the same block, any
+  // change in how far it has moved is applied to the camera as well, so what is
+  // under the viewport stays under it. A different block means the reader
+  // panned there themselves, which is a camera move of their own to leave alone.
+  const packAnchor=useRef(null)
+  const packSolid=layer.fragments?.filter(f=>!f.aggregate)||[]
+  const packNearest=packSolid.length?sourceViewAnchor(packSolid,stateRef.current.camera):null
+  const packBlock=packNearest?.sourceBlock??null,packShift=packNearest?.packShift||0
+  useEffect(()=>{
+    const previous=packAnchor.current
+    packAnchor.current={block:packBlock,shift:packShift}
+    if(!previous||previous.block!==packBlock||previous.shift===packShift)return
+    const delta=packShift-previous.shift
+    const current=stateRef.current.camera
+    patch({camera:{...current,x:current.x-delta}})
+  },[packBlock,packShift,patch])
+  // One answer to "which layer is on screen", read by the camera as well as the
+  // painter. Deriving it twice is what let a pan be clamped against one layer
+  // and drawn against another.
+  const layerRef=useRef(layer);layerRef.current=layer
   const previousMotifBlocks=useRef(null)
   useEffect(()=>{
     if(motifBlocks.blocks&&previousMotifBlocks.current!==motifBlocks.blocks&&state.original){
@@ -208,28 +256,49 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   },[motifBlocks.blocks,original,size.width,size.height,state.original,patch])
   const cameraFrame=useRef(null),pendingCamera=useRef(null)
   const camera=useCallback(value=>{
-    const current=stateRef.current,bounded=constrainCamera(current.original?original:current.layers.find(l=>l.id===current.active)||original,value,size)
-    pendingCamera.current={camera:bounded,active:current.active,original:current.original}
+    const current=stateRef.current,drawn=layerRef.current||original,bounded=constrainCamera(drawn,value,size)
+    pendingCamera.current={camera:bounded,active:current.active,original:current.original,layerId:drawn.id}
     if(cameraFrame.current==null)cameraFrame.current=requestAnimationFrame(()=>{
       cameraFrame.current=null;const next=pendingCamera.current
-      setState(s=>s.active!==next.active||s.original!==next.original?s:{...s,camera:next.camera,layers:s.layers.map(l=>l.id===s.active&&!s.original?{...l,camera:next.camera}:l)})
+      if((layerRef.current?.id||null)!==next.layerId)return
+      // A lens keeps its camera in the same place every other view does, so pan
+      // and zoom need no special case; what it must not do is write that camera
+      // back into the layer it was opened from, which is where the reader is
+      // returned to on closing.
+      setState(s=>s.active!==next.active||s.original!==next.original?s:{...s,camera:next.camera,
+        layers:next.layerId==='detail'?s.layers:s.layers.map(l=>l.id===s.active&&!s.original?{...l,camera:next.camera}:l)})
     })
     return bounded
   },[original,size])
   useEffect(()=>()=>{if(cameraFrame.current!=null)cancelAnimationFrame(cameraFrame.current)},[])
-  const renderState=useMemo(()=>({...state,original:layer.id==='original',camera:constrainCamera(layer,state.camera,size),placedOverlay:state.original&&state.overlay?state.layers.flatMap(l=>l.fragments.map(f=>({...f,color:l.color,name:l.name}))):[]}),[state,layer,size])
+  const renderState=useMemo(()=>({...state,original:layer.id==='original',blockContext,camera:constrainCamera(layer,state.camera,size),
+    placedOverlay:state.original&&state.overlay&&!blockContext?state.layers.flatMap(l=>l.fragments.map(f=>({...f,color:l.color,name:l.name}))):[]}),[state,layer,size,blockContext])
   const renderView=useMemo(()=>planeViewport(size,renderState.camera),[size,renderState.camera])
-  const filteredInventory=useMemo(()=>{
-    const allowed=viewFilter?.sequences?.length?new Set(viewFilter.sequences):null
-    return allowed?orderedInventory.filter(row=>allowed.has(row.id)):orderedInventory
-  },[orderedInventory,viewFilter])
-  const displayInventory=useMemo(()=>filteredInventory.map(row=>{
+  // Named once, over the whole file, and filtered afterwards. Doing it the other
+  // way round left every row a filter excludes with no entry anywhere, and the
+  // sheet falls back to a bare identifier when it cannot find one - so filtering
+  // Original renamed the rows of every layer holding a sequence the filter does
+  // not keep, which a layer is perfectly entitled to hold.
+  const namedInventory=useMemo(()=>orderedInventory.map(row=>{
     const linked=classifyGenomeLink(row,topBarGenomes,localGenomes)
     if(!linked.assembly)return row
     const name=genomeDisplayName(linked.genome,'')
     const label=row.label||row.source
     return {...row,label:name&&!String(label).toLowerCase().includes(String(name).toLowerCase())?`${name} · ${label}`:label,linkStatus:linked.status,linkedGenome:linked.genome}
-  }),[filteredInventory,localGenomes,topBarGenomes])
+  }),[orderedInventory,localGenomes,topBarGenomes])
+  // Which rows Original lists, and in what order: that is the filter's business.
+  const displayInventory=useMemo(()=>{
+    const allowed=viewFilter?.sequences?.length?new Set(viewFilter.sequences):null
+    return allowed?namedInventory.filter(row=>allowed.has(row.id)):namedInventory
+  },[namedInventory,viewFilter])
+  // Who every row is, whether it is listed or not. The painter draws names for
+  // rows a layer holds, and a layer is not narrowed by Original's filter.
+  const rowsById=useMemo(()=>new Map(namedInventory.map(row=>[row.id,row])),[namedInventory])
+  // Names for the controls that talk about rows. The inventory a filter has
+  // narrowed is not the whole file, and block context can hold a row the filter
+  // is hiding, so this falls back to the unfiltered inventory rather than
+  // printing a bare identifier.
+  const rowLabel=useCallback(id=>{const row=rowsById.get(id);return row?.label||row?.source||id},[rowsById])
   const genomeOptions=useMemo(()=>{
     const values=[]
     for(const genome of [...(topBarGenomes||[]),...localGenomes]){
@@ -257,8 +326,24 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   // never restates the question and the colours hold still while reading.
   const scheme=schemeById(state.colourScheme)
   const cohort=useMemo(()=>scheme.cohort?cohortOf(layer,displayInventory,litRows(state)):null,[scheme,layer,displayInventory,state])
-  const {tiles,annotations,connections,offWindow,counts,pending,warnings,conservation,gaps,displayCamera}=useLayerData(dataset,layer,renderState.camera,renderView,state.annotations,revision,setError,false,cohort)
+  // What each row's binned summaries are relative to. Outside the lens this is
+  // null, which leaves every request asking for the block's first row exactly as
+  // it always has.
+  const focusOf=useMemo(()=>blockContext?(rowId=>comparatorFor(blockContext,rowId)||blockContext.reference||rowId):null,[blockContext])
+  // The lens owns its annotation data and its overlay. Entering it must not turn
+  // the saved Annotations setting on, which would leak into the workspace and
+  // start the parked ribbon requesting on every other sheet as well.
+  const {tiles,annotations,connections,offWindow,counts,pending,warnings,conservation,gaps,displayCamera}=useLayerData(dataset,layer,renderState.camera,renderView,state.annotations&&!blockContext,revision,setError,false,cohort,focusOf)
   const motifSearch=useMotifs(snapshot,layer,displayCamera,renderView,scheme.id==='motif')
+  // Block context owns its annotation data, on its own request budget. Nothing
+  // here touches the parked Annotations setting or the ribbon it drives.
+  const contextData=useBlockContext(dataset,blockContext,contextLayer,renderState.camera,renderView,revision,setError)
+  const laneCountsKey=JSON.stringify(annotationLaneCounts(contextData.features))
+  useEffect(()=>{
+    const counts=JSON.parse(laneCountsKey)
+    setBlockContext(d=>!d||!Object.keys(counts).some(id=>d.trackLanes?.[id]!==counts[id])?d:
+      {...d,trackLanes:{...d.trackLanes,...counts}})
+  },[laneCountsKey])
   const browserRangesByFragment=useMemo(()=>{
     const eligible=new Set(displayInventory.filter(row=>row.linkStatus==='topbar'&&row.linkedGenome?.files?.gff3).map(row=>row.id)),ranges=new Map()
     if(!onOpenGenome||!eligible.size)return ranges
@@ -268,7 +353,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
     }
     return ranges
   },[displayInventory,layer.fragments,onOpenGenome,state.highlighted,state.selection])
-  const canvasState=useMemo(()=>({...renderState,camera:displayCamera,motifRows:motifSearch.rows,browserFragments:new Set(browserRangesByFragment.keys())}),[renderState,displayCamera,motifSearch.rows,browserRangesByFragment])
+  const canvasState=useMemo(()=>({...renderState,camera:displayCamera,annotations:state.annotations&&!blockContext,motifRows:motifSearch.rows,browserFragments:new Set(browserRangesByFragment.keys())}),[renderState,displayCamera,motifSearch.rows,browserRangesByFragment,state.annotations,blockContext])
   // Original is the whole alignment however it is being looked at, so it is
   // described by the source's own totals. What a filter or a hide holds back is
   // a second line under them, close enough to read against.
@@ -284,7 +369,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
     if(inventory.length>rowCount)parts.push(plural(inventory.length-rowCount,'sequence','sequences'))
     return parts.length?`${parts.join(' · ')} hidden`:''
   },[activeFilter,blocks.total,inventory.length])
-  const switchLayer=useCallback(id=>{setInspect(null);setState(s=>({...s,original:id==='original',active:id==='original'?s.active:id,selection:[],camera:id==='original'?fitCamera({fragments:original.fragments.filter(f=>f.sourceBlock===s.sourceBlock&&!f.aggregate).slice(0,1)},size.width,size.height):s.layers.find(l=>l.id===id)?.camera||s.camera}))},[original,size])
+  const switchLayer=useCallback(id=>{setInspect(null);setBlockContext(null);setState(s=>({...s,original:id==='original',active:id==='original'?s.active:id,selection:[],camera:id==='original'?fitCamera({fragments:original.fragments.filter(f=>f.sourceBlock===s.sourceBlock&&!f.aggregate).slice(0,1)},size.width,size.height):s.layers.find(l=>l.id===id)?.camera||s.camera}))},[original,size])
   // Entering panel mode lands on blocks; leaving it returns the sheet to full
   // size with the rows against the top edge, so the control is never a way to
   // get stuck looking at something too small to read.
@@ -426,10 +511,43 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   // off the end and the bar has to be scrolled to reach its own buttons. The
   // switches keep them in their tooltips; the sidebar card gives them a line
   // that is always in view and never competes for width.
-  const narrowedSummary=hiding?`Showing ${hidingSummary}`:hiddenSummary
+  // "Gap-only" only while the threshold is the whole cohort. Below that the
+  // hidden columns hold bases, and a line still calling them empty would be the
+  // view telling the reader the opposite of what it had just done for them.
+  const gapShareApplied=gapPercent(state.collapsePercent)
+  const narrowedSummary=[hiding?`Showing ${hidingSummary}`:hiddenSummary,
+    collapse.columns?(gapShareApplied<100
+      ?`${collapse.columns.toLocaleString()} columns hidden, ${gapShareApplied}% or more gapped`
+      :`${collapse.columns.toLocaleString()} gap-only columns hidden`):''].filter(Boolean).join(' · ')
   const closeHideMenu=useCallback(()=>setHideMenu(false),[])
   useMenuDismiss(hideMenu,closeHideMenu,hideButton,'al-tool-menu')
   const hideMenuChoice=hideDraft?.previous?state.hideMemory?.choice:canHide(hideChoice)?hideChoice:viewHidden?.choice
+  // The switch says what is hidden and only that. Collapsing lives in the same
+  // menu because that is where a reader goes to narrow a sheet, but it is not a
+  // hide - it hides nothing, it closes up columns nobody has anything in - and
+  // naming it on the face of the control made one word there into two that did
+  // not fit, leaving the reader reading "Sequences + ...". What is collapsed is
+  // counted on the Original alignment card, beside the other counts, and stated
+  // in the menu that sets it.
+  const collapsing=!!state.collapseGaps
+  // How many sequences the threshold is a share of. Counted from the sheet
+  // rather than from the file: the question the gap answer asks is about the
+  // rows being drawn, and a percentage of some larger number the reader cannot
+  // see would be a percentage of nothing they could check. Blocks holding fewer
+  // than this need fewer, which the menu says rather than pretending otherwise.
+  const gapCohort=useMemo(()=>new Set((shownLayer?.fragments||[]).filter(f=>!f.aggregate).flatMap(f=>f.rowIds)).size,[shownLayer])
+  // Closing gaps is its own switch, its own settings and its own Apply. Undo
+  // reaches both, so a reader who closes gaps and dislikes the result has the
+  // same way back as from any other edit.
+  const toggleGaps=useCallback(value=>commit(s=>({...s,collapseGaps:value})),[commit])
+  // Apply publishes the whole answer the menu asked for - shown or hidden, and
+  // how - in one commit, so Undo returns the sheet to how it was read rather
+  // than to a half state nobody chose.
+  const applyGapSettings=useCallback(({closed,marks,min,percent})=>commit(s=>({...s,collapseGaps:closed,collapseMarks:marks,collapseMin:min,collapsePercent:percent})),[commit])
+  // Stopping the work and leaving the switch on would be no answer at all: the
+  // next render asks the same questions again. So Stop is "do not close gaps",
+  // which is both halves - drop the work, and take the switch back off.
+  const cancelCollapse=useCallback(()=>{collapse.cancel();patch({collapseGaps:false})},[collapse,patch])
   const hideValue=hiding?({blocks:'Blocks',sequences:'Sequences',both:'Both'}[viewHidden?.what||state.hideWhat]||'On'):'Off'
   const openHideMenu=()=>{
     if(hideMenu){closeHideMenu();return}
@@ -447,22 +565,22 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
    * separately and Original is left alone - hiding is a way of reading one
    * sheet, where the filter is a narrowing of the alignment behind all of them.
    */
-  function hideInLayer(choice,{what,mode,rows:rowLayout}){
+  function hideInLayer(choice,{what,mode,rows:rowLayout},settings={}){
     const {blocks:kept,rows}=hideResult(choice,layerMembership(active.fragments,choice.rows),{what,mode})
     const refusal=hideRefusal(kept,what,mode)
     if(refusal){setNotice(refusal);return}
     const hidden={blocks:kept,rows,camera:active.hidden?.camera??state.camera,what,mode,rowLayout,choice}
     const survivors=hideLayerFragments(active.fragments,hidden,ids)
     setHideMenu(false)
-    commit(s=>({...s,hideWhat:what,hideMode:mode,hideRows:rowLayout,hideMemory:{choice,what,mode,rowLayout},
+    commit(s=>({...s,...settings,hideWhat:what,hideMode:mode,hideRows:rowLayout,hideMemory:{choice,what,mode,rowLayout},
       layers:s.layers.map(l=>l.id===s.active?{...l,hidden}:l),
       camera:survivors.length?fitCamera({fragments:survivors},size.width,size.height):s.camera}))
   }
-  async function applyHide(choice,{what,mode,rows:rowLayout}){
+  async function applyHide(choice,{what,mode,rows:rowLayout},settings={}){
     if(!canHide(choice))return
     if(what!=='blocks'&&!choice.rows.length){setNotice('No sequences are picked to keep.');return}
     if(choice.rows.length>5000){setNotice('Too many sequences are picked to ask about at once.');return}
-    if(!state.original){hideInLayer(choice,{what,mode,rows:rowLayout});return}
+    if(!state.original){hideInLayer(choice,{what,mode,rows:rowLayout},settings);return}
     setBusy(true)
     try{
       // A picked sequence runs the length of the file, and most of the blocks it
@@ -477,7 +595,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
       setHideMenu(false)
       // What was hidden, and what asked for it: the settings outlive the hide so
       // the same narrowing can be put back without building the picks again.
-      commit(s=>({...s,hideWhat:what,hideMode:mode,hideRows:rowLayout,
+      commit(s=>({...s,...settings,hideWhat:what,hideMode:mode,hideRows:rowLayout,
         hidden:{blocks:kept,rows,camera:s.hidden?.camera??s.camera,what,mode,rowLayout,choice},
         hideMemory:{choice,what,mode,rowLayout}}))
     }catch(error){setError(error.message)}finally{setBusy(false)}
@@ -511,7 +629,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
       // than at whatever height its row happens to fall at: a block can be a
       // thousand rows deep and the row followed here is the reason for coming.
       const mode=state.originalRows||'aligned',compact=(state.blockRows?.[Number(id)]||mode)==='compact'
-      const lines=rowId?blockRowLines(result.rows.map(r=>r.id),filteredInventory.map(r=>r.id),{compact,wholeView:mode==='compact'}):null
+      const lines=rowId?blockRowLines(result.rows.map(r=>r.id),displayInventory.map(r=>r.id),{compact,wholeView:mode==='compact'}):null
       const line=lines?.get(rowId)
       if(line!=null)view.y=centreOnRow(line,Math.max(...lines.values()),size.height)
       patch({sourceBlock:Number(id),original:true,camera:view,...(rowId?{highlighted:addHighlight(state.highlighted,rowId)}:{})})
@@ -519,7 +637,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   }
   function layerFromFilter(chunks){
     if(!chunks.length)return
-    const next=createLayer(`Filtered ${state.layers.length+1}`,state.layers.length,
+    const next=createLayer(nextLayerName(state.layers,'Filtered'),state.layers.length,
       chunks.map(c=>createFragment(c.sourceBlock,c.start,c.end,c.rowIds,c.coverage?{coverage:c.coverage}:{})))
     const tidied=tidyLayer(next,ids,chunkGap(next.fragments,size.width))
     tidied.camera=fitCamera(tidied,size.width,size.height)
@@ -534,9 +652,17 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
     commit(s=>({...s,layers:s.layers.map(l=>l.id!==s.active?l:{...l,
       fragments:l.fragments.map(f=>f.id===fragmentId?reorderFragmentRow(f,rowId,target.slot):f)})}))
   }
-  async function transfer(copy=false,destinationId=target){
+  /** Put the picked cells in a layer.
+   *
+   * Always a copy, wherever they came from. A layer is a way of looking at the
+   * alignment, not a box the cells are kept in, so taking a set of sequences
+   * into a layer of their own left the layer they came from holding the blank
+   * lane they used to fill and made every drop a decision about losing the
+   * arrangement behind it. Original was already copied for the same reason.
+   * Removing is its own act: the × on a chunk header or a sequence name.
+   */
+  async function transfer(destinationId='new'){
     const selected=state.selection
-    const newLayer=destinationId==='new'?createLayer(layerName.trim()||`Layer ${state.layers.length+1}`,state.layers.length):null
     let transferOriginal=original,selection=selected
     // The Original is a sliding window of descriptors. A row pick is semantic:
     // it names the sequence's complete path, so resolve every source block that
@@ -575,7 +701,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
     const present=new Set((state.original?transferOriginal:active).fragments.map(f=>f.id))
     const resolved=resolvePicks(selection)
     const waiting=resolved.filter(pick=>!present.has(pick.fragmentId))
-    if(waiting.length)setNotice(`${waiting.length} picked ${waiting.length===1?'block is':'blocks are'} not loaded, so ${waiting.length===1?'it was':'they were'} left behind. Navigate to them and move again.`)
+    if(waiting.length)setNotice(`${waiting.length} picked ${waiting.length===1?'block is':'blocks are'} not loaded, so ${waiting.length===1?'it was':'they were'} left behind. Navigate to them and drop them again.`)
     // Nothing to move means nothing to commit: going ahead would leave the
     // workspace pointing at a layer that was never made.
     if(waiting.length===resolved.length)return
@@ -586,12 +712,17 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
       // Original is immutable. Extracting from it creates working cells without
       // removing any source data or storing a duplicate of the full alignment.
       const prepared={...s,selection}
+      // Named against the layers as they stand at the drop, not as they stood
+      // when this view last rendered: a drop can follow an undo or another
+      // drop, and a name read from a stale list lands on a number the sidebar
+      // is already using.
+      const newLayer=destinationId==='new'?createLayer(nextLayerName(s.layers),s.layers.length):null
       const input=s.original?{...prepared,layers:[...s.layers,transferOriginal],active:'original'}:prepared
-      const next=moveSelection(input,newLayer?.id||destinationId,{copy:copy||s.original,targetLayer:newLayer,viewportWidth:size.width})
+      const next=moveSelection(input,newLayer?.id||destinationId,{copy:true,targetLayer:newLayer,viewportWidth:size.width})
       const layers=next.layers.filter(l=>l.id!=='original'),destination=layers.find(l=>l.id===next.active)
       const view=fitCamera(destination,size.width,size.height)
       return {...next,layers:layers.map(l=>l.id===next.active?{...l,camera:view}:l),camera:view}
-    });setLayerName('');setTarget('new');setInspect(null)
+    });setInspect(null)
   }
   function selectionDropTarget(point){
     const element=document.elementFromPoint(point.x,point.y)?.closest('[data-selection-drop]')
@@ -611,7 +742,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   function dropSelection(point){
     const id=selectionDropTarget(point)
     setSelectionDrag(null)
-    if(id)transfer(false,id)
+    if(id)transfer(id)
   }
   function requestMerge(from,to){if(from===to||from==='original'||to==='original')return;const a=state.layers.find(l=>l.id===from),b=state.layers.find(l=>l.id===to);if(!a||!b)return;if(layerOverlap(a,b))setMerge({from,to});else finishMerge(from,to,false)}
   function finishMerge(from,to,combine){commit(s=>{const next=mergeLayers(s,from,to,combine,ids),view=fitCamera(next.layers.find(l=>l.id===to),size.width,size.height);return {...next,camera:view,layers:next.layers.map(l=>l.id===to?{...l,camera:view}:l)}});setMerge(null)}
@@ -716,6 +847,67 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
       await onOpenGenome({loci})
     }catch(error){setError(error.message)}finally{setBusy(false)}
   }
+  /** Open one source block on its own.
+   *
+   * Always the complete source block, even when the press came from a chunk:
+   * a chunk is a piece someone cut out, and reading a gene against the
+   * alignment means reading it against the alignment the block actually has.
+   * Where the chunk covers less than the block, its interval is what the view
+   * opens framed on, and the bar says the whole block is in hand.
+   */
+  async function openBlockContext(fragment){
+    if(!dataset||!fragment||fragment.aggregate||contextBusy)return
+    setContextBusy(true);setError('')
+    try{
+      const result=await api(`/datasets/${dataset.id}/blocks/${fragment.sourceBlock}/rows`)
+      const present=result.rows.map(r=>r.id)
+      const ordered=resolveRowOrder(present,state.rowOrder).filter(id=>present.includes(id))
+      const rows=restrictRows(ordered,state.selection,state.highlighted)
+      const next=createDetail({
+        fragmentId:fragment.id,sourceBlock:fragment.sourceBlock,length:result.length,
+        rowIds:rows,allRowIds:ordered,available:result.rows.filter(r=>!r.empty_status).map(r=>r.id),
+        frame:fragment.start>0||fragment.end<result.length?{start:fragment.start,end:fragment.end}:null,
+        origin:{camera:state.camera,original:state.original,active:state.active,
+          selection:state.selection,highlighted:state.highlighted,rowOrder:state.rowOrder},
+      })
+      setBlockContext(next);setInspect(null)
+      patch({camera:contextCamera(next),selection:[]})
+    }catch(error){setError(error.message)}finally{setContextBusy(false)}
+  }
+  function contextCamera(detail){
+    const drawn=detailLayer(detail)
+    const view=fitCamera(drawn,size.width,size.height)
+    if(!detail.frame)return view
+    const span=Math.max(1,detail.frame.end-detail.frame.start)
+    return constrainCamera(drawn,{...view,x:detail.frame.start,scale:Math.max(view.scale,(size.width-MARGIN_X-24)/span)},size)
+  }
+  /** Open the rows the genomic panel is showing, at their own coordinates.
+   *
+   * The same handoff the block header's Genome Browser button makes, from a
+   * different starting point: there it is the columns that were picked, here it
+   * is the window each track is already framed on. */
+  async function openGenomicRowsInBrowser(rows,windows){
+    if(!onOpenGenome)return
+    const loci=[]
+    for(const rowId of rows||[]){
+      const row=contextData.rowsById?.get(rowId)
+      if(!row?.assembly||!row?.region||!row.genomic)continue
+      const genome=topBarGenomes.find(item=>getAssemblyAccession(item).toUpperCase()===String(row.assembly).toUpperCase())
+      if(!genome)continue
+      loci.push({assembly:row.assembly,region:row.region,chrom:row.region,strand:row.strand,
+        start:Math.max(0,windows?.[rowId]?.start??row.genomic.start)+1,end:windows?.[rowId]?.end??row.genomic.end,genomeKey:getGenomeKey(genome)})
+    }
+    if(!loci.length){setNotice('None of these rows is linked to a genome in the top bar.');return}
+    try{await onOpenGenome({loci})}catch(error){setError(error.message)}
+  }
+  /** Put back the sheet, the camera and the picks the reader came in with. The
+   * lens never wrote to any of them, so this is a restore rather than an undo. */
+  function closeBlockContext(){
+    const origin=blockContext?.origin
+    setBlockContext(null);setInspect(null)
+    if(origin)patch({camera:origin.camera,original:origin.original,active:origin.active,
+      selection:origin.selection,highlighted:origin.highlighted,rowOrder:origin.rowOrder})
+  }
   // The server owns the list of readers; this fallback only matters if the
   // capabilities call has not answered yet.
   const formatChoices=useMemo(()=>Object.entries(capabilities?.format_labels||{
@@ -729,7 +921,6 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
     if(window.electronAPI?.selectFile){try{const selected=await window.electronAPI.selectFile(path||undefined);if(selected)startImport({path:selected,format})}catch(e){setError(e.message)}}
     else file.current.click()
   }
-  const selectionCells=state.selection.reduce((n,s)=>n+(s.end-s.start)*s.rowIds.length,0)
   const selectionRows=new Set(state.selection.flatMap(s=>s.rowIds)).size
   const namedRow=inspect?.rowId?displayInventory.find(r=>r.id===inspect.rowId):null
   // The width the camera actually covers, which under plane zoom is wider than
@@ -784,7 +975,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
       <aside className={`al-sidebar ${state.sidebarCollapsed&&!selectionDrag?'collapsed':''}`}>
         <div className={`al-sidebar-bar ${layersOpen?'':'closed'}`}>
           <button className="al-layers-toggle" aria-expanded={layersOpen} onClick={()=>setLayersExpanded(v=>!v)}><i/>Layers</button>
-          <button className="al-new-layer" title="New empty layer" aria-label="New empty layer" onClick={()=>{setLayersExpanded(true);const next=createLayer(`Layer ${state.layers.length+1}`,state.layers.length);commit(s=>({...s,layers:[...s.layers,next],active:next.id,original:false,selection:[],camera:next.camera}))}}>＋</button>
+          <button className="al-new-layer" title="New empty layer" aria-label="New empty layer" onClick={()=>{setLayersExpanded(true);commit(s=>{const next=createLayer(nextLayerName(s.layers),s.layers.length);return {...s,layers:[...s.layers,next],active:next.id,original:false,selection:[],camera:next.camera}})}}>＋</button>
           <button className="al-sidebar-toggle" aria-label={state.sidebarCollapsed?'Expand alignment sidebar':'Collapse alignment sidebar'} aria-expanded={!state.sidebarCollapsed} onClick={()=>patch({sidebarCollapsed:!state.sidebarCollapsed})}><DrawerChevron pointsRight={!!state.sidebarCollapsed}/></button>
         </div>
         <div className="al-sidebar-content">
@@ -792,11 +983,9 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
         <button className={`al-original ${state.original?'selected':''}`} onClick={()=>switchLayer('original')}><i/> <span>Original alignment<small>{blockSummary}</small>{!!narrowedSummary&&<small className="al-narrowed">{narrowedSummary}</small>}</span></button>
         {state.original&&<label className="al-check al-overlay-check"><input type="checkbox" checked={!!state.overlay} onChange={e=>patch({overlay:e.target.checked})}/>Highlight regions in other layers</label>}
         <div className="al-layer-list">{state.layers.map(l=><div key={l.id} data-layer-drop={l.id} data-selection-drop={l.id} className={`al-layer ${selectionDrag?.target===l.id?'selection-drop-hover':''} ${selectionDrag&&!state.original&&l.id===state.active?'selection-drop-disabled':''} ${!state.original&&l.id===state.active?'selected':''}`} draggable onDragStart={e=>{e.dataTransfer.setData('application/x-alignment-layer',l.id);e.dataTransfer.effectAllowed='move'}} onDragOver={e=>{if(e.dataTransfer.types.includes('application/x-alignment-layer')){e.preventDefault();e.currentTarget.classList.add('drop')}}} onDragLeave={e=>e.currentTarget.classList.remove('drop')} onDrop={e=>{e.preventDefault();e.currentTarget.classList.remove('drop');requestMerge(e.dataTransfer.getData('application/x-alignment-layer'),l.id)}}><button onClick={()=>switchLayer(l.id)}><i style={{background:l.color}}/><span>{l.name}<small>{l.fragments.length} {l.fragments.length===1?'chunk':'chunks'} · {new Set(l.fragments.flatMap(f=>f.rowIds)).size} sequences</small></span></button><button className="al-rename" aria-label={`Rename ${l.name}`} onClick={()=>{setLayerName(l.name);setDialog({rename:l.id})}}>✎</button><button className="al-rename" aria-label={`Remove layer ${l.name}`} title="Remove this layer (undo available; Original stays intact)" onClick={()=>commit(s=>({...s,layers:s.layers.filter(item=>item.id!==l.id),original:s.original||s.active===l.id,selection:[]}))}>×</button></div>)}</div>
-        {!!selectionRows&&<button className={`al-new-layer-drop ${selectionDrag?.target==='new'?'selection-drop-hover':''}`} data-selection-drop="new" onClick={()=>transfer(false,'new')}><b>＋</b><span>New layer<small>Drop the picked cells here</small></span></button>}
+        {!!selectionRows&&<button className={`al-new-layer-drop ${selectionDrag?.target==='new'?'selection-drop-hover':''}`} data-selection-drop="new" onClick={()=>transfer('new')}><b>＋</b><span>New layer<small>Drop the picked cells here</small></span></button>}
         </div>
 </div>}
-        <details className="al-section" open={selectionRows>0?true:undefined}><summary>Selection</summary><p className="al-hint">Click a sequence name or a block header to pick it, or drag with Select or Columns to pick a region. Picks add up; click one again to drop it. Then drag any of them to a layer or ＋ New layer.</p><button disabled={!selectableFragments.length} title={selectableFragments.length?undefined:'Zoom in to an individual source block to select by coordinates.'} onClick={()=>{const f=selectableFragments[0];setRange({fragment:f?.id||'',start:(f?.start||0)+1,end:Math.min(f?.end||100,(f?.start||0)+100)});setSelectRows([]);setDialog('select')}}>Select by coordinates</button>        {!!selectionRows&&<div className="al-selection-bar" role="region" aria-label="Selected region actions"><strong>{selectionRows?`${selectionRows} ${selectionRows===1?'sequence':'sequences'} picked`:'Nothing picked'}</strong><small>{selectionRows?`${state.selection.length} ${state.selection.length===1?'pick':'picks'} · ${selectionCells.toLocaleString()} cells`:'Click a name or a block header, or drag with Select or Columns.'}</small>{!!selectionRows&&<><select aria-label="Move selection to layer" value={target} onChange={e=>setTarget(e.target.value)}><option value="new">New layer…</option>{state.layers.filter(l=>l.id!==state.active||state.original).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select>{target==='new'&&<input aria-label="New layer name" placeholder={`Layer ${state.layers.length+1}`} value={layerName} onChange={e=>setLayerName(e.target.value)}/>}<button className="primary" onClick={()=>transfer(false)}>{state.original?'Place in layer':'Move to layer'}</button>{!state.original&&<button onClick={()=>transfer(true)}>Copy instead</button>}<button onClick={()=>patch({selection:[],highlighted:[]})}>Clear selection</button></>}</div>}
-</details>
         <details className="al-section" open={filterOpen?true:undefined}><summary>Filter</summary>
           <p className="al-hint">Narrow the alignment to the sequences and blocks you want, then build a layer from them or show only those in Original.</p>
           <button className={filterOpen?'selected':''} aria-expanded={filterOpen} onClick={()=>setFilterOpen(v=>!v)}>{filterOpen?'Close filter':'Filter sequences & blocks'}</button>
@@ -805,11 +994,10 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
             <button onClick={()=>patch({filterOff:filterOn})}>{filterOn?'Turn filter off':'Turn filter on'}</button>
             <button onClick={()=>patch({filter:null,filterOff:false})}>Clear filter</button></div>}
         </details>
-        <details className="al-section"><summary>Alignment & loading</summary><strong className="al-dataset-name">{dataset.name}</strong><button onClick={()=>setDialog('open')}>Open alignment</button><div className="al-source"><small>{blocks.total} source {blocks.total===1?'block':'blocks'} · {inventory.length} {inventory.length===1?'sequence':'sequences'}</small>
+        <details className="al-section"><summary>Load data</summary><strong className="al-dataset-name">{dataset.name}</strong><button onClick={()=>setDialog('open')}>Open alignment</button><div className="al-source"><small>{blocks.total} source {blocks.total===1?'block':'blocks'} · {inventory.length} {inventory.length===1?'sequence':'sequences'}</small>
           {!!readerLabel&&<small className="al-reader">Read as <strong>{readerLabel}</strong>{dataset.format_chosen?' (you chose this format)':''}{lastImport.current&&<> · <button className="al-link" onClick={()=>{setFormat(dataset.format||'auto');setDialog('open')}}>read as another format</button></>}</small>}<button onClick={()=>setDialog('links')}>Link local genomes</button></div>
 </details>
-        <details className="al-section"><summary>Display</summary>{state.original&&<label className="al-row-mode">Sequence rows<select aria-label="Original sequence rows" value={state.originalRows||'aligned'} onChange={e=>patch({originalRows:e.target.value,blockRows:{}})}><option value="aligned">Align across source blocks</option><option value="compact">Collapse absent rows</option></select><small>Use the row icon on an individual block to override this.</small></label>}</details>
-        <details className="al-section"><summary>Workspace & export</summary><div className="al-actions"><button disabled={!history.current.past.length} onClick={()=>undo(false)}>Undo</button><button disabled={!history.current.future.length} onClick={()=>undo(true)}>Redo</button></div><button onClick={save}>Save workspace</button><button onClick={()=>workspace.current.click()}>Load workspace</button><button onClick={()=>{const url=canvas.current?.image();if(url){const a=document.createElement('a');a.href=url;a.download=`${dataset.name}-${active.name}.png`;a.click()}}}>Export image</button>
+        <details className="al-section"><summary>Workspace & export</summary><button onClick={save}>Save workspace</button><button onClick={()=>workspace.current.click()}>Load workspace</button>
           <div className="al-source"><strong>Export sequences</strong><label>Format<select value={exportFormat} onChange={e=>setExportFormat(e.target.value)}>{exportChoices.map(([value,label])=><option key={value} value={value} disabled={exportRegions.length>1&&(value==='clustal'||value==='phylip-relaxed')}>{label}</option>)}</select></label><button disabled={busy||!exportRegions.length} onClick={exportSequences}>{state.selection.length?'Export picked region':'Export this layer'}</button><small>{!exportRegions.length?'Zoom in to an individual source block, or pick a region, to export its columns.':state.selection.length?`${exportRegions.length} picked ${exportRegions.length===1?'region':'regions'}, in each sequence's own aligned columns.`:`Every chunk on screen: ${exportRegions.length}. Pick a region to export just that.`}{exportRegions.length>1&&' Clustal and PHYLIP hold one alignment each, so several regions export as FASTA or MAF.'}</small></div></details>
         </div>
       </aside>
@@ -819,9 +1007,8 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
         onNewLayer={layerFromFilter}
         onApplyToOriginal={value=>patch({filter:value,filterOff:false,original:true})}
         onClearFilter={()=>patch({filter:null,filterOff:false})}/>}
-      <main className="al-main"><div className="al-toolbar-rail" data-overflow={barEdges}><div className="al-toolbar" ref={toolbar} data-alignment-control-bar><div className="al-toolbar-group"><div className="al-toolbar-stack"><div className="al-source-nav" title={blockNavigator.title}><label>{blockNavigator.label} <input aria-label={state.original?"Jump to source block":"Jump to a block in this layer"} type="number" min={blockNavigator.min} max={blockNavigator.max} disabled={!blockNavigator.ready} placeholder={blockNavigator.grouped?'#':undefined} key={blockNavigator.grouped?'grouped':`${layer.id}:${blockNavigator.value}`} defaultValue={blockNavigator.grouped?'':blockNavigator.value??''} onKeyDown={e=>{if(e.key==='Enter'){const id=Number(e.currentTarget.value);if(Number.isInteger(id))blockNavigator.go(id)}}}/></label><button aria-label="Previous block" disabled={!!blockNavigator.grouped||blockNavigator.step(-1)==null} onClick={()=>blockNavigator.onStep(blockNavigator.step(-1))}>‹</button><button aria-label="Next block" disabled={!!blockNavigator.grouped||blockNavigator.step(1)==null} onClick={()=>blockNavigator.onStep(blockNavigator.step(1))}>›</button></div><button disabled={state.original||!active.fragments.length} onClick={()=>commit(s=>{const tidied=tidyLayer(active,ids,chunkGap(active.fragments,size.width)),view=fitCamera(tidied,size.width,size.height);return {...s,layers:s.layers.map(l=>l.id===active.id?{...tidied,camera:view}:l),camera:view}})}>Auto arrange</button></div><div className="al-tools" role="group" aria-label="Pointer tool"><button className={`al-control al-control-pan ${state.mode==='pan'?'selected':''}`} aria-pressed={state.mode==='pan'} title="Drag to move the sheet. Space does this from any mode." onClick={()=>patch({mode:'pan'})}><ControlLabel label="Pan" value="Move view" active={state.mode==='pan'}/></button>
-      <SelectTool mode={state.mode} kind={selectKind} picked={state.selection.length} rows={selectionRows} root={explorerRoot.current}
-        onMode={mode=>patch({mode})} onKind={setSelectKind} onClear={()=>patch({selection:[],highlighted:[]})}/></div><ZoomTool panel={!!state.planeZoom} plane={renderState.camera.plane} root={explorerRoot.current} onMode={zoomMode}/><ColourTool scheme={state.colourScheme} palette={state.palette} shading={state.shading} legendOverlay={!!state.legendOverlay}
+      <main className={`al-main ${blockContext?'is-context':''}`}><div className="al-toolbar-rail" data-overflow={barEdges}><div className="al-toolbar" ref={toolbar} data-alignment-control-bar><div className="al-toolbar-group"><div className="al-toolbar-stack"><div className="al-source-nav" title={blockNavigator.title}><label>{blockNavigator.label} <input aria-label={state.original?"Jump to source block":"Jump to a block in this layer"} type="number" min={blockNavigator.min} max={blockNavigator.max} disabled={!blockNavigator.ready} placeholder={blockNavigator.grouped?'#':undefined} key={blockNavigator.grouped?'grouped':`${layer.id}:${blockNavigator.value}`} defaultValue={blockNavigator.grouped?'':blockNavigator.value??''} onKeyDown={e=>{if(e.key==='Enter'){const id=Number(e.currentTarget.value);if(Number.isInteger(id))blockNavigator.go(id)}}}/></label><button aria-label="Previous block" disabled={!!blockNavigator.grouped||blockNavigator.step(-1)==null} onClick={()=>blockNavigator.onStep(blockNavigator.step(-1))}>‹</button><button aria-label="Next block" disabled={!!blockNavigator.grouped||blockNavigator.step(1)==null} onClick={()=>blockNavigator.onStep(blockNavigator.step(1))}>›</button></div><button disabled={state.original||!active.fragments.length} onClick={()=>commit(s=>{const tidied=tidyLayer(active,ids,chunkGap(active.fragments,size.width)),view=fitCamera(tidied,size.width,size.height);return {...s,layers:s.layers.map(l=>l.id===active.id?{...tidied,camera:view}:l),camera:view}})}>Arrange</button></div><CursorTool mode={state.mode} shape={cursorShape} picked={state.selection.length} rows={selectionRows} root={explorerRoot.current}
+        onMode={mode=>patch({mode})} onShape={setCursorShape} onClear={()=>patch({selection:[],highlighted:[]})}/><ZoomTool panel={!!state.planeZoom} plane={renderState.camera.plane} root={explorerRoot.current} onMode={zoomMode}/><ColourTool scheme={state.colourScheme} palette={state.palette} shading={state.shading} legendOverlay={!!state.legendOverlay}
         cohort={cohort} scale={conservation?.scale} light={theme==='light'} root={explorerRoot.current}
         motifs={motifs} motifsSaved={motifsSaved} config={config} disabled={motifOperation.running}
         hideUnmatched={!!state.hideUnmatchedMotifBlocks} onApply={applyColour}/></div><div className="al-toolbar-group al-toolbar-context"><button className={`al-control al-control-filter ${filterOn?'selected':''}`} disabled={!state.filter}
@@ -832,34 +1019,153 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   {/* On, the face of the control is the way off: the press lands where the word
       that says it is on is, rather than a menu away from it. Off, there is
       nothing to switch, so the same press opens the menu that sets it. */}
-  <button className="al-split-main" disabled={busy||(!hiding&&!canHide(hideChoice)&&!state.hideMemory)}
+  <button className="al-split-main" disabled={busy&&!hiding}
     aria-pressed={hiding}
     aria-haspopup={hiding?undefined:'dialog'} aria-expanded={hiding?undefined:hideMenu} aria-controls={!hiding&&hideMenu?hideMenuId:undefined}
-    title={hiding?`Showing ${hidingSummary}. Click to show everything.`:canHide(hideChoice)||state.hideMemory?'Choose what to hide':'Select sequences and/or blocks to choose what to hide'}
+    title={hiding?`Showing ${hidingSummary}. Click to show everything.`
+      :canHide(hideChoice)||state.hideMemory?'Choose what to hide':'Hide gappy columns, or select sequences and blocks to choose what to hide'}
     onClick={()=>{if(hiding){showEverything();closeHideMenu()}else openHideMenu()}}><ControlLabel label="Hide" value={hideValue}/></button>
-  <button className="al-split-arrow" disabled={busy||(!hiding&&!canHide(hideChoice)&&!state.hideMemory)}
+  <button className="al-split-arrow" disabled={busy}
     aria-label="Hide options" aria-haspopup="dialog" aria-expanded={hideMenu} aria-controls={hideMenu?hideMenuId:undefined}
-    title={hiding?'Change what is hidden, or show everything':'Choose what to hide'}
+    title={hiding?'Change what is hidden, or show everything':'Choose what to hide, or hide gappy columns'}
     onClick={openHideMenu}><ControlChevron/></button>
 </div>
+<GapTool closed={collapsing} marks={state.collapseMarks!==false} min={state.collapseMin||DEFAULT_COLLAPSE_MIN}
+  percent={gapPercent(state.collapsePercent)} rows={gapCohort}
+  status={collapse} root={explorerRoot.current} disabled={busy}
+  onToggle={toggleGaps} onApply={applyGapSettings} onStop={cancelCollapse} onRetry={()=>collapse.retry()}/>
 <LayerCycle layers={allLayers} active={layer.id} onChoose={switchLayer} dataset={dataset} inventory={displayInventory} light={theme==='light'} revision={revision}/></div></div></div>
+        {!!blockContext&&<div className="al-context-bar" role="region" aria-label="Block context">
+          <div className="al-context-id">
+            <strong>Block {blockContext.sourceBlock}</strong>
+            <small>{blockContext.length.toLocaleString()} alignment columns{blockContext.frame?' \u00b7 framed on the chunk you came from; the whole source block is in hand':''}</small>
+          </div>
+          <label className="al-context-mode">Compare
+            <select aria-label="Comparison mode" value={blockContext.mode} onChange={e=>setBlockContext(d=>setMode(d,e.target.value))}>
+              {COMPARISON_MODES.map(mode=><option key={mode} value={mode}>{mode==='reference'?'Reference':'Adjacent rows'}</option>)}
+            </select>
+          </label>
+          {blockContext.mode==='reference'&&<label className="al-context-reference">Reference
+            <select aria-label="Comparison reference" value={blockContext.reference||''} onChange={e=>setBlockContext(d=>setReference(d,e.target.value))}>
+              {blockContext.rows.map(id=><option key={id} value={id}>{rowLabel(id)}</option>)}
+            </select>
+          </label>}
+          <label>Inspect pair<select aria-label="Active comparison pair" value={activePair(blockContext)?.[1]||''} onChange={e=>setBlockContext(d=>({...d,pair:[comparatorFor(d,e.target.value),e.target.value]}))}>
+            {blockContext.rows.filter(id=>comparatorFor(blockContext,id)).map(id=><option key={id} value={id}>{rowLabel(comparatorFor(blockContext,id))} / {rowLabel(id)}</option>)}
+          </select></label>
+          {blockContext.rows.length>2&&<button onClick={()=>setBlockContext(d=>{
+            const pair=activePair(d)
+            return pair?{...d,rows:pair,reference:pair[0],pair}:d
+          })}>Show only this pair</button>}
+          <button className={contextRows?'selected':''} aria-expanded={contextRows} onClick={()=>setContextRows(v=>!v)}>
+            {blockContext.rows.length} of {blockContext.allRows.length} rows
+          </button>
+          {detailRestricted(blockContext)&&<button onClick={()=>setBlockContext(d=>({...d,rows:[...d.allRows],pair:null,reference:d.allRows.includes(d.reference)?d.reference:d.allRows[0]||null}))}>Show all rows</button>}
+          <button className={blockContext.genomic?.open?'selected':''} aria-expanded={!!blockContext.genomic?.open}
+            title="Show the active pair at their own genomic coordinates, with the sequence either side of the block"
+            onClick={()=>setBlockContext(d=>({...d,genomic:{...d.genomic,open:!d.genomic?.open}}))}>Genomic context</button>
+          <span className="al-context-spacer"/>
+          <button className="al-context-close" aria-label="Close block context" title="Close block context (Escape)" onClick={closeBlockContext}>Back to alignment</button>
+          {blockContext.referenceFallback==='none'&&<p className="al-context-note" role="status">No row in this block carries alignment sequence, so nothing is being compared.</p>}
+          {blockContext.referenceFallback&&blockContext.referenceFallback!=='none'&&<p className="al-context-note" role="status">
+            {rowLabel(blockContext.referenceFallback)} has no alignment coverage in this block, so {rowLabel(blockContext.reference)} is the reference instead.
+          </p>}
+          {contextData.zoomRequired&&<p className="al-context-note" role="status">Zoom in to see gene models and measured differences (up to 65,536 columns). <button onClick={()=>camera({...renderState.camera,scale:Math.max(renderState.camera.scale,(renderView.width-MARGIN_X)/32000)})}>Show annotation detail</button></p>}
+          {contextData.truncated&&<p className="al-context-note" role="status">Some annotations are omitted at this scale. Narrow the window to inspect them.</p>}
+          {!!contextData.warnings.length&&<p className="al-context-note" role="status">{contextData.warnings[0].message}</p>}
+          <div className="al-context-key" role="group" aria-label="What a comparison band shows">
+            {BAND_KINDS.map(([kind,colour,label])=><span key={kind}><i style={{background:colour}}/>{label}</span>)}
+            <small>Agreement is left blank. Columns gapped in both rows are excluded from every count.</small>
+          </div>
+          <details className="al-context-transcripts"><summary>Genes and transcripts</summary>
+            <p className="al-context-note">Select a transcript to highlight it. Click an exon or CDS in the track to inspect that feature.</p>
+            {blockContext.rows.map(id=><div key={id}>
+              <strong>{rowLabel(id)}</strong>
+              {(contextData.features?.[id]?.genes||[]).map(gene=><label key={gene.gene_id}>
+                <span>{gene.gene_name}</span>
+                <select aria-label={`Transcript for ${gene.gene_name} in ${rowLabel(id)}`} value={gene.transcripts.some(t=>t.transcript_id===blockContext.picks[id])?blockContext.picks[id]:''}
+                  onChange={e=>setBlockContext(d=>pickTranscript(d,id,e.target.value))}>
+                  <option value="">Choose transcript</option>
+                  {gene.transcripts.map(t=><option key={t.transcript_id} value={t.transcript_id}>{t.transcript_id}{t.is_canonical?' (canonical)':''}</option>)}
+                </select>
+                {gene.transcript_count>1&&<button aria-pressed={!!blockContext.expandedGenes?.[id]?.includes(gene.gene_id)} onClick={()=>setBlockContext(d=>{
+                  const genes=d.expandedGenes?.[id]||[]
+                  return {...d,expandedGenes:{...d.expandedGenes,[id]:genes.includes(gene.gene_id)?genes.filter(g=>g!==gene.gene_id):[...genes,gene.gene_id]}}
+                })}>{blockContext.expandedGenes?.[id]?.includes(gene.gene_id)?'Representative only':`Show isoforms (${gene.transcript_count})`}</button>}
+              </label>)}
+            </div>)}
+          </details>
+          {!!blockContext.feature&&<div className="al-context-measure" role="region" aria-label="Selected feature measurements">
+            <strong>{blockContext.feature.type.toUpperCase()} of {blockContext.feature.transcriptId} on {rowLabel(blockContext.feature.rowId)}</strong>
+            <small>{(blockContext.feature.genomic.end-blockContext.feature.genomic.start).toLocaleString()} bp of genome,
+              over {(blockContext.feature.end-blockContext.feature.start).toLocaleString()} alignment columns
+              in {blockContext.feature.pieces.length} base-bearing {blockContext.feature.pieces.length===1?'piece':'pieces'}.</small>
+            {blockContext.feature.clipped&&<small>This feature extends beyond the loaded interval; measurements cover only the displayed pieces.</small>}
+            <small>Each row is measured against the selected feature’s row. Measurements are limited to loaded rows and features spanning at most 65,536 columns.</small>
+            <table><thead><tr><th>Row</th><th>Comparable</th><th>Substituted</th><th>Gap in row</th><th>Gap in feature row</th><th>Unknown</th><th>No coverage</th></tr></thead>
+              <tbody>{blockContext.rows.filter(id=>contextData.measurements?.has(id)).map(id=>{
+                const measured=contextData.measurements.get(id)?.feature
+                if(!measured)return null
+                return <tr key={id} className={activePair(blockContext)?.[1]===id?'is-active':''}>
+                  <th scope="row"><button className="al-link" title="Inspect this pair" onClick={()=>setBlockContext(d=>({...setReference(d,d.feature.rowId),mode:'reference',pair:[d.feature.rowId,id]}))}>{rowLabel(id)}</button></th>
+                  <td>{measured.comparable.toLocaleString()}</td><td>{measured.substitution.toLocaleString()}</td>
+                  <td>{measured.target_gap.toLocaleString()}{measured.entirely_gapped?' · every column':''}</td>
+                  <td>{measured.reference_gap.toLocaleString()}</td>
+                  <td>{measured.unknown.toLocaleString()}</td><td>{measured.unavailable.toLocaleString()}</td>
+                </tr>})}</tbody></table>
+            {blockContext.rows.some(id=>contextData.measurements?.get(id)?.feature?.entirely_gapped)&&
+              <p className="al-context-note">A target gapped over every column of this feature is gapped in this alignment. That is not a search of that genome, and it is not exon loss.</p>}
+            <button onClick={()=>setBlockContext(d=>({...d,feature:null}))}>Clear feature</button>
+          </div>}
+          {contextRows&&<div className="al-context-rows" role="group" aria-label="Rows in this block">
+            {blockContext.rows.map((id,index)=><div key={id} className={id===blockContext.reference?'is-reference':''}>
+              <button className="al-link" title="Use this row as the comparison reference" onClick={()=>setBlockContext(d=>setReference(d,id))} aria-pressed={id===blockContext.reference}>{rowLabel(id)}</button>
+              <small>{id===blockContext.reference?'Reference':comparatorFor(blockContext,id)?`vs ${rowLabel(comparatorFor(blockContext,id))}`:'Nothing above to compare with'}</small>
+              <button aria-label={`Move ${rowLabel(id)} up`} disabled={index===0} onClick={()=>setBlockContext(d=>moveDetailRow(d,id,d.rows[index-1]))}>↑</button>
+              <button aria-label={`Move ${rowLabel(id)} down`} disabled={index===blockContext.rows.length-1} onClick={()=>setBlockContext(d=>moveDetailRow(d,id,d.rows[index+2]??null))}>↓</button>
+              <button aria-label={`Remove ${rowLabel(id)} from this view`} disabled={blockContext.rows.length<2} onClick={()=>setBlockContext(d=>{
+                const rows=d.rows.filter(value=>value!==id)
+                return {...d,rows,pair:null,reference:rows.includes(d.reference)?d.reference:rows[0]||null}
+              })}>×</button>
+            </div>)}
+          </div>}
+        </div>}
         <div className="al-stage">{!!zoomHint&&state.planeZoom&&<div className="al-zoom-hint" role="status" key={zoomHint}><span>Panel zoom is at full size. Switch to <strong>Alignment</strong> for sequence-level zoom.</span><button className="primary" onClick={()=>zoomMode(false)}>Switch</button><button aria-label="Dismiss zoom hint" onClick={dismissZoomHint}>×</button></div>}
         {!!state.legendOverlay&&(!!scheme.legend||scheme.id==='motif')&&<ColourLegend legend={scheme.id==='motif'?motifLegend(snapshot?.settings.motifs||[]):scheme.legend(theme==='light',conservation?.scale,state.palette?.[scheme.id],state.shading)}
           cohort={scheme.cohort?cohort:null} onDismiss={()=>patch({legendOverlay:false})}/>}
         {scheme.id==='motif'&&(motifSearch.pending||motifSearch.failure||motifBlocks.blocks)&&<div className="al-motif-tile-status" role="status">{motifSearch.failure|| (motifSearch.pending?'Loading prepared motif tiles…':`${motifBlocks.blocks.length.toLocaleString()} matching blocks`)}{motifBlocks.blocks&&<button onClick={()=>patch({hideUnmatchedMotifBlocks:false})}>Show unmatched blocks</button>}</div>}
-        <LayerCanvas ref={canvas} layer={layer} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} conservation={conservation} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onBrowseSelection={openSelectionInGenomeBrowser} onRemoveBlock={removeBlock} onRemoveRow={removeRow} onDeselect={deselect} onAggregate={(f,inner)=>inner?sourceBlock(inner.block):camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={(value,lit)=>patch({selection:value,mode:'pan',...(lit?.length?{highlighted:toggleHighlights(state.highlighted,lit)}:{})})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:addHighlight(state.highlighted,id)})} onUnlight={id=>patch(unlightRow(state,id))} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock} onReorderRow={reorderRow} onZoomLimit={noteZoomLimit}/></div>
-        <div className="al-status"><span>{pending?'Loading regional detail…':layer.fragments.some(f=>f.aggregate)?'Block presence overview':renderState.camera.scale*renderState.camera.plane>=NUCLEOTIDE_LETTER_THRESHOLD?'Sequence detail':renderState.camera.scale*renderState.camera.plane>=.65?'Base patterns':(scheme.status||state.shading==='uniform')?'Binned':'Binned agreement to first row'}{scheme.status?` \u00b7 ${scheme.status}${scheme.cohort?` among ${cohort?.ids.length||0} ${cohort?.ids.length===1?'sequence':'sequences'}${cohort?.picked?' picked':' in view'}`:''}`:''}{renderState.camera.plane<1?` · Whole panel at ${Math.round(renderState.camera.plane*100)}%`:''}{fallback?' · Canvas fallback':''}</span><span>{inspect?.kind==='aggregate'?`${namedRow?.label||''} · present in ${inspect.aggregate.presence?.[inspect.rowId]||0} of ${inspect.aggregate.count} source blocks (${inspect.aggregate.first}–${inspect.aggregate.last})`:inspect?.kind==='connection'?`${inventory.find(r=>r.id===inspect.connection.rowId)?.label||'Sequence'} · ${inspect.connection.columns==null?'Different source blocks: alignment distance unavailable':inspect.connection.columns<0?`${-inspect.connection.columns} overlapping alignment columns`:`${inspect.connection.columns} omitted alignment columns`} · ${counts[inspect.connection.id]?.bases??'?'} ungapped bases`:inspect?.kind==='cell'?`${namedRow?.label||''} · block ${inspect.fragment.sourceBlock}, column ${(inspect.column+1).toLocaleString()}${inspect.base?` · ${inspect.base}`:''}${inspect.placed?.length?` · In layers: ${inspect.placed.join(', ')}`:''}${inspect.features?.length?` · ${inspect.features.map(f=>f.type).join(', ')}`:''}`:'Click a name or a block header to pick it \u00b7 click a cell or a string to follow its path.'}</span></div>
+        <LayerCanvas ref={canvas} layer={layer} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} rowsById={rowsById} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} conservation={conservation} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onBrowseSelection={openSelectionInGenomeBrowser} onRemoveBlock={removeBlock} onRemoveRow={removeRow} onDeselect={deselect} onAggregate={(f,inner)=>inner?sourceBlock(inner.block):camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={(value,lit)=>patch({selection:value,mode:'pan',...(lit?.length?{highlighted:toggleHighlights(state.highlighted,lit)}:{})})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:addHighlight(state.highlighted,id)})} onUnlight={id=>patch(unlightRow(state,id))} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock} onReorderRow={reorderRow} onZoomLimit={noteZoomLimit} onBlockContext={f=>f?openBlockContext(f):closeBlockContext()} onPickTranscript={(rowId,transcriptId)=>setBlockContext(d=>pickTranscript(d,rowId,d.picks?.[rowId]===transcriptId?null:transcriptId))}
+          onPickFeature={feature=>setBlockContext(d=>({...pickTranscript(d,feature.rowId,feature.transcriptId),feature,pair:comparatorFor(d,feature.rowId)?[comparatorFor(d,feature.rowId),feature.rowId]:d.pair,genomic:{...d.genomic,open:true,selection:null,columns:{start:feature.start,end:feature.end}}}))} focusOf={focusOf} blockContext={contextData}/></div>
+        {!!blockContext?.genomic?.open&&<BlockContextGenomic dataset={dataset} detail={blockContext} rowsById={contextData.rowsById}
+          rowLabel={rowLabel} theme={theme} onChange={setBlockContext}
+          onOpenGenome={onOpenGenome?(rows,windows)=>openGenomicRowsInBrowser(rows,windows):null}/>}
+        {/* Apply closes the menu, so the work it started has to be visible from
+            the sheet as well - a bar that only existed inside the menu would be
+            a bar nobody watching the alignment ever saw. */}
+        {collapse.slow&&<div className="al-collapse-progress al-collapse-progress-bar" role="status" aria-live="polite">
+          <div className="al-progress-foot"><small>Checking which columns are empty — {collapse.done+collapse.failed} of {collapse.total} {collapse.total===1?'block':'blocks'}</small>
+            <button onClick={cancelCollapse}>Stop</button></div>
+          <div className="al-progress-track"><div className="al-progress-fill" style={{width:`${Math.round(100*(collapse.done+collapse.failed)/Math.max(1,collapse.total))}%`}}/></div>
+        </div>}
+        <div className="al-status"><span>{pending?'Loading regional detail…':layer.fragments.some(f=>f.aggregate)?'Block presence overview':renderState.camera.scale*renderState.camera.plane>=NUCLEOTIDE_LETTER_THRESHOLD?'Sequence detail':renderState.camera.scale*renderState.camera.plane>=.65?'Base patterns':(scheme.status||state.shading==='uniform')?'Binned':blockContext?(blockContext.mode==='reference'?'Agreement to selected reference':'Agreement between adjacent rows'):'Binned agreement to first row'}{scheme.status?` \u00b7 ${scheme.status}${scheme.cohort?` among ${cohort?.ids.length||0} ${cohort?.ids.length===1?'sequence':'sequences'}${cohort?.picked?' picked':' in view'}`:''}`:''}{renderState.camera.plane<1?` · Whole panel at ${Math.round(renderState.camera.plane*100)}%`:''}{fallback?' · Canvas fallback':''}</span><span>{inspect?.kind==='aggregate'?`${namedRow?.label||''} · present in ${inspect.aggregate.presence?.[inspect.rowId]||0} of ${inspect.aggregate.count} source blocks (${inspect.aggregate.first}–${inspect.aggregate.last})`:inspect?.kind==='connection'?`${inventory.find(r=>r.id===inspect.connection.rowId)?.label||'Sequence'} · ${inspect.connection.columns==null?'Different source blocks: alignment distance unavailable':inspect.connection.columns<0?`${-inspect.connection.columns} overlapping alignment columns`:`${inspect.connection.columns} omitted alignment columns`} · ${counts[inspect.connection.id]?.bases??'?'} ungapped bases`:inspect?.kind==='cell'?`${namedRow?.label||''} · block ${inspect.fragment.sourceBlock}, column ${(inspect.column+1).toLocaleString()}${inspect.base?` · ${inspect.base}`:''}${inspect.placed?.length?` · In layers: ${inspect.placed.join(', ')}`:''}${inspect.features?.length?` · ${inspect.features.map(f=>f.type).join(', ')}`:''}`:'Click a name or a block header to pick it \u00b7 click a cell or a string to follow its path.'}</span></div>
 
         {!!warnings.length&&<div className="al-annotation-warning">Annotations unavailable for {warnings.length} visible rows: {warnings[0].message}</div>}
       </main>
     </div>}
     <ControlMenu id={hideMenuId} root={explorerRoot.current} anchor={hideMenu?menuAnchor:null} title="Hide" current={hideValue} className="al-hide-menu">
       {hiding&&<small>Showing {hidingSummary}.</small>}
+      {/* Two removals, and they answer to different things. One reads the
+          reader's picks and takes away what is not among them; the other reads
+          the sheet as it stands and takes away columns nobody on it has a base
+          in. Sharing one unlabelled list of controls, the second looked like a
+          further condition on the first - and there was no way to ask for it
+          alone, because Apply was gated on there being picks to act on. */}
       <label>What<select aria-label="What to hide" value={hideWhat} onChange={e=>setHideDraft(v=>({...v,what:e.target.value}))}>
         <option value="blocks">Blocks</option><option value="sequences">Sequences</option><option value="both">Both</option>
       </select><small>{hideWhat==='sequences'?'Keep the picked sequences, and the blocks still holding one.'
         :hideWhat==='both'?'Keep the picked sequences, in the blocks that pass.'
         :'Keep the blocks that pass; every sequence stays.'}</small></label>
+      {!canHide(hideChoice)&&!state.hideMemory&&!viewHidden&&<small className="al-menu-warn">Nothing is picked yet, so there is nothing to keep. Click a sequence name or a block header, or drag with Select.</small>}
       {hideWhat!=='sequences'&&<label>Condition<select aria-label="Hide condition" value={hideMode} onChange={e=>setHideDraft(v=>({...v,mode:e.target.value}))}>
         <option value="or">Or</option><option value="and">And</option>
       </select><small>{hideMode==='and'
@@ -870,14 +1176,15 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
       </select><small>{hideRows==='keep'
         ?'Every surviving sequence stays on the line it is on, leaving a gap where each hidden one was.'
         :'Surviving sequences rise to the top of each chunk, keeping the lines they share across chunks.'}</small></label>}
-      {!!state.hideMemory&&<label className="al-menu-check"><input type="checkbox" checked={!!hideDraft?.previous} onChange={e=>setHideDraft(v=>({...v,previous:e.target.checked,...(e.target.checked?{what:state.hideMemory.what,mode:state.hideMemory.mode,rows:state.hideMemory.rowLayout||'compact'}:{})}))}/>Use previous picks</label>}
+      {!!state.hideMemory&&<label className="al-menu-check"><input type="checkbox" checked={!!hideDraft?.previous} onChange={e=>setHideDraft(v=>({...v,previous:e.target.checked,...(e.target.checked?{what:state.hideMemory.what,mode:state.hideMemory.mode,rows:state.hideMemory.rowLayout||'compact'}:{})}))}/>Repeat the last hide</label>}
       <small>Changes take effect with Apply.</small>
       {hiding&&<button onClick={()=>{showEverything();closeHideMenu()}}>Show everything</button>}
       <div className="al-menu-actions"><button onClick={closeHideMenu}>Cancel</button>
-        <button className="primary" disabled={busy||!hideMenuChoice||!canHide(hideMenuChoice)} onClick={()=>applyHide(hideMenuChoice,{what:hideWhat,mode:hideMode,rows:hideRows})}>Apply</button>
+        <button className="primary" disabled={busy||!hideMenuChoice||!canHide(hideMenuChoice)}
+          onClick={()=>applyHide(hideMenuChoice,{what:hideWhat,mode:hideMode,rows:hideRows})}>Apply</button>
       </div>
     </ControlMenu>
-    {selectionDrag&&<><div className="al-selection-dim"/><div className="al-selection-ghost" role="status" style={{left:selectionDrag.x+16,top:selectionDrag.y+16}}><strong>{selectionRows} sequences · {state.selection.length} regions</strong><small>{selectionDrag.target==='new'?'Release to create a new layer':selectionDrag.target?`Release to ${state.original?'place in':'move to'} ${state.layers.find(l=>l.id===selectionDrag.target)?.name}`:'Drop on a sidebar layer or ＋ New layer · Esc cancels'}</small></div></>}
+    {selectionDrag&&<><div className="al-selection-dim"/><div className="al-selection-ghost" role="status" style={{left:selectionDrag.x+16,top:selectionDrag.y+16}}><strong>{selectionRows} sequences · {state.selection.length} regions</strong><small>{selectionDrag.target==='new'?'Release to create a new layer':selectionDrag.target?`Release to copy into ${state.layers.find(l=>l.id===selectionDrag.target)?.name}`:'Drop on a sidebar layer or ＋ New layer · Esc cancels'}</small></div></>}
     {merge&&<div className="al-modal-shade"><div className="al-modal" role="dialog" aria-modal="true" aria-label="Overlapping chunks"><h3>These layers contain overlapping chunks</h3><p>Combine overlapping source intervals into one chunk with both sets of sequences, or preserve each chunk separately. Unselected cells remain blank.</p><button className="primary" onClick={()=>finishMerge(merge.from,merge.to,true)}>Combine overlapping chunks</button><button onClick={()=>finishMerge(merge.from,merge.to,false)}>Keep chunks separate</button><button onClick={()=>setMerge(null)}>Cancel</button></div></div>}
     {dialog&&<div className="al-modal-shade"><div className={`al-modal ${dialog==='links'?'al-links-modal':''}`} role="dialog" aria-modal="true" aria-label={typeof dialog==='string'?dialog:'Rename layer'}><button className="al-close" aria-label="Close dialog" onClick={()=>setDialog(null)}>×</button>
       {dialog==='open'&&<><h3>Open a nucleotide alignment</h3><p>Load a local MAF, aligned FASTA, Clustal, Stockholm, PHYLIP, NEXUS, MSF or XMFA file. Compressed text files are supported.</p><label>Format<select value={format} onChange={e=>setFormat(e.target.value)}><option value="auto">Detect automatically</option>{formatChoices.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><small>{format==='auto'?'The file is read by its own signature. The format used is shown once it loads, so a wrong guess can be corrected here.':'This reader is used whatever the file claims to be.'}</small><button className="primary" disabled={busy||!!job} onClick={chooseFile}>Choose file</button><label>Or enter a local file path<input placeholder="/path/to/alignment.maf" value={path} onChange={e=>setPath(e.target.value)}/></label><button disabled={!path||busy||!!job} onClick={()=>startImport({path,format})}>Open path</button><button disabled={busy||!!job} onClick={()=>startImport({name:'Layer exploration example',format:'fasta',content:demoAlignment()})}>Explore example</button><small>The source file stays unchanged. Layer layouts are stored separately.</small></>}

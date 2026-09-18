@@ -3,21 +3,22 @@ import * as THREE from 'three'
 import { sampleBase } from './tileCoverage'
 import { recordPerformance } from './performance'
 import { hitAtPoint } from './originalLayout'
-import { paintLayer, panelRect } from './paintLayer'
+import { paintLayer, panelRect, explorerColors } from './paintLayer'
+import { paintBlockContext } from './paintBlockContext'
 import { MARGIN_X, HEADER_HEIGHT, MARGIN_Y, ROW_HEIGHT } from './data'
 import { originalRowDropTarget } from './rowDrop.js'
 import { isSelectMode } from './selectKinds'
-import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, pickAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, rowListScrolls, togglePicks, blockPick, rowPicks, rowIsLit, namesInRect, rectEntersCells, planeOf, planeViewport, panelZoom, panelZoomBlocked, blockFitScale, blockAtLayoutX } from './layers'
+import { clamp, hasCell, rowCount, rowSlot, selectedCellAt, pickAt, selectionRect as selectRectangle, layerXToColumn, wheelScrollsRowList, rowListScrolls, togglePicks, blockPick, rowPicks, rowIsLit, namesInRect, rectEntersCells, planeOf, planeViewport, panelZoom, panelZoomBlocked, blockFitScale, blockAtLayoutX, pinnedBottom } from './layers'
 import { resolveBrowsingControls, readWheelEvent, beginWheelGesture, resolveWheelAction } from '../../utils/browsingControls'
 
 /** A classical canvas becomes the texture of an actual 3D panel. The same hit
  * coordinates and renderer drive the complete non-WebGL fallback. */
 /** How far a press on the picked cells may travel and still be a click. */
 const TRANSFER_SLOP=2
-const LayerCanvas = forwardRef(function LayerCanvas({ layer, state, navigationCamera, inventory, tiles, annotations, connections, offWindow, counts, gaps, conservation, light, config, onCamera, onCopyChunk, onBlockToLayer, onBrowseSelection, onRemoveBlock, onRemoveRow, onDeselect, onAggregate, onToggleRows, onSelection, onSelectionDrag, onSelectionDrop, onMove, onHighlight, onUnlight, onInspect, onSize, onFallback, onSourceBlock, onReorderRow, onZoomLimit }, ref) {
+const LayerCanvas = forwardRef(function LayerCanvas({ layer, state, navigationCamera, inventory, rowsById, tiles, annotations, connections, offWindow, counts, gaps, conservation, light, config, onCamera, onCopyChunk, onBlockToLayer, onBrowseSelection, onRemoveBlock, onRemoveRow, onDeselect, onAggregate, onToggleRows, onSelection, onSelectionDrag, onSelectionDrop, onMove, onHighlight, onUnlight, onInspect, onSize, onFallback, onSourceBlock, onReorderRow, onZoomLimit, onBlockContext, onPickTranscript, onPickFeature, focusOf, blockContext }, ref) {
   const host = useRef(null), engine = useRef(null), latest = useRef(null), interaction = useRef(null), hits = useRef([]), space = useRef(false)
   const [size, setSize] = useState({width:800,height:500}), [drag,setDrag] = useState(null), [rectangle,setRectangle] = useState(null), [reorder,setReorder] = useState(null), [overSelection,setOverSelection] = useState(false), [hoverPick,setHoverPick] = useState(null), [hover,setHover] = useState(null)
-  useLayoutEffect(()=>{ latest.current = {layer,state,navigationCamera,inventory,tiles,annotations,connections,counts,light,config,onCamera:navigate,onSelection,onSelectionDrag,onSelectionDrop,onMove,onHighlight,onUnlight,onInspect,onSize,onFallback,onZoomLimit,size,drag,rectangle} })
+  useLayoutEffect(()=>{ latest.current = {layer,state,navigationCamera,inventory,rowsById,tiles,annotations,connections,counts,light,config,onCamera:navigate,onSelection,onSelectionDrag,onSelectionDrop,onMove,onHighlight,onUnlight,onInspect,onSize,onFallback,onZoomLimit,size,drag,rectangle} })
   // Plane units, the coordinates the painter drew in and every hit region, drag
   // and drop target is expressed in. Dividing here once is the whole of what
   // plane zoom costs the gestures below: nothing downstream knows about it.
@@ -101,14 +102,21 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, state, navigationCa
     // the viewport it opens up, so one drawing serves both zooms unchanged.
     const plane=planeOf(state.camera),view=planeViewport(size,state.camera)
     const ctx=canvas.getContext('2d');ctx.setTransform(dpr*plane,0,0,dpr*plane,0,0)
-    hits.current=paintLayer(ctx,{layer,camera:state.camera,size:view,inventory,tiles,annotations,connections,offWindow,counts,state,drag,hover,gaps,reorder,selectionRect:rectangle,conservation,hoverPick,light})
+    hits.current=paintLayer(ctx,{layer,camera:state.camera,size:view,inventory,rowsById,tiles,annotations,connections,offWindow,counts,state,drag,hover,gaps,reorder,selectionRect:rectangle,conservation,hoverPick,light,focusOf})
+    // After the sheet and over it, appended to the same hit list: `hitAtPoint`
+    // walks backwards, so the overlay's own regions answer first without either
+    // painter knowing about the other.
+    if(state.blockContext)hits.current=[...hits.current,...paintBlockContext(ctx,{layer,camera:state.camera,size:view,
+      detail:state.blockContext,features:blockContext?.features,rowsById:blockContext?.rowsById,inventory,
+      comparison:blockContext?.comparison,comparisonPending:blockContext?.comparisonPending,
+      colors:explorerColors(light),light,pending:blockContext?.pending,zoomRequired:blockContext?.zoomRequired})]
     if(e.failed){if(e.fallback.width!==canvas.width||e.fallback.height!==canvas.height){e.fallback.width=canvas.width;e.fallback.height=canvas.height}e.fallback.getContext('2d').drawImage(canvas,0,0);return}
     if(e.width!==size.width||e.height!==size.height||e.dpr!==dpr){e.renderer.setPixelRatio(dpr);e.renderer.setSize(size.width,size.height,false);e.width=size.width;e.height=size.height;e.dpr=dpr}
     e.camera.left=-size.width/2;e.camera.right=size.width/2;e.camera.top=size.height/2;e.camera.bottom=-size.height/2;e.camera.updateProjectionMatrix()
     e.mesh.scale.set(size.width,size.height,1);e.texture.needsUpdate=true
     e.camera.updateMatrixWorld(true);e.scene.updateMatrixWorld(true);e.renderer.render(e.scene,e.camera)
     recordPerformance('paint',{ms:performance.now()-started,textureBytes:canvas.width*canvas.height*4})
-  },[layer,state,inventory,tiles,annotations,connections,offWindow,counts,gaps,conservation,light,size,drag,hover,hoverPick,reorder,rectangle])
+  },[layer,state,inventory,rowsById,tiles,annotations,connections,offWindow,counts,gaps,conservation,light,size,drag,hover,hoverPick,reorder,rectangle,focusOf,blockContext])
   // Where a drop lands, read off the layout as drawn rather than worked out from
   // a row height. The indicator and the move both come from this, so what is
   // shown and what happens cannot disagree.
@@ -143,11 +151,11 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, state, navigationCa
   // Pan grabs content: with Select or Columns armed, a press that would have
   // picked up a row, a block or a connector starts the rectangle instead, which
   // is the whole of what those modes are for.
-  const hitHere=(point,filter)=>hitAtPoint(hits.current,point,{original:!!state.original,marginX:MARGIN_X,filter})
+  const hitHere=(point,filter)=>hitAtPoint(hits.current,point,{original:!!state.original||!!state.blockContext,marginX:MARGIN_X,filter:hit=>(!filter||filter(hit))&&(!state.blockContext||point.y>=pinnedBottom(layer,state.camera)||layer.fragments.find(f=>f.id===hit.fragmentId)?.pinned)})
   function pointerDown(event){
     if(event.button!==0&&event.button!==1)return
     host.current.focus();const point=canvasPoint(event),p=latest.current
-    const hit=hitHere(point),grabs=!isSelectMode(state.mode)
+    const hit=hitHere(point),grabs=!isSelectMode(state.mode),editing=!!state.blockContext
     if(hit?.kind==='aggregate'){
       // The block under the cursor, which is the one the header names and the
       // one highlighted below it, rather than the whole merged group.
@@ -158,9 +166,19 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, state, navigationCa
     if(hit?.kind==='rows'){onToggleRows?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='copy'){onCopyChunk?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='browse'){onBrowseSelection?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
-    if(hit?.kind==='removeBlock'){onRemoveBlock?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
+    if(hit?.kind==='context'){onBlockContext?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
+    // The feature is the finer target and is published after the transcript, so
+    // `hitAtPoint`'s reverse walk finds it first: pressing an exon measures that
+    // exon, pressing the model around it chooses the transcript.
+    if(hit?.kind==='feature'){onPickFeature?.(hit.feature);return}
+    if(hit?.kind==='transcript'){onPickTranscript?.(hit.rowId,hit.transcriptId,hit.geneId);return}
+    // Removing a chunk or a sequence renumbers the layer's row slots
+    // (`compactSlots`), which is exactly what the grouped lanes of block context
+    // are made of - a removal there would collapse every track lane onto its
+    // sequence. Block context is a lens, not an edit, so neither is offered.
+    if(hit?.kind==='removeBlock'&&!editing){onRemoveBlock?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     // Before the name's own handler, or taking a row out would first pick it.
-    if(hit?.kind==='removeRow'){onRemoveRow?.(hit.rowId);return}
+    if(hit?.kind==='removeRow'&&!editing){onRemoveRow?.(hit.rowId);return}
     if(hit?.kind==='deselect'){setHoverPick(null);onDeselect?.(hit.pick);return}
     if(hit?.kind==='layer'){onBlockToLayer?.(layer.fragments.find(f=>f.id===hit.fragmentId));return}
     if(hit?.kind==='label'&&grabs){
@@ -172,6 +190,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, state, navigationCa
       // Same for one name at a time: a click on a name off the sheet used to do
       // nothing at all, which read as the name not being a control.
       if(!already){const picks=rowPicks(layer,hit.rowId);onSelection(togglePicks(state.selection,picks),picks.length?null:[hit.rowId])}
+      if(editing){event.preventDefault();return}
       interaction.current={kind:'reorder',point,rowId:hit.rowId,fragmentId:hit.fragmentId,wasPicked:already,fromLabel:true,camera:{...p.state.camera}}
       event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault();return
     }
@@ -214,7 +233,7 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, state, navigationCa
       const next=pointerHover(point)
       setHover(prev=>prev?.fragmentId===next?.fragmentId&&prev?.layoutX===next?.layoutX?prev:next)
       const hit=hitHere(point)
-      host.current.title=hit?.kind==='blockjump'?`Open source block ${hit.block}`:hit?.kind==='aggregate'?(next&&blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX)?`Open source block ${blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX).block}`:`Zoom into source blocks ${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.first}–${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.last}`):hit?.kind==='rows'?'Collapse or align absent rows for this block':hit?.kind==='copy'?'Copy chunk as aligned FASTA':hit?.kind==='browse'?'Open the selected genomic regions in Genome Browser':hit?.kind==='layer'?'Create a layer from this source block':hit?.kind==='removeBlock'?'Remove this chunk from the layer':hit?.kind==='removeRow'?'Remove this sequence from every chunk in the layer':hit?.kind==='deselect'?'Drop this selected region':''
+      host.current.title=hit?.kind==='blockjump'?`Open source block ${hit.block}`:hit?.kind==='aggregate'?(next&&blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX)?`Open source block ${blockAtLayoutX(layer.fragments.find(f=>f.id===hit.fragmentId),next.layoutX).block}`:`Zoom into source blocks ${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.first}–${layer.fragments.find(f=>f.id===hit.fragmentId)?.aggregate.last}`):hit?.kind==='rows'?'Collapse or align absent rows for this block':hit?.kind==='copy'?'Copy chunk as aligned FASTA':hit?.kind==='browse'?'Open the selected genomic regions in Genome Browser':hit?.kind==='layer'?'Create a layer from this source block':hit?.kind==='removeBlock'?'Remove this chunk from the layer':hit?.kind==='removeRow'?'Remove this sequence from every chunk in the layer':hit?.kind==='context'?'Open this block on its own, with each genome\u2019s annotation':hit?.kind==='feature'?hit.label:hit?.kind==='transcript'?hit.label:hit?.kind==='deselect'?'Drop this selected region':''
       if(hit?.kind==='connection'){onInspect(hit);return}
       for(const f of layer.fragments){const r=panelRect(f,state.camera),index=f.rowIds.findIndex((_,i)=>point.y>=r.y+rowSlot(f,i)*ROW_HEIGHT&&point.y<r.y+(rowSlot(f,i)+1)*ROW_HEIGHT)
         if(point.x>=r.x&&point.x<r.x+r.width&&index>=0){if(f.aggregate){onInspect({kind:'aggregate',rowId:f.rowIds[index],aggregate:f.aggregate});return}const column=f.start+Math.floor((point.x-r.x)/r.scale),base=sampleBase(tiles[f.id],f.rowIds[index],column);onInspect({kind:'cell',rowId:f.rowIds[index],fragment:f,column,base:hasCell(f,f.rowIds[index],column)?base:'Unselected cell',placed:(state.placedOverlay||[]).filter(p=>p.sourceBlock===f.sourceBlock&&hasCell(p,f.rowIds[index],column)).map(p=>p.name),features:(annotations[f.id]?.[f.rowIds[index]]||[]).filter(a=>column>=a.start&&column<=a.end)});return}}
@@ -316,6 +335,6 @@ const LayerCanvas = forwardRef(function LayerCanvas({ layer, state, navigationCa
   useEffect(()=>{const cancel=()=>{interaction.current=null;setDrag(null);setRectangle(null);latest.current.onSelectionDrag(null)};window.addEventListener('blur',cancel);return()=>window.removeEventListener('blur',cancel)},[])
   return <div className={`al-canvas ${state.mode==='pan'?'is-pan':'is-select'} ${state.selection.length?'has-selection':''} ${overSelection?'over-selection':''}`} ref={host} tabIndex={0} role="application" aria-label="Alignment panel. Use arrow keys to pan, plus and minus to zoom. Choose rectangle or columns to select. Drag highlighted cells to a sidebar layer or New layer. Drag chunk headers to arrange. Each header has a clipboard to copy FASTA; original source blocks also have a plus to create a layer."
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerLeave={()=>{setHover(null);setHoverPick(null)}} onPointerCancel={cancelGesture} onLostPointerCapture={()=>{if(interaction.current)cancelGesture()}}
-    onKeyDown={e=>{if(interaction.current?.kind==='transfer'){if(e.key==='Escape'){e.preventDefault();cancelGesture()}return}if(e.key===' '){space.current=true;e.preventDefault()}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const plane=planeOf(state.camera);onCamera({...state.camera,x:state.camera.x+(e.key==='ArrowLeft'?-80:e.key==='ArrowRight'?80:0)/plane/state.camera.scale,y:state.camera.y+(e.key==='ArrowUp'?-80:e.key==='ArrowDown'?80:0)/plane})}if(['+','=','-'].includes(e.key)){e.preventDefault();const current=latest.current?.navigationCamera||navigationCamera||state.camera,factor=e.key==='-'?1/1.4:1.4,plane=planeOf(current);if(state.planeZoom){if(panelZoomBlocked(current,factor)){onZoomLimit?.(true);return}onZoomLimit?.(false);navigate(panelZoom(current,factor,{blockScale:blockFitScale(layer,current,size),size}))}else{onZoomLimit?.(false);const scale=clamp(current.scale*factor,Number.EPSILON,24);navigate({...current,scale,x:current.x+(size.width/plane/2-MARGIN_X)*(1/current.scale-1/scale)})}}if(e.key==='Escape')onSelection([])}} onKeyUp={e=>{if(e.key===' ')space.current=false}} onBlur={()=>{space.current=false}} />
+    onKeyDown={e=>{if(interaction.current?.kind==='transfer'){if(e.key==='Escape'){e.preventDefault();cancelGesture()}return}if(e.key===' '){space.current=true;e.preventDefault()}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const plane=planeOf(state.camera);onCamera({...state.camera,x:state.camera.x+(e.key==='ArrowLeft'?-80:e.key==='ArrowRight'?80:0)/plane/state.camera.scale,y:state.camera.y+(e.key==='ArrowUp'?-80:e.key==='ArrowDown'?80:0)/plane})}if(['+','=','-'].includes(e.key)){e.preventDefault();const current=latest.current?.navigationCamera||navigationCamera||state.camera,factor=e.key==='-'?1/1.4:1.4,plane=planeOf(current);if(state.planeZoom){if(panelZoomBlocked(current,factor)){onZoomLimit?.(true);return}onZoomLimit?.(false);navigate(panelZoom(current,factor,{blockScale:blockFitScale(layer,current,size),size}))}else{onZoomLimit?.(false);const scale=clamp(current.scale*factor,Number.EPSILON,24);navigate({...current,scale,x:current.x+(size.width/plane/2-MARGIN_X)*(1/current.scale-1/scale)})}}if(e.key==='Escape'){e.preventDefault();if(state.blockContext){onBlockContext?.(null);return}onSelection([])}}} onKeyUp={e=>{if(e.key===' ')space.current=false}} onBlur={()=>{space.current=false}} />
 })
 export default LayerCanvas

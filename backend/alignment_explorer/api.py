@@ -17,6 +17,16 @@ from typing import Literal, Optional
 from .store import AlignmentStore, detect_format, fingerprint, normalize_metadata_entries, parse_metadata
 
 
+# What one block-context read may cost, stated once. These are request bounds,
+# not opinions about how much is interesting: everything held back is reported
+# as held back, with a continuation, and never silently dropped.
+BLOCK_CONTEXT_ROWS = 8
+BLOCK_DETAIL_COLUMNS = 65_536
+BLOCK_GENES_PER_ROW = 200
+BLOCK_TRANSCRIPTS_PER_PAGE = 8
+BLOCK_SEGMENTS_PER_RESPONSE = 20_000
+
+
 class ImportRequest(BaseModel):
     path: str = ''
     format: str = 'auto'
@@ -33,6 +43,64 @@ class RegionRequest(BaseModel):
     bins: int = Field(default=256, ge=16, le=2048)
     focus: Optional[str] = None
     summary: bool = False
+
+
+class BlockContextRequest(BaseModel):
+    block: int = Field(default=1, ge=1)
+    ids: Optional[list[str]] = Field(default=None, max_length=500)
+    start: Optional[int] = Field(default=None, ge=0)
+    end: Optional[int] = Field(default=None, ge=1)
+
+
+class BlockFeaturesRequest(BaseModel):
+    """Gene models for one block, projected into its alignment columns.
+
+    ``start``/``end`` are zero-based half-open alignment columns, as is every
+    coordinate this endpoint returns for a column. Genomic coordinates it
+    returns are zero-based half-open too; the one-based inclusive convention of
+    the GFF3 index is converted at the provider boundary and nowhere else.
+    """
+    block: int = Field(default=1, ge=1)
+    start: int = Field(default=0, ge=0)
+    end: Optional[int] = Field(default=None, ge=1)
+    ids: list[str] = Field(default_factory=list, max_length=BLOCK_CONTEXT_ROWS)
+    # Which genes to open past their one representative transcript. Expansion is
+    # per gene and paged, so a gene with fifty isoforms cannot be asked for whole
+    # by accident.
+    expand: dict[str, list[str]] = Field(default_factory=dict)
+    page: int = Field(default=0, ge=0)
+
+
+class BlockComparisonRequest(BaseModel):
+    """Measured difference between named pairs of rows, over one column window.
+
+    Pairs are explicit. Nothing here infers which rows should be compared: that
+    is the reader's choice of reference or of adjacency, made above.
+    """
+    block: int = Field(default=1, ge=1)
+    start: int = Field(default=0, ge=0)
+    end: Optional[int] = Field(default=None, ge=1)
+    pairs: list[tuple[str, str]] = Field(default_factory=list, max_length=BLOCK_CONTEXT_ROWS)
+    bins: int = Field(default=512, ge=16, le=4096)
+    # Column ranges of one reference feature, to be measured against each target.
+    feature: Optional[dict] = None
+
+
+class GapColumnsRequest(BaseModel):
+    """Columns enough of the cohort is a gap in, for one block.
+
+    The cohort is the rows on screen, so it is the caller's to state: the block's
+    own membership is never the denominator. `gap_percent` is how much of the
+    cohort present in the block has to be a gap for the column to count - 100,
+    the default, is the whole of it and the only threshold that hides no bases.
+    `min_run` is the shortest run worth hiding, applied after the threshold.
+    """
+    block: int = Field(default=1, ge=1)
+    start: int = Field(default=0, ge=0)
+    end: Optional[int] = Field(default=None, ge=1)
+    ids: list[str] = Field(default_factory=list, max_length=5000)
+    min_run: int = Field(default=1, ge=1, le=100000)
+    gap_percent: int = Field(default=100, ge=1, le=100)
 
 
 class ConservationRequest(BaseModel):
@@ -88,7 +156,7 @@ class NativeRegion(BaseModel):
     end: int = Field(ge=1)
 
 
-def create_router(cache_root=None, annotation_provider=None):
+def create_router(cache_root=None, annotation_provider=None, gene_provider=None, availability_provider=None):
     from .motif_jobs import MotifJobs
     motif_jobs = MotifJobs()
     root = Path(cache_root or os.environ.get('ENSEMBL_ALIGNMENT_CACHE', Path.home() / '.cache' / 'ensembl-go' / 'alignment-explorer'))
@@ -253,6 +321,25 @@ def create_router(cache_root=None, annotation_provider=None):
         def read():
             return store_for(dataset_id).conservation(payload.block, payload.start, payload.end,
                 payload.ids, bins=payload.bins, cancelled=cancelled.is_set)
+        worker = asyncio.create_task(run_in_threadpool(read))
+        try:
+            while not worker.done():
+                done, _ = await asyncio.wait({worker}, timeout=.05)
+                if done: break
+                if await request.is_disconnected(): cancelled.set()
+            return await worker
+        except InterruptedError as exc: raise HTTPException(499, 'Navigation changed') from exc
+        except ValueError as exc: raise HTTPException(400, str(exc)) from exc
+        finally:
+            cancelled.set()
+            if not worker.done(): worker.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
+
+    @router.post('/datasets/{dataset_id}/gap-columns')
+    async def gap_columns(dataset_id: str, payload: GapColumnsRequest, request: Request):
+        cancelled = threading.Event()
+        def read():
+            return store_for(dataset_id).gap_columns(payload.block, payload.start, payload.end,
+                payload.ids, min_run=payload.min_run, percent=payload.gap_percent, cancelled=cancelled.is_set)
         worker = asyncio.create_task(run_in_threadpool(read))
         try:
             while not worker.done():
@@ -433,6 +520,198 @@ def create_router(cache_root=None, annotation_provider=None):
             except Exception as exc:
                 warnings.append({'id':row['id'],'message':str(getattr(exc,'detail',exc))})
         return {'rows':output,'warnings':warnings}
+
+    @router.post('/datasets/{dataset_id}/block-context')
+    def block_context(dataset_id: str, payload: BlockContextRequest):
+        """What one block holds, and what can be said about each of its rows.
+
+        Identity, orientation, the genomic interval the row occupies and whether
+        a local genome can answer for it at all. Availability is reported as
+        several distinct states rather than one boolean, because "no genes here"
+        and "no annotation for this genome" are different facts and a track that
+        conflated them would read as biological absence.
+        """
+        from .store import source_span
+        store = store_for(dataset_id)
+        with store.connect() as db:
+            block = db.execute('SELECT * FROM blocks WHERE id=?', (payload.block,)).fetchone()
+            if block is None: raise HTTPException(404, 'Block not found')
+            sql = 'SELECT r.*,s.source,s.label,s.metadata FROM rows r JOIN sequences s ON s.id=r.id WHERE block=?'
+            args = [payload.block]
+            if payload.ids:
+                sql += ' AND r.id IN (' + ','.join('?' for _ in payload.ids) + ')'; args.extend(payload.ids)
+            records = [dict(r) for r in db.execute(sql + ' ORDER BY s.rowid', args)]
+        if (payload.start is None) != (payload.end is None):
+            raise HTTPException(400, 'Provide both selection boundaries')
+        if payload.start is not None and not payload.start < payload.end <= block['length']:
+            raise HTTPException(400, 'Selection must be inside this block')
+        rows = []
+        for record in records:
+            meta = json.loads(record['metadata'] or '{}')
+            assembly, region = meta.get('assembly'), meta.get('region')
+            span = None if record['empty_status'] else source_span(store, payload.block, record['id'], 0, block['length'])
+            placed = bool(span and span.get('coordinates') and span.get('bases'))
+            entry = {
+                'id': record['id'], 'source': record['source'], 'label': record['label'],
+                'strand': record['strand'], 'coordinates': bool(record['coordinates']),
+                'empty_status': record['empty_status'], 'assembly': assembly, 'region': region,
+                'bases': (span or {}).get('bases', 0),
+                'source_length': record['source_length'],
+                # Zero-based half-open, like every coordinate this endpoint emits.
+                'genomic': {'start': span['start'], 'end': span['end']} if placed else None,
+            }
+            if payload.start is not None:
+                selected = source_span(store, payload.block, record['id'], payload.start, payload.end)
+                entry['selection'] = ({'start': selected['start'], 'end': selected['end']}
+                                      if selected and selected.get('coordinates') and selected.get('bases') else None)
+            if record['empty_status']: entry['availability'] = 'no-coverage'
+            elif not assembly or not region: entry['availability'] = 'unresolved'
+            elif not placed: entry['availability'] = 'unplaced'
+            else: entry['availability'] = (availability_provider(assembly, region) if availability_provider else 'unknown')
+            rows.append(entry)
+        return {'block': payload.block, 'length': block['length'], 'rows': rows,
+                'limits': {'rows': BLOCK_CONTEXT_ROWS, 'columns': BLOCK_DETAIL_COLUMNS,
+                           'genes': BLOCK_GENES_PER_ROW, 'transcripts': BLOCK_TRANSCRIPTS_PER_PAGE,
+                           'segments': BLOCK_SEGMENTS_PER_RESPONSE}}
+
+    @router.post('/datasets/{dataset_id}/block-features')
+    def block_features(dataset_id: str, payload: BlockFeaturesRequest):
+        """Gene models for the rows of one block, over one column window.
+
+        Each transcript is returned twice over: once in genomic coordinates,
+        which is what it actually is, and once as the columns it occupies, which
+        is what the alignment makes of it. The column form is an envelope plus
+        the base-bearing pieces inside it, because mapping only the two
+        boundaries would fill this row's gaps with another row's insertions and
+        draw them as exon.
+        """
+        from .projection import row_segments, RowProjection
+        if not gene_provider: raise HTTPException(400, 'Local annotation is not available in this session')
+        store = store_for(dataset_id)
+        ids = list(dict.fromkeys(payload.ids))[:BLOCK_CONTEXT_ROWS]
+        if not ids: raise HTTPException(400, 'Name at least one sequence')
+        with store.connect() as db:
+            block = db.execute('SELECT * FROM blocks WHERE id=?', (payload.block,)).fetchone()
+            if block is None: raise HTTPException(404, 'Block not found')
+            start = max(0, payload.start)
+            end = min(block['length'], payload.end if payload.end is not None else block['length'])
+            if end <= start: raise HTTPException(400, 'Empty alignment interval')
+            detail = (end - start) <= BLOCK_DETAIL_COLUMNS
+            records = {r['id']: dict(r) for r in db.execute(
+                'SELECT r.*,s.metadata FROM rows r JOIN sequences s ON s.id=r.id WHERE block=? AND r.id IN (%s)'
+                % ','.join('?' * len(ids)), [payload.block, *ids])}
+            segments = {row_id: row_segments(db, payload.block, row_id, start, end) for row_id in ids if row_id in records}
+        output, warnings, truncated, budget = {}, [], False, BLOCK_SEGMENTS_PER_RESPONSE
+        for row_id in ids:
+            record = records.get(row_id)
+            if record is None:
+                warnings.append({'id': row_id, 'message': 'This sequence is not in this block.'}); continue
+            meta = json.loads(record['metadata'] or '{}')
+            assembly, region = meta.get('assembly'), meta.get('region')
+            entry = {'genes': [], 'complete': True}
+            output[row_id] = entry
+            if record['empty_status'] or not record['coordinates']:
+                entry['reason'] = 'no-coverage' if record['empty_status'] else 'unplaced'; continue
+            if not assembly or not region:
+                entry['reason'] = 'unresolved'; continue
+            projection = RowProjection(record, segments.get(row_id) or [], (start, end))
+            window = projection.window_coordinates()
+            if window is None:
+                entry['reason'] = 'no-coverage'; continue
+            try:
+                # One-based inclusive on the way in; nothing else in this module
+                # ever sees that convention.
+                genes = gene_provider(assembly, region, window[0] + 1, window[1],
+                                      expand=list(payload.expand.get(row_id) or []),
+                                      gene_limit=BLOCK_GENES_PER_ROW,
+                                      transcript_limit=BLOCK_TRANSCRIPTS_PER_PAGE,
+                                      page=payload.page)
+            except Exception as exc:
+                entry['reason'] = 'failed'
+                warnings.append({'id': row_id, 'message': str(getattr(exc, 'detail', exc))}); continue
+            entry['complete'] = bool(genes.get('complete', True))
+            if not entry['complete']: truncated = True
+            entry['window'] = {'start': window[0], 'end': window[1]}
+            for gene in genes.get('genes', []):
+                transcripts = []
+                for transcript in gene.get('transcripts', []):
+                    features = []
+                    for feature in transcript.get('features', []):
+                        if budget <= 0:
+                            truncated = True; entry['complete'] = False; break
+                        projected = projection.project(feature['start'], feature['end'])
+                        if projected is None: continue
+                        # An intron is the statement that two exons are joined,
+                        # and it is drawn as one line for exactly that reason.
+                        # Its pieces are of no use to a reader and there can be
+                        # thousands of them - one per insertion any other row
+                        # made anywhere inside it - so the envelope stands for
+                        # the whole. Exons keep their pieces, where the
+                        # distinction is the difference between drawing this
+                        # row's bases and drawing another row's insertion.
+                        if feature['type'] == 'intron':
+                            projected['pieces'] = [{'start': projected['start'], 'end': projected['end']}]
+                        budget -= len(projected['pieces'])
+                        features.append({'type': feature['type'],
+                                         'genomic': {'start': feature['start'], 'end': feature['end']},
+                                         **projected})
+                    if features: transcripts.append({**{k: v for k, v in transcript.items() if k != 'features'}, 'features': features})
+                if transcripts: entry['genes'].append({**{k: v for k, v in gene.items() if k != 'transcripts'}, 'transcripts': transcripts})
+        return {'block': payload.block, 'start': start, 'end': end, 'detail': detail,
+                'rows': output, 'warnings': warnings, 'truncated': truncated,
+                'next_page': payload.page + 1 if truncated else None}
+
+    @router.post('/datasets/{dataset_id}/block-comparison')
+    def block_comparison(dataset_id: str, payload: BlockComparisonRequest):
+        """What each named pair actually differs by, counted.
+
+        Observations only. Relative orientation is reported because it is a fact
+        the rows carry; it is never called an inversion, which would be a claim
+        about breakpoints this block cannot support on its own.
+        """
+        from .comparison import compare_columns, bin_kinds, comparable, measure_feature, describe
+        store = store_for(dataset_id)
+        pairs = [tuple(pair) for pair in payload.pairs][:BLOCK_CONTEXT_ROWS]
+        if not pairs: raise HTTPException(400, 'Name at least one pair of sequences')
+        wanted = list(dict.fromkeys([row for pair in pairs for row in pair]))
+        with store.connect() as db:
+            block = db.execute('SELECT * FROM blocks WHERE id=?', (payload.block,)).fetchone()
+            if block is None: raise HTTPException(404, 'Block not found')
+            start = max(0, payload.start)
+            end = min(block['length'], payload.end if payload.end is not None else block['length'])
+            if end <= start: raise HTTPException(400, 'Empty alignment interval')
+            if end - start > BLOCK_DETAIL_COLUMNS:
+                raise HTTPException(400, f'Compare at most {BLOCK_DETAIL_COLUMNS:,} columns at a time')
+        data = store.region(payload.block, start, end, wanted, max_cells=BLOCK_DETAIL_COLUMNS * BLOCK_CONTEXT_ROWS * 2)
+        if not data['detail']: raise HTTPException(400, 'Narrow the window to compare these rows')
+        by_id = {row['id']: row for row in data['rows']}
+        results = []
+        for reference_id, target_id in pairs:
+            reference, target = by_id.get(reference_id), by_id.get(target_id)
+            if reference is None or target is None:
+                results.append({'reference': reference_id, 'target': target_id, 'reason': 'missing'}); continue
+            kinds, totals = compare_columns(reference.get('sequence'), target.get('sequence'), start)
+            entry = {
+                'reference': reference_id, 'target': target_id,
+                'start': start, 'end': end,
+                'bins': bin_kinds(kinds, payload.bins),
+                'totals': totals, 'comparable': comparable(totals),
+                # A fact the rows carry, not an event they evidence.
+                'same_orientation': (reference['strand'] or '+') == (target['strand'] or '+'),
+            }
+            if payload.feature and payload.feature.get('pieces'):
+                pieces = [{'start': int(p['start']) - start, 'end': int(p['end']) - start}
+                          for p in payload.feature['pieces']]
+                measured = measure_feature(kinds, pieces)
+                measured['type'] = str(payload.feature.get('type') or '')
+                measured['description'] = describe(measured, target.get('label') or target.get('source') or target_id,
+                                                   reference.get('label') or reference.get('source') or reference_id,
+                                                   measured['type'] or None)
+                entry['feature'] = measured
+            entry['description'] = describe(totals, target.get('label') or target.get('source') or target_id,
+                                            reference.get('label') or reference.get('source') or reference_id)
+            results.append(entry)
+        return {'block': payload.block, 'start': start, 'end': end, 'pairs': results}
 
     @router.post('/datasets/{dataset_id}/locate')
     def locate(dataset_id: str, payload: dict):

@@ -103,6 +103,12 @@ function HomeView({ theme, onNavigate }) {
       ),
     },
     {
+      id: 'sequence',
+      title: 'Sequence',
+      description: 'Read sequence base by base, from a whole region down to a single exon',
+      icon: <AppButtonIcon buttonId="sequence" isLight={isLight} />,
+    },
+    {
       id: 'alignment_explorer',
       title: 'Alignment Explorer',
       description: 'Explore alignment blocks and connected sequence paths in named layers',

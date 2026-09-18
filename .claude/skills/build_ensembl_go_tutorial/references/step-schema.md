@@ -101,8 +101,8 @@ and idempotent by construction (it sets, never toggles):
 | Type | Sets |
 | --- | --- |
 | `browserView` | `locus`, or `pan` / `zoom` |
-| `browserControls` | `detail`, `flatten`, `expanded`, `biotypes`, `drawerTranscripts`, `geneTranscripts`, `hiddenTranscript`, `transcriptDetail`, `noteEditor`, `tutorialNote` |
-| `browserScene` | `active`, `pan`, `zoom`, `link`, `panels{locus,focus,tracks}`, `reset`, `preserveView`, `hideInactive` |
+| `browserControls` | `detail`, `flatten`, `expanded`, `biotypes`, `drawerTranscripts`, `geneTranscripts`, `hiddenTranscript`, `transcriptDetail`, `noteEditor`, `tutorialNote`, `locationFocus` (a `chr:start-end` region or `'none'` — the location of focus, which is not the gene of focus), `locationDetail` (`'sequence'`, `{ gene }` or `'none'` — the one wide slot beside the location drawer) |
+| `browserScene` | `active`, `pan`, `zoom`, `link`, `panels{locus,focus,tracks}`, `reset`, `preserveView`, `hideInactive`, `cycle` (`{ open, genome, action }` — the genome cycle wheel) |
 | `selectorList` | A stable Genome Selector scene: `fitAllRows`, `preserveOrder`, `lockScroll`, `center` |
 | `genomeSelection` | Which embedded genomes are selected, by `recipeId`. `[]` is a real instruction |
 | `pageScroll` | `target` plus `offset` px below the top of the scrolling region. Applied last |
@@ -163,7 +163,16 @@ are coalesced with the step's keys winning.
    pressing Next re-runs the whole action — which, for anything that toggles, undoes exactly
    the work they just did. Split it, use `all-clicks` with `desiredEngaged` on the several, and
    give the final press its own step.
-10. Does every control a step asks the reader to *use* have a capability the interaction guard
+10. Does an arrival that reaches into the genome browser panel wait for the *panel*, not just
+    for an anchor? `ensure: ['slice-genome-active']` publishes the genome through React state,
+    so an arrival running straight afterwards finds a panel that has not mounted, registered
+    its controls or resolved a region — and a registry call is then refused and returns false
+    in silence. Wait on `describeBrowserViewport()?.ready`, then on whatever the state brings
+    with it. Walking forward never sees this; jumping in sees nothing else.
+11. Does a step that puts a one-at-a-time slot in a named state close what is *already* in it?
+    A "none" branch that skips the control it would otherwise have opened closes nothing, and
+    the symptom is a layout shifted by the width of the panel that stayed up.
+12. Does every control a step asks the reader to *use* have a capability the interaction guard
     accepts for the events that control needs? A `<select>` needs `mousedown` and `change`; the
     guard maps capabilities to event types and a mismatch is silent — Next works and the
     reader's hands do not.

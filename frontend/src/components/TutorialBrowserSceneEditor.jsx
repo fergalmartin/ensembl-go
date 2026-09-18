@@ -15,7 +15,10 @@ export default function TutorialBrowserSceneEditor({ title, value, datasets, onC
       ...(checkOnly ? {} : { locus: `${p.chrom}:${Math.round(p.start)}-${Math.round(p.end)}` }),
       focus: p.focus || '', tracks: p.tracks,
     }]))
-    onChange({ ...current, panels, ...(!checkOnly ? { reset: true, preserveView: true } : {}) })
+    // A closed wheel has no genome and no action to record, and writing the empty strings
+    // it reports would put a dataset name of "" into the document.
+    const cycle = current.cycle?.open ? current.cycle : { open: false }
+    onChange({ ...current, panels, cycle, ...(!checkOnly ? { reset: true, preserveView: true } : {}) })
   }
   return <details className="rounded-md border border-gray-700 p-2.5" open={Boolean(value)}>
     <summary className="cursor-pointer text-xs font-semibold text-gray-200">{title}</summary>
@@ -39,6 +42,23 @@ export default function TutorialBrowserSceneEditor({ title, value, datasets, onC
         {['pan', 'zoom'].map((key) => <label key={key}>{key === 'pan' ? 'Pan' : 'Zoom'}<select className={input} value={scene[key] === undefined ? '' : String(scene[key])} onChange={(e) => update({ [key]: e.target.value === '' ? undefined : e.target.value === 'true' })}>
           <option value="">Keep</option><option value="true">Linked</option><option value="false">Independent</option>
         </select></label>)}
+      </div>
+      {/* The wheel cannot be arrived at by describing it: until something opens it there
+          is no rail for a spotlight and no faces for a card to talk about. Held open by a
+          tutorial it commits only from its own Focus/Jump buttons, so a step can sit
+          beside it without the reader's next click confirming something. */}
+      <div className="grid grid-cols-3 gap-2">
+        <label>Cycle wheel<select className={input} value={scene.cycle?.open === undefined ? '' : String(scene.cycle.open)} onChange={(e) => update({ cycle: e.target.value === '' ? undefined : { ...scene.cycle, open: e.target.value === 'true' } })}>
+          <option value="">Keep</option><option value="true">Open</option><option value="false">Closed</option>
+        </select></label>
+        {scene.cycle?.open && <>
+          <label>Showing<select className={input} value={scene.cycle?.genome ?? ''} onChange={(e) => update({ cycle: { ...scene.cycle, genome: e.target.value || undefined } })}>
+            <option value="">Keep</option>{datasets.map((dataset) => <option key={dataset.recipeId} value={dataset.recipeId}>{dataset.label || dataset.recipeId}</option>)}
+          </select></label>
+          <label>Chosen action<select className={input} value={scene.cycle?.action ?? ''} onChange={(e) => update({ cycle: { ...scene.cycle, action: e.target.value || undefined } })}>
+            <option value="">Keep</option><option value="none">Neither</option><option value="focus">Focus</option><option value="add">Add or Jump</option>
+          </select></label>
+        </>}
       </div>
       {datasets.map((dataset) => {
         const id = dataset.recipeId

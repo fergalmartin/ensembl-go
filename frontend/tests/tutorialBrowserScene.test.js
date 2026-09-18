@@ -47,7 +47,7 @@ test('the shipped tutorial clones into an editable portable document without los
   assert.deepEqual(validateTutorialDocument(clone),[])
   assert.deepEqual(clone.settings,document.settings)
   assert.deepEqual(clone.steps.find(s=>s.id==='search-samd11').autoplay.action.target,document.steps.find(s=>s.id==='search-samd11').autoplay.action.target)
-  assert.equal(clone.steps.length,32)
+  assert.equal(clone.steps.length,document.steps.length)
   for (let i=0;i<clone.steps.length;i++) {
     assert.deepEqual(clone.steps[i].reveals, document.steps[i].reveals)
     assert.deepEqual(clone.steps[i].interactionPolicy, document.steps[i].interactionPolicy)
@@ -86,4 +86,42 @@ test('focused scenes use normal gene framing and all four strand switches preced
   assert.equal(hide.completeWhen.hideInactive, true)
   assert.equal(browserSceneMatches({ hideInactive: true }, { hideInactive: false }), false)
   assert.equal(browserSceneMatches({ hideInactive: true }, { hideInactive: true }), true)
+})
+
+test('the cycle wheel is declared open or shut by every step that can see it', () => {
+  // The wheel is a full-screen overlay, so a step that inherits it rather than declaring
+  // it sits behind one. Every step from the one before the section to the one after it
+  // has to say which it expects — that is what makes them reachable backwards.
+  const ids = ['browse-four', 'cycle-button', 'cycle-open', 'cycle-spin', 'cycle-actions',
+    'cycle-pick-mouse', 'cycle-jump', 'cycle-jump-result', 'search-samd11']
+  for (const id of ids) {
+    const step = document.steps.find((entry) => entry.id === id)
+    assert.ok(step, `${id} is missing`)
+    assert.equal(typeof step.arrive[0].cycle?.open, 'boolean', `${id} does not declare the wheel`)
+  }
+  const section = document.steps.filter((step) => step.section === 'Moving between genomes')
+  assert.deepEqual(section.map((step) => step.id), ids.slice(1, -1))
+  // The exercise turns the wheel, so the steps before it must start somewhere else.
+  for (const id of ['cycle-spin', 'cycle-actions', 'cycle-pick-mouse']) {
+    assert.equal(document.steps.find((step) => step.id === id).arrive[0].cycle.genome, 'slice-f2b4e46327a2')
+  }
+  const jump = document.steps.find((step) => step.id === 'cycle-jump')
+  assert.equal(jump.arrive[0].cycle.genome, 'slice-5ff4df6986ca')
+  // Jump moves the reader; it must not change which genomes are open.
+  assert.deepEqual(jump.completeWhen.active, jump.arrive[0].active)
+  assert.equal(jump.completeWhen.cycle.open, false)
+})
+
+test('a declared wheel is compared by open state, genome and action alike', () => {
+  const open = { open: true, genome: 'rat', action: 'add' }
+  assert.equal(browserSceneMatches({ cycle: { open: true } }, { cycle: open }), true)
+  assert.equal(browserSceneMatches({ cycle: { open: false } }, { cycle: open }), false)
+  assert.equal(browserSceneMatches({ cycle: { open: true, genome: 'mouse' } }, { cycle: open }), false)
+  assert.equal(browserSceneMatches({ cycle: { open: true, action: 'none' } }, { cycle: open }), false)
+  // A shut wheel has nothing else to say, so the rest is not compared.
+  const shut = { open: false, genome: '', action: 'none' }
+  assert.equal(browserSceneMatches({ cycle: { open: false, genome: 'rat' } }, { cycle: shut }), true)
+  assert.ok(browserSceneProblems({ cycle: { open: true, genome: 'absent' } }, [{ recipeId: 'rat' }]).length)
+  assert.ok(browserSceneProblems({ cycle: { action: 'sideways' } }, [{ recipeId: 'rat' }]).length)
+  assert.deepEqual(browserSceneProblems({ cycle: { open: true, genome: 'rat', action: 'focus' } }, [{ recipeId: 'rat' }]), [])
 })

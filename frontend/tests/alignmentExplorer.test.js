@@ -1,11 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createFragment,createLayer,emptyWorkspace,cutFragment,moveSelection,mergeLayers,combineOverlaps,layerOverlap,tidyLayer,layerConnections,firstBlocks,selectionRect,validateLayerWorkspace,cellRanges } from '../src/components/alignment-explorer/layers.js'
+import { createFragment,createLayer,nextLayerName,emptyWorkspace,cutFragment,moveSelection,mergeLayers,combineOverlaps,layerOverlap,tidyLayer,layerConnections,firstBlocks,selectionRect,validateLayerWorkspace,cellRanges } from '../src/components/alignment-explorer/layers.js'
 
 function cells(fragments){const result=[];for(const f of fragments)for(const id of f.rowIds)for(const [a,z] of cellRanges(f,id))for(let i=a;i<z;i++)result.push(`${f.sourceBlock}:${id}:${i}`);return result.sort()}
 function fixture(){const fragment=createFragment(1,0,12,['a','b','c']),layer=createLayer('Working',0,[fragment]);return {fragment,layer,state:{...emptyWorkspace(),layers:[layer],active:layer.id}}}
 test('rectangle cut preserves exactly all input cells and no duplicates',()=>{const {fragment}=fixture(),cut=cutFragment(fragment,{start:3,end:8,rowIds:['b']});assert.deepEqual(cells([...cut.remaining,cut.extracted]),cells([fragment]));assert.equal(cells(cut.remaining).length,31);assert.deepEqual(cut.extracted.rowIds,['b'])})
 test('moving selected cells removes source cells and keeps source coordinates',()=>{const {fragment,layer,state}=fixture(),target=createLayer('Region');state.selection=[{fragmentId:fragment.id,start:2,end:5,rowIds:['a','c']}];const next=moveSelection(state,target.id,{targetLayer:target});assert.equal(next.active,target.id);assert.deepEqual(cells(next.layers.flatMap(l=>l.fragments)),cells(layer.fragments));assert.deepEqual(next.layers[1].fragments.map(f=>[f.start,f.end]),[[2,5]]);assert.equal(state.layers[0].fragments.length,1)})
+test('a new layer is named past the highest number already on the sidebar',()=>{
+  const layers=[createLayer('Layer 1'),createLayer('Filtered 2'),createLayer('Layer 5'),createLayer('Block 12')]
+  assert.equal(nextLayerName(layers),'Layer 6')
+  assert.equal(nextLayerName(layers,'Filtered'),'Filtered 3')
+  // Counting is what made a fourth layer answer to a name already in use.
+  assert.equal(nextLayerName([createLayer('Layer 3')]),'Layer 4')
+  assert.equal(nextLayerName([]),'Layer 1')
+  assert.equal(nextLayerName([createLayer('Conserved exons'),createLayer('Layer 2')]),'Layer 3')
+})
 test('copy leaves original cells in source',()=>{const {fragment,state}=fixture(),target=createLayer('Copy');state.selection=[{fragmentId:fragment.id,start:1,end:3,rowIds:['b']}];const next=moveSelection(state,target.id,{copy:true,targetLayer:target});assert.deepEqual(next.layers[0].fragments,state.layers[0].fragments);assert.equal(cells(next.layers[1].fragments).length,2)})
 test('merging overlapping intervals unions membership without adding unselected cells',()=>{const a=createFragment(1,0,8,['a']),b=createFragment(1,4,12,['b']);const combined=combineOverlaps([a,b],['a','b']);assert.equal(combined.length,1);assert.deepEqual(cells(combined),cells([a,b]));assert.deepEqual(combined[0].coverage,{a:[[0,8]],b:[[4,12]]})})
 test('transitive overlap combines once; duplicate cells count once',()=>{const fragments=[createFragment(1,0,5,['a']),createFragment(1,8,12,['a']),createFragment(1,4,9,['a'])];const combined=combineOverlaps(fragments);assert.equal(combined.length,1);assert.equal(cells(combined).length,12)})

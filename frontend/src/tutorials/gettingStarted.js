@@ -22,8 +22,10 @@ const SECTION = Object.freeze({
 export default {
   id: 'getting-started',
   title: 'Getting Started',
-  blurb: 'Set up where your data lives, fetch a genome, choose it, and find a gene in the '
-    + 'browser. Runs on a temporary demo genome and leaves your own setup untouched.',
+  blurb: 'This teaches you the basics of downloading and activating genomes, including '
+    + 'how to view them in the genome browser. This is the best place to start in terms of '
+    + 'learning to use Ensembl Go, the other tutorials then give more detailed insights '
+    + 'into particular views or features.',
   estimatedMinutes: 5,
   usesDemoGenome: true,
   completionBody: 'You have seen the whole loop: configure, download, activate, browse. '

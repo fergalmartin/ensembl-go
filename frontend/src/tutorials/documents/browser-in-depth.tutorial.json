@@ -4,8 +4,8 @@
   "id": "browser-in-depth",
   "revision": 1,
   "title": "The Genome Browser",
-  "blurb": "Tracks, panning, zooming down to the bases, transcript layout, gene-class filters, the focus drawer and notes — on a real slice of human chromosome 1. Runs on temporary data and leaves your own setup untouched.",
-  "estimatedMinutes": 10,
+  "blurb": "This is a detailed examination of the Genome Browser view, which focuses on navigation, controls and exploring information associated with the main browser track. It’s run on a small slice of human chromosome 1 on the GRCh38 assembly.",
+  "estimatedMinutes": 13,
   "usesDemoGenome": true,
   "completionBody": "Well done on completing the Genome Browser tutorial.",
   "author": "",
@@ -2378,11 +2378,634 @@
       }
     },
     {
+      "id": "location-window",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "top",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "none",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ]
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,790,017-119,815,580"
+        }
+      ],
+      "title": "Zoom out for a region",
+      "body": "In addition to focusing on genes, we can also focus on regions. This works similarly to gene focus, but with some unique aspects that we'll examine over the next few steps.",
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.viewport",
+              "version": 1
+            },
+            "capabilities": [
+              "pan",
+              "zoom"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          },
+          "capability": "set-locus",
+          "value": "1:119,745,000-119,860,000",
+          "browserView": {
+            "durationMs": 1000,
+            "pauseMs": 700,
+            "skipIfMoved": true
+          }
+        }
+      }
+    },
+    {
+      "id": "focus-window",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "bottom",
+      "align": "end",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "none",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ]
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,745,000-119,860,000"
+        }
+      ],
+      "title": "Focus this window",
+      "body": "There are a few ways to focus on a region. You could enter the location in the search box, you could use the selection tool to manually select a region, but we're going to use the window focus button. This button puts whatever is in the current window as the location focus. Try clicking it now.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.focusWindow",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.focusWindow",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.focusWindow",
+            "version": 1
+          },
+          "capability": "activate"
+        },
+        "options": {
+          "skipIfEngaged": true
+        }
+      }
+    },
+    {
+      "id": "location-focused",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "1:119,745,000-119,860,000",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ]
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,741,000-119,864,000"
+        }
+      ],
+      "title": "The location in focus",
+      "body": "As you can see below, it has a similar presentation to gene focus. There is a location focus bar (highlighted below), a location drawer and red boundary lines have been put at the edges of the region. The region is now centered in the window with a little bit of flanking region in view on either side of the red boundary lines.",
+      "spotlight": {
+        "target": {
+          "id": "browser.locationFocusBar",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      },
+      "cardPosition": {
+        "x": 0.0164,
+        "y": 0.0155
+      }
+    },
+    {
+      "id": "location-drawer",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "left",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "1:119,745,000-119,860,000",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ],
+          "locationDetail": "none"
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,741,000-119,864,000"
+        }
+      ],
+      "title": "The location drawer",
+      "body": "The location drawer is similar to the gene drawer in layout. The main differences are that there is a location section at the top, then a section of any genes overlapping the location and finally a notes section.",
+      "spotlight": {
+        "target": {
+          "id": "browser.locationDrawer",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "location-info",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "left",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "1:119,745,000-119,860,000",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ],
+          "locationDetail": "none"
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,741,000-119,864,000"
+        }
+      ],
+      "title": "The region itself",
+      "body": "The location section has an information button that can be used to access more information about the regions including the sequence. Try clicking it now.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "holdMs": 1800,
+      "spotlight": {
+        "target": {
+          "id": "location.info",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "location.info",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "location.info",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "location-sequence",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "left",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "1:119,745,000-119,860,000",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ],
+          "locationDetail": "sequence"
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,741,000-119,864,000"
+        }
+      ],
+      "title": "Its sequence",
+      "body": "The sequence for the whole region, forward or reverse complement, with Copy writing it out as FASTA. A long one opens as a preview until you ask for the rest; copying takes all of it either way.",
+      "spotlight": {
+        "target": {
+          "id": "location.sequencePanel",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "location-genes",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "left",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "1:119,745,000-119,860,000",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ],
+          "locationDetail": "none"
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,741,000-119,864,000"
+        }
+      ],
+      "title": "The genes inside it",
+      "body": "Every gene the region holds, five prime to three prime, with a strand filter above them. Four here — and PHGDH, whose tail is on the track just outside the boundary, is not one of them.",
+      "spotlight": {
+        "target": {
+          "id": "location.featureSection",
+          "version": 1,
+          "params": {
+            "sectionId": "genes"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "location-gene-info",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "left",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "1:119,745,000-119,860,000",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ],
+          "locationDetail": "none"
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,741,000-119,864,000"
+        }
+      ],
+      "title": "Look a gene up",
+      "body": "Each row carries three controls: details, a jump to the gene, and an eye that hides it from the track. Open REG4's details with the information mark, or press Next.",
+      "advanceOn": {
+        "type": "click"
+      },
+      "holdMs": 1800,
+      "spotlight": {
+        "target": {
+          "id": "location.geneInfo",
+          "version": 1,
+          "params": {
+            "geneId": "ENSG00000134193"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "location.geneInfo",
+              "version": 1,
+              "params": {
+                "geneId": "ENSG00000134193"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "location.geneInfo",
+            "version": 1,
+            "params": {
+              "geneId": "ENSG00000134193"
+            }
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "location-gene-detail",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "left",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "1:119,745,000-119,860,000",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ],
+          "locationDetail": {
+            "gene": "ENSG00000134193"
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,741,000-119,864,000"
+        }
+      ],
+      "title": "What the panel holds",
+      "body": "The same slot the sequence was in, now holding REG4: its identifier, biotype, coordinates, strand and description, and each of its transcripts with its own metadata beside it.",
+      "spotlight": {
+        "target": {
+          "id": "location.geneDetail",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "location-notes",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "left",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "1:119,745,000-119,860,000",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ],
+          "locationDetail": "none"
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,741,000-119,864,000"
+        }
+      ],
+      "title": "Notes on a region",
+      "body": "Notes work here exactly as they did on REG4, with the same editor behind the plus. What differs is what they are filed under: these belong to the coordinates rather than to any one gene.",
+      "spotlight": {
+        "target": {
+          "id": "location.notes",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "location-jump-gene",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "left",
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "browserControls",
+          "locationFocus": "1:119,745,000-119,860,000",
+          "biotypes": [
+            "proteinCoding",
+            "pseudogene",
+            "smallNonCoding"
+          ],
+          "locationDetail": "none"
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,741,000-119,864,000"
+        }
+      ],
+      "title": "Jump to a gene",
+      "body": "The crosshair beside a gene travels to it and focuses it. Click REG4's, or press Next — a panel focuses one thing at a time, so the location gives way to the gene.",
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.geneFocused"
+      },
+      "holdMs": 2500,
+      "spotlight": {
+        "target": {
+          "id": "location.geneFocus",
+          "version": 1,
+          "params": {
+            "geneId": "ENSG00000134193"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "location.geneFocus",
+              "version": 1,
+              "params": {
+                "geneId": "ENSG00000134193"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "location.geneFocus",
+            "version": 1,
+            "params": {
+              "geneId": "ENSG00000134193"
+            }
+          },
+          "capability": "activate"
+        }
+      }
+    },
+    {
+      "id": "location-to-gene",
+      "section": "Focusing on a location",
+      "view": "genome_browser",
+      "placement": "top",
+      "interactive": false,
+      "ensure": [
+        "slice-genome-installed",
+        "slice-genome-active",
+        "reg4-gene-focused"
+      ],
+      "undo": "unfocus-gene",
+      "arrive": {
+        "type": "browserView",
+        "locus": "1:119,790,017-119,815,580"
+      },
+      "title": "The gene has taken over",
+      "body": "REG4 is the gene of focus again, with its own bar and drawer, and the location bar has gone with it. Both kinds of focus share the browser, and only one of them holds it at a time.",
+      "spotlight": {
+        "target": {
+          "id": "browser.focusBar",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.viewport",
+            "version": 1
+          }
+        }
+      ],
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
       "id": "finish",
       "section": "Wrapping up",
       "placement": "center",
       "title": "The Genome Browser tutorial is complete",
-      "body": "You should now have a good grasp on the basics of browsing the genome, how to look at and compact transcripts, focusing on a gene, the gene drawers, how to manipulate what transcript are displayed, how to quickly fetch transcript sequences and how to add notes. It's actually quite a lot of stuff.",
+      "body": "You should now have a good grasp on the basics of browsing the genome, how to look at and compact transcripts, focusing on a gene, the gene drawers, how to manipulate what transcript are displayed, how to quickly fetch transcript sequences and how to add notes. You have also focused a region rather than a gene, and read its sequence, its genes and its notes from the location drawer. It's actually quite a lot of stuff.",
       "interactionPolicy": {
         "targets": []
       }

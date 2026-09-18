@@ -26,7 +26,7 @@ export function paintConservationSpan(ctx, { start, end, row, data, sources, coh
   // A gap belongs to this row, not to the column, and has to survive a wash
   // that is otherwise about every sequence at once.
   const gapAt = detail ? column => row.sequence[column - data.start] === '-' : null
-  const { spans, holes } = conservationSpans(sources, start, end)
+  const { spans, holes } = conservationSpans(sources, start, end, onScreen)
   const left = column => x + (column - fragmentStart) * scale
   for (const span of spans) {
     for (const run of conservationRuns(span.data, span.start, span.end, cohort, gapAt, index, contrast)) {

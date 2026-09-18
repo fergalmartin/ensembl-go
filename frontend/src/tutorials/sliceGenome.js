@@ -127,3 +127,36 @@ export const REG4_GENE_REGION = locus(REG4.start, REG4.end)
 /** PHGDH and HMGCS2 together: thirty-eight transcripts and twenty-two, at a zoom where
  *  their symbols are still readable. */
 export const DEEP_GENES_REGION = locus(119_635_000, 119_785_000)
+
+/** The window the location half of the tutorial focuses: a hundred and fifteen kilobases
+ *  ending just past REG4, so the reader travels out from the gene they have been working
+ *  on rather than to somewhere new.
+ *
+ *  Chosen for what it contains. With long non-coding genes filtered out — which is where
+ *  the tutorial's own filter section leaves the browser — it holds exactly four genes:
+ *  HMGCS2 and REG4, and the pseudogenes NBPF7P and PFN1P9. All four sit wholly inside it,
+ *  so the drawer's list is the same whether the region is read as overlapping or as
+ *  containing. It starts 773 bases after PHGDH ends, which is deliberate: PHGDH's tail is
+ *  on screen once the region is framed but outside its boundary lines, so the card about
+ *  the gene list has something true to say about what a region does and does not hold. */
+export const LOCATION_REGION = locus(119_745_000, 119_860_000)
+
+/** Where the browser sits once that window is the location of focus.
+ *
+ *  Pressing "Focus this window" keeps the region at BOX_SELECT_FILL_FRACTION of the view,
+ *  so the boundary lines land inside the track rather than on its edges where they cannot
+ *  be seen. This is that padded window, which is what every step after the press declares
+ *  — the alternative is each of them pulling the view back to the unpadded region and the
+ *  boundary lines disappearing off both sides. */
+export const LOCATION_FOCUS_VIEW = locus(119_741_000, 119_864_000)
+
+/** HMGCS2, the other protein-coding gene inside that window. Named here because the
+ *  location drawer lists it above REG4 and a card counts them. */
+export const HMGCS2 = Object.freeze({
+  symbol: 'HMGCS2',
+  id: 'ENSG00000134240',
+  start: 119_747_979,
+  end: 119_769_092,
+  strand: '-',
+  transcripts: 22,
+})

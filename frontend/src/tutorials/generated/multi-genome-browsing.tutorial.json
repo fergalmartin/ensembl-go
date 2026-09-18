@@ -2,12 +2,12 @@
   "format": "ensembl-go-tutorial",
   "schemaVersion": 1,
   "id": "multi-genome-browsing",
-  "revision": 2,
+  "revision": 3,
   "title": "Multi-genome browsing",
-  "blurb": "Compare annotations and species, link regions and genes, and make room for several genome panels.",
-  "estimatedMinutes": 12,
+  "blurb": "This is a follow on from the Genome Browser tutorial, and should be completed after that. The focus is on activating multiple genomes simultaneously and demonstrating some of the controls and features that only become available when multiple genomes are displayed in the browser.",
+  "estimatedMinutes": 14,
   "usesDemoGenome": false,
-  "completionBody": "You have compared annotations on the same assembly and browsed a shared gene across human, mouse and rat.",
+  "completionBody": "You have compared annotations on the same assembly, browsed a shared gene across human, mouse and rat, and used the cycle wheel to move between their panels.",
   "settings": {
     "showInactivePills": true,
     "genomeColors": [
@@ -1587,7 +1587,7 @@
       "id": "browse-four",
       "section": "Adding mouse and rat",
       "title": "Browse all four genomes",
-      "body": "Try moving the four panels and switching Pan and Zoom on or off. These buttons link movement; they don't find a corresponding gene for you. You can scroll the page using the scrollbar or the space outside the tracks. Other controls aren't active for this step.",
+      "body": "Try moving the four panels and switching Pan and Zoom on or off. These buttons link movement; they don't find a corresponding gene for you. You can scroll the page using the scrollbar or the space outside the tracks. Click Next to move on when you're ready.",
       "view": "genome_browser",
       "placement": "bottom",
       "align": "end",
@@ -1782,7 +1782,10 @@
             }
           },
           "preserveView": true,
-          "hideInactive": false
+          "hideInactive": false,
+          "cycle": {
+            "open": false
+          }
         }
       ],
       "autoplayDemo": {
@@ -1824,7 +1827,824 @@
         "durationMs": 1100,
         "pauseMs": 1000,
         "revealPanel": true
+      },
+      "cardPosition": {
+        "x": 0.021,
+        "y": 0.0155
       }
+    },
+    {
+      "section": "Moving between genomes",
+      "view": "genome_browser",
+      "deferUntilReady": true,
+      "holdMs": 1100,
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "id": "cycle-button",
+      "title": "The Cycle button",
+      "body": "Four genomes take up a lot of vertical space. You can move up/down the page to scroll the four browsers. Another option is Cycle, which opens a wheel carrying every genome you have in the top bar (even inactive ones). IT's designed to make it easier to either jump between genomes, or focus on a single genome and deactivate multi-genome browsing.",
+      "placement": "bottom",
+      "align": "end",
+      "autoplayMs": 9000,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.cycle",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false,
+          "cycle": {
+            "open": false
+          }
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "browser.toolbar",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "offset": 44
+        }
+      ]
+    },
+    {
+      "section": "Moving between genomes",
+      "view": "genome_browser",
+      "deferUntilReady": true,
+      "holdMs": 1100,
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "id": "cycle-open",
+      "title": "Open the wheel",
+      "body": "The Cycle button can be used via click-drag-release, however for this tutorial it's best to interact with it by simply clicking on it normally, which will then make the Cycle controls and view appear. Try clicking on it now.",
+      "placement": "bottom",
+      "align": "end",
+      "autoplayMs": 9000,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "settleMs": 12000,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.cycle",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.cycle",
+          "version": 1
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false,
+          "cycle": {
+            "open": false
+          }
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "browser.toolbar",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-f2b4e46327a2"
+            }
+          },
+          "offset": 44
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.cycle",
+              "version": 1
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "completeWhen": {
+        "cycle": {
+          "open": true
+        }
+      }
+    },
+    {
+      "section": "Moving between genomes",
+      "view": "genome_browser",
+      "deferUntilReady": true,
+      "holdMs": 1100,
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "id": "cycle-spin",
+      "title": "Spin through the genomes",
+      "body": "Move the pointer up and down the rail and the wheel turns with it, bringing each genome round in turn. Nothing has changed yet: the wheel acts only when you choose one of the two actions beside it. Click Next when you're ready to proceed.",
+      "placement": "left",
+      "align": "start",
+      "autoplayMs": 11000,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.cycleRail",
+              "version": 1
+            },
+            "capabilities": [
+              "set-state"
+            ]
+          }
+        ]
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.cycleRail",
+          "version": 1
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.cycleWheel",
+            "version": 1
+          }
+        },
+        {
+          "target": {
+            "id": "browser.cycleStatus",
+            "version": 1
+          }
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false,
+          "cycle": {
+            "open": true,
+            "genome": "slice-f2b4e46327a2",
+            "action": "none"
+          }
+        }
+      ],
+      "placementTarget": {
+        "id": "browser.cycleAction",
+        "version": 1,
+        "params": {
+          "action": "focus"
+        }
+      },
+      "cardPosition": {
+        "x": 0.5194,
+        "y": 0.0155
+      }
+    },
+    {
+      "section": "Moving between genomes",
+      "view": "genome_browser",
+      "deferUntilReady": true,
+      "holdMs": 1100,
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "id": "cycle-actions",
+      "title": "Focus or Jump",
+      "body": "Focus, on the left, deactivates all genomes other than that of the front panel. It's a quick way to switch back to single genome browsing. Jump, on the right, will return to the browser and align the front facing panel to the top of the current view. So it essentially automatically scrolls to put that genome in focus. Note that for inactive genomes (i.e. ones with pill buttons in the top bar, but not currently activated), they will also appear as panels, and instead of Jump, there will be an option to activate them.",
+      "placement": "left",
+      "align": "start",
+      "autoplayMs": 12000,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.cycleAction",
+          "version": 1,
+          "params": {
+            "action": "focus"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.cycleAction",
+            "version": 1,
+            "params": {
+              "action": "add"
+            }
+          },
+          "ring": true
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false,
+          "cycle": {
+            "open": true,
+            "genome": "slice-f2b4e46327a2",
+            "action": "none"
+          }
+        }
+      ]
+    },
+    {
+      "section": "Moving between genomes",
+      "view": "genome_browser",
+      "deferUntilReady": true,
+      "holdMs": 1100,
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "id": "cycle-pick-mouse",
+      "title": "Choose mouse",
+      "body": "Click the amber dot on the rail, or move the pointer down to it. The wheel turns to mouse and names its assembly underneath — or press Next and the tutorial will do it.",
+      "placement": "left",
+      "align": "start",
+      "autoplayMs": 10000,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "settleMs": 12000,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.cycleGenome",
+              "version": 1,
+              "params": {
+                "dataset": "slice-5ff4df6986ca"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "browser.cycleRail",
+              "version": 1
+            },
+            "capabilities": [
+              "set-state"
+            ]
+          }
+        ]
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.cycleGenome",
+          "version": 1,
+          "params": {
+            "dataset": "slice-5ff4df6986ca"
+          }
+        }
+      },
+      "reveals": [
+        {
+          "target": {
+            "id": "browser.cycleStatus",
+            "version": 1
+          }
+        }
+      ],
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false,
+          "cycle": {
+            "open": true,
+            "genome": "slice-f2b4e46327a2",
+            "action": "none"
+          }
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.cycleGenome",
+              "version": 1,
+              "params": {
+                "dataset": "slice-5ff4df6986ca"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "completeWhen": {
+        "cycle": {
+          "open": true,
+          "genome": "slice-5ff4df6986ca"
+        }
+      }
+    },
+    {
+      "section": "Moving between genomes",
+      "view": "genome_browser",
+      "deferUntilReady": true,
+      "holdMs": 2400,
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "id": "cycle-jump",
+      "title": "Jump to mouse",
+      "body": "Now click Jump. The wheel closes and the page travels until mouse's control bar meets the top of the browser. All four genomes stay open — Jump moves you, it doesn't change what is active.",
+      "placement": "left",
+      "align": "start",
+      "autoplayMs": 11000,
+      "advanceOn": {
+        "type": "signal",
+        "name": "browser.state"
+      },
+      "settleMs": 12000,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.cycleAction",
+              "version": 1,
+              "params": {
+                "action": "add"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.cycleAction",
+          "version": 1,
+          "params": {
+            "action": "add"
+          }
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false,
+          "cycle": {
+            "open": true,
+            "genome": "slice-5ff4df6986ca",
+            "action": "none"
+          }
+        }
+      ],
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.cycleAction",
+              "version": 1,
+              "params": {
+                "action": "add"
+              }
+            },
+            "capability": "activate"
+          }
+        ]
+      },
+      "completeWhen": {
+        "active": [
+          "slice-f2b4e46327a2",
+          "slice-210e10f41dd0",
+          "slice-5ff4df6986ca",
+          "slice-98214c680329"
+        ],
+        "cycle": {
+          "open": false
+        }
+      }
+    },
+    {
+      "section": "Moving between genomes",
+      "view": "genome_browser",
+      "deferUntilReady": true,
+      "holdMs": 1100,
+      "blockedControlMessage": "This control bar isn't active for this step. Try moving the tracks, then press Next when you're ready.",
+      "id": "cycle-jump-result",
+      "title": "Mouse is at the top",
+      "body": "The mouse panel now sits under the general controls, with the others still open around it. Cycle is how you get around once a comparison holds more genomes than fit on a screen.",
+      "placement": "bottom",
+      "align": "start",
+      "autoplayMs": 10000,
+      "advanceOn": {
+        "type": "manual"
+      },
+      "action": {
+        "type": "none"
+      },
+      "interactionPolicy": {
+        "targets": []
+      },
+      "spotlight": {
+        "target": {
+          "id": "browser.toolbar",
+          "version": 1,
+          "params": {
+            "recipeId": "slice-5ff4df6986ca"
+          }
+        }
+      },
+      "arrive": [
+        {
+          "type": "browserScene",
+          "reset": true,
+          "active": [
+            "slice-f2b4e46327a2",
+            "slice-210e10f41dd0",
+            "slice-5ff4df6986ca",
+            "slice-98214c680329"
+          ],
+          "pan": false,
+          "zoom": false,
+          "link": "none",
+          "panels": {
+            "slice-f2b4e46327a2": {
+              "locus": "1:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-210e10f41dd0": {
+              "locus": "NC_000001.11:900000-1010000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-5ff4df6986ca": {
+              "locus": "4:156300000-156380000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            },
+            "slice-98214c680329": {
+              "locus": "5:172080000-172165000",
+              "focus": "",
+              "tracks": {
+                "forward": true,
+                "reverse": true,
+                "sequence": true
+              }
+            }
+          },
+          "preserveView": true,
+          "hideInactive": false,
+          "cycle": {
+            "open": false
+          }
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "browser.toolbar",
+            "version": 1,
+            "params": {
+              "recipeId": "slice-5ff4df6986ca"
+            }
+          },
+          "offset": 44
+        }
+      ]
     },
     {
       "id": "search-samd11",
@@ -1931,7 +2751,10 @@
             }
           },
           "preserveView": true,
-          "hideInactive": false
+          "hideInactive": false,
+          "cycle": {
+            "open": false
+          }
         }
       ],
       "autoplay": {
@@ -3573,7 +4396,7 @@
       "id": "review",
       "section": "Unfocus and review",
       "title": "What we've covered",
-      "body": "We've compared two annotations on GRCh38, linked their regions by coordinates, and used Pan and Zoom together and separately. We've also linked SAMD11 across human, mouse and rat by its symbol, made space by switching off unused strands, and cleared every focused gene with Unfocus. These controls can be combined as you build your own comparisons. Hide removes the space occupied by inactive tracks.",
+      "body": "We've compared two annotations on GRCh38, linked their regions by coordinates, and used Pan and Zoom together and separately. We've cycled between the panels and jumped to one of them, linked SAMD11 across human, mouse and rat by its symbol, made space by switching off unused strands, and cleared every focused gene with Unfocus.",
       "view": "genome_browser",
       "placement": "bottom",
       "align": "end",

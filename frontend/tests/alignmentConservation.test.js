@@ -206,3 +206,14 @@ test('the cohort is what the blocks on the sheet hold, not every identity in the
   const merged=cohortOf({id:'original',fragments:[{id:'a',aggregate:{count:20},rowIds:[]}]},inventory,new Set())
   assert.equal(merged.ids.length,3881)
 })
+
+test('conservation tiles share the sequence tiles order, pixel rule and all',async()=>{
+  const {conservationSpans}=await import('../src/components/alignment-explorer/conservationCoverage.js')
+  const tile=size=>({start:0,end:1000,bin_size:size,bins:{columns:[1]}})
+  // No scale given: finest first, exactly as before.
+  assert.equal(conservationSpans([tile(64),tile(4)],0,1000).spans[0].data.bin_size,4)
+  // Zoomed out past what either resolves: the cheaper of the two, same wash.
+  assert.equal(conservationSpans([tile(64),tile(4)],0,1000,1/1000).spans[0].data.bin_size,64)
+  // Zoomed in: the finest still wins.
+  assert.equal(conservationSpans([tile(64),tile(4)],0,1000,2).spans[0].data.bin_size,4)
+})

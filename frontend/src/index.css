@@ -271,3 +271,37 @@ body {
 @media (prefers-reduced-motion: reduce) {
   [data-tutorial-overlay] * { animation: none !important; }
 }
+
+/* The alphas the selection is drawn at.
+ *
+ * Registered so they carry a type and an initial value, which is what lets the
+ * palette write `rgb(r g b / var(--sequence-select-alpha))` and get a number
+ * rather than an invalid colour.
+ *
+ * These used to breathe: a keyframe drove all three, on one element above the
+ * rows, so that a stretch rose and fell as one piece rather than in patches.
+ * The mechanism worked and the cost did not. A custom property that inherits is
+ * inherited by the whole subtree under the element carrying it, and that element
+ * was the slab -- every mounted row, sixteen hundred cells. Changing it sixty
+ * times a second meant recalculating the style of all of them sixty times a
+ * second: seventeen per cent of the main thread, for ever, whether anything was
+ * highlighted or not. Measured at 17.0% against 0.4% with the animation frozen,
+ * and scrubbing a hundred and twenty hovers down a gene list cost nothing at all
+ * by comparison -- so the delay a reader felt moving between rows was this
+ * animation holding the frame, not the work of the highlight.
+ *
+ * They now sit at the values `prefers-reduced-motion` already settled them at,
+ * which were chosen for this exact job: the bright end of the swing, because
+ * being hard to see over a coloured base is what the movement was there to fix.
+ */
+@property --sequence-select-alpha {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0.34;
+}
+
+@property --sequence-select-edge-alpha {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
+}

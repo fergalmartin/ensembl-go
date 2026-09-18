@@ -1,4 +1,5 @@
 import { browserViewportControls, describeBrowserViewport, parseLocus, sameBrowserViewport } from './browserTutorialControls.js'
+import { describeGenomeCycle, genomeCycleMatches, genomeCycleProblems, setGenomeCycle } from './genomeCycleControls.js'
 
 let host = null
 let generation = 0
@@ -7,11 +8,17 @@ export function registerTutorialBrowserHost(controls) {
   host = controls
   return () => { if (host === controls) { host = null; appliedActive = null; generation += 1 } }
 }
-export function cancelTutorialBrowserScene() { generation += 1; host?.cancel?.() }
+// `appliedActive` is what lets `preserveView` leave a scene the reader has moved alone, so
+// it has to be forgotten when the run that established it ends. It was not: the browser
+// view stays mounted between tutorials, so the second run of a tutorial — and every cold
+// jump after the first in one session — matched the signature left by the run before,
+// skipped the whole arrival, and drew four panels at their chromosomes' default view with
+// no genes in them. Forward play was always right, which is why only a screenshot found it.
+export function cancelTutorialBrowserScene() { generation += 1; appliedActive = null; host?.cancel?.(); setGenomeCycle({ open: false }) }
 export function describeTutorialBrowserScene() {
   const state = host?.describe?.()
   if (!state) return null
-  return { ...state, panels: Object.fromEntries((state.active || []).map((id) => [id, describeBrowserViewport(id)])) }
+  return { ...state, cycle: describeGenomeCycle(), panels: Object.fromEntries((state.active || []).map((id) => [id, describeBrowserViewport(id)])) }
 }
 export function tutorialSettings(document, genomes) {
   const settings = document?.settings || {}
@@ -27,6 +34,7 @@ export function browserSceneMatches(wanted, actual = describeTutorialBrowserScen
   if (!wanted || !actual) return false
   if (wanted.active && (wanted.active.length !== actual.active?.length || wanted.active.some((id, i) => id !== actual.active[i]))) return false
   for (const key of ['pan', 'zoom', 'link', 'hideInactive']) if (wanted[key] !== undefined && wanted[key] !== actual[key]) return false
+  if (wanted.cycle !== undefined && !genomeCycleMatches(wanted.cycle, actual.cycle)) return false
   for (const [id, panel] of Object.entries(wanted.panels || {})) {
     const current = actual.panels?.[id]
     if (!current?.ready) return false
@@ -58,6 +66,11 @@ export async function applyTutorialBrowserScene(scene) {
   await delay(80)
   if (!current()) return false
   await host.link(scene, current)
+  // Last, because the wheel reads the active genomes and photographs their panels as it
+  // opens: a wheel raised before the scene had settled would show the genomes of the step
+  // before, and the panel it links to would be one the reader is no longer looking at.
+  if (!current()) return false
+  await setGenomeCycle(scene.cycle, current)
   if (current()) appliedActive = activeSignature
   return current()
 }
@@ -70,6 +83,7 @@ export function browserSceneProblems(scene, datasets = []) {
   const known = new Set((Array.isArray(datasets) ? datasets : []).map((d) => d.recipeId))
   for (const id of [...(scene.active || []), ...Object.keys(scene.panels || {})]) if (!known.has(id)) problems.push(`Browser scene names an unattached dataset: ${id}.`)
   if (scene.link !== undefined && !['none', 'region', 'gene'].includes(scene.link)) problems.push('Browser link must be none, region or gene.')
+  problems.push(...genomeCycleProblems(scene.cycle, known))
   for (const key of ['pan', 'zoom', 'reset', 'preserveView', 'hideInactive']) if (scene[key] !== undefined && typeof scene[key] !== 'boolean') problems.push(`Browser ${key} must be true or false.`)
   for (const panel of Object.values(scene.panels || {})) {
     if (!panel || typeof panel !== 'object' || Array.isArray(panel)) { problems.push('Each browser panel needs a state object.'); continue }

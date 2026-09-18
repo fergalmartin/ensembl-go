@@ -10,14 +10,17 @@ import { useEffect } from 'react'
  */
 export const MENU_WIDTH = 400
 
-export function menuPosition(element, width = MENU_WIDTH) {
+/** `prefix` names the custom properties the answer is written into, so a second
+ * bar with its own tokens can use this positioner without borrowing the
+ * explorer's variable names for its own stylesheet. */
+export function menuPosition(element, width = MENU_WIDTH, prefix = 'al') {
   const rect = element?.getBoundingClientRect()
   if (!rect) return { top: 0, left: 8 }
   const actualWidth = Math.min(width, window.innerWidth - 16)
   const left = Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - actualWidth - 8)))
   return { top: Math.round(rect.bottom + 9), left, width: actualWidth,
-    '--al-menu-max-height': `${Math.max(120, window.innerHeight - rect.bottom - 17)}px`,
-    '--al-menu-pointer': `${Math.max(14, Math.min(actualWidth - 14, rect.left + rect.width / 2 - left))}px` }
+    [`--${prefix}-menu-max-height`]: `${Math.max(120, window.innerHeight - rect.bottom - 17)}px`,
+    [`--${prefix}-menu-pointer`]: `${Math.max(14, Math.min(actualWidth - 14, rect.left + rect.width / 2 - left))}px` }
 }
 
 /** Close on Escape, or on a press anywhere but the menu and its own button.

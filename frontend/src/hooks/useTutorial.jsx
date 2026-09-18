@@ -38,6 +38,7 @@ import {
   describeBrowserViewport,
   moveBrowserViewport,
   sameBrowserViewport,
+  setBrowserLocationFocus,
 } from '../utils/browserTutorialControls'
 import {
   DEFAULT_SPEED_INDEX,
@@ -1229,6 +1230,66 @@ export function TutorialProvider({ children }) {
     }
     if (wanted.flatten !== undefined && engaged('browser-flatten') !== wanted.flatten) {
       await press('browser-flatten')
+    }
+    // The location of focus, before anything that lives inside the drawer it opens — and
+    // before the gene-drawer branches below, because focusing a location clears the gene
+    // of focus and takes that drawer with it. Set through the panel's own handler rather
+    // than by pressing "Focus this window": that control focuses whatever the window
+    // happens to be showing, so a step wanting a named region would have to travel there
+    // and be moved back, which is the move-plus-correction docs/TUTORIALS.md rules out.
+    if (wanted.locationFocus !== undefined) {
+      const target = wanted.locationFocus === 'none' ? null : wanted.locationFocus
+      // Waited for, not merely called. A cold jump arrives here with the slice genome
+      // only just activated: the panel has not registered its controls yet, and it has no
+      // region either, so the call is refused for a chromosome it does not recognise and
+      // returns false — silently, which is how nine steps of this section came to draw no
+      // ring at all while walking forwards and backwards was perfect.
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        if (describeBrowserViewport()?.ready) break
+        await sleep(paced(SETTLE_MS))
+      }
+      if (setBrowserLocationFocus(target)) {
+        // Only when something actually changed: the helper reports false for a location
+        // already in focus, and waiting there would add a pause to every revisit.
+        await sleep(paced(SETTLE_MS))
+      }
+      // And wait for what the focus brings with it, because everything below this lives
+      // inside that drawer — the same reason the gene drawer's fold is waited for.
+      if (target) await waitForAnchor('focus-location-dismiss')
+    }
+    // The wide slot beside the location drawer, which holds the sequence panel or one
+    // gene's details, one at a time. After the focus above, because neither exists until
+    // a location is in focus. Read from `aria-expanded` on the control that opens it, so
+    // this sets rather than toggles whatever the last step left.
+    if (wanted.locationDetail !== undefined) {
+      const wantedGene = String(wanted.locationDetail?.gene || '').trim()
+      const wantedSequence = wanted.locationDetail === 'sequence'
+      // Null when the step wants the slot empty, which is the case that bit: naming the
+      // sequence control as "the one to keep" while asking for nothing left a sequence
+      // panel opened two steps earlier standing, and the drawer's list sat 540 pixels to
+      // the left of where every card after it said it would be. Forward and backward each
+      // showed it on the steps the other one got right, which is why only the diff of the
+      // two sweeps found it.
+      const opener = wantedGene
+        ? `location-gene-info-${wantedGene}`
+        : wantedSequence ? 'location-info' : null
+      if (opener) {
+        const control = await waitForAnchor(opener)
+        if (control && control.getAttribute('aria-expanded') !== 'true') {
+          clickAsTutorial(control)
+          await sleep(paced(SETTLE_MS))
+        }
+      }
+      // Whatever else is open has to be shut, including when the step asked for a
+      // different panel: the slot holds one at a time, but the control that opened the
+      // other one still reads as expanded until it is pressed again.
+      const openers = [...document.querySelectorAll('[data-tour-id="location-info"], [data-tour-id^="location-gene-info-"]')]
+      for (const control of openers) {
+        if (opener && control.getAttribute('data-tour-id') === opener) continue
+        if (control.getAttribute('aria-expanded') !== 'true') continue
+        clickAsTutorial(control)
+        await sleep(paced(SETTLE_MS))
+      }
     }
     // One named gene's own transcripts, which is a different thing from the window-wide
     // expand control above: the `+N` pill under a gene sets that gene alone. Applied last,

@@ -7,6 +7,7 @@ import { fetchDemoGenomeStatus, installDemoGenome } from '../tutorials/demoGenom
 import ScreenshotExportModal from './ScreenshotExportModal'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
 import ProgressGlyph from './ProgressGlyph'
+import { DownloadMark } from './appIconMarks'
 import {
     buildDefaultScreenshotName,
     buildDomNodeScreenshotSnapshot,
@@ -85,21 +86,8 @@ const IconUpDown = ({ open, size = 12 }) => (
         <polyline points="6 9 12 15 18 9" />
     </svg>
 )
-const DownloadGlyph = ({ size = 16, style = undefined, opacity = 1 }) => (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="currentColor" stroke="none" aria-hidden="true" style={style}>
-        <g opacity={opacity}>
-            <path d="M3.5999999,2.7C3.5999999,2.8,3.5,2.9000001,3.5,3s0,0.2,0.0999999,0.3L15.5,19.5999985
-	c0.1999998,0.2999992,0.6000004,0.2999992,0.7999992,0.2000008c0.1000004,0,0.1000004-0.1000004,0.2000008-0.2000008L28.3999996,3.3
-	C28.6000004,3,28.5,2.6999998,28.1999989,2.5c-0.1000004-0.0999999-0.2000008-0.0999999-0.2999992-0.0999999H4.0999999
-	C3.9000001,2.4000001,3.7,2.5,3.5999999,2.7z"/>
-            <path d="M29.3353596,29.6499996c1,0,1.666666-0.833334,1.666666-1.6666679v-1.7666645c0-1-0.833334-1.666666-1.666666-1.666666
-	H2.6686926c-0.8333333,0-1.6666666,0.666666-1.6666666,1.666666v1.7666645c0,0.833334,0.6666669,1.6666679,1.6666666,1.6666679
-	H29.3353596z"/>
-        </g>
-    </svg>
-)
 const IconDownload = ({ size = 16, progress = null }) => (
-    <ProgressGlyph size={size} progress={progress} renderGlyph={(props) => <DownloadGlyph {...props} />} />
+    <ProgressGlyph size={size} progress={progress} renderGlyph={(props) => <DownloadMark {...props} />} />
 )
 const IconDownloaded = ({ size = 16 }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">

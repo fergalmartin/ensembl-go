@@ -23,7 +23,10 @@ const contracts = TUTORIAL_TARGET_VIEWS.flatMap((view) => (
     contractVersion: 1,
     authoringVisible: true,
     ...target,
-    ...(view.viewId === 'genome_browser' && !['browser.globalControls', 'browser.hideInactive', 'browser.tracks', 'browser.detail', 'browser.flatten', 'browser.unfocus', 'browser.biotypes', 'browser.pan', 'browser.zoom', 'browser.linkRegion', 'browser.linkGene'].includes(target.id) && !target.id.startsWith('browser.biotype.') ? { parameters: { ...target.parameters, recipeId: { type: 'string', required: false } } } : {}),
+    // The cycle wheel is exempt for the same reason as the general control bar: it belongs
+    // to no panel. It is drawn in a portal on the body, so scoping it to
+    // `[data-tutorial-genome="…"]` would find nothing at all.
+    ...(view.viewId === 'genome_browser' && !['browser.globalControls', 'browser.hideInactive', 'browser.tracks', 'browser.detail', 'browser.flatten', 'browser.unfocus', 'browser.biotypes', 'browser.pan', 'browser.zoom', 'browser.linkRegion', 'browser.linkGene'].includes(target.id) && !target.id.startsWith('browser.biotype.') && !target.id.startsWith('browser.cycle') ? { parameters: { ...target.parameters, recipeId: { type: 'string', required: false } } } : {}),
     viewId: view.viewId,
   }))
 ))

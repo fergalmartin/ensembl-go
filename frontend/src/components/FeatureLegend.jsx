@@ -1,34 +1,9 @@
 import { useState } from 'react'
 
-// Simplified feature colors - merged categories
-const FEATURE_COLORS = {
-    genomic: { bg: '#60a5fa', label: 'Genomic' },
-    exon: { bg: '#60a5fa', label: 'Exon' },
-    cds: { bg: '#60a5fa', label: 'CDS' },
-    utr: { bg: '#c4b5fd', label: 'UTR' },          // Merged 5'/3' UTR
-    utr5: { bg: '#c4b5fd', label: 'UTR' },         // Keep for backward compat
-    utr3: { bg: '#c4b5fd', label: 'UTR' },         // Keep for backward compat
-    intron: { bg: '#4a5568', label: 'Intronic' },
-    intergenic: { bg: '#4a5568', label: 'Intronic' },
-    splice: { bg: '#ed8936', label: 'Splice site' },  // Merged donor/acceptor
-    splice_site: { bg: '#ed8936', label: 'Splice site' },  // Alias for projection
-    donor: { bg: '#ed8936', label: 'Splice site' },   // Keep for backward compat
-    acceptor: { bg: '#ed8936', label: 'Splice site' },
-    start_codon: { bg: '#0d9488', label: 'Start (ATG)' },
-    stop_codon: { bg: '#c026d3', label: 'Stop' },
-}
-
-// Unique legend items for display (removes duplicates)
-const LEGEND_ITEMS = [
-    { key: 'genomic', bg: '#60a5fa', outlineOnly: true, label: 'Genomic' },
-    { key: 'exon', bg: '#60a5fa', label: 'Exon' },
-    { key: 'cds', bg: '#60a5fa', gradient: 'linear-gradient(90deg, #60a5fa 50%, #bfdbfe 50%)', label: 'CDS' },
-    { key: 'utr', bg: '#c4b5fd', label: 'UTR' },
-    { key: 'intron', bg: '#4a5568', label: 'Intronic' },
-    { key: 'splice', bg: '#ed8936', label: 'Splice site' },
-    { key: 'start_codon', bg: '#0d9488', label: 'Start (ATG)' },
-    { key: 'stop_codon', bg: '#c026d3', label: 'Stop' },
-]
+// The legend itself. The colours and the legend rows it draws live in
+// utils/featureColors.js, so that plain modules can read the same palette
+// without importing a React component.
+import { FEATURE_COLORS, LEGEND_ITEMS } from '../utils/featureColors'
 
 export default function FeatureLegend({ theme, horizontal = false, defaultExpanded = false }) {
     const [expanded, setExpanded] = useState(Boolean(defaultExpanded))

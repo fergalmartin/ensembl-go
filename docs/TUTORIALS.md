@@ -27,8 +27,8 @@ There are two. **Getting Started** walks through Configuration → Download → 
 Selector → Genome Browser using a bundled demo genome, so a new user can complete the
 whole loop without downloading a real assembly. **The Genome Browser** stays in one app
 and goes through it properly — tracks, panning, zooming to the bases, transcript layout,
-gene-class filters, the focus drawer, transcript sequences and notes — on a real slice of
-human chromosome 1.
+gene-class filters, the focus drawer, transcript sequences, notes, and focusing on a region
+rather than a gene — on a real slice of human chromosome 1.
 
 This document is for adding the next one.
 
@@ -344,7 +344,7 @@ about:
 | Type | Sets |
 | --- | --- |
 | `browserView` | Where the browser is looking: `locus`, or `pan` / `zoom`. |
-| `browserControls` | `detail`, `flatten`, `expanded` (booleans), `biotypes` (`'all'`, `'protein-coding'`, or a list of the classes left showing — `['proteinCoding', 'pseudogene', 'smallNonCoding']`), `drawerTranscripts` (`'collapsed'` or `'expanded'`), `geneTranscripts` (`{ gene, expanded }` — one named gene's own rows, which is a different control from `expanded`), `hiddenTranscript` (`{ transcript, hidden }`). Only the keys given are enforced. |
+| `browserControls` | `detail`, `flatten`, `expanded` (booleans), `biotypes` (`'all'`, `'protein-coding'`, or a list of the classes left showing — `['proteinCoding', 'pseudogene', 'smallNonCoding']`), `drawerTranscripts` (`'collapsed'` or `'expanded'`), `geneTranscripts` (`{ gene, expanded }` — one named gene's own rows, which is a different control from `expanded`), `hiddenTranscript` (`{ transcript, hidden }`), `locationFocus` (a `chr:start-end` region or `'none'` — the *location* of focus, which is a different thing from the gene of focus), `locationDetail` (`'sequence'`, `{ gene }` or `'none'` — what the wide slot beside the location drawer is showing). Only the keys given are enforced. |
 | `selectorList` | A stable Genome Selector teaching scene. A semantic list `target` can be centred without highlighting it; `fitAllRows`, `preserveOrder`, and `lockScroll` keep a small complete list visible and stationary while selections change. |
 | `genomeSelection` | Which of the tutorial's embedded genomes are selected, named by their `recipeId`s. The resulting set, not a list of clicks, so re-entering the step selects the same genomes rather than toggling them. `genomes: []` is a real instruction: arrive with nothing selected. |
 | `pageScroll` | Where the page is scrolled: a `target`, and either the `offset` in pixels between the top of the scrolling region and the top of that target, or `center: true` for a target that should simply be well clear of both edges. Applied last, after everything else that changes the page's height, and smoothly during playback. |
@@ -352,6 +352,7 @@ about:
 | `playlists` | Which playlists exist, named and described as the tutorial asks the user to name them, with members as embedded dataset recipe ids. `selected` names the one being shown. `playlists: []` is a real instruction: none created yet. |
 | `customGenome` | The state of the Genome Selector's add-a-genome form: `panel`, the six `fields`, which analysis `reports` are showing, whether the file `browser` is open and where it is pointed, and whether the genome has been `registered` and made `active`. |
 | `trackRegistry` | The state of the Track Manager: which demo tracks are `registered`, the registration `wizard` (`closed`, `file`, `details`), the `file` chosen, the `fields` typed, the BigWig `dataType` and `displayMode`, whether a `genome` is associated, and whether the file `browser` is open. |
+| `browserScene` | A multi-genome scene: `active`, `pan`, `zoom`, `link`, `hideInactive`, a `panels` map, and `cycle` — the genome wheel's own state, `{ open, genome, action }`. |
 | `browserTracks` | Which registered tracks a browser panel is showing: `added`, which of them are `visible` (absent means all), whether the whole set is `hideInactive`, whether the `picker` is open, and what is `chosen` in it but not yet added. |
 
 `genomeSelection` is what lets a step talk about the *result* of a selection the user made
@@ -1279,8 +1280,14 @@ Two other forms:
 | `browser-gene-transcripts-${gene.id}` | GenomeBrowser.jsx — the `+N` / X pill under a gene |
 | `browser-gene-hidden-transcripts-${gene.id}` | GenomeBrowser.jsx — the “Show N hidden” label under a gene |
 | `browser-global-controls`, `browser-unfocus`, `browser-tracks-toggle`, `browser-detail`, `browser-flatten` | [GenomeBrowserView.jsx](../frontend/src/components/GenomeBrowserView.jsx) — the bar that applies to every active genome |
+| `browser-cycle`, `browser-cycle-wheel`, `browser-cycle-rail`, `browser-cycle-genome-${entry.tourId}`, `browser-cycle-action-focus`, `browser-cycle-action-add`, `browser-cycle-cancel`, `browser-cycle-status` | [GenomeWheel.jsx](../frontend/src/components/GenomeWheel.jsx) — the Cycle button and the wheel it raises |
 | `browser-biotype-filter`, `browser-biotype-${key}` | GenomeBrowserView.jsx — the gene-class grid and its four checkboxes |
 | `focus-transcripts-expand`, `focus-transcript-info-${id}`, `focus-transcript-hide-${id}`, `focus-notes-add`, `[data-focus-drawer-notes]` | [FocusGeneDrawer.jsx](../frontend/src/components/FocusGeneDrawer.jsx) |
+| `browser-focus-window`, `browser-recenter-location`, `[data-location-focus-bar="true"]` | GenomeBrowser.jsx — making the window the location of focus, and the bar that says so |
+| `focus-location-dismiss`, `location-info`, `location-strand`, `location-section-${sectionId}`, `location-show-hidden`, `location-notes-add`, `location-note-row-${id}`, `[data-location-drawer="true"]`, `[data-location-drawer-notes="true"]`, `[data-location-drawer-section="genes"]` | [FocusLocationDrawer.jsx](../frontend/src/components/FocusLocationDrawer.jsx) |
+| `location-gene-info-${id}`, `location-gene-focus-${id}`, `location-gene-hide-${id}`, `location-page-prev-${sectionId}`, `location-page-next-${sectionId}`, `[data-drawer-location-gene-row]` | FocusLocationDrawer.jsx — one gene's row in the location's list |
+| `location-gene-detail-focus`, `location-gene-detail-close`, `[data-location-gene-detail]` | [LocationGeneDetail.jsx](../frontend/src/components/LocationGeneDetail.jsx) |
+| `location-sequence-close`, `location-sequence-strand`, `location-sequence-copy`, `location-sequence-copy-all`, `location-sequence-expand`, `[data-location-sequence-panel="true"]` | [LocationSequencePanel.jsx](../frontend/src/components/LocationSequencePanel.jsx) |
 | `focus-sequence-types`, `focus-sequence-${feature.key}` | [FocusTranscriptDetail.jsx](../frontend/src/components/FocusTranscriptDetail.jsx) |
 | `focus-note-title`, `focus-note-body`, `focus-note-save` | [FocusNotesPanel.jsx](../frontend/src/components/FocusNotesPanel.jsx) |
 | `app-genome-pills` | [App.jsx](../frontend/src/App.jsx) — the complete selected-genomes strip |
@@ -1870,6 +1877,11 @@ manual JSON editing:
   already in that state when a reader has partly completed an exercise.
 - **Locked-bar message:** choose the brief message shown when a reader tries a genome
   toolbar held inactive by that step's interaction policy.
+- **The genome cycle wheel on arrival:** **Multi-genome arrival state** states whether the
+  Cycle wheel is open, which genome it is showing and which of Focus and Add/Jump is chosen.
+  The wheel cannot be arrived at by describing it — until something opens it there is no rail
+  for a spotlight and no faces for a card to talk about — so this is the only way to author a
+  step beside it. **Use current browser state** captures it with the rest of the scene.
 - **Track Manager on arrival:** state the Track Manager for a step — which demo tracks are
   already registered, where the registration wizard is, the file and label and BigWig data
   type it holds, whether the file browser is up, and whether a genome has been associated.
@@ -1877,6 +1889,10 @@ manual JSON editing:
   portable document may not carry one.
 - **Custom tracks on the panel:** which registered tracks a browser panel draws, whether the
   track picker is open, and what is ticked in it but not yet added.
+- **The location of focus on arrival:** **Browser arrival state** takes a region as
+  `chr:start-end`, or `none` for a step that has to find nothing focused — the step before the
+  one that presses **Focus this window**. Beside it, *Beside the location drawer* states what
+  the wide slot holds: nothing, the region's sequence, or one named gene's details.
 - **Add-a-genome form on arrival:** state the Genome Selector's import form for a step —
   the labels, which files are chosen, which analysis reports are open, whether the file
   browser is up and what it is choosing, and whether the genome has been added and activated.
@@ -1884,8 +1900,8 @@ manual JSON editing:
   portable document may not carry one.
 
 The portable scene vocabulary is `browserScene` in `arrive` or `action`. It contains
-`active` (ordered recipe IDs), `pan`, `zoom`, `link` (`none`, `region`, `gene`), and a
-`panels` map keyed by recipe ID. Each panel can name `locus`, `focus` (empty clears it),
+`active` (ordered recipe IDs), `pan`, `zoom`, `link` (`none`, `region`, `gene`),
+`cycle` (the genome wheel — see below), and a `panels` map keyed by recipe ID. Each panel can name `locus`, `focus` (empty clears it),
 and `tracks: { forward, reverse, sequence }` as visibility booleans. `reset` clears
 previous focus/link state before restoration; `preserveView` preserves an already
 established matching scene so result cards do not undo the reader's movement.
@@ -1928,6 +1944,88 @@ Backward navigation restores both power settings and inactive-track visibility.
 Focused arrivals omit a fixed locus when they want the browser's normal gene-centred
 view. Gene-link synchronisation now uses the same drawer-aware window as gene navigation,
 so enabling linked Pan/Zoom does not replace that window with unadjusted coordinates.
+
+### Moving between genomes — the cycle wheel (September 2026)
+
+A seventh section, **Moving between genomes**, sits between *Adding mouse and rat* and
+*Linking a gene* and takes the tutorial from 32 steps to 39. It teaches the **Cycle**
+button in the general control bar: the wheel of every genome, the rail beside it, and the
+two things the wheel can do — **Focus**, which makes one genome the only active one, and
+**Jump**, which keeps them all and scrolls that genome's panel to the top. The reader
+opens the wheel, turns it, picks mouse and jumps to it.
+
+#### The wheel is a state, not a gesture
+
+The wheel's own gesture is a press, a travel and a release. There is no moment in the
+middle for a step to point at, so a step **declares** the wheel the way a Genome Selector
+step declares `dialog`: `browserScene` grew a `cycle` key.
+
+```json
+"cycle": { "open": true, "genome": "slice-5ff4df6986ca", "action": "add" }
+"cycle": { "open": false }
+```
+
+`genome` is a dataset recipe id — the same name the panels are scoped by, and the only one
+a portable document knows. `action` is `focus`, `add` or `none`. It works everywhere the
+rest of the vocabulary does: in `arrive`, in a `browserScene` action, and in `completeWhen`,
+where a step waits for the reader to actually turn the wheel to mouse.
+
+The runtime bridge is [`utils/genomeCycleControls.js`](../frontend/src/utils/genomeCycleControls.js),
+a module registry the wheel publishes `describe` / `open` / `choose` / `close` on — the same
+pattern as `browserTutorialControls`, for the same reason. **The cycle is applied last**, after
+the panels, the loci and the linking: the wheel reads the active genomes and photographs each
+panel as it opens, so a wheel raised before the scene had settled would show the genomes of
+the step before.
+
+#### A held wheel, and why the app needs one
+
+Confirming the wheel is normally *a click anywhere*. With a tutorial card on screen that is
+a trap: pressing Next would commit the wheel instead of advancing the step, and the card's
+own buttons would be unreachable. So while a tutorial is running the wheel opens **held** —
+`held={tutorialRunning}` from `GenomeBrowserView`, which already knows:
+
+- it follows the pointer as a sticky session does, so the drum still turns under the reader;
+- nothing outside its own rail commits it, so the card stays live;
+- **Focus** and **Jump** are real buttons that commit, and each rail dot is a real button
+  that chooses a genome without committing — which is also the only way a tutorial can pick
+  one, having no pointer to travel with;
+- the overlay drops to `z-index: 200`, under the tutorial's 300, so the step's dimming,
+  cutouts and card are drawn *over* the wheel and the reader sees the rail through the hole
+  the step cuts.
+
+The status line says so rather than offering "Release to cancel", which is untrue of a held
+wheel.
+
+Two things this needed that are not about tutorials. **The Cycle button opened only on
+`pointerdown`**, so any click carrying no pointer — assistive technology, and a tutorial
+pressing it on the reader's behalf — found the button dead; it now has an `onClick` that
+opens the same session, and `start` refuses a second one either way. And **a session opened
+without a pointer had none to capture and no release to wait for**, so it opened and then
+refused to turn; it now behaves as a click that never travelled does.
+
+New targets, all exempt from `recipeId` scoping in `tutorialTargets/index.js` because the
+wheel is a portal on the body and belongs to no panel: `browser.cycle`, `browser.cycleWheel`,
+`browser.cycleRail`, `browser.cycleGenome` (parameterised by `dataset`), `browser.cycleAction`
+(`focus` or `add`), `browser.cycleCancel`, `browser.cycleStatus`.
+
+#### Two bugs this found, neither of them in the new steps
+
+**A scene was preserved across the run that established it.** `appliedActive` in
+`tutorialBrowserScene.js` is what lets `preserveView` leave a scene the reader has moved
+alone. The genome browser stays mounted between tutorials, so it was never forgotten — and
+the second run of a tutorial, and every cold jump after the first in one session, matched
+the signature left by the run before, skipped the whole arrival, and drew four panels at
+their chromosomes' default view with no genes in them. `cancelTutorialBrowserScene` now
+clears it. **Forward play was always right**, all three sweeps reported a ring on every
+step, and only a screenshot of a jumped-into step showed it: this is the
+"[a clean probe is not a working tutorial](#testing-a-new-tutorial)" case in full.
+
+**A positioned arrival never converted back to a target.** `legacyTutorialToDocument`
+restores target references for spotlights, reveals and advances, but not for the `target`
+of a `selectorList` or `pageScroll` arrival — so a framed step kept the anchor it had been
+materialised into, and a *scoped* one kept a raw selector, which `validateTutorialDocument`
+refuses outright. Cloning any tutorial that frames a step against one genome's panel
+therefore produced a document the builder could not open. The conversion is now symmetric.
 
 ## Importing a genome from local files (September 2026)
 
@@ -2152,3 +2250,109 @@ which is the centre of the ring. Both now carry an authored `cardPosition` on th
 top-left edge, which is peripheral at both 1600x1100 and 1512x900. **This is invisible at the
 authoring size**: at 1600x1100 the list step fitted its card above the ring by twelve pixels
 and only failed at 900.
+
+## Focusing on a location (September 2026)
+
+The Genome Browser tutorial grew a ninth section, **Focusing on a location** — twelve steps
+between *Adding notes* and *Wrapping up*, taking it from 46 to 58. A location of focus is
+the same idea as a gene of focus for a stretch of sequence nobody annotated: the window
+itself becomes the thing in focus, with its own dashed boundary lines, its own bar and its
+own drawer holding the region, the genes inside it and notes. The section is deliberately
+the gene sections again one surface along, because that is the point it is making, and its
+cards spend their words on what differs.
+
+It adds no data. It runs on `grch38_reg4`, the slice the tutorial already uses, and focuses
+`1:119,745,000-119,860,000` — a hundred and fifteen kilobases immediately after PHGDH ends,
+which with long non-coding genes filtered out holds exactly four genes: HMGCS2, REG4 and the
+pseudogenes NBPF7P and PFN1P9. PHGDH's tail is then on the track but *outside* the boundary
+lines, which is what gives the card about the gene list something true to say about what a
+region does and does not contain.
+
+### The location of focus is a state, not a button press
+
+`browserControls` grew `locationFocus`, a `chr:start-end` region or `'none'`.
+
+The obvious implementation is wrong, and it is worth saying why. There **is** a control —
+`browser-focus-window` — but it focuses whatever the window happens to be showing, so a step
+wanting a named region would have to travel there, press, and then be moved back to the view
+its card describes. That is the move-plus-correction this document rules out under
+[Movement](#movement--smooth-once-and-never-past-the-target). So the arrival goes through the
+panel's own `focusLocation` instead, published on the `browserTutorialControls` registry as
+`setLocationFocus` alongside `goToLocus` — the same pattern, for the same reason: nothing is
+done behind the app's back, and the view is left entirely alone so the step's own
+`browserView` arrival is the only thing that moves it, in one journey.
+
+`setBrowserLocationFocus` returns false when nothing had to change, which is what lets the
+arrival run on every visit without re-focusing what is already focused.
+
+**The declared view is the padded window, not the region.** Pressing the button keeps the
+region at `BOX_SELECT_FILL_FRACTION` (0.94) of the view so the boundary lines land inside the
+track rather than on its edges. Every step after the press therefore declares
+`LOCATION_FOCUS_VIEW`, which is that padded window — measured in the running app at 0.2–0.3%
+from where the button leaves the view, which is under half a pixel and invisible. Declaring
+the unpadded region instead would pull the boundary lines off both sides of the screen.
+
+### `locationDetail`, and the bug only the two sweeps together could find
+
+The location drawer has one wide slot beside it, holding either the region's sequence or one
+gene's details. `locationDetail` states which: `'sequence'`, `{ gene }`, or `'none'`.
+
+Its first version named the sequence control as "the one to keep open" even when the step
+asked for **nothing**, so a sequence panel opened two steps earlier was never closed. The
+drawer's list then sat 540 pixels — `FOCUS_DETAIL_WIDTH` — to the left of where every card
+after it said it would be.
+
+**Neither sweep found this on its own.** Forward, the steps after the sequence were wrong and
+the ones before it were right; backward, exactly the other way round. Both sweeps reported a
+ring on every step, because there *was* a ring — just not where the step meant. What found it
+was the probe's forward-versus-backward **diff**, where four of the section's steps differed
+by exactly 540 in x. That is what the diff is for, and it is the first time it has earned its
+keep.
+
+### A cold jump has no panel to focus
+
+The other bug, and the familiar shape: forward and backward perfect, nine of the section's
+steps drawing no ring at all when jumped into directly.
+
+`ensure: ['slice-genome-active']` publishes the genome through `setConfigOverride`, and the
+arrival runs before the panel has mounted, registered its controls or resolved a region — so
+`setLocationFocus` was refused for a chromosome the panel did not yet recognise, returned
+false, and said nothing. No focus, no bar, no drawer, nothing for nine spotlights to land on.
+The branch now waits for `describeBrowserViewport()?.ready` before setting, and then waits for
+`focus-location-dismiss` to render, because everything below it lives inside that drawer.
+This is the third variant of the same rule in this document: **when an arrival touches the
+page, ask whether the thing it is touching exists yet.**
+
+### The result card that was true only going forwards
+
+`location-to-gene` originally read *"REG4 is the gene of focus again, note and all"*. The note
+belongs to the section before it, and nothing in this step declares one — so the sentence was
+true walking forward and false on every cold jump and every walk back. The claim was dropped
+rather than propped up with an arrival, because a card asserting less is cheaper than a step
+that has to create a note to be re-readable. **Every claim a card makes has to survive the
+step being reached backwards.**
+
+### What was built for it
+
+| Built | Where |
+| --- | --- |
+| 30 target contracts | `frontend/src/tutorialTargets/genomeBrowser.js` — `browser.focusWindow`, `browser.recenterLocation`, `browser.locationFocusBar`, `browser.locationDrawer` and the `location.*` family |
+| Three explicit attributes | `data-location-focus-bar`, `data-location-drawer-notes`, `data-location-drawer-section` — see below |
+| `setLocationFocus` on the panel | `GenomeBrowser.jsx`, published through `registerBrowserViewport`; `describe()` now reports `locationFocus` |
+| `setBrowserLocationFocus` | `frontend/src/utils/browserTutorialControls.js` |
+| The `locationFocus` and `locationDetail` arrivals | `tutorialModel.js` validation, applied in `useTutorial.jsx` |
+| Builder fields | **Browser arrival state** gained *Location of focus* and *Beside the location drawer* |
+| Four tests of the section's own invariants | `frontend/tests/tutorials.test.js` |
+
+**The three new attributes exist because the binding test cannot read a compound selector.**
+`tutorialTargets.test.js` checks every advertised target against the components by plain text,
+stripping a selector down to one attribute name — so `[data-focus-bar][data-focus-kind="location"]`
+and `[data-location-drawer="true"] [data-focus-drawer-notes]` were both invisible to it. Rather
+than weaken the test, the components write the attribute out: it is one line each, and it makes
+the anchor greppable, which is the thing the test is protecting. **Give a target one attribute
+of its own rather than composing two.**
+
+The location bar and the location drawer needed distinguishing anyway. A panel focuses one
+thing at a time, so the gene bar and the location bar are never on screen together — but
+`[data-focus-bar]` alone resolves to whichever *is*, and a location step would then have
+quietly ringed a gene bar left over from the section before.

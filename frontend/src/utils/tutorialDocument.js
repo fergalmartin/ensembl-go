@@ -512,6 +512,20 @@ export function legacyTutorialToDocument(tutorial, options = {}) {
     const revealTarget = targetRefFromAnchor(step.reveal?.anchor)
     const whenTypedTarget = targetRefFromAnchor(step.reveal?.whenTyped)
     const advanceTarget = targetRefFromAnchor(step.advanceOn?.anchor)
+    // The counterpart of the `positioned` conversion in materialisation. Without it a
+    // framed arrival keeps the anchor it was materialised into, and a *scoped* one — a
+    // target belonging to one genome's panel — keeps a raw selector, which
+    // `validateTutorialDocument` refuses outright. So cloning any tutorial that frames a
+    // step against one panel produced a document the builder could not open.
+    const positionedArrivals = new Set(['selectorList', 'pageScroll'])
+    const arrivals = (Array.isArray(step.arrive) ? step.arrive : (step.arrive ? [step.arrive] : [])).map((arrival) => {
+      if (!positionedArrivals.has(arrival?.type) || arrival.target || !arrival.anchor) return arrival
+      const target = targetRefFromAnchor(arrival.anchor)
+      if (!target) return arrival
+      const { anchor: _anchor, ...rest } = arrival
+      return { ...rest, target }
+    })
+    if (arrivals.length) step.arrive = Array.isArray(step.arrive) ? arrivals : arrivals[0]
     const inferredAction = step.action || (step.prefill
       ? { type: 'type', anchor: step.prefill.anchor, value: step.prefill.value, submit: true }
       : null)

@@ -1,0 +1,371 @@
+/* The sequence view's control bar, in the app's two existing control-bar idioms.
+ *
+ * The bar itself is the genome browser's: the same background, the same border
+ * under it, the same height and padding, so moving between the two views does
+ * not move the furniture. The controls on it are the alignment explorer's: a
+ * quiet label over the value that is actually applied, a chevron where there is
+ * a menu behind it, and the menu itself drawn over the page and pinned to its
+ * button. A reader who has learned one of those has learned this one.
+ *
+ * Written out here rather than imported from `alignment-explorer/explorer.css`
+ * because that file is scoped to `.alignment-layers` and carries the whole
+ * explorer with it -- three thousand lines of canvas, sidebar and modal rules
+ * for the dozen this bar needs. The tokens are the same values, so the two stay
+ * the same colour; the shapes are stated once each.
+ *
+ * Everything is scoped under `.sv-controls`, which is the view's own root. The
+ * menus are portalled into that root rather than into the body, so they inherit
+ * these tokens and the light/dark switch reaches them.
+ */
+
+.sv-controls {
+  --sv-bar: #1e2938;
+  --sv-panel: #1a273a;
+  --sv-field: #111827;
+  --sv-border: #374151;
+  --sv-text: #e3eaf4;
+  --sv-muted: #9aaac0;
+  --sv-accent: #60a5fa;
+  --sv-primary: #2563eb;
+  --sv-primary-hover: #3b82f6;
+  --sv-warn: #fbbf24;
+}
+
+.sv-controls.light {
+  --sv-bar: #f1f3f5;
+  --sv-panel: #ffffff;
+  --sv-field: #ffffff;
+  --sv-border: #d2dae5;
+  --sv-text: #27394c;
+  --sv-muted: #66788d;
+  --sv-accent: #0099ff;
+  --sv-primary: #0099ff;
+  --sv-primary-hover: #0088ee;
+  --sv-warn: #b45309;
+}
+
+/* ---- the bar ---------------------------------------------------------- */
+
+.sv-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  min-height: 59px;
+  border-bottom: 1px solid var(--sv-border);
+  background: var(--sv-bar);
+  color: var(--sv-text);
+  font: 12px/1.45 Lato, system-ui, sans-serif;
+  flex: none;
+  overflow-x: auto;
+  box-sizing: border-box;
+}
+.sv-bar > * { flex-shrink: 0; }
+/* What is being read, rather than a control on it: pushed to the far end, the
+   way the explorer puts its context group there. */
+.sv-bar > .sv-bar-context { margin-left: auto; padding-left: 10px; min-width: 0; flex-shrink: 1; }
+.sv-bar::-webkit-scrollbar { height: 7px; }
+.sv-bar::-webkit-scrollbar-track { background: transparent; }
+.sv-bar::-webkit-scrollbar-thumb { background: var(--sv-border); border-radius: 4px; }
+.sv-bar::-webkit-scrollbar-thumb:hover { background: var(--sv-muted); }
+
+/* Scoped to the bar and the menus, not to `.sv-controls`. The tokens live on
+   the view's root so that a menu portalled into it inherits them, and the root
+   holds the whole view -- the drawer, the base popup, the legend. An element
+   rule up there would restyle every button in all of them. */
+.sv-bar button,
+.sv-bar select,
+.sv-bar input:not([type=checkbox]),
+.sv-menu button,
+.sv-menu select,
+.sv-menu input:not([type=checkbox]) {
+  background: var(--sv-panel);
+  color: var(--sv-text);
+  border: 1px solid var(--sv-border);
+  border-radius: 5px;
+  padding: 6px 9px;
+  font: inherit;
+  min-width: 0;
+}
+.sv-bar button,
+.sv-menu button { cursor: pointer; white-space: nowrap; }
+.sv-bar button:hover:not(:disabled),
+.sv-menu button:hover:not(:disabled) {
+  border-color: var(--sv-accent);
+  background: color-mix(in srgb, var(--sv-accent) 9%, var(--sv-panel));
+}
+.sv-bar button:disabled,
+.sv-menu button:disabled { opacity: .4; cursor: default; }
+.sv-menu button.primary { color: #fff; background: var(--sv-primary); border-color: var(--sv-primary); }
+.sv-menu button.primary:hover:not(:disabled) { background: var(--sv-primary-hover); border-color: var(--sv-primary-hover); }
+.sv-bar .selected,
+.sv-menu .selected { border-color: var(--sv-accent); background: color-mix(in srgb, var(--sv-accent) 12%, var(--sv-panel)); }
+.sv-bar :focus-visible,
+.sv-menu :focus-visible { outline: 2px solid var(--sv-accent); outline-offset: 2px; }
+.sv-bar small,
+.sv-menu small,
+.sv-notes small { font-size: 10px; color: var(--sv-muted); }
+.sv-menu input[type=checkbox] { accent-color: var(--sv-accent); }
+
+/* ---- a control on the bar --------------------------------------------- */
+
+/* Two lines in the height of the bar: what the control is, and what it is set
+   to. The value is the applied one -- never a menu draft -- so the bar always
+   reads as the state of the view rather than as the state of a menu. */
+.sv-bar .sv-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  height: 46px;
+  padding: 6px 10px;
+  text-align: left;
+  min-width: var(--sv-w, auto);
+}
+.sv-control-label { display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 0; flex: 1; }
+.sv-control-name {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  color: var(--sv-muted); font-size: 10px; font-weight: 400; line-height: 12px; white-space: nowrap;
+}
+.sv-control-value {
+  display: block; color: var(--sv-text); font-size: 12px; font-weight: 600; line-height: 16px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sv-control-active { color: var(--sv-accent); font-size: 9px; font-weight: 600; }
+/* A control whose face is its name alone. The two-line form's name is a caption
+   over a value; standing by itself it is the label, and takes the value's size. */
+.sv-control > .sv-control-name { color: var(--sv-text); font-size: 12px; font-weight: 600; line-height: 16px; }
+.sv-control-chevron { flex-shrink: 0; color: var(--sv-muted); transition: transform .12s; }
+.sv-bar .menu-open { border-color: var(--sv-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sv-accent) 28%, transparent); }
+.sv-bar .menu-open .sv-control-chevron { transform: rotate(180deg); color: var(--sv-accent); }
+.sv-bar button:hover:not(:disabled) .sv-control-chevron { color: var(--sv-text); }
+
+/* A control whose face is a switch and whose chevron is its settings: one press
+   to turn the thing off and on, a second target for the how. The explorer's
+   Gaps control is the same object. */
+.sv-split { display: inline-flex; align-items: stretch; height: 46px; border: 1px solid var(--sv-border); border-radius: 5px; overflow: hidden; }
+.sv-split button { border: 0 !important; border-radius: 0 !important; background: transparent !important; }
+.sv-split button:hover:not(:disabled) { background: color-mix(in srgb, var(--sv-accent) 12%, transparent) !important; }
+.sv-split-main { flex: 1; min-width: 0; text-align: left; padding: 5px 9px !important; display: flex; align-items: center; }
+.sv-split-arrow { width: 30px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; padding: 0 !important; border-left: 1px solid var(--sv-border) !important; }
+.sv-split.selected { border-color: var(--sv-accent); background: color-mix(in srgb, var(--sv-accent) 12%, var(--sv-panel)); }
+
+/* The two square controls: the search button and the selection tool. Square
+   because both are a glyph rather than a word, and the same height as the
+   fields they stand beside. */
+.sv-icon-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 30px; padding: 0 !important;
+  color: #fff; background: var(--sv-primary) !important; border-color: var(--sv-primary) !important;
+}
+.sv-icon-button:hover:not(:disabled) { background: var(--sv-primary-hover) !important; border-color: var(--sv-primary-hover) !important; }
+/* A tool in hand. The inset ring is how the genome browser says the same thing. */
+.sv-icon-button[aria-pressed=true] { box-shadow: 0 0 0 2px var(--sv-bar) inset; }
+
+.sv-find { display: flex; align-items: center; gap: 5px; }
+.sv-find input { width: 232px; height: 30px; box-sizing: border-box; background: var(--sv-field); }
+.sv-bar select { height: 30px; box-sizing: border-box; padding: 0 6px; background: var(--sv-field); max-width: 220px; }
+
+.sv-divider { width: 1px; height: 28px; background: var(--sv-border); }
+
+/* What is on screen, and anything the view has to say about it. Wraps rather
+   than scrolling the bar, because it is a sentence and not a control. */
+.sv-readout { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--sv-muted); font-size: 11px; line-height: 1.35; }
+.sv-readout strong { color: var(--sv-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.sv-readout .sv-note { overflow-wrap: anywhere; }
+.sv-readout .sv-note.warn { color: var(--sv-warn); }
+/* What the view has to say about what it is showing. Under the bar rather than
+   in it: these are sentences, and a sentence in a row of controls either
+   truncates or pushes the controls off the end of it. */
+.sv-notes {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 5px 10px 6px;
+  border-bottom: 1px solid var(--sv-border);
+  background: var(--sv-bar);
+  color: var(--sv-muted);
+  font: 11px/1.45 Lato, system-ui, sans-serif;
+}
+.sv-notes .sv-note.warn { color: var(--sv-warn); }
+
+.sv-bar .sv-link,
+.sv-notes .sv-link {
+  padding: 0; border: 0; border-radius: 0; background: none !important;
+  color: var(--sv-accent); font: inherit; text-decoration: underline; cursor: pointer;
+}
+.sv-bar .sv-link:hover,
+.sv-notes .sv-link:hover { color: var(--sv-text); }
+
+/* ---- a menu hanging off a control ------------------------------------- */
+
+.sv-anchored-menu { position: fixed; z-index: 40; }
+.sv-anchored-menu::before {
+  content: ''; position: absolute; left: var(--sv-menu-pointer); top: -6px;
+  width: 11px; height: 11px; transform: translateX(-50%) rotate(45deg);
+  background: var(--sv-panel); border-top: 1px solid var(--sv-accent); border-left: 1px solid var(--sv-accent);
+  z-index: 1; pointer-events: none;
+}
+.sv-menu {
+  position: relative; width: 100%; box-sizing: border-box;
+  max-height: var(--sv-menu-max-height); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 9px; padding: 11px;
+  background: var(--sv-panel); color: var(--sv-text);
+  border: 1px solid var(--sv-accent); border-radius: 7px; box-shadow: 0 12px 32px #0007;
+  font: 12px/1.45 Lato, system-ui, sans-serif;
+}
+.sv-menu-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding-bottom: 9px; border-bottom: 1px solid var(--sv-border); }
+.sv-menu-heading strong { font-size: 13px; }
+.sv-menu-heading span { font-size: 10px; color: var(--sv-muted); }
+
+/* A named part of a long menu. The Feature menu answers four different
+   questions, and without the rules between them they read as one list of
+   switches in which the flank boxes look like they belong to the collapse
+   above them. */
+.sv-menu-section { display: flex; flex-direction: column; gap: 7px; padding-top: 9px; border-top: 1px solid var(--sv-border); }
+.sv-menu-section:first-of-type { padding-top: 0; border-top: 0; }
+.sv-menu-title { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--sv-muted); }
+
+.sv-menu-check { display: flex; align-items: center; gap: 7px; font-size: 11.5px; }
+.sv-menu-check input { flex: none; }
+
+/* The settings a switch above governs. A fieldset, so turning the switch off
+   greys them and takes them out of the tab order in one attribute rather than
+   leaving live controls for a state they do not describe. */
+.sv-menu-fields { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; border: 0; padding: 0 0 0 24px; margin: 0; min-width: 0; }
+.sv-menu-fields[disabled] { opacity: .45; }
+.sv-menu-fields label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--sv-muted); }
+.sv-menu-fields input[type=text] { width: 58px; padding: 2px 5px; font-size: 11px; text-align: right; background: var(--sv-field); }
+/* The sentence about a switch, lined up under the fields it explains but
+   outside the fieldset that greys them. */
+.sv-menu-note { display: block; padding-left: 24px; line-height: 1.5; }
+
+/* A switch and the settings it governs, as one block. Named rather than
+   matched as `.sv-menu-section > div`, which outranks the class on the flank
+   grid below and laid its three columns out in one. */
+.sv-menu-item { display: flex; flex-direction: column; gap: 6px; }
+
+/* One row per feature type, three columns: what it is, and its two ends. The
+   grid is what keeps the 5' boxes under each other -- a flex row of labelled
+   fields lets each row set its own column positions, and the eye then cannot
+   compare down the column, which is the whole reason for listing them. */
+.sv-flank-grid { display: grid; grid-template-columns: 1fr auto auto; gap: 6px 10px; align-items: center; }
+.sv-flank-grid > span { font-size: 11px; color: var(--sv-text); }
+.sv-flank-grid > .sv-flank-head { font-size: 10px; color: var(--sv-muted); text-transform: uppercase; letter-spacing: .05em; text-align: right; }
+.sv-flank-grid label { display: flex; align-items: center; gap: 5px; justify-content: flex-end; font-size: 10px; color: var(--sv-muted); }
+.sv-flank-grid input { width: 62px; padding: 3px 5px; font-size: 11px; text-align: right; background: var(--sv-field); }
+
+/* ---- the colour list ---------------------------------------------------- */
+
+.sv-colour-menu .sv-menu-section { gap: 3px; }
+/* A whole row is the target, not the swatch alone: the name is what a reader
+   aims at, and a 14px square is a small thing to ask anyone to hit. */
+.sv-colour-row {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 5px 7px !important; text-align: left;
+  background: transparent !important; border-color: transparent !important;
+}
+.sv-colour-row:hover:not(:disabled) { border-color: var(--sv-accent) !important; }
+.sv-colour-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 11.5px; }
+.sv-colour-name small { line-height: 1.35; }
+.sv-colour-value {
+  flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px; color: var(--sv-muted); text-transform: uppercase;
+}
+.sv-swatch {
+  flex: none; width: 15px; height: 15px; border-radius: 3px;
+  border: 1px solid var(--sv-border); box-sizing: border-box;
+}
+
+.sv-menu-actions {
+  position: sticky; bottom: -11px; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 10px 0 0; background: var(--sv-panel); border-top: 1px solid var(--sv-border);
+}
+.sv-menu-actions small { margin-right: auto; line-height: 1.4; }
+.sv-menu-actions button { font-size: 11px; }
+
+/* Zoom: a slider and, once it has been moved, the way back.
+
+   Boxed like the controls either side of it, with the same border, radius,
+   height and padding a bar button has -- it is one of the bar's controls, and
+   set loose it read as a stray label with a slider after it. The cross stays
+   outside the box: it is an action rather than part of the setting. */
+.sv-zoom { display: flex; align-items: center; gap: 7px; }
+.sv-bar .sv-zoom-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 46px;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  background: var(--sv-panel);
+  color: var(--sv-text);
+  border: 1px solid var(--sv-border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sv-bar .sv-zoom-box:hover { border-color: var(--sv-accent); }
+.sv-bar .sv-zoom-box:focus-within { border-color: var(--sv-accent); }
+/* The same type the single-line controls set their name in, so "Zoom" and
+   "Features" are the same words at the same size. */
+.sv-bar .sv-zoom-box .sv-control-name {
+  color: var(--sv-text); font-size: 12px; font-weight: 600; line-height: 16px;
+}
+.sv-zoom-value {
+  font-size: 12px; font-weight: 600; line-height: 16px;
+  font-variant-numeric: tabular-nums; min-width: 34px; text-align: right;
+  color: var(--sv-muted);
+}
+.sv-zoom-box input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 92px;
+  height: 12px;
+  /* The bar styles inputs generally -- a border, a radius, a background -- and
+     turning the native appearance off is what lets those reach a range input
+     that never wanted them. Without this the track sits inside a bordered box a
+     few pixels wider than itself, which is the same illusion of somewhere
+     further to drag that the fill had. */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+.sv-zoom-box input[type="range"]:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+/* The track is filled to `--sv-zoom-fill`, and the thumb is sized so that its
+   right-hand edge lands on the end of the track at full size. Left to the
+   browser, the fill stops at the thumb's centre and a stub of empty track shows
+   past it -- which reads as somewhere further to drag when there is not. */
+.sv-zoom-box input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background:
+    linear-gradient(to right, #2875c8 0 calc(var(--sv-zoom-fill, 1) * 100%),
+      var(--sv-zoom-rail, #64748b55) calc(var(--sv-zoom-fill, 1) * 100%) 100%);
+}
+.sv-zoom-box input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #2875c8;
+  /* Centred on a 4px track. */
+  margin-top: -3.5px;
+}
+.sv-zoom-box input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background:
+    linear-gradient(to right, #2875c8 0 calc(var(--sv-zoom-fill, 1) * 100%),
+      var(--sv-zoom-rail, #64748b55) calc(var(--sv-zoom-fill, 1) * 100%) 100%);
+}
+.sv-zoom-box input[type="range"]::-moz-range-thumb {
+  width: 11px; height: 11px; border: 0; border-radius: 50%; background: #2875c8;
+}
+.sv-controls.light .sv-zoom-box input[type="range"] { --sv-zoom-rail: #cbd5e1; }
+.sv-zoom-value { font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; opacity: .75; }

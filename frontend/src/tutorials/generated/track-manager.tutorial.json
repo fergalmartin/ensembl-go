@@ -4,7 +4,7 @@
   "id": "track-manager",
   "revision": 1,
   "title": "Adding your own data tracks",
-  "blurb": "Register coverage, peak and variant files in the Track Manager, then read them in the genome browser beside the annotation. Runs on a small demo data set and leaves your own tracks untouched.",
+  "blurb": "This tutorial introduces you to the Track Manager view, where you can register your own tracks and attach them to a genome. It demonstrates this for a few different data types and shows how to subsequently view them in the Genome Browser.",
   "estimatedMinutes": 10,
   "usesDemoGenome": true,
   "completionBody": "You can now bring your own data into Ensembl Go and read it beside the genes. Your own registered tracks were never touched, and the tutorial's temporary data has been cleared away.",

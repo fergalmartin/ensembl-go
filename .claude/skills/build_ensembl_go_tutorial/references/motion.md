@@ -190,3 +190,25 @@ scaled by the speed factor.
    not blend into one blur.
 8. **At the fast speed, is anything now too quick to follow?** At the slow speed, does
    anything crawl? Both ends are authored by the same durations.
+
+## A control whose effect depends on the current view is not an arrival
+
+The browser's **Focus this window** button focuses whatever the window happens to be showing.
+An arrival that wanted a *named* region would therefore have to travel there, press it, and
+then be moved back to the view the card describes — a journey and a correction, which is the
+thing this document exists to prevent.
+
+So the arrival goes through the panel's own handler, published on the
+`browserTutorialControls` registry beside `goToLocus` (`setLocationFocus`). It changes the
+state and leaves the view completely alone, which makes the step's own `browserView` arrival
+the only thing that moves the browser: one journey.
+
+The general rule: **if pressing the control would produce a different result depending on where
+the reader happens to be, the arrival must not press it.** Press it in the *step* — that is the
+lesson — and set the state from the registry everywhere else.
+
+**When an arrival's effect re-frames the view, declare the framed window, not the raw one.**
+Focusing a window keeps the region at `BOX_SELECT_FILL_FRACTION` of the view so its boundary
+lines land inside the track. Every later step declares that padded window; declaring the region
+itself would put the boundary lines off both edges. Measure the real number in the running app
+rather than deriving it — the drawer inset is part of it.

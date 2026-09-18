@@ -1,25 +1,23 @@
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './data.js'
-import { cellRanges, firstBlocks, rowSlot, rowCount, panelGeometry, blockJumpMarkers, linkIsBuried, litRows, sourceViewAnchor, BLOCK_EDGE_GAP, blockAtLayoutX, planeOf, pickSlots } from './layers.js'
+import { cellRanges, firstBlocks, rowSlot, panelRect, pinnedBottom, blockJumpMarkers, linkIsBuried, litRows, sourceViewAnchor, BLOCK_EDGE_GAP, blockAtLayoutX, planeOf, pickSlots } from './layers.js'
 import { rowCoverage } from './tileCoverage'
 import { visibleGaps } from './gapMemory'
+import { columnPieces, collapseJoins, collapsedColumns, displayColumn, sourceColumn } from './collapse.js'
 import { denseOriginal } from './originalLayout'
 import { blockHeaderPlan, rulerTicks } from './headerPlan.js'
 import { FEATURE_COLORS } from '../FeatureLegend'
 
-import { NUCLEOTIDE_TEXT_COLOR, NUCLEOTIDE_LETTER_THRESHOLD, getBaseColor } from '../../utils/nucleotideStyle'
+import { NUCLEOTIDE_LETTER_THRESHOLD } from '../../utils/nucleotideStyle'
 import { basePalette, presenceColour } from './palettes.js'
 import { recordPerformance } from './performance.js'
 import { schemeById } from './colourSchemes.js'
 import { paintConservationSpan } from './paintConservation.js'
 import { paintUniformSpan } from './paintUniform.js'
+import { binRuns } from './paintBins.js'
 import { paintMotifSpan } from './paintMotifs.js'
-import { firstMotifSpan } from './motifs.js'
-import { readableTextOn } from '../../utils/genomePillColors.js'
+import { paintBases } from './paintBases.js'
 import { monoFont } from '../../utils/typography'
-// The left edge is the exact affine position; the body is compressed into the
-// rect minus a constant pixel gap, leaving a channel before the next block.
-export const panelRect=(f,camera)=>({...panelGeometry(f,camera,MARGIN_X),y:MARGIN_Y+f.y*ROW_HEIGHT-camera.y,height:rowCount(f)*ROW_HEIGHT})
-export function pointInPanel(px,py,f,camera){const r=panelRect(f,camera);return px>=r.x&&px<=r.x+r.width&&py>=r.y-HEADER_HEIGHT&&py<=r.y+r.height}
+export { panelRect, pointInPanel } from './layers.js'
 function rounded(ctx,x,y,w,h,r=5){ctx.beginPath();ctx.roundRect(x,y,Math.max(0,w),Math.max(0,h),r)}
 function dashed(ctx,x,y,width,height,color) {
   ctx.save();ctx.beginPath();ctx.rect(x,y,width,height);ctx.clip();ctx.strokeStyle=color;ctx.lineWidth=1
@@ -30,6 +28,9 @@ function dashed(ctx,x,y,width,height,color) {
 // a feature; it waits until the camera makes it one. Only ever adds gaps on
 // zooming in, never removes them.
 const MIN_VISIBLE_GAP=2
+// Two marks nearer than this are one mark as far as the eye is concerned, and
+// drawing both only thickens it.
+const MIN_JOIN_GAP=5
 // Breathing room at both ends of a header, so a name never touches the edge it
 // is measured against.
 const HEADER_PAD=6
@@ -46,13 +47,22 @@ function niceStep(scale){const raw=80/scale,mag=10**Math.floor(Math.log10(raw));
 function rowChunks(fragment,rowId){return cellRanges(fragment,rowId)}
 
 /** Paint an alignment layer to a viewport-sized texture: no chromosome-sized canvases. */
-export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,connections,offWindow=[],counts,state,drag,hover,gaps,reorder,selectionRect,conservation=null,hoverPick=null,ghost=false,light=false}) {
+/** The sheet's palette, in one place.
+ *
+ * Both painters take it from here. When the overlay built its own it was short
+ * of `text`, and every name it drew kept whatever fill happened to be current -
+ * which is a class of bug that only an unshared palette can have. */
+export function explorerColors(light) {
   const colors=light?{background:'#f6f8fb',panel:'#fff',text:'#27394c',muted:'#738196',border:'#cbd5e1',head:'#edf2f8',void:'#eef2f7'}:{background:'#152032',panel:'#1c293d',text:'#e3eaf4',muted:'#8f9fb3',border:'#3a4d65',head:'#24354c',void:'#152032'}
   // A gap is sequence that is not there to say anything, which is the same
   // statement the Feature Explorer outlines unannotated genomic sequence to
   // make. Same colour, from its own table, so the two views stay one
   // vocabulary and cannot drift apart.
   colors.gap=FEATURE_COLORS.genomic?.bg||'#60a5fa'
+  return colors
+}
+export function paintLayer(ctx,{layer,camera,size,inventory,rowsById=null,tiles,annotations,connections,offWindow=[],counts,state,drag,hover,gaps,reorder,selectionRect,conservation=null,hoverPick=null,ghost=false,light=false,focusOf=null}) {
+  const colors=explorerColors(light)
   const linkedPill=(row,x,y,width)=>{
     if(row?.linkStatus!=='topbar'&&row?.linkStatus!=='local')return
     ctx.save();ctx.fillStyle=light?'#dbeafe':'#17365f';ctx.strokeStyle=colors.gap;ctx.lineWidth=1
@@ -112,7 +122,11 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
   const drawLayer=drag?.fragmentId?{...layer,fragments:layer.fragments.map(f=>f.id===drag.fragmentId?{...f,x:drag.x,y:drag.y}:f)}:layer
   const dense=denseOriginal(drawLayer,camera,size,plane),aligned=state.original&&((state.originalRows||'aligned')==='aligned'||drawLayer.fragments.some(f=>f.aggregate))
   const headerBoxes=[],labelBoxes=[],fragmentById=new Map(drawLayer.fragments.map(f=>[f.id,f]))
-  const first=firstBlocks(drawLayer),byId=new Map(inventory.map(r=>[r.id,r])),hits=[]
+  // Every row the sheet might draw, not only the ones Original is listing. A
+  // layer holds what the reader put in it, and Original's filter has no say
+  // over that - looked up in the listed rows alone, a layer's own sequences
+  // came out as bare identifiers the moment a filter excluded them.
+  const first=firstBlocks(drawLayer),byId=rowsById||new Map(inventory.map(r=>[r.id,r])),hits=[]
   ctx.font='11px "IBM Plex Mono", monospace'
   // Strings are drawn first so the sequence panels cover their endpoints.
   // Panels paint over strings, so a link skipping blocks it is not in would be
@@ -125,7 +139,13 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     const selected=lit.has(connection.rowId)
     if(dense&&!selected)continue
     const a=panelRect(originalA,camera),b=panelRect(originalB,camera)
-    const ax=a.x+(connection.fromEnd-originalA.start)*a.scale,bx=b.x+(connection.toStart-originalB.start)*b.scale
+    // Through the collapse map, the same as the cells the ends sit against. A
+    // link is anchored to a column, and a column's place on a collapsed panel is
+    // not its distance from the block's start: placed that way the ends ran off
+    // the panel they belong to, so the curves wrapped, leaned and were then
+    // discarded as buried by blocks they were nowhere near.
+    const ax=a.x+displayColumn(originalA,connection.fromEnd)*a.scale
+    const bx=b.x+displayColumn(originalB,connection.toStart)*b.scale
     const ay=a.y+(rowSlot(originalA,originalA.rowIds.indexOf(connection.rowId))+0.5)*ROW_HEIGHT
     const by=b.y+(rowSlot(originalB,originalB.rowIds.indexOf(connection.rowId))+0.5)*ROW_HEIGHT
     if(Math.max(ax,bx)<0||Math.min(ax,bx)>size.width||Math.min(ay,by)>size.height||Math.max(ay,by)<0)continue
@@ -211,7 +231,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       hits.push({kind:'aggregate',fragmentId:f.id,x:left,y:top-HEADER_HEIGHT,width:right-left,height:HEADER_HEIGHT});continue
     }
     const tile=tiles[f.id],sources=tile?.sources||[tile?.data].filter(Boolean)
-    ctx.save();ctx.beginPath();ctx.rect(Math.max(0,r.x),Math.max(0,r.y-HEADER_HEIGHT),Math.min(size.width,w+1),Math.min(size.height,r.height+HEADER_HEIGHT));ctx.clip()
+    ctx.save();ctx.beginPath();const clipTop=Math.max(0,r.y-HEADER_HEIGHT,f.pinned?0:pinnedBottom(layer,camera));ctx.rect(Math.max(0,r.x),clipTop,Math.min(size.width,w+1),Math.max(0,Math.min(size.height,r.y+r.height)-clipTop));ctx.clip()
     ctx.fillStyle=colors.background;ctx.fillRect(r.x,r.y,w,r.height)
     if(aligned&&!f.compact&&!flatRows){ctx.strokeStyle=colors.border;ctx.globalAlpha=.28;for(let y=Math.max(r.y,MARGIN_Y+Math.floor(camera.y/ROW_HEIGHT)*ROW_HEIGHT-camera.y);y<Math.min(size.height,r.y+r.height);y+=ROW_HEIGHT)ctx.strokeRect(r.x+.5,y+.5,w,ROW_HEIGHT);ctx.globalAlpha=1}
     const hovered=hover?.fragmentId===f.id
@@ -219,25 +239,64 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     // The ruler goes with the coordinates: a block too narrow to name its
     // interval is too narrow to tick it either.
     const headerLeft=Math.max(state.original?MARGIN_X:0,r.x),headerRight=Math.min(size.width,r.x+w)
+    // The header names the columns the panel covers, which is still the whole
+    // block: a collapse removes them from the drawing, not from the interval.
+    // What it adds is how many of them are not being drawn, said in words - the
+    // bare signed number it used to print was a quantity with no unit and no
+    // verb, and nothing on screen said what it was counting or why.
+    const cut=collapsedColumns(f)
     const interval=`${(f.start+1).toLocaleString()}–${f.end.toLocaleString()}`
+    const cutNote=cut?`${cut.toLocaleString()} ${cut===1?'column':'columns'} hidden`:''
     const canBrowse=state.browserFragments?.has(f.id)
+    // Block context is a lens onto one block, so it is offered from every sheet
+    // that draws blocks and from none that is already one.
+    const canContext=!state.blockContext&&!f.aggregate
+    const actionCount=state.blockContext?0:(state.original?3:2)+(canBrowse?1:0)+(canContext?1:0)
     ctx.font=monoFont(10)
-    const headerPlan=legible&&headerRight-headerLeft>2*HEADER_PAD?blockHeaderPlan({
-      room:headerRight-headerLeft-2*HEADER_PAD,actionsWidth:((state.original?3:2)+(canBrowse?1:0))*23,
-      sourceBlock:f.sourceBlock,interval,compact:f.compact&&!dense,
+    const headerPlan=(!state.blockContext||f.pinned||!layer.fragments.some(part=>part.pinned))&&legible&&headerRight-headerLeft>2*HEADER_PAD?blockHeaderPlan({
+      room:headerRight-headerLeft-2*HEADER_PAD,actionsWidth:actionCount*23,
+      sourceBlock:f.sourceBlock,interval,note:cutNote,compact:f.compact&&!dense,
       measure:text=>ctx.measureText(text).width}):null
     ctx.fillStyle=colors.head;ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,HEADER_HEIGHT)
     // Pointing at a block's header picks the whole block out of the row of them.
     if(hovered){ctx.fillStyle=light?'#26374d12':'#cfe0f812';ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,r.height+HEADER_HEIGHT)}
     // A block picked by its header is outlined in the colour a picked name takes.
     const blockPicked=state.selection.some(s=>s.kind==='block'&&s.fragmentId===f.id)
-    const leftVisible=Math.max(0,-r.x),firstCol=f.start+leftVisible/r.scale,step=niceStep(onScreen)
+    // The window in source columns, read back through the collapse map. Taken
+    // as a plain division it would name columns that are not on screen at all
+    // once anything between them has been collapsed, and every row would then
+    // ask its tiles for the wrong stretch of the block.
+    const visibleFrom=Math.max(f.start,sourceColumn(f,Math.max(0,-r.x)/r.scale))
+    const visibleTo=Math.min(f.end,sourceColumn(f,Math.max(0,(size.width-r.x)/r.scale)))
+    // How many columns of this panel land under half a screen pixel - one
+    // device pixel on the displays this is read on, and the finest mark that
+    // can be told from its neighbour. Everything here is drawn in plane units
+    // and the canvas carries the plane factor, so a screen pixel is `1/plane`
+    // of them. Both simplifications below are measured in this and in nothing
+    // else, which is what makes them do nothing at all close up: at a pixel a
+    // column or better it is under one column, and a rule that fires below one
+    // column never fires.
+    const subPixel=.5/Math.max(Number.EPSILON,r.scale*plane)
+    // Kept runs nearer than that are one run. A collapsed block holds up to
+    // four thousand of them and zoomed out every one became a piece of its own,
+    // in every row, of every span - which is how a sheet that draws in
+    // milliseconds close up came to take seconds a step out. Floored to whole
+    // columns so that a pan or a nudge of the wheel asks for a run list that is
+    // already built rather than a slightly different one.
+    const joinTolerance=Math.floor(subPixel)
+    const step=niceStep(onScreen)
     ctx.font='10px "IBM Plex Mono", monospace';ctx.fillStyle=colors.muted
     const tickLimit=Math.min(size.width,r.x+w)-HEADER_PAD
-    if(headerPlan?.interval)for(const tick of rulerTicks({from:firstCol,end:f.end,x:r.x,start:f.start,scale:r.scale,step,
-      limit:tickLimit,viewport:size.width,measure:text=>ctx.measureText(text).width})){
-      if(tick.label)ctx.fillText(tick.label,tick.x+3,r.y-9)
-      ctx.fillRect(tick.x,r.y-5,1,5)
+    // Ticks are laid per kept run rather than across the panel, because a
+    // collapse breaks the one thing an evenly stepped ruler assumes: that the
+    // column under a position is the position's own distance from the start.
+    // Numbering it that way would print coordinates that are not in the block.
+    if(headerPlan?.interval)for(const piece of columnPieces(f,visibleFrom,visibleTo,joinTolerance)){
+      for(const tick of rulerTicks({from:piece.start,end:piece.end,x:r.x-piece.hidden*r.scale,start:f.start,scale:r.scale,step,
+        limit:tickLimit,viewport:size.width,measure:text=>ctx.measureText(text).width})){
+        if(tick.label)ctx.fillText(tick.label,tick.x+3,r.y-9)
+        ctx.fillRect(tick.x,r.y-5,1,5)
+      }
     }
     ctx.fillStyle=layer.color;ctx.fillRect(r.x,r.y-HEADER_HEIGHT,w,2)
 
@@ -253,12 +312,18 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       ctx.globalAlpha=anyLit&&!selected?0.36:1
       ctx.fillStyle=colors.void;ctx.fillRect(r.x,y,w,ROW_HEIGHT)
       for(const [rangeStart,rangeEnd] of ranges){
-        const left=Math.max(rangeStart,Math.floor(f.start-r.x/r.scale)),right=Math.min(rangeEnd,Math.ceil(f.start+(size.width-r.x)/r.scale))
-        const coverage=rowCoverage(sources,id,left,right,onScreen)
+        const left=Math.max(rangeStart,Math.floor(visibleFrom)),right=Math.min(rangeEnd,Math.ceil(visibleTo))
+        const coverage=rowCoverage(sources,id,left,right,onScreen,focusOf?focusOf(id):undefined)
         if(!detailRow&&!flatRows)detailRow=coverage.spans.some(s=>s.data?.detail&&s.row?.sequence!=null)
-        for(const {start,end,data,row} of [...coverage.spans,...coverage.holes.map(([start,end])=>({start,end,data:null,row:null}))]){
+        for(const span of [...coverage.spans,...coverage.holes.map(([start,end])=>({start,end,data:null,row:null}))]){
+        // One span of tile coverage becomes one drawn piece per kept run it
+        // crosses. The loops below are untouched: each piece hands them its own
+        // origin, shifted left by the columns collapsed before it, so they go on
+        // placing a column at `origin + (column - f.start) * scale` as they always did.
+        for(const piece of columnPieces(f,span.start,span.end,joinTolerance)){
+        const {data,row}=span,start=piece.start,end=piece.end,ox=r.x-piece.hidden*r.scale
         if(end<=start)continue
-        const x=r.x+(start-f.start)*r.scale,width=(end-start)*r.scale
+        const x=ox+(start-f.start)*r.scale,width=(end-start)*r.scale
         if(!row||row.missing||row.sequence==null&&data?.detail){
           // Membership is known before bases arrive. Keep an explicitly neutral
           // presence mark instead of making the block body disappear.
@@ -271,64 +336,47 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         // branches under it stay exactly the straight-line loops they were.
         if(ramp&&cohortSize){
           paintConservationSpan(ctx,{start,end,row,data,sources:conservation?.sources?.[f.id],cohort:cohortSize,ramp,index:scheme.index,contrast:conservation?.scale,
-            x:r.x,scale:r.scale,fragmentStart:f.start,y,colors,onScreen,light,flat:flatRows,rowPad,counter:paintCount})
+            x:ox,scale:r.scale,fragmentStart:f.start,y,colors,onScreen,light,flat:flatRows,rowPad,counter:paintCount})
           continue
         }
         // Below a few pixels a row is a mark rather than a sequence: one rect
         // says "present here", and the bins, gaps and features it would carry
         // are not resolvable at that size anyway.
         if(flatRows){ctx.fillStyle=motifMode?neutral:uniform||presence;ctx.fillRect(x,y+rowPad,width,ROW_HEIGHT-2*rowPad)
-          if(motifMode)paintMotifSpan(ctx,{spans:motifSpans,start,end,x:r.x,scale:r.scale,fragmentStart:f.start,y:y+rowPad,height:ROW_HEIGHT-2*rowPad})
+          if(motifMode)paintMotifSpan(ctx,{spans:motifSpans,start,end,x:ox,scale:r.scale,fragmentStart:f.start,y:y+rowPad,height:ROW_HEIGHT-2*rowPad})
           continue}
         // Below the bases and nowhere else: the detail branch under this paints
         // the sequence exactly as it always did, whichever shading is chosen.
         if(uniform&&!data.detail){
-          paintUniformSpan(ctx,{start,end,row,data,colour:uniform,x:r.x,scale:r.scale,fragmentStart:f.start,y,
+          paintUniformSpan(ctx,{start,end,row,data,colour:uniform,x:ox,scale:r.scale,fragmentStart:f.start,y,
             colors,counter:paintCount})
           continue
         }
         if(motifMode&&onScreen<NUCLEOTIDE_LETTER_THRESHOLD){
           const top=data.detail?y+1:y+3,height=data.detail?24:ROW_HEIGHT-6
           ctx.fillStyle=neutral;ctx.fillRect(x,top,width,height)
-          paintMotifSpan(ctx,{spans:motifSpans,start,end,x:r.x,scale:r.scale,fragmentStart:f.start,y:top,height})
+          paintMotifSpan(ctx,{spans:motifSpans,start,end,x:ox,scale:r.scale,fragmentStart:f.start,y:top,height})
         } else if(data.detail){
-          let motifIndex=firstMotifSpan(motifSpans,start)
-          for(let col=start;col<end;col++){
-            const base=row.sequence[col-data.start]
-            const left=Math.round(r.x+(col-f.start)*r.scale),right=Math.round(r.x+(col+1-f.start)*r.scale)
-            const width=Math.max(.5,right-left),top=y+1,height=24
-            while(motifIndex<motifSpans.length&&motifSpans[motifIndex][1]<=col)motifIndex++
-            const motifColor=motifSpans[motifIndex]?.[0]<=col?motifSpans[motifIndex][2]:neutral
-            ctx.fillStyle=base==='-'?colors.background:motifMode?motifColor:getBaseColor(base,baseColors)
-            ctx.fillRect(left,top,width,height)
-            if(onScreen>=6&&width>=2){
-              ctx.strokeStyle=light?'rgba(0,0,0,0.35)':'rgba(255,255,255,0.25)';ctx.lineWidth=1
-              ctx.beginPath();ctx.moveTo(right-.5,top+.5);ctx.lineTo(right-.5,top+height-.5);ctx.stroke()
-            }
-            // A gap's own dash is drawn with the run below, not here: this cell
-            // is painted over by that pass, and a dash left under it was rubbed
-            // out - visible only on a dimmed row, where the paint over it is
-            // translucent enough to let it through.
-            if(onScreen>=NUCLEOTIDE_LETTER_THRESHOLD&&base!=='-'){
-              if(motifMode&&!motifTextColors.has(motifColor))motifTextColors.set(motifColor,readableTextOn(motifColor))
-              ctx.fillStyle=motifMode?motifTextColors.get(motifColor):NUCLEOTIDE_TEXT_COLOR;ctx.font=monoFont(12);ctx.textAlign='center';ctx.textBaseline='middle'
-              ctx.fillText(base.toUpperCase(),left+width/2,top+height/2)
-              ctx.textAlign='left';ctx.textBaseline='alphabetic'
-            }
-          }
+          paintBases(ctx,{sequence:row.sequence,sequenceStart:data.start,start,end,x:ox,scale:r.scale,
+            fragmentStart:f.start,top:y+1,height:24,colors,baseColors,onScreen,light,
+            motifMode,motifSpans,neutral,motifTextColors})
         } else if(motifMode){
-          paintUniformSpan(ctx,{start,end,row,data,colour:neutral,x:r.x,scale:r.scale,fragmentStart:f.start,y,colors,counter:paintCount})
-          paintMotifSpan(ctx,{spans:motifSpans,start,end,x:r.x,scale:r.scale,fragmentStart:f.start,y:y+3,height:ROW_HEIGHT-6})
+          paintUniformSpan(ctx,{start,end,row,data,colour:neutral,x:ox,scale:r.scale,fragmentStart:f.start,y,colors,counter:paintCount})
+          paintMotifSpan(ctx,{spans:motifSpans,start,end,x:ox,scale:r.scale,fragmentStart:f.start,y:y+3,height:ROW_HEIGHT-6})
         } else {
-          row.bins?.forEach((bin,i)=>{
-            const ba=data.start+i*data.bin_size,bz=Math.min(data.end,ba+data.bin_size),a=Math.max(start,ba),z=Math.min(end,bz)
-            if(z<=a)return
-            const total=Object.values(bin).reduce((a,b)=>a+b,0),canonical='ACGT'.split('').reduce((n,c)=>n+(bin[c]||0),0),div=row.divergence_bins?.[i]?.fraction
-            ctx.fillStyle=bin['-']===total?colors.background:div==null?(canonical?presence:'#877b9f'):`hsl(${168-div*130} ${light?30:36}% ${light?65:49}%)`
-            ctx.fillRect(r.x+(a-f.start)*r.scale,y+3,(z-a)*r.scale,ROW_HEIGHT-6)
-            if(bin['-']===total){ctx.strokeStyle=colors.gap;ctx.lineWidth=.5;ctx.strokeRect(r.x+(a-f.start)*r.scale,y+3,(z-a)*r.scale,ROW_HEIGHT-6)}
-            if(canonical===0&&!(bin['-']===total))dashed(ctx,r.x+(a-f.start)*r.scale,y+3,(z-a)*r.scale,ROW_HEIGHT-6,colors.border)
-          })
+          // One rectangle per run of bins rather than one per bin, and only
+          // over the bins this piece actually covers. Both used to be the same
+          // thing and neither is: coverage resolves finest-first, so zooming
+          // out goes on drawing whatever detailed tiles are already in hand,
+          // and those bins can be a small fraction of a pixel each.
+          for(const run of binRuns(start,end,row,data,subPixel)){
+            const bx=ox+(run.start-f.start)*r.scale,bw=(run.end-run.start)*r.scale
+            ctx.fillStyle=run.gap?colors.background:run.fraction==null?(run.canonical?presence:'#877b9f'):`hsl(${168-run.fraction*130} ${light?30:36}% ${light?65:49}%)`
+            ctx.fillRect(bx,y+3,bw,ROW_HEIGHT-6)
+            if(run.gap){ctx.strokeStyle=colors.gap;ctx.lineWidth=.5;ctx.strokeRect(bx,y+3,bw,ROW_HEIGHT-6)}
+            else if(run.canonical===0)dashed(ctx,bx,y+3,bw,ROW_HEIGHT-6,colors.border)
+            paintCount.fills++
+          }
         }
         if(state.annotations){
           const features=annotations[f.id]?.[id]||row.metadata?.features||[]
@@ -338,11 +386,12 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
             const type=feature.type,color=FEATURE_COLORS[type]?.bg||'#60a5fa'
             ctx.fillStyle=color
             const h=type==='cds'?7:type==='exon'?4:3
-            ctx.fillRect(r.x+(a-f.start)*r.scale,y+ROW_HEIGHT-h,(z-a)*r.scale,h)
-            if(type==='cds'&&onScreen>=4){ctx.fillStyle='#bfdbfe';for(let p=a;p<z;p+=6)ctx.fillRect(r.x+(p-f.start)*r.scale,y+ROW_HEIGHT-h,Math.min(3,z-p)*r.scale,h)}
+            ctx.fillRect(ox+(a-f.start)*r.scale,y+ROW_HEIGHT-h,(z-a)*r.scale,h)
+            if(type==='cds'&&onScreen>=4){ctx.fillStyle='#bfdbfe';for(let p=a;p<z;p+=6)ctx.fillRect(ox+(p-f.start)*r.scale,y+ROW_HEIGHT-h,Math.min(3,z-p)*r.scale,h)}
           }
         }
-      }
+        }
+        }
       }
       // Gaps last, from memory rather than from whichever tile is to hand, so one
       // resolved at any zoom stays resolved instead of flickering as tiles swap.
@@ -350,11 +399,20 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       // outline and its dash: one run is one box at every zoom, where an outline
       // per cell drew a row of little boxes at one zoom and a long one at the next.
       if(gaps&&!f.aggregate&&!flatRows){
-        const from=Math.max(f.start,f.start+(-r.x)/r.scale),to=Math.min(f.end,f.start+(size.width-r.x)/r.scale)
         const gapTop=detailRow?y+1:y+3,gapHeight=detailRow?24:ROW_HEIGHT-6
-        const runs=visibleGaps(gaps,f.sourceBlock,id,from,to,MIN_VISIBLE_GAP/(r.scale*plane))
+        // A remembered gap can straddle a collapsed stretch, so each run is cut
+        // on the same runs the cells were. Drawn whole it would paint its box
+        // straight over the join and the columns beyond it.
+        // One run is one box, collapse or no collapse. A collapsed stretch has
+        // no width on the panel, so a run straddling one is still a single
+        // unbroken box - and it has to be drawn as one: two boxes would meet in
+        // a pair of outlines exactly where the alignment is meant to read as
+        // continuous. What the box covers is gap either way, since a collapsed
+        // stretch is by definition gap in every row on screen.
+        const runs=visibleGaps(gaps,f.sourceBlock,id,visibleFrom,visibleTo,MIN_VISIBLE_GAP/(r.scale*plane))
         for(const [a,z] of runs){
-          const gx=r.x+(a-f.start)*r.scale,gw=(z-a)*r.scale
+          const gx=r.x+displayColumn(f,a)*r.scale,gw=(displayColumn(f,z)-displayColumn(f,a))*r.scale
+          if(gw<=0)continue
           ctx.fillStyle=colors.background;ctx.fillRect(gx,gapTop,gw,gapHeight)
           ctx.strokeStyle=colors.gap;ctx.lineWidth=.5;ctx.strokeRect(gx+.5,gapTop+.5,Math.max(0,gw-1),gapHeight-1);ctx.lineWidth=1
         }
@@ -364,15 +422,51 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         // tile drew dashes on some rows and not their neighbours.
         if(onScreen>=NUCLEOTIDE_LETTER_THRESHOLD&&runs.length){
           ctx.fillStyle=colors.gap;ctx.font=monoFont(12);ctx.textAlign='center';ctx.textBaseline='middle'
+          // A glyph per column, so unlike the box these follow the kept runs: a
+          // collapsed column has no column of its own to put a dash in.
           for(const [a,z] of runs)
-            for(let column=a;column<z;column++)
-              ctx.fillText('-',r.x+(column+.5-f.start)*r.scale,gapTop+gapHeight/2)
+            for(const piece of columnPieces(f,a,z))
+              for(let column=piece.start;column<piece.end;column++)
+                ctx.fillText('-',r.x-piece.hidden*r.scale+(column+.5-f.start)*r.scale,gapTop+gapHeight/2)
           ctx.textAlign='left';ctx.textBaseline='alphabetic'
         }
       }
       ctx.globalAlpha=1
       if(selected){ctx.strokeStyle=PICKED_EDGE;ctx.lineWidth=hair(1.5);ctx.strokeRect(r.x,y+1,w,ROW_HEIGHT-2)}
       ctx.strokeStyle=colors.border;ctx.globalAlpha=.18;ctx.beginPath();ctx.moveTo(r.x,y+ROW_HEIGHT);ctx.lineTo(r.x+w,y+ROW_HEIGHT);ctx.stroke();ctx.globalAlpha=1
+    }
+    // Where columns were taken out, said so on the sheet itself.
+    //
+    // A collapse is the one thing this view does that makes neighbouring
+    // columns on screen not neighbours in the alignment, so it cannot be silent.
+    // The mark is drawn after the cells and through the whole panel, header
+    // included: it is a property of the panel, not of any row in it, and a row
+    // that happens to be empty there must not look like the one that was cut.
+    const joinFrom=Math.max(0,-r.x-4)/r.scale,joinTo=Math.max(0,size.width-r.x+4)/r.scale
+    // Marks closer together than they are wide are not marks any more. A real
+    // alignment read down to a few sequences collapses in thousands of short
+    // runs, and drawn one apiece they merged into a hatch that filled the block
+    // header and striped the cells - which says "something happened all along
+    // here" far less clearly than a handful of marks and a count does. The
+    // header carries the total, so nothing is lost by drawing the ones that can
+    // be told apart.
+    let lastJoin=-Infinity
+    for(const join of state.collapseMarks===false?[]:collapseJoins(f,joinFrom,joinTo)){
+      const jx=r.x+join.offset*r.scale
+      if(jx-lastJoin<MIN_JOIN_GAP/plane)continue
+      lastJoin=jx
+      // One hairline through the cells, and nothing in the header. It was a
+      // banded mark with two edges and a dashed riser into the header, which is
+      // a reasonable mark for the handful of joins a small alignment has and
+      // completely wrong for the thousands a real one has: the risers hatched
+      // the header solid and the bands turned the block into a barcode with the
+      // sequence somewhere behind it. What is collapsed is a count in the
+      // header; where it happened only needs a line fine enough to read past.
+      ctx.strokeStyle=colors.gap;ctx.globalAlpha=.6;ctx.lineWidth=hair(1)
+      ctx.beginPath();ctx.moveTo(jx,r.y);ctx.lineTo(jx,r.y+r.height);ctx.stroke()
+      ctx.globalAlpha=1;ctx.lineWidth=1
+      hits.push({kind:'collapse',fragmentId:f.id,x:jx-5,y:r.y-HEADER_HEIGHT,width:10,height:r.height+HEADER_HEIGHT,
+        columns:join.columns,from:join.start,to:join.end})
     }
     // Optional provenance overlay on the immutable Original, never on by default.
     for(const placed of state.placedOverlay||[]){
@@ -381,7 +475,8 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         const y=r.y+rowSlot(f,index)*ROW_HEIGHT
         if(y+ROW_HEIGHT<0||y>size.height)continue
         for(const [a,z] of cellRanges(placed,id)){
-          const x=r.x+(a-f.start)*r.scale,width=(z-a)*r.scale
+          const x=r.x+displayColumn(f,a)*r.scale,width=(displayColumn(f,z)-displayColumn(f,a))*r.scale
+          if(width<=0)continue
           // Another layer's colour, drawn the way a pick is drawn: the layer is
           // what the mark means, the weight and the inset are what kind of mark
           // it is, and those are the pick's.
@@ -391,7 +486,13 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
       }
     }
     for(const selected of state.selection.filter(s=>s.fragmentId===f.id)){
-      const x=r.x+(selected.start-f.start)*r.scale,width=(selected.end-selected.start)*r.scale
+      // A pick is stored in source columns and stays that way: only where it is
+      // drawn moves. It stays one rectangle with one edge, because the columns
+      // collapsed inside it are still inside it - they are picked, and they are
+      // exported - and an edge drawn around each drawn piece would cut the
+      // region into parts the reader never made.
+      const x=r.x+displayColumn(f,selected.start)*r.scale
+      const width=(displayColumn(f,selected.end)-displayColumn(f,selected.start))*r.scale
       for(const id of selected.rowIds){const i=f.rowIds.indexOf(id);if(i<0)continue;const y=r.y+rowSlot(f,i)*ROW_HEIGHT;ctx.fillStyle=PICKED+WASH_ALPHA;ctx.fillRect(x,y,width,ROW_HEIGHT);pickEdge(x,y+1,width,ROW_HEIGHT-2)}
       // Pointing at a region offers to drop it. On the region's own top right
       // corner rather than the block's, since several regions can share a block
@@ -439,9 +540,12 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     hits.push({kind:'header',fragmentId:f.id,x:r.x,y:r.y-HEADER_HEIGHT,width:w,height:HEADER_HEIGHT})
     // Labels travel with the leftmost block. Only glyphs get a subtle halo;
     // there is no sticky opaque rectangle to erase bases or connecting strings.
+    // Except where a fixed gutter is drawn instead - Original's, or block
+    // context's - because two sets of names for the same rows is worse than
+    // either on its own.
     for(let index=0;index<f.rowIds.length;index++) {
       const id=f.rowIds[index],y=r.y+rowSlot(f,index)*ROW_HEIGHT
-      if(state.original||dense||!legible||first.get(id)!==f.id||y+ROW_HEIGHT<0||y>size.height)continue
+      if(state.original||state.blockContext||dense||!legible||first.get(id)!==f.id||y+ROW_HEIGHT<0||y>size.height)continue
       let label=byId.get(id)?.label||byId.get(id)?.source||id
       ctx.font=`${lit.has(id)?'bold ':''}11px Lato, sans-serif`
       if(ctx.measureText(label).width>140){while(label.length&&ctx.measureText(label+'…').width>140)label=label.slice(0,-1);label+='…'}
@@ -465,7 +569,7 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
         hits.push({kind:'removeRow',rowId:id,x:cx-9,y,width:18,height:ROW_HEIGHT})
       }
     }
-    if(!headerPlan)continue
+    if(!headerPlan||state.blockContext)continue
     const plan=headerPlan,textWidth=plan.width
     ctx.font=monoFont(10)
     // Alone in the header, a name sits in the middle of the block the way a
@@ -477,31 +581,53 @@ export function paintLayer(ctx,{layer,camera,size,inventory,tiles,annotations,co
     ctx.save();ctx.beginPath();ctx.rect(headerLeft,r.y-HEADER_HEIGHT,headerRight-headerLeft,HEADER_HEIGHT);ctx.clip()
     ctx.fillStyle=colors.text
     ctx.fillText(plan.text,textX,plan.interval?r.y-35:r.y-27)
-    if(plan.interval)ctx.fillText(interval,textX,r.y-21)
+    if(plan.interval)ctx.fillText(plan.line,textX,r.y-21)
     ctx.restore()
     // Small header actions have their own hit regions, separate from dragging.
-    if(plan.actions){
-    const iconX=headerRight-23,iconY=r.y-HEADER_HEIGHT+6
+    // None of them in block context: copying and removing belong to the sheet
+    // this is a lens onto, the lens has its own bar, and an icon that is drawn
+    // but does nothing is worse than one that is not there.
+    if(plan.actions&&!state.blockContext){
+    // One cursor rather than hand-laid offsets. Every icon is the same width and
+    // they run right to left, so the arithmetic that used to be written out at
+    // each call site - and had to be corrected at each one whenever an icon was
+    // added - is now the order of these blocks and nothing else.
+    const iconY=r.y-HEADER_HEIGHT+6
+    let taken=0
+    const nextX=()=>headerRight-23-(taken++)*23
+    const iconX=nextX()
     ctx.fillStyle=colors.head;rounded(ctx,iconX,iconY,20,22,3);ctx.fill()
     ctx.strokeStyle=colors.text;ctx.lineWidth=1.3;ctx.strokeRect(iconX+6,iconY+6,9,12);ctx.strokeRect(iconX+8,iconY+3,5,4)
     hits.push({kind:'copy',fragmentId:f.id,x:iconX,y:iconY,width:20,height:22})
     // A chunk is a piece someone put in this layer, so it can be taken back out
     // again. Never on the Original: that is a derived view of the source, where
     // the equivalent gesture is Hide, which is reversible and already exists.
-    if(!state.original){const closeX=iconX-23;ctx.fillStyle=colors.head;rounded(ctx,closeX,iconY,20,22,3);ctx.fill()
+    if(!state.original){const closeX=nextX();ctx.fillStyle=colors.head;rounded(ctx,closeX,iconY,20,22,3);ctx.fill()
       ctx.strokeStyle=colors.text;ctx.lineWidth=1.3;ctx.beginPath()
       ctx.moveTo(closeX+6,iconY+7);ctx.lineTo(closeX+14,iconY+15);ctx.moveTo(closeX+14,iconY+7);ctx.lineTo(closeX+6,iconY+15);ctx.stroke()
       hits.push({kind:'removeBlock',fragmentId:f.id,x:closeX,y:iconY,width:20,height:22})}
-    if(state.original){const plusX=iconX-23;ctx.fillStyle=colors.head;rounded(ctx,plusX,iconY,20,22,3);ctx.fill();ctx.strokeStyle=colors.text;ctx.beginPath();ctx.moveTo(plusX+5,iconY+11);ctx.lineTo(plusX+15,iconY+11);ctx.moveTo(plusX+10,iconY+6);ctx.lineTo(plusX+10,iconY+16);ctx.stroke();hits.push({kind:'layer',fragmentId:f.id,x:plusX,y:iconY,width:20,height:22})
-      const rowX=plusX-23;ctx.fillStyle=colors.head;rounded(ctx,rowX,iconY,20,22,3);ctx.fill();ctx.strokeStyle=colors.text;ctx.beginPath();for(let i=0;i<3;i++){const y=iconY+6+i*(f.compact?3:5);ctx.moveTo(rowX+5,y);ctx.lineTo(rowX+15,y)}ctx.stroke();hits.push({kind:'rows',fragmentId:f.id,x:rowX,y:iconY,width:20,height:22})}
+    if(state.original){const plusX=nextX();ctx.fillStyle=colors.head;rounded(ctx,plusX,iconY,20,22,3);ctx.fill();ctx.strokeStyle=colors.text;ctx.beginPath();ctx.moveTo(plusX+5,iconY+11);ctx.lineTo(plusX+15,iconY+11);ctx.moveTo(plusX+10,iconY+6);ctx.lineTo(plusX+10,iconY+16);ctx.stroke();hits.push({kind:'layer',fragmentId:f.id,x:plusX,y:iconY,width:20,height:22})
+      const rowX=nextX();ctx.fillStyle=colors.head;rounded(ctx,rowX,iconY,20,22,3);ctx.fill();ctx.strokeStyle=colors.text;ctx.beginPath();for(let i=0;i<3;i++){const y=iconY+6+i*(f.compact?3:5);ctx.moveTo(rowX+5,y);ctx.lineTo(rowX+15,y)}ctx.stroke();hits.push({kind:'rows',fragmentId:f.id,x:rowX,y:iconY,width:20,height:22})}
     if(canBrowse){
-      const browseX=iconX-(state.original?69:46)
+      const browseX=nextX()
       ctx.fillStyle=light?'#dbeafe':'#17365f';rounded(ctx,browseX,iconY,20,22,3);ctx.fill()
       ctx.strokeStyle=colors.gap;ctx.lineWidth=1.25;rounded(ctx,browseX+4,iconY+4,12,14,2);ctx.stroke()
       ctx.beginPath();ctx.moveTo(browseX+4,iconY+9);ctx.lineTo(browseX+16,iconY+9);ctx.stroke()
       ctx.fillStyle=colors.gap
       for(const x of [browseX+7,browseX+10,browseX+13]){ctx.beginPath();ctx.arc(x,iconY+7,0.7,0,Math.PI*2);ctx.fill()}
       ctx.lineWidth=1;hits.push({kind:'browse',fragmentId:f.id,x:browseX,y:iconY,width:20,height:22})
+    }
+    if(canContext){
+      // Corner brackets: this block, on its own, with everything else set aside.
+      const cx=nextX()
+      ctx.fillStyle=colors.head;rounded(ctx,cx,iconY,20,22,3);ctx.fill()
+      ctx.strokeStyle=colors.text;ctx.lineWidth=1.3;ctx.beginPath()
+      for(const [ax,ay,bx,by,mx,my] of [[4,9,4,5,8,5],[16,9,16,5,12,5],[4,13,4,17,8,17],[16,13,16,17,12,17]]){
+        ctx.moveTo(cx+ax,iconY+ay);ctx.lineTo(cx+bx,iconY+by);ctx.lineTo(cx+mx,iconY+my)
+      }
+      ctx.stroke()
+      ctx.fillStyle=colors.text;ctx.fillRect(cx+6,iconY+10,8,2)
+      ctx.lineWidth=1;hits.push({kind:'context',fragmentId:f.id,x:cx,y:iconY,width:20,height:22})
     }
     }
 

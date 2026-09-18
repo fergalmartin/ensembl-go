@@ -135,7 +135,10 @@ export const ADVANCE_TYPES = Object.freeze(['manual', 'view', 'click', 'all-clic
  *                   `'protein-coding'`, `drawerTranscripts` as `'collapsed'` or
  *                   `'expanded'`, `transcriptDetail` and `noteEditor` as `'open'` or
  *                   `'closed'`, `transcriptSequence` as a feature key and `tutorialNote`
- *                   as `'none'`. Only the keys given are enforced.
+ *                   as `'none'`. `locationFocus` is the region the panel holds in focus,
+ *                   as `chr:start-end` or `'none'`, and `locationDetail` is what the wide
+ *                   slot beside its drawer is showing — `'sequence'`, `{ gene }` or
+ *                   `'none'`. Only the keys given are enforced.
  *
  *  `browserView` is the odd one out and is worth explaining. The browser has no zoom
  *  buttons and no slider — panning is a drag or the arrow keys, zooming is the wheel or
@@ -678,6 +681,14 @@ export function tutorialSections(tutorial) {
   return groups
 }
 
+/** How many chapters the tutorial is broken into, which is what the catalogue reports.
+ *
+ *  Steps that name no section are not a chapter of their own, so a tutorial that uses no
+ *  sections at all counts zero and leaves the caller to say something else about it. */
+export function sectionCount(tutorial) {
+  return tutorialSections(tutorial).filter((group) => group.title).length
+}
+
 export function stepAt(tutorial, index) {
   const steps = Array.isArray(tutorial?.steps) ? tutorial.steps : []
   if (!Number.isInteger(index) || index < 0 || index >= steps.length) return null
@@ -979,6 +990,9 @@ const DRAWER_TRANSCRIPT_STATES = Object.freeze(['collapsed', 'expanded'])
 const PANEL_STATES = Object.freeze(['open', 'closed'])
 const TUTORIAL_NOTE_STATES = Object.freeze(['none'])
 const PINNED_TRANSCRIPT_STATES = Object.freeze(['none'])
+const LOCATION_DETAIL_STATES = Object.freeze(['none', 'sequence'])
+/** `chr:start-end`, with or without thousands separators. */
+const LOCUS_PATTERN = /^\s*[^:\s]+\s*:\s*[\d,\s]+\s*-\s*[\d,\s]+\s*$/
 
 export function browserViewProblems(move, where) {
   const problems = []
@@ -1010,7 +1024,7 @@ function browserControlProblems(controls, where) {
   const named = [
     'detail', 'flatten', 'expanded', 'biotypes', 'drawerTranscripts',
     'transcriptDetail', 'noteEditor', 'tutorialNote', 'pinnedTranscript',
-    'geneTranscripts', 'hiddenTranscript',
+    'geneTranscripts', 'hiddenTranscript', 'locationFocus', 'locationDetail',
   ].filter((key) => controls?.[key] !== undefined)
   if (named.length === 0) problems.push(`${where}: a browserControls action names no control to set.`)
   for (const key of ['detail', 'flatten', 'expanded']) {
@@ -1065,6 +1079,27 @@ function browserControlProblems(controls, where) {
     problems.push(
       `${where}: browserControls drawerTranscripts must be one of ${DRAWER_TRANSCRIPT_STATES.join(', ')}.`
     )
+  }
+  // The location of focus: a region, or "none". Written as a locus rather than as a pair
+  // of numbers so it reads like every other coordinate in a definition, and so the value
+  // a card quotes and the value its arrival sets are the same string.
+  if (controls.locationFocus !== undefined
+    && controls.locationFocus !== 'none'
+    && !LOCUS_PATTERN.test(String(controls.locationFocus))) {
+    problems.push(`${where}: browserControls locationFocus must be "none" or a chr:start-end region.`)
+  }
+  // The one wide slot beside the location drawer: the region's sequence, one gene's
+  // details, or nothing. A gene is named rather than positional, because the drawer's
+  // list is paged and ordered five-prime to three-prime and "the first row" is not a
+  // stable way to say which gene a step means.
+  if (controls.locationDetail !== undefined) {
+    const gene = String(controls.locationDetail?.gene || '').trim()
+    const stated = LOCATION_DETAIL_STATES.includes(controls.locationDetail) || gene
+    if (!stated) {
+      problems.push(
+        `${where}: browserControls locationDetail must be one of ${LOCATION_DETAIL_STATES.join(', ')}, or { gene }.`
+      )
+    }
   }
   return problems
 }

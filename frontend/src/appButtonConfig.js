@@ -4,6 +4,7 @@ export const DATA_VIEW_BUTTON_IDS = [
   'genome_browser',
   'track_manager',
   'feature_explorer',
+  'sequence',
   'alignment',
   'alignment_explorer',
   'neighbourhood',
@@ -20,7 +21,8 @@ export const DATA_VIEW_BUTTON_IDS = [
 export const ACTION_BUTTON_IDS = ['genome_playlist', 'theme_toggle', 'screenshot_toggle']
 
 export const APP_BUTTON_IDS = [...DATA_VIEW_BUTTON_IDS, ...ACTION_BUTTON_IDS]
-export const IN_PROGRESS_VIEW_BUTTON_IDS = []
+// Shipped but off by default: enable it in the app organiser to try it.
+export const IN_PROGRESS_VIEW_BUTTON_IDS = ['sequence']
 
 export const NON_DEACTIVATABLE_APP_BUTTON_IDS = ['configuration']
 const DATA_VIEW_BUTTON_ID_SET = new Set(DATA_VIEW_BUTTON_IDS)
@@ -37,6 +39,7 @@ export const APP_BUTTON_META = {
   genome_browser: { id: 'genome_browser', label: 'Genome Browser', shortLabel: 'Browser', kind: 'data_view', viewId: 'genome_browser' },
   track_manager: { id: 'track_manager', label: 'Track Manager', shortLabel: 'Tracks', kind: 'data_view', viewId: 'track_manager' },
   feature_explorer: { id: 'feature_explorer', label: 'Feature Explorer', shortLabel: 'Features', kind: 'data_view', viewId: 'feature_explorer' },
+  sequence: { id: 'sequence', label: 'Sequence', shortLabel: 'Sequence', kind: 'data_view', viewId: 'sequence' },
   alignment: { id: 'alignment', label: 'Alignment', shortLabel: 'Align', kind: 'data_view', viewId: 'alignment' },
   alignment_explorer: { id: 'alignment_explorer', label: 'Alignment Explorer', shortLabel: 'Explorer', kind: 'data_view', viewId: 'alignment_explorer' },
   neighbourhood: { id: 'neighbourhood', label: 'Neighbourhood', shortLabel: 'Neighbour', kind: 'data_view', viewId: 'neighbourhood' },

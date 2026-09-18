@@ -4,7 +4,7 @@
   "id": "getting-started",
   "revision": 1,
   "title": "Getting Started",
-  "blurb": "Set up where your data lives, fetch a genome, choose it, and find a gene in the browser. Runs on a temporary demo genome and leaves your own setup untouched.",
+  "blurb": "This teaches you the basics of downloading and activating genomes, including how to view them in the genome browser. This is the best place to start in terms of learning to use Ensembl Go, the other tutorials then give more detailed insights into particular views or features.",
   "estimatedMinutes": 5,
   "usesDemoGenome": true,
   "completionBody": "You have seen the whole loop: configure, download, activate, browse. Real genomes work exactly the same way; they just take longer to arrive. Your own settings and genomes were never changed, and the tutorial’s temporary data has been cleared away.",

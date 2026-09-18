@@ -31,7 +31,7 @@ Explicit user decisions:
 
 ## Current interaction
 
-The toolbar provides Original block navigation stacked over Auto arrange, then Pan, Select, Columns, Reset and Cycle. The sidebar contains Layers, Selection, Alignment & loading, Display & annotations, and Workspace & export.
+The toolbar provides Original block navigation stacked over Arrange, then Cursor (Move view, Free select, Columns in one control), Zoom, Colour, Filter, Hide, Gaps and Cycle. The sidebar contains Layers, Filter, Load data, and Workspace & export.
 
 Wheel behaviour follows the configured Genome Browser scheme. Arrow keys pan and plus/minus zoom. Space-drag pans. The panel starts front-facing; the 3D setting tilts it and exposes the layer stack. Canvas fallback preserves editing without WebGL.
 
@@ -90,7 +90,7 @@ The gutter claims the whole band rather than only the rows with names in them, w
 
 **A note on testing gestures here.** Drags cannot be driven end to end in headless Chrome: `pointerDown` calls `setPointerCapture`, and a release synthesised through `Input.dispatchMouseEvent` never reaches the handler afterwards, so the gesture hangs half-finished and the marquee stays on screen. Clicks on hit regions are unaffected, because those branches return before capture. To exercise a release, drive the press and moves with real input and then dispatch `pointerup` at the element with canvas-relative coordinates. Note also that completing a selection sets the mode back to Pan, so a second drag needs the mode re-armed or it pans instead - and re-arming it only works if the *browser's* capture was released too. A synthetic `pointerup` satisfies the handler but not the browser, which goes on retargeting every later press to the canvas: the toolbar click that should re-arm Select lands on the sheet instead, and the second drag looks like a broken toggle. Follow the synthetic release with `releasePointerCapture` and a real `Input.dispatchMouseEvent` mouseReleased.
 
-**The control bar's split buttons.** `SelectTool`, `ZoomTool` and `ColourTool` are the same shape: a `.al-split` pair sharing one border, the main half doing the obvious thing and the arrow opening a menu. Each is titled with its decision and keeps that title whatever the mode - labels that rewrote themselves (`Free select` becoming `Columns`, `Zoom` becoming `Zoom Panel`) changed the bar's width and read as a control appearing rather than one changing. The consequence is that Zoom and Colour have no visible mode, so both flash the mode they land on above the button: `ToolToast`, positioned by `toastPosition` and cleared by its own `animationend` rather than a timer, so there is no timer to cancel when the next press arrives. Colour's main half cycles the schemes, because comparing two of them means going back and forth and doing that through a menu is three actions each way. The menu is a portal into `explorerRoot`, not a child of the bar - the bar scrolls sideways and would clip it - and `menuAnchor.js` holds the two pieces that entails. `menuPosition` is called when the menu opens rather than measured in an effect: the bar does not move while a menu is open, and measuring in an effect would cost a second render on every open. `useMenuDismiss` watches `pointerdown` in the capture phase so a press that lands on the canvas closes the menu instead of starting a gesture with it.
+**The control bar's split buttons.** `CursorTool`, `ZoomTool`, `ColourTool` and `GapTool` are the same shape: a `.al-split` pair sharing one border, the main half doing the obvious thing and the arrow opening a menu. Each is titled with its decision and keeps that title whatever the mode - labels that rewrote themselves (`Free select` becoming `Columns`, `Zoom` becoming `Zoom Panel`) changed the bar's width and read as a control appearing rather than one changing. The consequence is that Zoom and Colour have no visible mode, so both flash the mode they land on above the button: `ToolToast`, positioned by `toastPosition` and cleared by its own `animationend` rather than a timer, so there is no timer to cancel when the next press arrives. Colour's main half cycles the schemes, because comparing two of them means going back and forth and doing that through a menu is three actions each way. The menu is a portal into `explorerRoot`, not a child of the bar - the bar scrolls sideways and would clip it - and `menuAnchor.js` holds the two pieces that entails. `menuPosition` is called when the menu opens rather than measured in an effect: the bar does not move while a menu is open, and measuring in an effect would cost a second render on every open. `useMenuDismiss` watches `pointerdown` in the capture phase so a press that lands on the canvas closes the menu instead of starting a gesture with it.
 
 Select is split rather than plain for a specific reason: completing a selection sets `mode` back to `pan`, so without a remembered kind the reader would have to say which of the two they wanted before every drag. `selectKind` in the component's own state is that memory; it is UI, not workspace, and deliberately does not survive a reload.
 
@@ -118,7 +118,7 @@ So the overlay now owns the whole treatment: the background, the outline around 
 
 The colour is `colors.gap`, taken from `FEATURE_COLORS.genomic` rather than written out again: the Feature Explorer outlines unannotated genomic sequence in that blue, a gap is the same kind of statement, and one source means the two views cannot drift apart. The conservation and uniform painters take it from the same `colors` object, so all four paths outline a gap identically. A span with no statistic yet keeps the neutral border, because that is not a gap - nothing is known there, rather than nothing being there.
 
-**One gold for everything picked.** `PICKED_EDGE` is the edge of a pick and `WASH_ALPHA` the fill inside it, in `paintLayer.js`. Regions from Select and Columns, the live marquee and the deselect ring were teal; a name, a block header and a lit row were gold. They are one act, so they are now one colour, and the wash rather than the hue is what tells a picked stretch from a lit row.
+**One gold for everything picked.** `PICKED_EDGE` is the edge of a pick and `WASH_ALPHA` the fill inside it, in `paintLayer.js`. Regions from Free select and Columns, the live marquee and the deselect ring were teal; a name, a block header and a lit row were gold. They are one act, so they are now one colour, and the wash rather than the hue is what tells a picked stretch from a lit row.
 
 `armedEdge` draws every one of them: a dark line at half alpha and `hair(3)`, then the colour at `hair(1.5)` over it, dashed for the marquee with the backing left solid so the gold is never on bare bases in a dash gap. The backing is the constant `EDGE_SHADOW`, not `colors.background`, and that is deliberate - it is read against the bases, which are the same saturated colours in either theme, and a pale backing in light mode left the gold with nothing behind it. This is the same arming the gold jump-marker labels have always used, for the same reason.
 
@@ -174,10 +174,18 @@ Paths below are relative to the repository root.
 | `data.js` | API helper, coordinate constants, quantized visible-region requests. |
 | `colourSchemes.js`, `palettes.js` | What a cell's colour means, and the colours it can mean it in. |
 | `paintConservation.js`, `paintUniform.js` | The cohort and uniform-shading span painters: siblings of the base path, never changes to it. |
-| `SelectTool.jsx`, `ZoomTool.jsx`, `ColourTool.jsx`, `menuAnchor.js`, `selectKinds.js` | The control bar's split buttons and the menus behind their arrows. |
+| `CursorTool.jsx`, `ZoomTool.jsx`, `ColourTool.jsx`, `GapTool.jsx`, `menuAnchor.js`, `selectKinds.js` | The control bar's split buttons and the menus behind their arrows. |
 | `ColourLegend.jsx` | The key for whichever scheme is active, in the menu and optionally over the alignment. |
 | `LayerCycle.jsx`, `layout.js`, `explorer.css` | Cycle previews, panel geometry helpers, presentation. |
 | `associations.js` | Conservative automatic genome matching. |
+| `detail.js` | Block context's whole model: included rows, reference, mode, order, active pair, lane groups, request planning. Pure; no React, no canvas. |
+| `useBlockContext.js` | Block context's own request budget: block identities, gene models, pairwise measurements. |
+| `paintBlockContext.js`, `comparisonBands.js` | The overlay over the sheet - track lanes, reference guides, comparison bands - and what a band's colours mean. |
+| `paintBases.js` | The per-column base cells, shared by the sheet and by block context so a base cannot look like two things. |
+| `BlockContextGenomic.jsx`, `genomicContext.js` | The genomic half: real lengths, real coordinates, its own transform. |
+| `regionRequests.js` | Which regional reads a fragment needs, and which comparison row each is relative to. |
+| `backend/alignment_explorer/projection.py` | Alignment columns to genomic coordinates and back, from runs of sequence rather than a per-base map. |
+| `backend/alignment_explorer/comparison.py` | What two rows differ by, counted. Observational and directional by construction. |
 | `frontend/src/utils/nucleotideStyle.js` | Shared nucleotide palette and letter threshold. |
 | `backend/alignment_explorer/store.py` | Streaming text imports, SQLite sequence chunks, row identity, coordinates, layout index, regional summaries/export. |
 | `backend/alignment_explorer/api.py` | API routes, import jobs, source checks, metadata, annotations, workspace persistence. |
@@ -226,6 +234,9 @@ All endpoints use `/api/alignment-explorer`.
 | `POST /datasets/{id}/region` | Regional bases or summaries, with IDs, bins and focus. |
 | `POST /datasets/{id}/connections` | Source spans and distance information. |
 | `POST /datasets/{id}/annotations` | Local/embedded projected annotation detail. |
+| `POST /datasets/{id}/block-context` | Block context: row identities, genomic spans, orientation, resolved assembly/region, and why a row can or cannot be annotated. |
+| `POST /datasets/{id}/block-features` | Gene models over a column window, in genomic coordinates and as projected column pieces. |
+| `POST /datasets/{id}/block-comparison` | Measured difference between named pairs, and optional selected-feature measurements. |
 | `POST /datasets/{id}/metadata` | Explicit associations and labels. |
 | `POST /datasets/{id}/export` | Regional FASTA or coordinate-aware MAF. |
 | `PUT/GET /datasets/{id}/workspace` | Versioned workspace persistence. |
@@ -324,6 +335,89 @@ These are limitations or follow-up checks, not all confirmed user-facing defects
 8. **Path and annotation acceptance.** Exercise duplicate IDs/copies, reverse strands, absent components, compact row remapping, masked chunks, merge/cut/export correspondence and GFF3 overlays together. Cross-block connections have no defined alignment-column gap; never invent one.
 9. **Native formats and packaging.** HAL/TAF optional dependencies, Windows-through-WSL helper packaging, and a complete native regional browsing UI still need separate work. Similarity space, structural lenses and the earlier ribbon/bundle design are not the current product scope.
 10. **Rendering/test coverage.** Model tests cover camera bounds, masks, row layouts, scheduler starvation and curve hit testing; visual interaction checks are manual. There is no comprehensive automated browser/FPS suite.
+
+### Block context
+
+See [the corrective review](ALIGNMENT_BLOCK_CONTEXT_REVIEW.md) for the latest behaviour, tests and remaining gaps in the original proposal.
+
+A lens onto one source block, added on 14 September 2026. It is **not** a layer and
+**not** part of the workspace: `blockContext` is React state in
+`AlignmentExplorerView`, never `state`, so nothing it does can be committed, undone
+or saved. A lens onto a block is not a statement about the alignment, and a saved
+one could name a block, a row or a transcript that has since gone. `origin` carries
+the camera, sheet, picks and row order to put back on closing.
+
+Load-bearing decisions, each of which was a bug before it was a rule:
+
+- **Lanes come from complete row groups.** `rowGroups` assigns cumulative slots so a
+  reorder moves a sequence together with its own annotation lanes, and expanding one
+  gene moves the rows below it and nobody else. `layoutRows` is set explicitly
+  because `rowCount` would otherwise stop one lane short of the last group.
+- **Removal is stood down inside the lens.** `compactSlots` (`layers.js`) renumbers
+  the used-slot set densely, which would collapse every track lane onto its
+  sequence. `LayerCanvas` suppresses `removeBlock`, `removeRow` and row reorder, and
+  `paintLayer` draws no header actions at all while `state.blockContext` is set -
+  an icon that is drawn but inert is worse than one that is absent.
+- **Pinning is one flag in `panelRect`.** A pinned fragment keeps the horizontal
+  transform and drops the vertical one. Painting and hit testing both read that one
+  function, so they cannot disagree about where a pinned row is.
+- **One palette.** `explorerColors` is shared by both painters. When the overlay
+  built its own it was short of `text`, and every name it drew silently kept
+  whichever fill happened to be current.
+- **The gutter is painted last and text is clamped to its edge.** The block slides
+  under the gutter as the camera moves, so anything written left of `MARGIN_X` is
+  painted over by the names. `paintLayer`'s floating labels are suppressed here for
+  the same reason Original suppresses them: two sets of names is worse than either.
+- **The comparison band is drawn before the annotation, and independently of it.**
+  It was inside the early return for a row with no gene models, so exactly the rows
+  that most needed measuring showed none.
+
+**Comparison rows are per request, not per block.** `visibleRequests` and
+`planTiles` take a `focusOf` function and group by it; `rowCoverage` takes the
+expected comparator and drops a binned tile built against any other, leaving a hole
+that reads as loading rather than showing agreement with a reference nobody chose.
+Detail tiles are comparator-independent and always kept. Without `focusOf`
+everything behaves exactly as before, against the block's first row.
+
+**Coordinates.** The new endpoints are zero-based half-open throughout. The GFF3
+index is one-based inclusive and is converted at the provider boundary
+(`alignment_explorer_block_genes`) and nowhere else. `/api/browse/sequence` is
+zero-based half-open and caps at 100 kb. Row strand decides projection; transcript
+strand decides biological ordering and sequence orientation, and the two are never
+conflated.
+
+**Projection is from runs, not from a map.** `row_segments` walks only the chunks a
+column window touches and returns the runs of non-gap bases in it, with each run's
+count over the whole row. Both directions are then a bisect. This is what bounds a
+block of millions of columns: 44 real rows over a 16,384-column window index in
+1-4 ms each, and every column of every row round-trips against `locate_column` on
+both strands. `project` returns an envelope **and** the base-bearing pieces inside
+it: mapping only the two boundaries would fill this row's gaps with another row's
+insertions and draw them as exon. Introns are the one exception and collapse to
+their envelope, because an intron is the statement that two exons are joined and
+its pieces run to the thousands.
+
+**A gap column has no genomic coordinate.** `at_column` returns an explicit gap with
+the coordinates either side rather than the nearest base. Inventing one would make
+an insertion in another row read as sequence in this one.
+
+**Bounds are request bounds, and everything held back says so.** Eight rows or pairs
+per request, 65,536 columns per detailed window, 200 genes per row, eight
+transcripts per expansion page, 20,000 projected segments per response - with
+`truncated` and `next_page` in the reply. There is no whole-block entry limit:
+large blocks stay navigable and the work is bounded by window and row count.
+
+**The measurements are observations.** `comparison.py` has no insertion, no
+deletion and no inversion in its vocabulary, and its tests assert that those words
+do not appear in what it produces. Double-gap columns are excluded from every
+comparable total; unknown bases and absent coverage are never counted as
+difference. Entirely-gapped is reported as entirely-gapped, not as exon loss.
+
+**What is not done.** Tree import, inferred phylogenies and automatic homology
+matching are deferred, as is dragging a row group on the canvas - ordering is by
+the bar's keyboard controls. The genomic panel fetches models through
+`/api/browse/canonical_transcripts` and does not yet draw genomic sequence letters
+at base zoom.
 
 ### Annotations are built but unreachable
 

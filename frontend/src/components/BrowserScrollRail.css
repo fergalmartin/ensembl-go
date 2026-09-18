@@ -1,0 +1,102 @@
+/* The browser's own scroll bar, drawn in the Cycle wheel's language: a rail of
+   coloured dots with a ring for where the page is. Sized to live inside the
+   app's 24px page padding, so it never covers a track label. */
+.browser-scroll-rail {
+  position: fixed;
+  z-index: 40;
+  box-sizing: border-box;
+  border: 1px solid #8da2c777;
+  border-radius: 11px;
+  background: #7285a218;
+  color: #cfe0f5;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  /* The hover labels and the readout hang off the right-hand side. */
+  overflow: visible;
+  transition: background .15s, border-color .15s;
+}
+.browser-scroll-rail:hover, .browser-scroll-rail.engaged { background: #7285a230; border-color: #8da2c7aa; }
+.browser-scroll-rail.engaged { cursor: grabbing; }
+.browser-scroll-rail:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+.browser-scroll-rail.light { border-color: #9aa6b4bb; background: #ffffffb0; color: #2b3a52; }
+.browser-scroll-rail.light:hover, .browser-scroll-rail.light.engaged { background: #ffffffe0; border-color: #8a97a8aa; }
+
+.browser-scroll-rail-line { position: absolute; left: 9px; width: 2px; background: #8da2c744; border-radius: 1px; }
+.browser-scroll-rail.light .browser-scroll-rail-line { background: #adb5bd88; }
+
+/* How much of the page each genome takes up, so the rail reads as a map and not
+   only as a row of dots. */
+.browser-scroll-rail-band { position: absolute; left: 7px; width: 6px; border-radius: 3px; opacity: .3; pointer-events: none; transition: opacity .15s; }
+.browser-scroll-rail-band.current { opacity: .7; }
+
+.browser-scroll-rail-stop { position: absolute; left: 0; width: 20px; height: 20px; padding: 0; border: 0; background: none; border-radius: 50%; transform: translateY(-50%); cursor: pointer; }
+.browser-scroll-rail-stop::after {
+  content: '';
+  position: absolute; left: 5.5px; top: 5.5px; width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--dot);
+  box-shadow: 0 0 0 2px #0d1622aa;
+  transition: transform .12s;
+}
+.browser-scroll-rail.light .browser-scroll-rail-stop::after { box-shadow: 0 0 0 2px #ffffffcc; }
+.browser-scroll-rail-stop:hover::after { transform: scale(1.25); }
+
+.browser-scroll-rail-stop-label,
+.browser-scroll-rail-readout {
+  position: absolute;
+  left: 28px;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #16223bf2;
+  color: #e5edf7;
+  box-shadow: 0 6px 18px #00000055;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s;
+}
+.browser-scroll-rail-stop-label { top: 50%; }
+.browser-scroll-rail.light .browser-scroll-rail-stop-label,
+.browser-scroll-rail.light .browser-scroll-rail-readout { background: #ffffffF2; color: #243248; box-shadow: 0 6px 18px #00000022; }
+.browser-scroll-rail-stop:hover .browser-scroll-rail-stop-label { opacity: 1; }
+
+/* The readout names the genome the ring is currently over. Only while the rail
+   is in use: a chip permanently parked over the first panel would be clutter. */
+.browser-scroll-rail:hover .browser-scroll-rail-readout,
+.browser-scroll-rail.engaged .browser-scroll-rail-readout { opacity: 1; }
+/* Two chips at the same height would sit on top of each other. */
+.browser-scroll-rail-stop:hover ~ .browser-scroll-rail-readout { opacity: 0; }
+
+/* Drawn over the dot it has arrived at, so it must not intercept the press. */
+/* The ring is the one mark on the rail the reader is always looking for, so it
+   is drawn as a thumb rather than a hairline: a 3px stroke filling the rail's
+   full inner width, with a dark seam outside it so it stays legible where it
+   crosses a bright genome band. Drawn over the dot it has arrived at, so it must
+   not intercept the press. */
+.browser-scroll-rail-indicator {
+  position: absolute;
+  left: 0;
+  /* Border-box, so the ring is 20px across the outside rather than 26px: at the
+     top of the rail it is centred on the end cap's padding and must not spill
+     over the border. */
+  box-sizing: border-box;
+  width: 20px; height: 20px;
+  border: 3px solid currentColor;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  box-shadow: 0 0 0 1px #0b121ecc, inset 0 0 0 1px #0b121e88, 0 0 12px #7fa9f355;
+  pointer-events: none;
+}
+.browser-scroll-rail.light .browser-scroll-rail-indicator {
+  box-shadow: 0 0 0 1px #ffffffdd, inset 0 0 0 1px #ffffffcc, 0 0 10px #2b3a5233;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-scroll-rail, .browser-scroll-rail-band, .browser-scroll-rail-stop::after,
+  .browser-scroll-rail-stop-label, .browser-scroll-rail-readout { transition: none; }
+  .browser-scroll-rail-stop:hover::after { transform: none; }
+}

@@ -34,8 +34,9 @@ checkpoints are in-session snapshots.
 | Value offered on the card | `copy` and `copyTarget` (only targets that accept input are offered) |
 | Manual completion | `advanceOn` — manual, click, all-clicks, input value, fixed pause, or a signal |
 | Progression and autoplay | `holdMs`, `autoplayMs`, `settleMs` |
-| Browser arrival state / Multi-genome arrival state | `arrive` `browserView` / `browserControls` / `browserScene`; **Use current browser state** captures the scene |
+| Browser arrival state / Multi-genome arrival state | `arrive` `browserView` / `browserControls` / `browserScene`; **Use current browser state** captures the scene. *Location of focus* takes a `chr:start-end` region or `none`, and *Beside the location drawer* states what the wide slot holds |
 | Browser state applied by Next | An idempotent `browserScene` action |
+| Multi-genome arrival state → cycle wheel | `browserScene.cycle` — whether the Cycle wheel is open, which genome it shows, which of Focus and Add/Jump is chosen |
 | Complete when the browser matches | `completeWhen`, waiting on the `browser.state` signal |
 | Autoplay browser demonstration | `autoplayDemo` as a `browserView` move sequence |
 | Genome list arrival state | `arrive` `selectorList` — **Frame a fixed, complete genome list** |
@@ -97,6 +98,11 @@ Capabilities a document may use: `spotlight`, `activate`, `input`, `set-state`, 
 `index.js` adds an optional `recipeId` parameter to every genome-browser target except the
 global controls, which scopes its selector to `[data-tutorial-genome="<recipeId>"]`. That is
 how a step addresses one genome's panel rather than the first on the page.
+
+**A surface drawn in a portal belongs in that exemption too.** The genome cycle wheel renders
+on `document.body`, so scoping any of its targets to `[data-tutorial-genome="…"]` finds
+nothing at all — `browser.cycle*` is exempt alongside the general control bar, and names a
+genome through its own `dataset` parameter instead.
 
 ### Adding a target
 
@@ -182,3 +188,18 @@ and executable content. **Create recipe from region** extracts real sequence and
 annotation at the current coordinates — partial genes may expand the boundary (the default),
 be omitted, or cancel generation; expanded real sequence is capped at 5 Mb. Warn the author
 that a package made from a private genome contains that real sequence and annotation.
+
+## Give a target its own attribute rather than composing two
+
+`tutorialTargets.test.js` checks every advertised contract against the components by plain
+text, stripping a selector down to a single attribute name — so a compound selector such as
+`[data-focus-bar][data-focus-kind="location"]`, or a descendant one such as
+`[data-location-drawer="true"] [data-focus-drawer-notes]`, is invisible to it and the contract
+is reported as having no binding.
+
+Do not weaken the check. Write the attribute out in the component instead: it is one line, and
+the greppable anchor is exactly what the test is protecting. The location drawer needed three
+of them (`data-location-focus-bar`, `data-location-drawer-notes`, `data-location-drawer-section`)
+and they were worth having anyway — the gene drawer and the location drawer share
+`data-focus-drawer` and `data-focus-drawer-notes`, so a location step naming the shared
+attribute would have resolved to whichever drawer happened to be open.

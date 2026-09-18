@@ -15,9 +15,24 @@ test('tutorial cards expose their step titles and can start directly at one', ()
   assert.match(provider, /initTutorialState\(next, \{ startedAt: Date\.now\(\), stepIndex \}\)/)
 })
 
-test('collapsed tutorial cards share a stable catalogue height', () => {
+test('a card reports its sections and its estimate, and nothing about its demo data', () => {
+  assert.match(view, /const sections = sectionCount\(tutorial\)/)
+  assert.match(view, /\$\{sections\} section\$\{sections === 1 \? '' : 's'\}/)
+  assert.match(view, /about \$\{tutorial\.estimatedMinutes\} minutes/)
+  assert.doesNotMatch(view, /usesDemoGenome/)
+})
+
+test('collapsed cards share a height and settle their chips, counts and step list on one floor', () => {
   assert.match(view, /flex min-h-72 flex-col overflow-hidden rounded-xl border p-5/)
-  assert.match(view, /className=\{`mt-auto border-t pt-3/)
+  assert.match(view, /className="mt-auto flex flex-wrap items-center gap-2 pt-4"/)
+  assert.match(view, /className=\{`mt-3 border-t pt-3/)
+  assert.match(view, /openStepLists\.size \? 'items-start' : 'items-stretch'/)
+})
+
+test('an expanded step list stops stretching the card beside it', () => {
+  assert.match(view, /const isOpen = event\.target\.open/)
+  assert.match(view, /if \(isOpen\) next\.add\(tutorial\.id\)/)
+  assert.match(view, /else next\.delete\(tutorial\.id\)/)
 })
 
 test('published tutorials precede visually distinct drafts and the add card comes last', () => {

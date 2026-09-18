@@ -7,6 +7,29 @@ export default {
     ...[['pan', 'Pan'], ['zoom', 'Zoom'], ['linkRegion', 'Link region'], ['linkGene', 'Link gene']].map(([id, label]) => ({ id: `browser.${id}`, anchor: `browser-${id}`, label, kind: 'button', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' })),
     ...[['GF', 'forward'], ['GR', 'reverse'], ['SL', 'sequence']].map(([label, strand]) => ({ id: `browser.toggle${label}`, anchor: `browser-toggle-${strand}`, label: `${label} track switch`, kind: 'button', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' })),
     { id: 'browser.globalControls', anchor: 'browser-global-controls', label: 'General browser controls', kind: 'group', capabilities: ['spotlight'], safety: 'read' },
+
+    // ── The genome cycle wheel ──────────────────────────────────────────────────
+    // Not scoped by `recipeId`, even though most of it is per genome: the wheel belongs to
+    // the general control bar and is drawn in a portal on the body, outside every panel.
+    // A genome is named by the dataset it came from instead, which is the same id the
+    // panels are scoped by and the only name a portable document knows.
+    { id: 'browser.cycle', anchor: 'browser-cycle', label: 'Cycle genomes', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    { id: 'browser.cycleWheel', anchor: 'browser-cycle-wheel', label: 'Genome wheel', kind: 'region', capabilities: ['spotlight'], safety: 'read' },
+    // `set-state` rather than `activate`: what the reader does to the rail is move along
+    // it, which chooses a genome without committing anything.
+    { id: 'browser.cycleRail', anchor: 'browser-cycle-rail', label: 'Genome wheel rail', kind: 'group', capabilities: ['spotlight', 'set-state'], safety: 'read' },
+    {
+      id: 'browser.cycleGenome', anchorTemplate: 'browser-cycle-genome-{dataset}', label: 'A genome on the wheel', kind: 'button',
+      parameters: { dataset: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate', 'set-state'], safety: 'read',
+    },
+    {
+      id: 'browser.cycleAction', anchorTemplate: 'browser-cycle-action-{action}', label: 'Focus or Add/Jump', kind: 'button',
+      parameters: { action: { type: 'enum', values: ['focus', 'add'], required: true } },
+      capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
+    },
+    { id: 'browser.cycleCancel', anchor: 'browser-cycle-cancel', label: 'Cancel the genome wheel', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
+    { id: 'browser.cycleStatus', anchor: 'browser-cycle-status', label: 'Genome wheel status', kind: 'status', capabilities: ['spotlight'], safety: 'read' },
+
     { id: 'browser.tracks', anchor: 'browser-tracks-toggle', label: 'Tracks', kind: 'button', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
     { id: 'browser.detail', anchor: 'browser-detail', label: 'Detail', kind: 'toggle', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
     { id: 'browser.flatten', anchor: 'browser-flatten', label: 'Flatten', kind: 'toggle', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
@@ -24,10 +47,23 @@ export default {
     { id: 'browser.expandTranscripts', anchor: 'browser-expand-transcripts', label: 'Expand transcripts', kind: 'toggle', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
     { id: 'browser.coordinates', anchor: 'browser-coordinates', label: 'Visible coordinates', kind: 'status', capabilities: ['spotlight'], safety: 'read' },
     { id: 'browser.recenter', anchor: 'browser-recenter', label: 'Centre on focused gene', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    // The location counterparts of the two controls above. `browser-focus-window` makes
+    // the window itself the thing in focus, which is the location half of clicking a gene;
+    // `browser-recenter-location` is the same crosshair as `browser.recenter`, rendered by
+    // the location focus bar rather than the gene one. Two anchors rather than one so a
+    // step can say which kind of focus it is pointing at.
+    { id: 'browser.focusWindow', anchor: 'browser-focus-window', label: 'Focus this window', kind: 'button', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
+    { id: 'browser.recenterLocation', anchor: 'browser-recenter-location', label: 'Centre on location of focus', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
     { id: 'browser.viewport', selector: '[data-browser-canvas-surface]', label: 'Browser track', kind: 'canvas', capabilities: ['spotlight', 'pan', 'zoom', 'set-locus', 'read-state'], safety: 'sandbox-write' },
     { id: 'browser.focusBar', selector: '[data-focus-bar]', label: 'Gene of focus bar', kind: 'region', capabilities: ['spotlight'], safety: 'read' },
     { id: 'browser.focusDrawer', selector: '[data-focus-drawer]', label: 'Gene drawer', kind: 'drawer', capabilities: ['spotlight', 'scroll'], safety: 'read' },
     { id: 'browser.focusDrawerOpen', selector: '[data-focus-drawer="true"]', label: 'Open gene drawer', kind: 'drawer', capabilities: ['spotlight', 'scroll'], safety: 'read' },
+    // A panel focuses one thing at a time, so the gene bar and the location bar are never
+    // on screen together and `[data-focus-bar]` alone would resolve to whichever is. These
+    // two say which, through the kind the bar already publishes, so a location step cannot
+    // quietly land its spotlight on a gene bar left over from the section before.
+    { id: 'browser.locationFocusBar', selector: '[data-location-focus-bar="true"]', label: 'Location of focus bar', kind: 'region', capabilities: ['spotlight'], safety: 'read' },
+    { id: 'browser.locationDrawer', selector: '[data-location-drawer="true"]', label: 'Location drawer', kind: 'drawer', capabilities: ['spotlight', 'scroll'], safety: 'read' },
     {
       id: 'browser.geneTranscripts', anchorTemplate: 'browser-gene-transcripts-{geneId}',
       label: 'Show or hide a gene\u2019s other transcripts', kind: 'button',
@@ -76,6 +112,70 @@ export default {
       id: 'browser.geneNote', anchorTemplate: 'browser-gene-note-{geneId}', label: 'Gene note marker', kind: 'canvas-marker',
       parameters: { geneId: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate'], safety: 'read',
     },
+
+    // ── The location drawer ─────────────────────────────────────────────────────
+    // The location half of `focus.*` above: the same drawer shape, listing what a region
+    // contains rather than what a gene is made of. Its notes section carries the same
+    // `data-focus-drawer-notes` attribute as the gene drawer's, so the contract below is
+    // scoped to the location drawer rather than reusing `focus.notes` — a step that means
+    // the location's notes should not resolve to a gene drawer that happens to be open.
+    { id: 'location.dismiss', anchor: 'focus-location-dismiss', label: 'Clear the location of focus', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    { id: 'location.info', anchor: 'location-info', label: 'Location information and sequence', kind: 'button', capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write' },
+    {
+      id: 'location.section', anchorTemplate: 'location-section-{sectionId}', label: 'Feature section fold', kind: 'button',
+      parameters: { sectionId: { type: 'enum', values: ['genes'], required: true } },
+      capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write',
+    },
+    {
+      id: 'location.featureSection', selectorTemplate: '[data-location-drawer-section="{sectionId}"]', label: 'A feature section', kind: 'region',
+      parameters: { sectionId: { type: 'enum', values: ['genes'], required: true } },
+      capabilities: ['spotlight'], safety: 'read',
+    },
+    { id: 'location.strand', anchor: 'location-strand', label: 'Strand filter', kind: 'group', capabilities: ['spotlight'], safety: 'read' },
+    {
+      id: 'location.geneRow', selectorTemplate: '[data-drawer-location-gene-row="{geneId}"]', label: 'A gene in this location', kind: 'row',
+      parameters: { geneId: { type: 'string', required: true } }, capabilities: ['spotlight'], safety: 'read',
+    },
+    {
+      id: 'location.geneInfo', anchorTemplate: 'location-gene-info-{geneId}', label: 'Gene details', kind: 'button',
+      parameters: { geneId: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write',
+    },
+    {
+      id: 'location.geneFocus', anchorTemplate: 'location-gene-focus-{geneId}', label: 'Jump to this gene', kind: 'button',
+      parameters: { geneId: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
+    },
+    {
+      id: 'location.geneHide', anchorTemplate: 'location-gene-hide-{geneId}', label: 'Hide this gene', kind: 'button',
+      parameters: { geneId: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate', 'set-state'], safety: 'sandbox-write',
+    },
+    {
+      id: 'location.pagePrevious', anchorTemplate: 'location-page-prev-{sectionId}', label: 'Previous page of features', kind: 'button',
+      parameters: { sectionId: { type: 'enum', values: ['genes'], required: true } },
+      capabilities: ['spotlight', 'activate'], safety: 'read',
+    },
+    {
+      id: 'location.pageNext', anchorTemplate: 'location-page-next-{sectionId}', label: 'Next page of features', kind: 'button',
+      parameters: { sectionId: { type: 'enum', values: ['genes'], required: true } },
+      capabilities: ['spotlight', 'activate'], safety: 'read',
+    },
+    { id: 'location.showHidden', anchor: 'location-show-hidden', label: 'Show hidden genes', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    { id: 'location.notes', selector: '[data-location-drawer-notes="true"]', label: 'Location notes section', kind: 'region', capabilities: ['spotlight'], safety: 'read' },
+    { id: 'location.notesAdd', anchor: 'location-notes-add', label: 'Add a note about this location', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    {
+      id: 'location.noteRow', anchorTemplate: 'location-note-row-{noteId}', label: 'A note on this location', kind: 'button',
+      parameters: { noteId: { type: 'string', required: true } }, capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
+    },
+
+    // The wide slot beside the drawer, which holds one of two panels at a time.
+    { id: 'location.geneDetail', selector: '[data-location-gene-detail]', label: 'Gene detail panel', kind: 'drawer', capabilities: ['spotlight', 'scroll'], safety: 'read' },
+    { id: 'location.geneDetailFocus', anchor: 'location-gene-detail-focus', label: 'Focus this gene', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    { id: 'location.geneDetailClose', anchor: 'location-gene-detail-close', label: 'Close gene details', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    { id: 'location.sequencePanel', selector: '[data-location-sequence-panel="true"]', label: 'Location sequence panel', kind: 'drawer', capabilities: ['spotlight', 'scroll'], safety: 'read' },
+    { id: 'location.sequenceStrand', anchor: 'location-sequence-strand', label: 'Sequence strand', kind: 'group', capabilities: ['spotlight'], safety: 'read' },
+    { id: 'location.sequenceCopy', anchor: 'location-sequence-copy', label: 'Copy this sequence', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
+    { id: 'location.sequenceCopyAll', anchor: 'location-sequence-copy-all', label: 'Copy the whole region', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
+    { id: 'location.sequenceExpand', anchor: 'location-sequence-expand', label: 'Grow the sequence box', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
+    { id: 'location.sequenceClose', anchor: 'location-sequence-close', label: 'Close the location sequence', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
 
     // ── Custom data tracks ──────────────────────────────────────────────────────
     // Registering a track in the Track Manager and showing it in a panel are different

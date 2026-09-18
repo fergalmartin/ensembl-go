@@ -4,6 +4,10 @@
 .genome-wheel-button:focus-visible { outline:2px solid #60a5fa; outline-offset:3px; }
 .genome-wheel-overlay { position:fixed; inset:0; z-index:1000; overflow:hidden; background:rgba(12,19,31,.96); color:#e5edf7; user-select:none; touch-action:none; animation:genome-cycle-enter .18s ease-out; }
 .genome-wheel-overlay.light { background:rgba(231,237,244,.97); color:#243248; }
+/* Under the tutorial overlay (z-index 300) rather than over it, so a step's card, its
+   dimming and its cutouts are drawn on top of the wheel instead of behind it — the reader
+   sees the rail through the hole the step cuts, and the card stays readable beside it. */
+.genome-wheel-overlay.held { z-index:200; }
 .genome-wheel-overlay.leaving { opacity:0; transition:opacity .18s; pointer-events:none; }
 /* Released without dragging: the wheel now follows the bare cursor and the next click confirms. */
 .genome-wheel-overlay.hovering { cursor:pointer; }
@@ -21,8 +25,11 @@
 .genome-wheel-preview canvas { width:100%; height:auto; align-self:flex-start; }
 .genome-wheel-rail { position:fixed; width:52px; border:1px solid #8da2c744; border-radius:28px; background:#7285a21a; box-shadow:0 8px 30px #0002; }
 .genome-wheel-line { position:absolute; top:16px; bottom:16px; width:2px; left:25px; background:#8da2c744; }
-.genome-wheel-dot { position:absolute; left:21px; width:10px; height:10px; border-radius:50%; transform:translateY(-50%); }
-.genome-wheel-indicator { position:absolute; left:16px; width:20px; height:20px; border:2px solid currentColor; border-radius:50%; transform:translateY(-50%); box-shadow:0 0 15px #7fa9f355; }
+/* A button rather than the 10px mark it draws, so the whole 22px square is pressable. */
+.genome-wheel-dot { position:absolute; left:15px; width:22px; height:22px; padding:0; border:0; background:none; border-radius:50%; transform:translateY(-50%); cursor:pointer; }
+.genome-wheel-dot::after { content:''; position:absolute; left:6px; top:6px; width:10px; height:10px; border-radius:50%; background:var(--dot); }
+/* Drawn over the dot the pointer is choosing, so it must not intercept the press. */
+.genome-wheel-indicator { position:absolute; left:16px; width:20px; height:20px; border:2px solid currentColor; border-radius:50%; transform:translateY(-50%); box-shadow:0 0 15px #7fa9f355; pointer-events:none; }
 .genome-wheel-status { position:absolute; bottom:12px; left:16px; right:150px; font-size:12px; display:flex; flex-direction:column; align-items:center; gap:4px; text-align:center; }
 .genome-wheel-overlay-genome .genome-wheel-status { right:115px; }
 .genome-wheel-status strong { font-size:16px; }
@@ -38,7 +45,12 @@
 /* Keep the rail in viewport coordinates, directly beneath the button. */
 .genome-wheel-indicator.outside { opacity:.15; box-shadow:none; }
 .genome-cycle-actions { position:absolute; left:0; right:0; pointer-events:none; }
-.genome-cycle-action { position:absolute; width:32px; height:32px; transform:translate(-50%,-50%); border-radius:50%; display:flex; align-items:center; justify-content:center; background:#253449; color:#cad6e5; border:1px solid #8da2c777; }
+.genome-cycle-action { position:absolute; width:32px; height:32px; padding:0; font:inherit; transform:translate(-50%,-50%); border-radius:50%; display:flex; align-items:center; justify-content:center; background:#253449; color:#cad6e5; border:1px solid #8da2c777; }
+/* Held open by a tutorial, the wheel does not commit on a click away from the rail — so
+   these two are the only way to confirm, and they have to be pressable. Everywhere else
+   the intent already follows the pointer and any click confirms it. */
+.genome-wheel-overlay.held .genome-cycle-action { pointer-events:auto; cursor:pointer; }
+.genome-wheel-overlay.held .genome-cycle-action:focus-visible { outline:2px solid #a1d1ff; outline-offset:3px; }
 .genome-cycle-action small { position:absolute; top:32px; font-size:10px; font-weight:600; }
 .genome-cycle-action.chosen { background:#2875c8; color:white; border-color:#a1d1ff; box-shadow:0 0 0 3px #5aaaff35; }
 .light .genome-cycle-action { background:#e4ebf4; color:#35485f; }

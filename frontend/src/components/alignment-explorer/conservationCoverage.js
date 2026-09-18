@@ -1,12 +1,19 @@
-/** Compose conservation tiles the way sequence tiles are composed: finest
- * first, each filling only what better data left open. An arriving partial
- * tile must never erase a coarse one's coverage, or a pan would reshade behind
- * the reader. Spans do not overlap, so nothing double-blends. */
-export function conservationSpans(sources, start, end) {
+import { byDrawnResolution, drawnUnit } from './tileCoverage.js'
+
+/** Compose conservation tiles the way sequence tiles are composed, which now
+ * means sharing the order rather than restating it: each tile fills only what
+ * better data left open, and what counts as better is one decision in one
+ * place. An arriving partial tile must never erase a coarse one's coverage, or
+ * a pan would reshade behind the reader. Spans do not overlap, so nothing
+ * double-blends.
+ *
+ * `scale` is screen pixels per column, and with none given the order is the
+ * plain finest-first it always was. */
+export function conservationSpans(sources, start, end, scale = 0) {
   const spans = []
   if (!sources?.length) return { spans, holes: [[start, end]] }
   const candidates = sources.filter(data => data.end > start && data.start < end && data.bins?.columns?.length)
-    .sort((a, b) => a.bin_size - b.bin_size)
+    .sort(byDrawnResolution(drawnUnit(scale)))
   let holes = [[start, end]]
   for (const data of candidates) {
     const next = []

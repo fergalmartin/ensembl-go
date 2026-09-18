@@ -127,6 +127,18 @@ The tell that this had happened was in the probe's own output and easy to read p
 whose **height** differed between directions. A ring around a canvas is the same ring whether
 the canvas has three extra tracks in it or none.
 
+**Screenshot a step you *jumped into*, not one you walked to.** The second instance of this
+was module-level state that outlived the run which set it: `appliedActive` in
+`tutorialBrowserScene.js` is what lets `preserveView` leave a scene the reader has moved
+alone, and the genome browser stays mounted between tutorials, so it was never forgotten. The
+second run of a tutorial — and every cold jump after the first in one session — matched the
+previous run's signature, skipped the whole arrival, and drew four panels at their
+chromosomes' default view with no genes in them. Forward play was perfect, all three sweeps
+were green, and the first cold jump in a fresh page was right, which is what makes this
+particular shape so easy to miss. **When something is remembered across runs, ask what clears
+it when a run ends** — and take the screenshot after at least one previous run, because the
+first one is the one that works.
+
 ### Do the step by hand before trusting it
 
 A probe presses Next. **Next is the path most likely to work**, because the tutorial performs
@@ -165,6 +177,18 @@ at**.
 The probe diffs forward against backward per step — step id, section, title, ring geometry,
 card box. A step whose fingerprint differs between the two directions has an `arrive` that
 does not fully describe what its card asserts.
+
+**The diff finds what neither sweep can.** The location section shipped with an arrival that
+failed to close a panel it had asked to close, so a drawer's list sat 540 pixels — one detail
+panel's width — from where every card after it said it would be. *Both* sweeps reported a ring
+on every step, because there was a ring; each was wrong on exactly the steps the other got
+right, forward on the ones after the panel opened and backward on the ones before. The tell
+was four steps differing by the same number of pixels in x. **Read the diff even when both
+sweeps are green, and look for a constant offset repeated across several steps** — that is a
+layout the arrival did not put back, not noise.
+
+Height-only differences on canvas rings are the known exception: the panel's own row
+stabilisation remembers a row count across a pan, and that is not a tutorial fault.
 
 For scale: before the interaction-guard fix, the browser tutorial had 15 steps with no target
 walking backwards and 14 jumping in. After it, one. That is what these sweeps are for.

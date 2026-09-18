@@ -22,8 +22,11 @@ import {
   blockerRects,
   unionRect,
   cutoutPathD,
+  clipRectToClippingAncestors,
   expandRect,
   nonOverlappingRects,
+  overlayOccluders,
+  rectClearOfOccluders,
   placeCard,
   TUTORIAL_CARD_MARGIN,
   TUTORIAL_CARD_WIDTH,
@@ -627,9 +630,21 @@ export default function TutorialOverlay() {
   // clean strip between rows. Ordinary target + context reveals retain their breathing
   // room because context reveals are not rings.
   const highlightPadding = highlightedRectCount > 1 ? MULTI_HIGHLIGHT_INSET : HOLE_PADDING
+  // The breathing room put around a measured rect escapes everything the measurement was
+  // cut back to: a few pixels of ring outside the panel that owns the target, over the
+  // page behind it, or back under the control bar the panel is scrolled beneath. A grown
+  // rect therefore goes through the same clipping and the same trim again.
+  const occluders = overlayOccluders()
+  const clearOfChrome = (rect, forSelector) => {
+    if (!rect) return rect
+    let node = null
+    try { node = forSelector ? document.querySelector(forSelector) : null } catch { node = null }
+    if (!node) return rect
+    return rectClearOfOccluders(clipRectToClippingAncestors(rect, node), node, occluders)
+  }
   // A canvas starts at its ruler. Insetting its ring would paint over that ruler;
   // unlike adjacent list rows, browser panels have space for an outside outline.
-  const padded = expandRect(hole, selector.includes('[data-browser-canvas-surface]') ? HOLE_PADDING : highlightPadding, size)
+  const padded = clearOfChrome(expandRect(hole, selector.includes('[data-browser-canvas-surface]') ? HOLE_PADDING : highlightPadding, size), selector)
   const interactive = stepIsInteractive(step)
   // A settled step has been done and is only waiting out its pause, so its ring comes off
   // at once — it would otherwise spend that pause insisting on a control there is nothing
@@ -641,7 +656,10 @@ export default function TutorialOverlay() {
   // When the step is only pointing something out, the hole is covered as well, so the
   // spotlight reads as "look at this" rather than "use this".
   const revealed = revealRects.map((rect, index) => (
-    rect ? expandRect(rect, anchorSelector(reveals[index]?.anchor).includes('[data-browser-canvas-surface]') ? HOLE_PADDING : (reveals[index]?.ring ? highlightPadding : HOLE_PADDING), size) : null
+    rect ? clearOfChrome(
+      expandRect(rect, anchorSelector(reveals[index]?.anchor).includes('[data-browser-canvas-surface]') ? HOLE_PADDING : (reveals[index]?.ring ? highlightPadding : HOLE_PADDING), size),
+      anchorSelector(reveals[index]?.anchor),
+    ) : null
   ))
   // Scrollable regions are pointer pass-throughs, but not visual cutouts: the four rows
   // stay highlighted while wheel, trackpad, touch and scrollbar input reaches the list.

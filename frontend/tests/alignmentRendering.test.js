@@ -55,3 +55,26 @@ test('consumer leases deduplicate previews and retry preserves healthy data',asy
   cache.retryFailed();await flush();assert.equal(cache.get('a'),7);assert.equal(reads,1)
   assert.deepEqual([...cache.wanted],['a'])
 })
+
+test('tiles already finer than a pixel are drawn from the cheapest of them, not the finest',async()=>{
+  const {rowCoverage,byDrawnResolution,drawnUnit}=await import('../src/components/alignment-explorer/tileCoverage.js')
+  const bins=size=>({start:0,end:1000,detail:false,bin_size:size,
+    rows:[{id:'a',bins:Array.from({length:1000/size},()=>({A:size})),divergence_bins:[]}]})
+  // Zoomed out hard: half a screen pixel is 500 columns, so every one of these
+  // levels is finer than anything that can be seen.
+  const scale=1/1000
+  assert.equal(drawnUnit(scale),500)
+  const result=rowCoverage([bins(4),bins(32),bins(256)],'a',0,1000,scale)
+  assert.equal(result.spans.length,1)
+  assert.equal(result.spans[0].data.bin_size,256,'the coarsest that is still finer than a pixel')
+  // Zoomed in, nothing is under a pixel and the old rule is untouched.
+  assert.equal(rowCoverage([bins(4),bins(32),bins(256)],'a',0,1000,2).spans[0].data.bin_size,4)
+  // A tile coarser than a pixel never wins over one that is not.
+  assert.equal(rowCoverage([bins(256),bins(2000/2)],'a',0,1000,scale).spans[0].data.bin_size,256)
+  // Detail outranks every binned tile at any zoom, and two detail tiles tie.
+  const seq={start:0,end:1000,detail:true,rows:[{id:'a',sequence:'A'.repeat(1000)}]}
+  assert.equal([seq,bins(256)].sort(byDrawnResolution(500))[0],seq)
+  assert.equal(byDrawnResolution(500)(seq,{...seq}),0)
+  // With no scale behind it the order is exactly the finest-first it always was.
+  assert.deepEqual([bins(256),bins(4),bins(32)].sort(byDrawnResolution()).map(d=>d.bin_size),[4,32,256])
+})

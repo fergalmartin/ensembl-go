@@ -1302,6 +1302,12 @@ export default function TutorialBuilderOverlay() {
   const initiallyActiveDatasetCount = embeddedTutorialDatasets.filter(tutorialDatasetStartsActive).length
   const browserViewArrival = arrivalOf(selectedStep, 'browserView')
   const browserControlsArrival = arrivalOf(selectedStep, 'browserControls')
+  // The wide slot beside the location drawer is one field with two shapes — a word, or a
+  // gene id — so the editor splits it into a choice and the gene that choice needs.
+  const locationDetailGene = String(browserControlsArrival?.locationDetail?.gene || '')
+  const locationDetailChoice = browserControlsArrival?.locationDetail === undefined
+    ? ''
+    : (locationDetailGene ? 'gene' : String(browserControlsArrival.locationDetail))
   const selectorListArrival = arrivalOf(selectedStep, 'selectorList')
   const genomeSelectionArrival = arrivalOf(selectedStep, 'genomeSelection')
   // Ordered by the document's datasets rather than by the runtime's active list, so the
@@ -2054,6 +2060,40 @@ export default function TutorialBuilderOverlay() {
                         <div key={field}><label className={label}>{field}</label><select className={textInput} value={browserControlsArrival?.[field] === undefined ? '' : String(browserControlsArrival[field])} onChange={(event) => updateArrival('browserControls', { [field]: event.target.value === '' ? undefined : event.target.value === 'true' })}><option value="">Keep</option><option value="true">On</option><option value="false">Off</option></select></div>
                       ))}
                     </div>
+                    {/* The location of focus is a state, not a press. Authoring it as a
+                        region rather than as "the window at the time" is what lets a step
+                        declare the location its card describes and still be reached
+                        backwards or jumped into. `none` is a real instruction: it is what
+                        the step *before* the one that focuses a window has to say. */}
+                    <div>
+                      <label className={label}>Location of focus</label>
+                      <input className={textInput} placeholder="1:119,745,000-119,860,000 or none"
+                        value={browserControlsArrival?.locationFocus === undefined ? '' : String(browserControlsArrival.locationFocus)}
+                        onChange={(event) => updateArrival('browserControls', { locationFocus: event.target.value.trim() || undefined })} />
+                    </div>
+                    <div>
+                      <label className={label}>Beside the location drawer</label>
+                      <select className={textInput}
+                        value={locationDetailChoice}
+                        onChange={(event) => updateArrival('browserControls', {
+                          locationDetail: event.target.value === '' ? undefined
+                            : event.target.value === 'gene' ? { gene: locationDetailGene || '' }
+                              : event.target.value,
+                        })}>
+                        <option value="">Keep</option>
+                        <option value="none">Nothing</option>
+                        <option value="sequence">The region's sequence</option>
+                        <option value="gene">One gene's details</option>
+                      </select>
+                    </div>
+                    {locationDetailChoice === 'gene' && (
+                      <div>
+                        <label className={label}>Gene shown in that panel</label>
+                        <input className={textInput} placeholder="ENSG00000134193"
+                          value={locationDetailGene}
+                          onChange={(event) => updateArrival('browserControls', { locationDetail: { gene: event.target.value.trim() } })} />
+                      </div>
+                    )}
                   </div>
                 </details>
               )}

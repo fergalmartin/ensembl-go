@@ -1,3 +1,4 @@
+import { displaySpan, displayColumn, sourceColumn } from './collapse.js'
 import { MARGIN_X, MARGIN_Y, ROW_HEIGHT, HEADER_HEIGHT } from './layout.js'
 import { BUILTIN_GENOME_COLOR_PALETTE } from '../../genomeColorSchemes.js'
 import { schemeById, shadingById, COLOUR_SCHEMES } from './colourSchemes.js'
@@ -23,12 +24,47 @@ export function validPalettes(value) {
   }
   return picked
 }
-export const emptyWorkspace = () => ({ version: 2, filter: null, filterOff: false, hidden: null, hideWhat: 'blocks', hideMode: 'or', hideMemory: null, rowOrder: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', annotations: false, colourScheme: 'bases', palette: {}, shading: 'relative', legendOverlay: false, connectionUnit: 'columns', highlighted: [], selection: [], planeZoom: false, camera: defaultCamera() })
+/** The shortest run of gap-only columns worth collapsing.
+ *
+ * One, because a column no sequence on screen has a base in is uninformative
+ * whether it stands alone or in a run of a thousand, and the reader asking for
+ * them to go did not ask for some of them to stay. Raising it is how to keep
+ * the short ones, which is a reasonable thing to want when the marks are on and
+ * a scatter of single columns would be a scatter of marks. */
+export const DEFAULT_COLLAPSE_MIN = 1
+/** How much of the cohort has to be a gap in a column before it is hidden.
+ *
+ * A hundred per cent, because that is the only threshold that hides nothing a
+ * reader could be looking at: every sequence on screen is a gap there, so the
+ * column carries no sequence at all. Lower it and real bases go out of the
+ * drawing - which is a perfectly good thing to ask for, and why it is asked for
+ * rather than assumed. */
+export const DEFAULT_GAP_PERCENT = 100
+export const gapPercent = value => Math.min(100, Math.max(1, Math.round(Number(value)) || DEFAULT_GAP_PERCENT))
+export const emptyWorkspace = () => ({ version: 2, filter: null, filterOff: false, hidden: null, hideWhat: 'blocks', hideMode: 'or', hideMemory: null, collapseGaps: false, collapseMin: DEFAULT_COLLAPSE_MIN, collapsePercent: DEFAULT_GAP_PERCENT, collapseMarks: true, rowOrder: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', annotations: false, colourScheme: 'bases', palette: {}, shading: 'relative', legendOverlay: false, connectionUnit: 'columns', highlighted: [], selection: [], planeZoom: false, camera: defaultCamera() })
 export function createFragment(sourceBlock, start, end, rowIds, options = {}) {
   return { id: newId(), sourceBlock, start, end, rowIds: [...new Set(rowIds)], x: 0, y: 0, slots: null, ...options }
 }
 export function createLayer(name, index = 0, fragments = []) {
   return { id: newId(), name, color: PALETTE[index % PALETTE.length], fragments, camera: defaultCamera() }
+}
+/** The next unused `Prefix N` name.
+ *
+ * Counting the layers and adding one is not a name: delete a layer, or make one
+ * through a path that names itself (Filtered, Block), and the count lands on a
+ * number already on the sidebar, so two layers answer to `Layer 5` and neither
+ * the reader nor the eye can tell which drop went where. Read the numbers the
+ * layers actually carry instead and take one past the highest, so the names keep
+ * climbing whatever else happens to the list.
+ */
+export function nextLayerName(layers = [], prefix = 'Layer') {
+  const pattern = new RegExp(`^${prefix}\\s+(\\d+)$`)
+  let highest = 0
+  for (const layer of layers) {
+    const match = pattern.exec(String(layer?.name || '').trim())
+    if (match) highest = Math.max(highest, Number(match[1]))
+  }
+  return `${prefix} ${highest + 1}`
 }
 export const rowSlot = (fragment, index) => fragment.slots?.[index] ?? index
 export const rowCount = fragment => fragment.layoutRows??(fragment.rowIds.length ? Math.max(...fragment.rowIds.map((_,i)=>rowSlot(fragment,i))) + 1 : 0)
@@ -533,10 +569,10 @@ export function wheelScrollsRowList(pointX,descriptor,marginX,scrollable) {
 }
 export const BLOCK_EDGE_GAP=52
 /** Never eat a narrow block to feed the channel beside it. */
-export const blockGap=(f,camera)=>Math.min(BLOCK_EDGE_GAP,(f.end-f.start)*camera.scale*0.25)
+export const blockGap=(f,camera)=>Math.min(BLOCK_EDGE_GAP,displaySpan(f)*camera.scale*0.25)
 /** Pixels per alignment column inside a block, slightly under camera.scale. */
 export function columnScale(f,camera) {
-  const span=Math.max(1,f.end-f.start)
+  const span=Math.max(1,displaySpan(f))
   return Math.max(Number.EPSILON,(span*camera.scale-blockGap(f,camera))/span)
 }
 /** Inverse of the painter's column placement: an undistorted layer-space x back
@@ -604,11 +640,30 @@ export const linkIsBuried=(connection,rects,{original=false,packed=false}={})=>
 
 export function panelGeometry(f,camera,marginX) {
   const scale=columnScale(f,camera)
-  return {x:marginX+(f.x-camera.x)*camera.scale,width:(f.end-f.start)*scale,scale}
+  return {x:marginX+(f.x-camera.x)*camera.scale,width:displaySpan(f)*scale,scale}
 }
+/** A fragment's rectangle on the canvas.
+ *
+ * The left edge is the exact affine position; the body is compressed into the
+ * rect minus a constant pixel gap, leaving a channel before the next block.
+ *
+ * A pinned fragment keeps that horizontal transform and drops the vertical one,
+ * which is the whole of what pinning is: the same columns over the same block,
+ * held where the reader can still see them while the stack scrolls underneath.
+ * Painting and hit testing both read this, so the two cannot disagree about
+ * where a pinned row is. */
+export const panelRect=(f,camera)=>({...panelGeometry(f,camera,MARGIN_X),y:MARGIN_Y+f.y*ROW_HEIGHT-(f.pinned?0:camera.y),height:rowCount(f)*ROW_HEIGHT})
+export const pinnedBottom=(layer,camera)=>Math.max(0,...(layer?.fragments||[]).filter(f=>f.pinned).map(f=>{const rect=panelRect(f,camera);return rect.y+rect.height}))
+export function pointInPanel(px,py,f,camera){const r=panelRect(f,camera);return px>=r.x&&px<=r.x+r.width&&py>=r.y-HEADER_HEIGHT&&py<=r.y+r.height}
 export function layerXToColumn(f,camera,x) {
-  if(!camera)return x-f.x+f.start
-  return f.start+(x-f.x)*camera.scale/columnScale(f,camera)
+  if(!camera)return sourceColumn(f,x-f.x)
+  return sourceColumn(f,(x-f.x)*camera.scale/columnScale(f,camera))
+}
+/** Layer-space x of a source column: the inverse of `layerXToColumn`, and the
+ *  one place outside the painter that has to agree with it. */
+export function columnToLayerX(f,camera,column) {
+  if(!camera)return f.x+displayColumn(f,column)
+  return f.x+displayColumn(f,column)*columnScale(f,camera)/camera.scale
 }
 export function selectionRect(layer,rect,columnsOnly=false,camera=null) {
   const selected=[]
@@ -628,7 +683,7 @@ export function layerBounds(layer) {
   if(!layer?.fragments.length)return null
   return {
     left:Math.min(...layer.fragments.map(f=>f.x)),
-    right:Math.max(...layer.fragments.map(f=>f.x+f.end-f.start)),
+    right:Math.max(...layer.fragments.map(f=>f.x+displaySpan(f))),
     top:Math.min(...layer.fragments.map(f=>f.y))*ROW_HEIGHT,
     bottom:Math.max(...layer.fragments.map(f=>f.y+rowCount(f)))*ROW_HEIGHT,
   }
@@ -837,7 +892,9 @@ export function validateLayerWorkspace(value,ids) {
   })
   // A hidden set is a list of block numbers and the view to come back to.
   const hidden=hiddenState(value.hidden),hideMemory=hideSettings(value.hideMemory)
-  return {...emptyWorkspace(),...value,hidden,hideMemory,layers,colourScheme:schemeById(value.colourScheme).id,palette:validPalettes(value.palette),shading:shadingById(value.shading).id,legendOverlay:!!value.legendOverlay,highlighted:highlightedRows(value.highlighted).filter(id=>known.has(id)),rowOrder:Array.isArray(value.rowOrder)&&value.rowOrder.every(id=>typeof id==='string')?value.rowOrder:null,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(value.camera)}}
+  const collapseMin=Math.min(100000,Math.max(1,Math.round(Number(value.collapseMin))||DEFAULT_COLLAPSE_MIN))
+  const collapsePercent=gapPercent(value.collapsePercent)
+  return {...emptyWorkspace(),...value,hidden,hideMemory,layers,collapseGaps:!!value.collapseGaps,collapseMin,collapsePercent,collapseMarks:value.collapseMarks!==false,colourScheme:schemeById(value.colourScheme).id,palette:validPalettes(value.palette),shading:shadingById(value.shading).id,legendOverlay:!!value.legendOverlay,highlighted:highlightedRows(value.highlighted).filter(id=>known.has(id)),rowOrder:Array.isArray(value.rowOrder)&&value.rowOrder.every(id=>typeof id==='string')?value.rowOrder:null,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(value.camera)}}
 }
 
 /** The names a selection rectangle covers.
@@ -1027,7 +1084,7 @@ export function chunkFasta(fragment,rows) {
 }
 
 export function sourceViewAnchor(fragments,camera) {
-  const distance=f=>Math.max(f.x-camera.x,0,camera.x-(f.x+f.end-f.start))
+  const distance=f=>Math.max(f.x-camera.x,0,camera.x-(f.x+displaySpan(f)))
   return fragments.reduce((best,f)=>!best||distance(f)<distance(best)?f:best,null)
 }
 /** Which chunk of a layer the window is over.
@@ -1045,7 +1102,7 @@ export function layerViewAnchor(fragments,camera,view) {
   const midY=camera.y+Math.max(40,view.height-MARGIN_Y)/2
   const away=(lo,hi,at)=>Math.max(lo-at,0,at-hi)
   const distance=f=>Math.hypot(
-    away(f.x,f.x+f.end-f.start,midX)*camera.scale,
+    away(f.x,f.x+displaySpan(f),midX)*camera.scale,
     away(f.y*ROW_HEIGHT,(f.y+rowCount(f))*ROW_HEIGHT,midY))
   return fragments.reduce((best,f)=>!best||distance(f)<distance(best)?f:best,null)
 }

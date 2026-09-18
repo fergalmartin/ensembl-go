@@ -1,8 +1,12 @@
 import { FONT_MONO } from '../utils/typography'
+import { DownloadMark, GenomeBrowserMark } from './appIconMarks'
 
 export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
   const size = compact ? 18 : 24
   const strokeWidth = compact ? 1.8 : 2
+
+  // Rows of sequence with a coordinate gutter: what the view itself looks like.
+  if (buttonId === 'sequence') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M3 6h2M3 12h2M3 18h2M8 6h13M8 12h13M8 18h9"/></svg>
 
   if (buttonId === 'alignment_explorer') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4ZM3 12l9 4 9-4M3 17l9 4 9-4"/></svg>
 
@@ -62,15 +66,7 @@ export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
   }
 
   if (buttonId === 'genome_browser') {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="3" width="20" height="18" rx="2" />
-        <line x1="2" y1="9" x2="22" y2="9" />
-        <circle cx="5.5" cy="6" r="0.8" fill="currentColor" stroke="none" />
-        <circle cx="8.5" cy="6" r="0.8" fill="currentColor" stroke="none" />
-        <circle cx="11.5" cy="6" r="0.8" fill="currentColor" stroke="none" />
-      </svg>
-    )
+    return <GenomeBrowserMark size={size} strokeWidth={strokeWidth} />
   }
 
   if (buttonId === 'feature_explorer') {
@@ -219,18 +215,7 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
   }
 
   if (buttonId === 'download') {
-    const iconSize = compact ? size + 2 : Math.round((size + 5) * 0.75)
-    return (
-      <svg width={iconSize} height={iconSize} viewBox="0 0 32 32" fill="currentColor" stroke="none" aria-hidden="true">
-        <path d="M3.5999999,2.7C3.5999999,2.8,3.5,2.9000001,3.5,3s0,0.2,0.0999999,0.3L15.5,19.5999985
-	c0.1999998,0.2999992,0.6000004,0.2999992,0.7999992,0.2000008c0.1000004,0,0.1000004-0.1000004,0.2000008-0.2000008L28.3999996,3.3
-	C28.6000004,3,28.5,2.6999998,28.1999989,2.5c-0.1000004-0.0999999-0.2000008-0.0999999-0.2999992-0.0999999H4.0999999
-	C3.9000001,2.4000001,3.7,2.5,3.5999999,2.7z"/>
-        <path d="M29.3353596,29.6499996c1,0,1.666666-0.833334,1.666666-1.6666679v-1.7666645c0-1-0.833334-1.666666-1.666666-1.666666
-	H2.6686926c-0.8333333,0-1.6666666,0.666666-1.6666666,1.666666v1.7666645c0,0.833334,0.6666669,1.6666679,1.6666666,1.6666679
-	H29.3353596z"/>
-      </svg>
-    )
+    return <DownloadMark size={compact ? size + 2 : Math.round((size + 5) * 0.75)} />
   }
 
   if (buttonId === 'configuration') {

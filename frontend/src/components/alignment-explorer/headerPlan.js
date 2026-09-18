@@ -13,9 +13,15 @@
  * as a whole has no say: one wide block among slivers has the room for all of it,
  * and used to be cut back to its number alone because its neighbours were small.
  */
-export function blockHeaderPlan({room,actionsWidth,sourceBlock,interval,compact=false,measure}) {
+export function blockHeaderPlan({room,actionsWidth,sourceBlock,interval,note='',compact=false,measure}) {
   const long=`Block ${sourceBlock}`,suffix=compact?` · compact`:''
+  // `note` is a droppable piece of its own rather than part of the interval,
+  // because it is the first thing that should go when the header narrows and
+  // the last thing that should be abbreviated. A count of columns the panel is
+  // not drawing has to be readable as a sentence or not be there at all - a
+  // shortened form of it is a number the reader has to guess the meaning of.
   const plans=[
+    ...(note?[{text:long+suffix,actions:true,interval:true,note:true}]:[]),
     {text:long+suffix,actions:true,interval:true},
     {text:long+suffix,actions:true,interval:false},
     {text:long,actions:true,interval:false},
@@ -23,9 +29,10 @@ export function blockHeaderPlan({room,actionsWidth,sourceBlock,interval,compact=
     {text:`Blk ${sourceBlock}`,actions:false,interval:false},
     {text:`${sourceBlock}`,actions:false,interval:false},
   ]
-  const width=plan=>Math.max(measure(plan.text),plan.interval?measure(interval):0)
+  const lineOf=plan=>plan.interval?(plan.note?`${interval} · ${note}`:interval):''
+  const width=plan=>Math.max(measure(plan.text),plan.interval?measure(lineOf(plan)):0)
   const plan=plans.find(p=>width(p)+(p.actions?actionsWidth:0)<=room)
-  return plan?{...plan,width:width(plan)}:null
+  return plan?{...plan,width:width(plan),line:lineOf(plan)}:null
 }
 
 /** Where a block's ruler puts its marks, and which of them can be named.

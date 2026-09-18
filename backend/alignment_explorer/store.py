@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from collections import Counter
 from .summary_cache import SummaryCache, summarize, cohort_summarize
+from .gaps import (runs_of_gap, intersect, merge_adjacent, fill_uncovered,
+                   gap_tally, tally_gaps, runs_at_least, rows_needed)
 from contextlib import contextmanager
 
 DNA = set('ACGTRYSWKMBDHVN-?.')
@@ -713,6 +715,104 @@ class AlignmentStore:
             counts = cohort_summarize(db, block, cohort, start, end, step, summary_cache)
             return {'block': block, 'start': start, 'end': end, 'length': b['length'],
                     'bin_size': step, 'cohort': len(cohort), 'bins': counts}
+
+    def gap_columns(self, block, start=0, end=None, ids=(), min_run=1, percent=100, max_runs=4000, cancelled=lambda: False):
+        """Column runs at least `percent` of the cohort is a gap in.
+
+        The cohort is whatever the reader is looking at, so the answer is
+        computed per call rather than stored: hiding a sequence can empty a
+        column and showing it again can fill it, and a cached answer would
+        outlive the view that made it true.
+
+        Rows the block does not hold are skipped rather than counted as gap,
+        and they are out of the denominator too - `rows_needed` says why.
+
+        At 100% the answer is the intersection of the rows' gap runs, folded a
+        row at a time: each row can only ever narrow what is left, so a cohort
+        whose first row is dense finishes almost immediately and a sheet with
+        nothing closable in it costs one or two rows rather than all of them.
+        Below 100% there is no such early answer - a column can still cross the
+        threshold after any number of rows that have a base there - so every row
+        is read and counted into a tally four bytes a column wide. That is the
+        price of the question, and it is why the fold is kept for the case that
+        can avoid it.
+
+        `min_run` is applied last, to the surviving runs. Filtering each row's
+        runs first would be a different and wrong question: three rows whose
+        long gaps overlap in a short stretch share that stretch and nothing
+        else, and a per-row filter would keep it while dropping the long runs
+        that produced it.
+        """
+        with self.connect() as db:
+            b = db.execute('SELECT * FROM blocks WHERE id=?', (block,)).fetchone()
+            if b is None: raise ValueError('Alignment block not found')
+            start = max(0, int(start))
+            end = min(b['length'], int(end if end is not None else b['length']))
+            if end <= start: raise ValueError('Empty alignment interval')
+            cohort = sorted(set(ids))
+            percent = min(100, max(1, int(percent)))
+            if not cohort: return {'block': block, 'start': start, 'end': end, 'runs': [], 'cohort': 0,
+                                   'present': 0, 'percent': percent, 'needed': 0, 'truncated': False}
+            whole = percent >= 100
+            found = None
+            tally = None if whole else gap_tally(end - start)
+            present = 0
+            settled = False
+            for row_id in cohort:
+                if cancelled(): raise InterruptedError('Navigation changed')
+                if settled:
+                    # The answer is already known - the intersection emptied -
+                    # but how many rows the block holds is part of what is
+                    # reported, and stopping the loop outright reported one. An
+                    # index probe that never touches the bases is what the rest
+                    # of this row costs now, rather than reading and scanning it.
+                    if db.execute('SELECT 1 FROM chunks WHERE block=? AND id=? AND offset<? AND offset+length(bases)>? LIMIT 1',
+                                  (block, row_id, end, start)).fetchone(): present += 1
+                    continue
+                chunks = db.execute(
+                    'SELECT offset,bases FROM chunks WHERE block=? AND id=? AND offset<? AND offset+length(bases)>? ORDER BY offset',
+                    (block, row_id, end, start)).fetchall()
+                if not chunks: continue
+                present += 1
+                gaps = []
+                covered = 0
+                for chunk in chunks:
+                    if cancelled(): raise InterruptedError('Navigation changed')
+                    a = max(start, chunk['offset'])
+                    z = min(end, chunk['offset'] + len(chunk['bases']))
+                    if z <= a: continue
+                    covered += z - a
+                    gaps.extend(runs_of_gap(chunk['bases'][a - chunk['offset']:z - chunk['offset']], a))
+                # Columns this row does not reach are columns it has no base in.
+                # A row ending early leaves the tail empty exactly as a run of
+                # '-' would, and reading it any other way would keep a tail no
+                # sequence in the cohort occupies.
+                gaps = fill_uncovered(gaps, [(c['offset'], c['offset'] + len(c['bases'])) for c in chunks], start, end)
+                if whole:
+                    found = gaps if found is None else intersect(found, gaps)
+                    # Nothing shared so far is nothing shared at the end: the
+                    # intersection only ever shrinks, so the rows not yet read
+                    # cannot put anything back.
+                    if not found: settled = True
+                else:
+                    tally_gaps(tally, gaps, start)
+            needed = rows_needed(present, percent)
+            if not whole:
+                found = runs_at_least(tally, needed, start)
+            elif found is None:
+                found = []
+            if not found:
+                return {'block': block, 'start': start, 'end': end, 'runs': [], 'cohort': len(cohort),
+                        'present': present, 'percent': percent, 'needed': needed, 'truncated': False}
+            runs = [[a, z] for a, z in found if z - a >= max(1, int(min_run))]
+            truncated = len(runs) > max_runs
+            if truncated:
+                # Keep the widest runs: they are what a collapse is for, and a
+                # bounded answer that keeps the small ones would collapse almost
+                # nothing while still costing the reader their coordinates.
+                runs = sorted(sorted(runs, key=lambda r: r[1] - r[0], reverse=True)[:max_runs])
+            return {'block': block, 'start': start, 'end': end, 'runs': runs, 'cohort': len(cohort),
+                    'present': present, 'percent': percent, 'needed': needed, 'truncated': truncated}
 
     def update_metadata(self, entries):
         entries = normalize_metadata_entries(entries)

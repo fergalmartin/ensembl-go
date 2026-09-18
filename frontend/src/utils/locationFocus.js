@@ -91,6 +91,21 @@ export function sequenceChunks(start, end, chunkSize = SEQUENCE_CHUNK_BP) {
     return chunks
 }
 
+/**
+ * One base's complement, IUPAC-aware and case-preserving.
+ *
+ * Exported because the sequence view complements a row a character at a time —
+ * it has to leave its not-yet-loaded placeholders alone — and a second copy of
+ * this table would be a second thing to get wrong.
+ */
+export function complementBase(base) {
+    const character = String(base || '')
+    const upper = character.toUpperCase()
+    const complement = COMPLEMENT[upper]
+    if (!complement) return 'N'
+    return character === upper ? complement : complement.toLowerCase()
+}
+
 export function reverseComplement(sequence) {
     const text = String(sequence || '')
     let out = ''

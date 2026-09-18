@@ -54,6 +54,25 @@ export function moveBrowserViewport(move = {}) {
   return false
 }
 
+/** Make a region the panel's location of focus, or clear it with `null`.
+ *
+ *  Goes through the panel's own `focusLocation`, so the drawer, the focus bar, the dashed
+ *  boundary lines and the gene that gives way to it all move together — and so a step can
+ *  declare the location it describes without first driving the view there and back.
+ *
+ *  Returns false when nothing had to change, which is what lets an arrival run on every
+ *  visit without re-focusing what is already focused. */
+export function setBrowserLocationFocus(locus, panelKey) {
+  const controls = browserViewportControls(panelKey)
+  if (!controls?.setLocationFocus) return false
+  if (locus === null || locus === undefined || locus === 'none' || locus === '') {
+    return Boolean(controls.setLocationFocus(null))
+  }
+  const range = typeof locus === 'string' ? parseLocus(locus) : locus
+  if (!range) return false
+  return Boolean(controls.setLocationFocus(range))
+}
+
 /** Whether two viewport descriptions are the same place.
  *
  *  Rounded, because a view that has settled after an animation is not bit-identical to

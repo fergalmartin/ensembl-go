@@ -223,3 +223,38 @@ test('a uniform span is one run of sequence, cut only where this row is absent',
   assert.deepEqual(uniformRuns(0,5,null,null,false),[{start:0,end:5,gap:false}])
   assert.deepEqual(uniformRuns(3,3,{sequence:'AAA'},{start:0,detail:true},true),[],'an empty span draws nothing')
 })
+
+test('binned coverage is cut into runs, bounded by the span and by what a pixel shows', async () => {
+  const { binRuns } = await import('../src/components/alignment-explorer/paintBins.js')
+  const row = {
+    bins: [{ A: 2, '-': 1 }, { '-': 3 }, { C: 3 }, { A: 1, N: 2 }],
+    divergence_bins: [{ comparable: 2, different: 1 }, { comparable: 0, different: 0 },
+      { comparable: 3, different: 0 }, { comparable: 1, different: 1 }],
+  }
+  const data = { start: 0, end: 12, bin_size: 3 }
+  // With nothing to merge, a run is a bin, exactly as the painter drew them.
+  const plain = binRuns(0, 12, row, data, 0)
+  assert.equal(plain.length, 4)
+  assert.deepEqual(plain.map(r => [r.start, r.end]), [[0, 3], [3, 6], [6, 9], [9, 12]])
+  assert.deepEqual(plain.map(r => r.gap), [false, true, false, false])
+  assert.deepEqual(plain.map(r => r.fraction), [0.5, null, 0, 1])
+  // A bin with no A, C, G or T in it is not a gap, and says so separately.
+  assert.equal(plain[3].canonical, 1)
+  assert.equal(binRuns(0, 12, { bins: [{ N: 3 }] }, { start: 0, end: 3, bin_size: 3 })[0].canonical, 0)
+  // Only the bins the span reaches are looked at, and they are clipped to it.
+  assert.deepEqual(binRuns(4, 8, row, data, 0).map(r => [r.start, r.end]), [[4, 6], [6, 8]])
+  // Under a pixel, neighbours are summed into one run rather than fighting over
+  // the same fill. Divergence is recomputed from the run's own totals.
+  const merged = binRuns(0, 12, row, data, 12)
+  assert.equal(merged.length, 1)
+  assert.deepEqual([merged[0].start, merged[0].end], [0, 12])
+  assert.equal(merged[0].total, 12)
+  assert.equal(merged[0].canonical, 6)
+  assert.equal(merged[0].gap, false, 'a run holding a base is not an absence')
+  assert.equal(merged[0].fraction, 2 / 6)
+  // A minimum a bin already clears merges nothing.
+  assert.equal(binRuns(0, 12, row, data, 3).length, 4)
+  // Nothing to draw from, nothing drawn.
+  assert.deepEqual(binRuns(0, 12, { bins: [] }, data, 0), [])
+  assert.deepEqual(binRuns(5, 5, row, data, 0), [])
+})

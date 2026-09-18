@@ -484,7 +484,25 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="Ensembl Go API", lifespan=_lifespan)
 
 from alignment_explorer import create_router as create_alignment_explorer_router
-app.include_router(create_alignment_explorer_router(annotation_provider=lambda *args: alignment_explorer_annotation_features(*args)))
+app.include_router(create_alignment_explorer_router(
+    annotation_provider=lambda *args, **kwargs: alignment_explorer_annotation_features(*args, **kwargs),
+    gene_provider=lambda *args, **kwargs: alignment_explorer_block_genes(*args, **kwargs),
+    availability_provider=lambda *args, **kwargs: alignment_explorer_genome_availability(*args, **kwargs)))
+
+# The sequence view, wired the same way: a package that never imports this module
+# and is handed the functions it needs. Every provider is defined further down
+# this file, so each is passed as a lambda that looks it up when called rather
+# than as the name, which does not exist yet at this line.
+from sequence_view import create_router as create_sequence_view_router
+app.include_router(create_sequence_view_router(
+    db_provider=lambda *args, **kwargs: _get_browse_db(*args, **kwargs),
+    db_optional_provider=lambda *args, **kwargs: _get_browse_db_optional(*args, **kwargs),
+    fasta_provider=lambda *args, **kwargs: _get_browse_fasta(*args, **kwargs),
+    chrom_resolver=lambda *args, **kwargs: _resolve_browse_chrom_name(*args, **kwargs),
+    tx_feature_intervals=lambda *args, **kwargs: _build_tx_feature_intervals(*args, **kwargs),
+    mode_segments=lambda *args, **kwargs: _build_mode_segments(*args, **kwargs),
+    normalize_intervals=lambda *args, **kwargs: _normalize_interval_list(*args, **kwargs),
+    ordered_five_to_three=lambda *args, **kwargs: _ordered_five_to_three(*args, **kwargs)))
 API_TOKEN = os.environ.get("ENSEMBL_LOCAL_API_TOKEN", "").strip()
 API_TOKEN_HEADER = "x-ensembl-local-token"
 # Routes serving the sandboxed 3D structure viewer. Kept off /api because these
@@ -12139,6 +12157,147 @@ async def browse_canonical_transcripts(
         return results
 
     return await run_in_threadpool(_query)
+
+
+def _alignment_explorer_transcript_features(exons, cds_list, utrs, strand):
+    """One transcript's parts as zero-based half-open genomic intervals.
+
+    Geometry only: exons, introns between them, CDS and UTR. Splice sites and
+    codons are read off the sequence and belong with the measurements, not with
+    the shape of the model, so they are not invented here.
+
+    ``strand`` is the transcript's own, which decides what is 5' and what is 3'
+    and has nothing to do with the strand the alignment row is on.
+    """
+    def interval(kind, start, end):
+        # GFF3 is one-based inclusive; everything past this function is not.
+        return {'type': kind, 'start': int(start) - 1, 'end': int(end)}
+    def bounds(item):
+        return int(item.get('start', 0) or 0), int(item.get('end', 0) or 0)
+    features = []
+    ordered = sorted((bounds(item) for item in exons), key=lambda pair: pair[0])
+    for exon_start, exon_end in ordered:
+        features.append(interval('exon', exon_start, exon_end))
+    for (_, first_end), (second_start, _) in zip(ordered, ordered[1:]):
+        if second_start - 1 >= first_end + 1:
+            features.append(interval('intron', first_end + 1, second_start - 1))
+    for cds_start, cds_end in (bounds(item) for item in cds_list):
+        features.append(interval('cds', cds_start, cds_end))
+    coding = sorted((bounds(item) for item in cds_list), key=lambda pair: pair[0])
+    for utr in utrs:
+        utr_start, utr_end = bounds(utr)
+        tagged = str(utr.get('feature_type') or '')
+        kind = 'utr5' if tagged == 'five_prime_UTR' else 'utr3' if tagged == 'three_prime_UTR' else None
+        if kind is None and coding:
+            # An untagged UTR is named from which side of the CDS it lies on,
+            # which is the same fallback the sequence viewer uses.
+            before = utr_end < coding[0][0]
+            kind = ('utr5' if before else 'utr3') if strand == '+' else ('utr3' if before else 'utr5')
+        features.append(interval(kind or 'utr5', utr_start, utr_end))
+    return features
+
+
+def alignment_explorer_block_genes(genome, chrom, start, end, expand=(), gene_limit=200, transcript_limit=8, page=0):
+    """Gene models overlapping a genomic interval, for the block context view.
+
+    One representative transcript per gene — canonical where the index says so,
+    otherwise the first by position, labelled as a fallback rather than passed
+    off as canonical. A gene named in ``expand`` returns a page of its other
+    isoforms as well, so opening one gene never means loading every isoform of
+    every gene in the window.
+
+    ``start``/``end`` are one-based inclusive, matching the GFF3 index this
+    reads. Everything returned is zero-based half-open.
+    """
+    db_path = _get_browse_db(genome)
+    resolved = _resolve_db_chrom_name_for_genome(db_path, chrom, genome) or chrom
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        gene_rows = conn.execute(
+            'SELECT id,name,start,end,strand,biotype,description FROM genes WHERE chrom=? AND end>=? AND start<=? ORDER BY start LIMIT ?',
+            (resolved, int(start), int(end), int(gene_limit) + 1)).fetchall()
+        complete = len(gene_rows) <= int(gene_limit)
+        gene_rows = gene_rows[:int(gene_limit)]
+        if not gene_rows:
+            return {'genes': [], 'complete': complete}
+        ids = [row['id'] for row in gene_rows]
+        # One query for every transcript of every gene in the window. The
+        # per-transcript lookup this replaces opened a database connection each
+        # time, which at a few thousand isoforms is the whole cost of the call.
+        placeholders = ','.join('?' * len(ids))
+        transcript_rows = conn.execute(
+            'SELECT id,parent_gene_id,chrom,start,end,strand,is_canonical,data FROM transcripts WHERE parent_gene_id IN (%s) ORDER BY is_canonical DESC,start ASC' % placeholders,
+            ids).fetchall()
+    finally:
+        conn.close()
+    by_gene = {}
+    for row in transcript_rows:
+        by_gene.setdefault(row['parent_gene_id'], []).append(row)
+    wanted = set(expand or ())
+    genes = []
+    for gene in gene_rows:
+        available = by_gene.get(gene['id'], [])
+        if not available:
+            continue
+        if gene['id'] in wanted:
+            window = available[int(page) * int(transcript_limit):(int(page) + 1) * int(transcript_limit)]
+            if (int(page) + 1) * int(transcript_limit) < len(available): complete = False
+        else:
+            window = available[:1]
+        transcripts = []
+        for row in window:
+            data = json.loads(row['data']) if row['data'] else {}
+            lists = {key: [item for item in data.get(key, []) if isinstance(item, dict)] for key in ('exons', 'cds_list', 'utrs')}
+            tx_strand = row['strand'] or gene['strand'] or '+'
+            transcripts.append({
+                'transcript_id': row['id'],
+                'is_canonical': bool(row['is_canonical']),
+                # Where the index names no canonical transcript, the first by
+                # position stands in. Saying so is the point: a fallback drawn as
+                # canonical is a claim the annotation never made.
+                'representative': not bool(row['is_canonical']),
+                'biotype': data.get('biotype') or gene['biotype'] or '',
+                'tags': data.get('tags', []) if isinstance(data.get('tags', []), list) else [],
+                'strand': tx_strand,
+                'genomic': {'start': int(row['start']) - 1, 'end': int(row['end'])},
+                'features': _alignment_explorer_transcript_features(lists['exons'], lists['cds_list'], lists['utrs'], tx_strand),
+            })
+        genes.append({
+            'gene_id': gene['id'], 'gene_name': gene['name'] or gene['id'],
+            'biotype': gene['biotype'] or '', 'strand': gene['strand'] or '+',
+            'description': gene['description'] or '',
+            'genomic': {'start': int(gene['start']) - 1, 'end': int(gene['end'])},
+            'transcript_count': len(available),
+            'transcripts': transcripts,
+        })
+    return {'genes': genes, 'complete': complete}
+
+
+def alignment_explorer_genome_availability(assembly, region):
+    """Whether a linked assembly can answer for a region, and how far.
+
+    Four separate answers, never one boolean. A genome that is not installed,
+    one installed without annotation, and one whose annotation simply has no
+    genes in a region are three different facts, and a track that showed them
+    identically would read as biological absence.
+    """
+    try:
+        _resolve_browse_genome_context(assembly)
+    except Exception:
+        return 'unavailable'
+    try:
+        db_path = _get_browse_db_optional(assembly)
+    except Exception:
+        db_path = None
+    if not db_path:
+        return 'no-annotation'
+    try:
+        if _resolve_db_chrom_name_for_genome(db_path, region, assembly) is None:
+            return 'no-region'
+    except Exception:
+        return 'no-region'
+    return 'ready'
 
 
 def alignment_explorer_annotation_features(genome, chrom, start, end, sequence, strand, transcript_id=None):
