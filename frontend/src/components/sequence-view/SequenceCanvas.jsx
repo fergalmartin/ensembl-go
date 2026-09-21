@@ -620,6 +620,24 @@ export default function SequenceCanvas({
         onSelectionChange?.({ start: dragRef.current.anchor, end: coord })
     }, [placeAt, onSelectionChange])
 
+    /**
+     * Carry the loose end of a half-made two-click selection to the pointer.
+     *
+     * Between the two clicks the reader is holding nothing, but they are still
+     * drawing: the end follows them, the region outlines as it grows and the
+     * rest of the page stays dim, so what the second click is about to take is
+     * on the screen before it is taken rather than after. The anchor is left
+     * alone -- only the far end moves -- and, as with a drag, a pointer that
+     * has wandered into another record is not somewhere this selection can go.
+     */
+    const extendPending = useCallback((at) => {
+        if (!pendingEnd || !at) return
+        const place = placeAt(at.index, at.offset)
+        const coord = place ? coordAtColumn(place.layout, place.column) : null
+        if (coord === null || place.section.key !== pendingEnd.sectionKey) return
+        onSelectionChange?.({ start: pendingEnd.coord, end: coord })
+    }, [pendingEnd, placeAt, onSelectionChange])
+
     const handleHover = useCallback((event) => {
         const press = pressRef.current
         if (press && !press.moved) {
@@ -629,10 +647,12 @@ export default function SequenceCanvas({
         const at = cellAt(event)
         if (!at) {
             setHover(null)
-            // Nothing under the pointer to describe, but a drag in hand still
-            // has somewhere to be: over a margin or between two rows it keeps
-            // going from the base it is level with.
-            if (dragRef.current) extendDrag(nearestCell(event))
+            // Nothing under the pointer to describe, but a gesture in hand
+            // still has somewhere to be: over a margin or between two rows it
+            // keeps going from the base it is level with.
+            const near = dragRef.current || pendingEnd ? nearestCell(event) : null
+            if (dragRef.current) extendDrag(near)
+            else extendPending(near)
             return
         }
         const { index, offset } = at
@@ -656,7 +676,8 @@ export default function SequenceCanvas({
             ),
         })
         extendDrag(at)
-    }, [cellAt, nearestCell, extendDrag, placeAt, painted, viewFor])
+        extendPending(at)
+    }, [cellAt, nearestCell, extendDrag, extendPending, pendingEnd, placeAt, painted, viewFor])
 
     /** How far past the top or bottom of the sequence a point is, in pixels. */
     const edgeAt = useCallback((y) => {
@@ -960,12 +981,15 @@ export default function SequenceCanvas({
                         // part of it, which is what makes the stretch itself
                         // legible at a glance.
                         previewing={Boolean(preview)}
-                        // A finished selection dims what is outside it, the way
-                        // the pointer's feature does. Not while it is being
-                        // drawn: the reader is watching the end follow their
-                        // hand, and the page going dark under it would be one
-                        // thing too many happening at once.
-                        selecting={Boolean(selection) && !dragging}
+                        // A selection dims what is outside it, the way the
+                        // pointer's feature does -- from the first move of the
+                        // gesture rather than once it is let go. The dimming is
+                        // what shows the reader the stretch they are gathering:
+                        // waiting until the end meant dragging across an
+                        // unchanged page and only then seeing what had been
+                        // taken. It is the same while a two-click selection is
+                        // half made, where the second end follows the pointer.
+                        selecting={Boolean(selection)}
                     />
                 )))}
             </div>

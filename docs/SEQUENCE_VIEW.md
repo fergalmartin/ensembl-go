@@ -996,19 +996,44 @@ the same range with its ends the other way round, so it needs no case of its
 own. And a collapsed stretch's marker, having columns of its own inside the
 range, comes along without being asked.
 
-### The outline
+### The outline, and the dimming around it
 
-The amber is the alignment explorer's, so a selection means the same thing in
-both views: a wash over the cells and a line around the whole of them.
+The amber edge is the alignment explorer's, so a selection means the same thing
+in both views: a line around the whole of the chosen cells. What is *inside* the
+line is left exactly as it was — a wash over the selected bases is the one thing
+that cannot be done to a view whose subject is what colour a base is, because
+every annotation under it comes out a different shade of the selection. The
+region is shown by taking the light off everything else instead: the bases
+outside it drop to `DIMMED`, the same 0.22 the pointer's feature dims by, so the
+two readings of the page look like one mechanism rather than two.
 
-**It sits at the bright end of what used to be a swing.** The wash and the
-outline breathed once, on the same clock as the hover tint, because a fixed amber
-at the weight the explorer uses is nearly invisible over a mixed pink or a CDS
-blue — those cells are already carrying a colour. The movement went with the
-clock — see *Pointing at a row in the list* for what it cost — and the alphas
-left behind are the ones `prefers-reduced-motion` already settled it at, chosen
-for exactly this: bright enough to find over a coloured base, light enough to
-read the bases through.
+**The dimming starts with the gesture, not when it finishes.** It used to wait
+for the release, on the reasoning that the page going dark under a moving hand
+was one thing too many at once. In practice it meant dragging across an unchanged
+page and only seeing what had been taken after letting go, with no way to correct
+the far end while it was still yours to move. Now `selecting` is simply whether
+there is a selection at all, so the stretch lights up from the first move and the
+reader is choosing against what they can see.
+
+**It holds for the half-made two-click selection too.** Between the two clicks
+the pointer carries the loose end: `extendPending` moves it on every hover, the
+anchor stays where the first click put it, and the outline and the dimming grow
+with it. The second click therefore lands on a region already on the screen. As
+with a drag, an end that has wandered into another record is refused rather than
+clamped — see *A selection stays in one record*.
+
+**The amber sits at the bright end of what used to be a swing.** The edge
+breathed once, on the same clock as the hover tint, because a fixed amber at the
+weight the explorer uses is nearly invisible over a mixed pink or a CDS blue —
+those cells are already carrying a colour. The movement went with the clock — see
+*Pointing at a row in the list* for what it cost — and the alphas left behind are
+the ones `prefers-reduced-motion` already settled it at.
+
+**Rows dim whole wherever they can.** Opacity is a transparency layer the
+compositor keeps, and sixty cells a row over forty rows is two thousand of them,
+which is what once turned scrolling with a gene held into a slideshow. Almost
+every row is wholly in the selection or wholly out of it, so it carries one
+opacity; only the two rows an end falls inside are decided cell by cell.
 
 `selectionMask` gives each selected cell a hex digit saying which of its four
 sides the region's edge runs along — a side gets an edge where the neighbour is
