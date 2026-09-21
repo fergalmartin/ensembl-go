@@ -33,10 +33,25 @@ import {
  * multi-row selection the staircase a reader expects of selected text.
  */
 export const SELECT_NONE = '.'
+
 export const SELECT_TOP = 1
 export const SELECT_RIGHT = 2
 export const SELECT_BOTTOM = 4
 export const SELECT_LEFT = 8
+
+/**
+ * A cell no pattern matched, in the find channel.
+ *
+ * The find channel is a string beside the others, one character a cell: a
+ * base-36 digit naming which pattern claimed the cell, or this. A channel of
+ * its own rather than two more bits in the marks, because the marks are read
+ * back with `parseInt(_, 32)` and there is no room left in a base-32 digit --
+ * and because what a reader is looking for is not an annotation.
+ */
+export const FIND_NONE = '.'
+
+/** How many patterns a row can tell apart, which is what a base-36 digit holds. */
+export const MAX_FIND_LANES = 36
 
 /**
  * One row, ready to draw.
@@ -60,6 +75,10 @@ export function paintDisplayRow(row, {
     strand = '+',
     allowed = null,
     selection = null,
+    // Where the reader's patterns matched, as `[loColumn, hiColumn, lane]` in
+    // display columns -- sorted and disjoint, the top pattern having already
+    // won anywhere two of them overlapped.
+    finds = null,
     genes = [],
     overlaps = [],
     marked = null,
@@ -69,7 +88,7 @@ export function paintDisplayRow(row, {
     width = BASES_PER_ROW,
 } = {}) {
     const length = Math.max(0, Math.floor(Number(row?.length) || 0))
-    if (!length) return { sequence: '', classes: '', mask: '', edges: '', amino: '' }
+    if (!length) return { sequence: '', classes: '', mask: '', finds: '', edges: '', amino: '' }
 
     // Filled rather than concatenated: pieces and markers arrive in column
     // order, but a row that ends mid-marker has columns nothing claims, and a
@@ -89,6 +108,10 @@ export function paintDisplayRow(row, {
     // between, and up to the point on the last -- and a collapsed stretch's
     // marker, having columns of its own inside the range, comes along with it.
     const mask = selectionMask(row, selection, length, Math.max(1, Math.floor(width)))
+    // Columns for the same reason the selection is: a match is a stretch of
+    // what is drawn, and collapsed the columns between two points already carry
+    // the markers along with them.
+    const found = findMask(row, finds, length)
 
     for (const piece of row.pieces || []) {
         const range = { start: piece.s, end: piece.e }
@@ -132,6 +155,7 @@ export function paintDisplayRow(row, {
         sequence: sequence.join(''),
         classes: classes.join(''),
         mask,
+        finds: found,
         edges: edges.join(''),
         // Empty rather than blank when the track is off, so a row that is not
         // drawing a protein lane can say so with one falsy check.
@@ -172,4 +196,49 @@ export function selectionMask(row, selection, length, width) {
         out[i] = bits.toString(16)
     }
     return out.join('')
+}
+
+/**
+ * Which of a row's columns each pattern matched, as one base-36 digit a cell.
+ *
+ * `spans` is `[loColumn, hiColumn, lane]`, inclusive, sorted by `lo` and
+ * disjoint -- which is what `resolvePatternSpans` produces and what lets this
+ * walk the row once rather than testing every span against every cell. A screen
+ * of sequence can hold thousands of matches, and the quadratic version of this
+ * was the difference between scrolling and not.
+ *
+ * The lane is the pattern's place in the reader's list, which is what the row
+ * looks a colour up by. It is stored one higher than it is, so that lane zero
+ * is a digit and not the character for no match.
+ */
+export function findMask(row, spans, length) {
+    const size = Math.max(0, Math.floor(Number(length) || 0))
+    const blank = FIND_NONE.repeat(size)
+    const list = Array.isArray(spans) ? spans : []
+    if (!size || list.length === 0) return blank
+    const base = Number(row?.col0) || 0
+    const last = base + size - 1
+
+    const out = new Array(size).fill(FIND_NONE)
+    for (const span of list) {
+        const lo = Number(span?.[0])
+        const hi = Number(span?.[1])
+        if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue
+        // Sorted, so the first span starting past this row ends the walk.
+        if (lo > last) break
+        if (hi < base) continue
+        const lane = Math.max(0, Math.min(MAX_FIND_LANES - 1, Math.floor(Number(span?.[2]) || 0)))
+        const digit = (lane + 1).toString(36)
+        const from = Math.max(base, lo) - base
+        const to = Math.min(last, hi) - base
+        for (let i = from; i <= to; i += 1) out[i] = digit
+    }
+    return out.join('')
+}
+
+/** The lane a find-channel character names, or -1 for a cell nothing matched. */
+export function findLane(character) {
+    if (!character || character === FIND_NONE) return -1
+    const value = parseInt(character, 36)
+    return Number.isFinite(value) && value > 0 ? value - 1 : -1
 }

@@ -57,6 +57,8 @@ import {
     chunkRange,
 } from './sequenceViewChunks.js'
 import { BASES_PER_ROW } from './sequenceViewRows.js'
+import { aminoRow, rowClasses, splicedRows } from './transcriptSequenceView.js'
+import { fastaHeaderLine } from './sequenceViewPlain.js'
 
 /** As shown on screen -- collapsed stretches left out -- or every base of it. */
 export const SHAPE_SHOWN = 'shown'
@@ -268,12 +270,120 @@ function entryBases(entry) {
     return Math.max(0, (num(entry?.end) ?? 0) - (num(entry?.start) ?? 0) + 1)
 }
 
+/**
+ * How much sequence a target comes to.
+ *
+ * Off its entries' coordinates, because a stretch of chromosome is its
+ * coordinates. A spliced reading has none -- it is a transcript's own sequence,
+ * whose length is a fact about the transcript rather than about a span -- so it
+ * carries the count itself and that is taken instead.
+ */
 export function targetBases(target) {
+    if (target?.kind === 'reading') return Math.max(0, Number(target.bases) || 0)
     return (target?.entries || []).reduce((total, entry) => total + entryBases(entry), 0)
 }
 
 /**
- * Everything the reader could download from where they are standing.
+ * The readings a transcript has, as things to download.
+ *
+ * A transcript's own sequence is not a stretch of chromosome, and the level
+ * targets below are all stretches of chromosome: downloading "Transcript"
+ * there gives the genomic span, introns and all, which is the right answer to
+ * a different question. A reader looking at a spliced reading and pressing
+ * download means *that*, so the panel offers it by name.
+ *
+ * `readings` is which of the three exist, which the bar already knows, and
+ * `answers` is what has come back for them -- which gives the panel a length
+ * to print beside each. A reading not yet fetched has none, and prints none:
+ * a nought would say the transcript has no sequence.
+ */
+export function readingTargets({ focus = null, readings = [], answers = {} } = {}) {
+    const transcript = focus?.transcript
+    if (!transcript?.id || !Array.isArray(readings) || !readings.length) return []
+    return readings.map((kind) => {
+        const answer = answers?.[kind]
+        const length = answer?.status === 'ok' ? Number(answer.length) || 0 : 0
+        return {
+        id: `reading:${kind}`,
+        kind: 'reading',
+        reading: kind,
+        label: READING_LABEL[kind] || kind,
+        detail: transcript.id,
+        fileStem: `${transcript.id}_${kind}`,
+        level: LEVEL_TRANSCRIPT,
+        // What the file will hold, and in what: a protein is counted in
+        // residues, and calling them bases would be a different molecule.
+        bases: length,
+        unit: kind === 'protein' ? 'aa' : 'bp',
+        // A spliced sequence has no flanks: there is no sequence either side of
+        // it in its own coordinates, and adding genomic flank to it would be
+        // gluing a stretch of chromosome onto something that is not one.
+        flankable: false,
+        transcriptId: transcript.id,
+        entries: [{
+            key: `reading:${kind}`,
+            label: transcript.id,
+            named: true,
+            detail: READING_DETAIL[kind] || kind,
+            level: LEVEL_TRANSCRIPT,
+            reading: kind,
+            transcriptId: transcript.id,
+            chrom: focus.chrom,
+            strand: transcript.strand || '+',
+        }],
+        }
+    })
+}
+
+/**
+ * What each reading is called in the panel, and in a file.
+ *
+ * Two names for the transcript, because the panel has to tell it from the
+ * transcript's *stretch of chromosome* listed beside it and a file does not:
+ * inside `>ENST1 Transcript sequence` there is nothing to confuse it with.
+ */
+const READING_LABEL = {
+    transcript: 'Transcript (sequence)',
+    cds: 'CDS',
+    protein: 'Protein',
+}
+
+const READING_DETAIL = {
+    transcript: 'Transcript sequence',
+    cds: 'CDS',
+    protein: 'Protein',
+}
+
+/**
+ * The two lists as one, in the order a reader goes down them.
+ *
+ * The readings belong *with* the transcript rather than above everything:
+ * location, gene, the transcript's stretch of chromosome, and then that
+ * transcript read three ways. They were first, which put a protein above the
+ * location it is in and broke the ladder the drawer stacks the focus in.
+ *
+ * Where both are listed the transcript appears twice -- its span with the
+ * introns in it, and its own spliced sequence -- and neither is simply "the
+ * transcript", so both say which they are. Only where both are listed: with no
+ * readings to tell it from, `Transcript` is the whole of what it is.
+ */
+export function orderTargets(levels = [], readings = []) {
+    if (!readings.length) return levels
+    const at = levels.findIndex((target) => target.id === `level:${LEVEL_TRANSCRIPT}`)
+    // No transcript level to sit under -- which the focus should not allow,
+    // since both are built from the same transcript -- so they go last rather
+    // than jumping the ladder.
+    if (at < 0) return [...levels, ...readings]
+    return [
+        ...levels.slice(0, at),
+        { ...levels[at], label: 'Transcript (genomic)' },
+        ...readings,
+        ...levels.slice(at + 1),
+    ]
+}
+
+/**
+ * Everything else the reader could download from where they are standing.
  *
  * The ticked records first when there are any -- in record mode that is almost
  * always what is meant -- and then the focus chain from the top down, in the
@@ -682,6 +792,61 @@ export function paintRows({
     return rows
 }
 
+/**
+ * The same rows, for a transcript read in its own coordinates.
+ *
+ * A spliced reading is not a stretch of chromosome, so none of the machinery
+ * above applies to it: there is no layout to lay out, no coordinates to read
+ * sequence at, and no collapse to plan. The sequence arrives whole from
+ * `/transcript-sequence`, and what is left is the same handful of strings every
+ * row is made of -- which is exactly what the writers already take, so a
+ * spliced reading writes to RTF and HTML through the same path a region does.
+ *
+ * `runs` is `splicedRunsFor`'s answer, the same list the surface colours with,
+ * so a downloaded file and the screen cannot disagree about what a base is.
+ */
+export function splicedExportRows({
+    sequence = '',
+    runs = [],
+    cds = null,
+    palette = DEFAULT_PALETTE,
+    protein = false,
+    gutters = true,
+    plainInk = '#334155',
+} = {}) {
+    const text = String(sequence || '')
+    const translating = Boolean(protein) && Boolean(cds)
+    return splicedRows(text.length).map((row) => {
+        const codes = rowClasses(row, runs)
+        const amino = translating ? aminoRow(row, text, cds) : ''
+        const cells = []
+        for (let i = 0; i < row.length; i += 1) {
+            const code = codes[i] || CLASS_NONE
+            const style = code === CLASS_NONE ? null : palette.style(code)
+            const outline = Boolean(style?.outline)
+            cells.push({
+                ch: text[row.col0 + i] || ' ',
+                gap: false,
+                pending: false,
+                // Outlined classes have no fill on screen either: the outline
+                // says "sequence of this kind, not the feature itself", and a
+                // file that filled them would be saying something else.
+                bg: style && !outline ? style.bg : null,
+                outline: outline ? style.bg : null,
+                underline: null,
+                fg: style && !outline ? textOnColour(style.bg) : plainInk,
+            })
+        }
+        return {
+            index: row.index,
+            left: gutters ? row.first : null,
+            right: gutters ? row.last : null,
+            amino,
+            cells,
+        }
+    })
+}
+
 /** Everything a record's heading says, which is known before a row is painted. */
 export function documentMeta(entry, layout, strand = '+') {
     return {
@@ -768,14 +933,22 @@ export function documentBases(document_) {
     return out
 }
 
-/** The line a FASTA record is headed by, in the backend's own wording. */
+/**
+ * The line a FASTA record is headed by, in the backend's own wording.
+ *
+ * Written by `fastaHeaderLine`, which the FASTA display on screen writes its own
+ * header with: a reader who copies a region off the screen and downloads the
+ * same region should not be handed two different names for one thing.
+ */
 export function documentHeader(document_) {
-    const strand = document_.strand === '-' ? '(-)' : '(+)'
-    const name = document_.label || document_.chrom
-    const spliced = document_.collapsed
-        ? ` spliced -${document_.hidden}bp`
-        : ''
-    return `>${name} ${document_.chrom}:${document_.start}-${document_.end}${strand}${spliced}`
+    return fastaHeaderLine({
+        name: document_.label || document_.chrom,
+        chrom: document_.chrom,
+        start: document_.start,
+        end: document_.end,
+        strand: document_.strand,
+        hidden: document_.collapsed ? document_.hidden : 0,
+    })
 }
 
 export function fastaText(documents, width = BASES_PER_ROW) {

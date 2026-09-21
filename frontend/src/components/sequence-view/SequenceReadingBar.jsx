@@ -63,6 +63,9 @@ export default function SequenceReadingBar({
     // a highlight outside the coding sequence has no positions in a CDS.
     span = null,
     range = null,
+    // Where the whole reading lies on the chromosome, for the two actions that
+    // put the reader somewhere when nothing is highlighted.
+    wholeRange = null,
     chrom = '',
     onChange,
     onCopy,
@@ -87,16 +90,38 @@ export default function SequenceReadingBar({
     const acts = genomicReading ? highlighted : Boolean(span)
     const what = acts ? 'the highlighted stretch' : `the whole ${KIND_NOUNS[mode]}`
 
-    // Both of these put the reader somewhere on the chromosome, so both need a
-    // stretch of it to put them at -- and a protein's residues are not one. They
-    // do have a genomic span, through their codons, and this view knows it; the
-    // judgement that jumping there reads as a non-sequitur is the reason they are
-    // refused rather than any difficulty in working it out. The title says where
-    // to go instead rather than leaving a dead control unexplained.
-    const placeable = highlighted && mode !== KIND_PROTEIN
-    const placeWhy = !highlighted
-        ? 'Highlight a stretch first'
-        : 'A protein’s residues are not a stretch of chromosome — switch to CDS for the bases that spell them'
+    /**
+     * Both of these put the reader somewhere on the chromosome.
+     *
+     * They used to need a highlight, which made them dead controls most of the
+     * time -- and needlessly, because the reading itself has a stretch of
+     * chromosome: the transcript's span, or the coding sequence's. So without
+     * a highlight they act on the whole reading, and with one they act on it.
+     *
+     * A protein is no exception. Its *residues* are not a stretch of
+     * chromosome, which is why a highlight in one cannot be placed; the
+     * protein as a whole is the CDS, and that is somewhere to go.
+     */
+    /**
+     * Download says what will be *offered*, not what will be written.
+     *
+     * It opens the panel rather than writing a file, and in a spliced reading
+     * the panel opens on the reading in front of the reader -- whichever of
+     * the three it is -- rather than on the highlight. A highlighted stretch
+     * of a CDS is not a stretch of chromosome, and the panel's ad-hoc target
+     * is one: offering it there would hand over the introns between the ends.
+     * Copying still takes the highlight, because that is written from the
+     * reading's own sequence.
+     */
+    const downloadWhat = genomicReading
+        ? `Download ${what} — choose the shape and the format`
+        : 'Download this transcript — choose the reading, the shape and the format'
+
+    const placeable = highlighted ? mode !== KIND_PROTEIN : Boolean(wholeRange)
+    const placeWhy = highlighted && mode === KIND_PROTEIN
+        ? 'A protein’s residues are not a stretch of chromosome — switch to CDS for the bases that spell them'
+        : ''
+    const placeWhat = highlighted ? 'the highlighted stretch' : `the whole ${KIND_NOUNS[mode]}`
 
     return (
         <div className="sv-reading-track" data-sequence-mode-bar="true">
@@ -149,19 +174,19 @@ export default function SequenceReadingBar({
                     ><CopyGlyph size={14} /></Act>
                     <Act
                         label="Download as FASTA"
-                        title={`Download ${what} as FASTA`}
+                        title={downloadWhat}
                         onClick={onDownload}
                     ><DownloadGlyph size={14} /></Act>
                     <Act
                         label="Set as the location"
-                        title={placeable ? 'Set this as the genomic location' : placeWhy}
+                        title={placeable ? `Set the chromosome ${placeWhat} covers as the location` : placeWhy}
                         disabled={!placeable}
                         onClick={onFocusRegion}
                     ><TargetGlyph size={15} /></Act>
                     <Act
                         label="Show in the genome browser"
                         title={placeable
-                            ? 'Show the stretch of chromosome this covers in the genome browser'
+                            ? `Show the chromosome ${placeWhat} covers in the genome browser`
                             : placeWhy}
                         disabled={!placeable}
                         onClick={onBrowse}

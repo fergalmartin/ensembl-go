@@ -11,6 +11,7 @@ import {
     SELECT_NONE,
     SELECT_RIGHT,
     SELECT_TOP,
+    findLane,
 } from '../../utils/sequenceViewPaint'
 import {
     EDGE_GENE_END,
@@ -81,6 +82,32 @@ const DIMMED = 0.22
 const AMINO_TEXT = { light: '#475569', dark: '#94a3b8' }
 const AMINO_STOP = { light: '#b91c1c', dark: '#fca5a5' }
 
+// What a match to the reader's pattern is drawn as: a bar under the run, in the
+// pattern's own colour.
+//
+// A bar rather than a fill, for the reason the selection is not a fill either:
+// the whole subject of this view is what colour a base is, and a wash over a
+// match comes out a different shade over every annotation it crosses. It is
+// thicker than the pointer's underline, because a find is something the reader
+// went looking for and the pointer's mark is something they merely brushed.
+const FIND_BAR_PX = 3
+
+// The one match the reader is standing on, boxed. Drawn in the pattern's own
+// colour, so it reads as the same object as the bars under the matches around
+// it -- and thicker than they are, because it is the one being looked at.
+//
+// Around the *outside* of the run only. Every cell used to ring itself, which
+// drew a rule between every pair of bases and made a six-base match look like
+// six boxes; and the ring and the bar both landed on the bottom edge, so that
+// one side came out half again as thick as the other three. The sides are
+// decided the way the selection's are -- a side is drawn where the neighbour
+// is not also in the match -- and the ends of a row always count as an edge,
+// because a match that wraps really does stop there on the screen.
+const FIND_RING_PX = 3
+
+/** Stable, so a row with no patterns on it never re-renders for a new array. */
+const EMPTY_COLOURS = Object.freeze([])
+
 /**
  * One row of sequence: a coordinate, sixty cells, a coordinate.
  *
@@ -119,6 +146,14 @@ function SequenceRow({
     // Whether a finished selection is on the page at all. The mask says which
     // of this row's cells are in it; this says whether to dim the rest.
     selecting = false,
+    // Where the reader's patterns matched: one base-36 digit a cell naming the
+    // pattern, and the colours to look those up in. See sequenceViewPaint.js.
+    finds = '',
+    findColours = EMPTY_COLOURS,
+    // The one match the reader is standing on, as display columns. Two numbers
+    // rather than a range object, so the memo below can compare them.
+    findAtLo = -1,
+    findAtHi = -1,
 }) {
     // Whether there is a lane is the scroller's answer, not this row's: it is
     // what decided how tall the row is, and a row that drew one the height index
@@ -232,6 +267,18 @@ function SequenceRow({
         // A marker cell stands for sequence that is not on screen, so it belongs
         // to no feature and dims with everything else.
         const dimmed = dimSomeCells && !(previewing ? previewed : selected)
+        // Which pattern claimed this cell, and whether it is the match the
+        // reader is standing on. `column` is only worked out where there is a
+        // current match to compare it with.
+        const lane = finds ? findLane(finds[i]) : -1
+        const findInk = lane >= 0 ? (findColours[lane] || null) : null
+        const column = (row.col0 || 0) + i
+        const atCurrent = findAtLo >= 0 && column >= findAtLo && column <= findAtHi
+        // Which sides of the box this cell carries. Only the outside of the
+        // run: a side where the neighbour is not in the match too, and the
+        // ends of the row either way.
+        const opensCurrentLeft = atCurrent && i > 0 && column - 1 >= findAtLo
+        const opensCurrentRight = atCurrent && i < sequence.length - 1 && column + 1 <= findAtHi
 
         cells.push(
             <span
@@ -265,7 +312,7 @@ function SequenceRow({
                     // tints the whole cell goes last of all. One list rather
                     // than one property per mark, because a second boxShadow
                     // would replace the first rather than adding to it.
-                    ...(outlined || selected || previewed ? {
+                    ...(outlined || selected || previewed || findInk ? {
                         boxShadow: [
                             // The rails, outside the cell rather than inset:
                             // an offset shadow with no blur is the cell's own
@@ -285,6 +332,22 @@ function SequenceRow({
                             previewed ? `inset 0 -${PREVIEW_LINE_PX}px 0 0 ${PREVIEW_LINE}` : '',
                             previewed && !opensPreviewLeft ? `inset ${PREVIEW_LINE_PX}px 0 0 0 ${PREVIEW_LINE}` : '',
                             previewed && !opensPreviewRight ? `inset -${PREVIEW_LINE_PX}px 0 0 0 ${PREVIEW_LINE}` : '',
+                            // A match: a bar under the run in the pattern's
+                            // colour, and the one the reader is standing on
+                            // ringed in the same colour so the two read as one
+                            // object. Before the selection's edge in the list,
+                            // so an edge drawn over it still shows: earlier
+                            // shadows paint over later ones.
+                            // The four sides of the box, each drawn only where
+                            // the run actually ends. One thickness on all of
+                            // them, and no bar underneath: the bar is how a
+                            // match the reader is *not* standing on is marked,
+                            // and drawing both put two marks on one edge.
+                            findInk && atCurrent ? `inset 0 ${FIND_RING_PX}px 0 0 ${findInk}` : '',
+                            findInk && atCurrent ? `inset 0 -${FIND_RING_PX}px 0 0 ${findInk}` : '',
+                            findInk && atCurrent && !opensCurrentLeft ? `inset ${FIND_RING_PX}px 0 0 0 ${findInk}` : '',
+                            findInk && atCurrent && !opensCurrentRight ? `inset -${FIND_RING_PX}px 0 0 0 ${findInk}` : '',
+                            findInk && !atCurrent ? `inset 0 -${FIND_BAR_PX}px 0 0 ${findInk}` : '',
                             selected && (sides & SELECT_TOP) ? `inset 0 1.5px 0 0 ${selectEdge}` : '',
                             selected && (sides & SELECT_BOTTOM) ? `inset 0 -1.5px 0 0 ${selectEdge}` : '',
                             selected && (sides & SELECT_LEFT) ? `inset 1.5px 0 0 0 ${selectEdge}` : '',
@@ -413,6 +476,10 @@ export default memo(SequenceRow, (before, after) => (
     // the feature ever dimmed, which is precisely the rows that should not.
     && before.previewing === after.previewing
     && before.selecting === after.selecting
+    && before.finds === after.finds
+    && before.findColours === after.findColours
+    && before.findAtLo === after.findAtLo
+    && before.findAtHi === after.findAtHi
     && before.row.index === after.row.index
     && before.labels.left === after.labels.left
     && before.labels.right === after.labels.right

@@ -136,6 +136,11 @@ test('the margin either side is a share of the screen, not a fixed few rows', ()
   // rectangles on a canvas rather than an element per base, and what is placed
   // is also what is asked for.
   assert.ok(overscanRows(250, { cheap: true }) > overscanRows(250))
+  // Bigger again where what is placed is also the whole of what the browser can
+  // select and find, which is what the plain displays hand it.
+  assert.ok(overscanRows(25, { plain: true }) > overscanRows(25, { cheap: true }))
+  // Several screens either side, so a find reaches past the one on screen.
+  assert.ok(overscanRows(25, { plain: true }) >= 50)
 })
 
 test('the margin is bounded at both ends, however big or small the screen', () => {
@@ -146,6 +151,10 @@ test('the margin is bounded at both ends, however big or small the screen', () =
   // elements nobody can see.
   assert.ok(overscanRows(10_000) <= 12)
   assert.ok(overscanRows(10_000, { cheap: true }) <= 160)
+  assert.ok(overscanRows(10_000, { plain: true }) <= 400)
+  // Never nothing there either: a short window still mounts enough text either
+  // side to be worth finding in.
+  assert.ok(overscanRows(1, { plain: true }) >= 40)
   // Nonsense reads as an empty screen rather than as a negative margin.
   assert.ok(overscanRows(NaN) >= 3)
   assert.ok(overscanRows(-50) >= 3)

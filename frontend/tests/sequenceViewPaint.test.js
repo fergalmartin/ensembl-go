@@ -260,7 +260,7 @@ test('a row made only of marker draws the marker and no bases', () => {
 test('a row with nothing in it paints nothing rather than throwing', () => {
   assert.deepEqual(
     paintDisplayRow(null, {}),
-    { sequence: '', classes: '', mask: '', edges: '', amino: '' },
+    { sequence: '', classes: '', mask: '', finds: '', edges: '', amino: '' },
   )
 })
 

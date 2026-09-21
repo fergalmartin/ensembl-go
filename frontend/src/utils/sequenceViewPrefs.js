@@ -19,6 +19,7 @@ import { DEFAULT_COLOURS, normaliseColours } from './sequenceViewColours.js'
 import { COLLAPSE_KINDS, DEFAULT_COLLAPSE } from './sequenceViewDisplay.js'
 import { DEFAULT_FLANKS, flankPair } from './sequenceViewFocus.js'
 import { LEVEL_GROUPS, defaultHighlights } from './sequenceViewPalette.js'
+import { DISPLAY_RICH, isDisplayMode } from './sequenceViewPlain.js'
 
 export const PREFS_KEY = 'ensemblGo.sequenceView.v1'
 
@@ -39,7 +40,22 @@ export function defaultPrefs() {
     for (const [level, pair] of Object.entries(DEFAULT_FLANKS)) flanks[level] = { ...pair }
     const collapse = {}
     for (const kind of COLLAPSE_KINDS) collapse[kind] = { ...DEFAULT_COLLAPSE[kind] }
-    return { highlights, flanks, collapse, colours: { ...DEFAULT_COLOURS }, reverse: false, protein: false }
+    return {
+        highlights,
+        flanks,
+        collapse,
+        colours: { ...DEFAULT_COLOURS },
+        reverse: false,
+        protein: false,
+        // The view as it has always been. A reader who has never opened the
+        // Display menu gets the display this view is, and the plain ones are
+        // there for the asking.
+        display: DISPLAY_RICH,
+        // On when a plain display is chosen, because the colours are most of
+        // what this view knows and text without them is a text file. It is the
+        // reader's to turn off, which is why it is stored rather than derived.
+        plainColour: true,
+    }
 }
 
 /** What was stored, read against the defaults as they are now. */
@@ -80,6 +96,15 @@ export function normalisePrefs(stored) {
         colours: normaliseColours(stored?.colours),
         reverse: Boolean(stored?.reverse),
         protein: Boolean(stored?.protein),
+        // A display this version does not have is the display this version is:
+        // a setting stored by a later build, or a typo in a hand-edited store,
+        // should leave the reader with a view rather than with nothing drawn.
+        display: isDisplayMode(stored?.display) ? stored.display : base.display,
+        // Stored absence is not stored off, so a reader who has never seen this
+        // switch gets it on rather than getting uncoloured text.
+        plainColour: stored?.plainColour === undefined || stored?.plainColour === null
+            ? base.plainColour
+            : Boolean(stored.plainColour),
     }
 }
 

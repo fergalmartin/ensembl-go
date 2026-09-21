@@ -126,3 +126,39 @@ def fasta_header(chrom: str, start: int, end: int, strand: str = "+", genome: st
 def wrap_sequence(sequence: str, width: int = FASTA_LINE_WIDTH) -> str:
     size = max(1, int(width))
     return "\n".join(sequence[i:i + size] for i in range(0, len(sequence), size))
+
+
+# ---- finding a pattern in a region --------------------------------------
+
+# How much sequence a find scans at a time.
+#
+# A region in focus can be a whole chromosome, and holding 249 Mb of sequence
+# plus whatever the scan builds on top of it costs more than this process should
+# spend on one request -- the same reasoning `/fasta` streams for. So the scan
+# walks the region in blocks and never holds more than one of them.
+FIND_SCAN_BP = 8_000_000
+
+# How far each block reaches back into the one before it.
+#
+# A match lying across a block boundary would otherwise be found by neither: the
+# first block runs out before the pattern ends, and the second starts after it
+# began. The overlap is what makes the seam invisible, and a block only claims
+# the matches beginning in its own share -- the rest belong to the next block,
+# which sees them whole.
+#
+# It bounds the one thing this cannot do: a single match longer than the overlap
+# may be cut where two blocks meet. A megabase is some four orders of magnitude
+# past anything anyone searches sequence for.
+FIND_OVERLAP_BP = 1_000_000
+
+# The most match positions one answer carries.
+#
+# The count is exact however many there are -- counting costs the scan, which is
+# being paid anyway -- but the positions are a list, and "A" over a chromosome is
+# sixty million of them and half a gigabyte of JSON. Past this the answer says
+# how many there were and carries the first of them, which is what a reader
+# stepping through matches one at a time can use.
+MAX_FIND_MATCHES = 100_000
+
+# How many patterns one find may carry.
+MAX_FIND_PATTERNS = 20

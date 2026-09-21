@@ -75,6 +75,11 @@ export function rowMetrics(available, scrollbarPx = 12, gutter = GUTTER_WIDTH) {
     return {
         cellWidth,
         rowWidth,
+        // What the coordinates either side cost, which is where the bases
+        // start. Reported rather than left to the caller to remember: the
+        // spliced view passes a narrower one, so the constant is not the
+        // answer everywhere.
+        gutter: margin,
         // The letter has to sit inside the cell whatever width it ended up.
         fontSize: Math.min(13, Math.max(9, cellWidth - 2)),
         fits: rowWidth <= usable,

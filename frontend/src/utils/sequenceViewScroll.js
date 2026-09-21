@@ -149,9 +149,18 @@ export function scrollTopForRow(model, row) {
  * element per base: there the margin costs almost nothing to draw and buys the
  * annotation behind it time to arrive, because what is placed is also what is
  * asked for.
+ *
+ * `plain` is the biggest share of all, and for a different reason. The plain
+ * displays hand selecting, copying and finding to the browser, and a browser can
+ * only find what is in the document: whatever is placed is the whole of what
+ * `Ctrl-F` can reach and the whole of what a select-all can take. Several
+ * screens either side is what makes those worth having, and a plain row is a
+ * line of text with a span or two on it -- so it is also what the margin there
+ * can afford.
  */
-export function overscanRows(viewportRows, { cheap = false } = {}) {
+export function overscanRows(viewportRows, { cheap = false, plain = false } = {}) {
     const rows = Math.max(0, Math.floor(Number(viewportRows) || 0))
+    if (plain) return Math.max(40, Math.min(400, Math.round(rows * 3)))
     return cheap
         ? Math.max(12, Math.min(160, Math.round(rows * 0.6)))
         : Math.max(3, Math.min(12, Math.round(rows * 0.3)))

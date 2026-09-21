@@ -27,7 +27,9 @@ import {
     mergeClassAnswers,
     paintRows,
     paletteColours,
+    orderTargets,
     plainText,
+    readingTargets,
     readsForIntervals,
     readsForLayout,
     readsReverse,
@@ -607,4 +609,84 @@ test('a file size is said the way a reader would say it', () => {
     assert.equal(formatBytes(722_000_000), '722 MB')
     assert.equal(formatBytes(1_200_000_000), '1.2 GB')
     assert.equal(formatBytes(-5), '0 bytes')
+})
+
+test('a transcript offers its own readings, with what each holds', () => {
+    const focus = {
+        chrom: 'chr1',
+        transcript: { id: 'ENST1', strand: '-' },
+    }
+    const answers = {
+        transcript: { status: 'ok', length: 2618 },
+        protein: { status: 'ok', length: 305 },
+        // Asked for and not back yet: a length is not known, which is not the
+        // same as being nought.
+        cds: null,
+    }
+    const targets = readingTargets({
+        focus,
+        readings: ['transcript', 'cds', 'protein'],
+        answers,
+    })
+    assert.deepEqual(targets.map((one) => one.id), [
+        'reading:transcript', 'reading:cds', 'reading:protein',
+    ])
+    assert.deepEqual(targets.map((one) => one.bases), [2618, 0, 305])
+    assert.deepEqual(targets.map((one) => one.unit), ['bp', 'bp', 'aa'])
+    assert.deepEqual(targets.map((one) => one.label), [
+        'Transcript (sequence)', 'CDS', 'Protein',
+    ])
+    // In a file there is nothing to tell it from, so it is named plainly.
+    assert.equal(targets[0].entries[0].detail, 'Transcript sequence')
+    // No flank: there is no sequence either side of a spliced transcript in
+    // its own coordinates.
+    assert.equal(targets.every((one) => one.flankable === false), true)
+    // Named for the transcript and the reading, so two of them do not collide.
+    assert.equal(exportFileName({ target: targets[2], format: 'fasta' }), 'ENST1_protein.fa')
+
+    // Counted off the reading's own length rather than its entries, which
+    // have no span to count.
+    assert.equal(targetBases(targets[0]), 2618)
+    assert.equal(targetBases(targets[1]), 0)
+
+    // Nothing to offer where there is no transcript, or no reading fetched.
+    assert.deepEqual(readingTargets({ focus: { chrom: 'chr1' }, readings: ['transcript'] }), [])
+    assert.deepEqual(readingTargets({ focus, readings: [] }), [])
+})
+
+test('the readings are listed under the transcript they are readings of', () => {
+    const levels = [
+        { id: 'records', label: '2 selected records' },
+        { id: 'level:location', label: 'Location' },
+        { id: 'level:gene', label: 'Gene' },
+        { id: 'level:transcript', label: 'Transcript' },
+        { id: 'level:feature', label: 'Feature' },
+    ]
+    const readings = [
+        { id: 'reading:transcript', label: 'Transcript (sequence)' },
+        { id: 'reading:cds', label: 'CDS' },
+        { id: 'reading:protein', label: 'Protein' },
+    ]
+    assert.deepEqual(orderTargets(levels, readings).map((one) => [one.id, one.label]), [
+        ['records', '2 selected records'],
+        ['level:location', 'Location'],
+        ['level:gene', 'Gene'],
+        // The transcript twice: its stretch of chromosome, then its own
+        // sequence read three ways.
+        ['level:transcript', 'Transcript (genomic)'],
+        ['reading:transcript', 'Transcript (sequence)'],
+        ['reading:cds', 'CDS'],
+        ['reading:protein', 'Protein'],
+        ['level:feature', 'Feature'],
+    ])
+
+    // With nothing to tell it from, the transcript level keeps its own name.
+    assert.deepEqual(orderTargets(levels, []), levels)
+    // And with no transcript level to sit under, the readings do not jump the
+    // ladder.
+    const without = levels.filter((one) => one.id !== 'level:transcript')
+    assert.deepEqual(
+        orderTargets(without, readings).map((one) => one.id),
+        [...without.map((one) => one.id), ...readings.map((one) => one.id)],
+    )
 })

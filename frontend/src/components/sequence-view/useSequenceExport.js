@@ -44,7 +44,10 @@ import {
     readsReverse,
     resolveFileName,
     sequenceStore,
+    splicedExportRows,
 } from '../../utils/sequenceViewExport'
+import { genomicExtentOf, splicedRunsFor } from '../../utils/transcriptSequenceView'
+import { wrapSequence } from '../../utils/locationFocus'
 import { rtfWriter } from '../../utils/sequenceViewRtf'
 import { htmlWriter } from '../../utils/sequenceViewHtml'
 
@@ -187,10 +190,15 @@ export default function useSequenceExport({
         const entries = target.entries.map((entry) => ({ ...entry, genome: genomeKey }))
         // The reader's name, made safe and given the format's own extension.
         const fileName = resolveFileName(asked, format, entries[0].chrom || 'sequence')
+        // A transcript read in its own coordinates answers neither the shape
+        // question nor the orientation one -- nothing was collapsed, and it is
+        // spelled 5' to 3' whichever strand it is on -- so the line does not
+        // pretend to. The panel does not ask them for one either.
+        const reading = entries.every((one) => one.reading)
         const subtitle = [
             genomeLabel,
-            shape === SHAPE_SHOWN ? 'as shown on screen' : 'whole span',
-            orientation === ORIENTATION_FORWARD ? 'forward strand'
+            reading ? '' : shape === SHAPE_SHOWN ? 'as shown on screen' : 'whole span',
+            reading ? '' : orientation === ORIENTATION_FORWARD ? 'forward strand'
                 : orientation === ORIENTATION_REVERSE ? 'reverse complement'
                     : '',
             entries[0].flank && (entries[0].flank.five || entries[0].flank.three)
@@ -204,6 +212,7 @@ export default function useSequenceExport({
             // backend a range and nothing else -- anything read the other way
             // round has to go the long way so the orientation is applied.
             const straightThrough = !coloured
+                && !entries.some((one) => one.reading)
                 && shape !== SHAPE_SHOWN
                 && entries.length === 1
                 && format === 'fasta'
@@ -244,6 +253,69 @@ export default function useSequenceExport({
                 const step = entries.length > 1 ? ` (${at + 1} of ${entries.length})` : ''
                 setProgress(`Reading ${entry.label}${step}…`)
                 setFraction(null)
+
+                /**
+                 * A transcript read in its own coordinates.
+                 *
+                 * None of the machinery below applies: there is nothing to lay
+                 * out, no coordinates to read sequence at and no collapse to
+                 * plan. The whole sequence arrives in one answer, and the rows
+                 * are built from it -- the same rows the surface draws, from
+                 * the same run list, so the file and the screen cannot
+                 * disagree about what a base is.
+                 */
+                if (entry.reading) {
+                    const answer = await sequenceApi('/transcript-sequence', {
+                        genome: genomeKey,
+                        transcript_id: entry.transcriptId,
+                        kind: entry.reading,
+                    })
+                    if (!running()) return false
+                    if (answer?.status !== 'ok') {
+                        throw new Error(answer?.status === 'no_cds'
+                            ? 'This transcript has no coding sequence'
+                            : 'Could not read this transcript')
+                    }
+                    const extent = genomicExtentOf(answer)
+                    const meta = {
+                        key: entry.key,
+                        label: entry.transcriptId,
+                        detail: entry.detail || '',
+                        chrom: entry.chrom,
+                        // The reading's own genomic edges, not the
+                        // transcript's: a CDS does not begin where its
+                        // transcript does.
+                        start: extent?.start ?? entry.start,
+                        end: extent?.end ?? entry.end,
+                        strand: entry.strand || '+',
+                        reverse: false,
+                        collapsed: false,
+                        hidden: 0,
+                        kept: answer.length || 0,
+                        rows: Math.ceil((answer.length || 0) / 60),
+                    }
+                    if (!coloured) {
+                        const header = `>${entry.transcriptId} ${entry.detail || entry.reading}`
+                        const body = wrapSequence(answer.sequence || '', 60)
+                        sink.write(format === 'text' ? `${body}\n` : `${header}\n${body}\n`)
+                        continue
+                    }
+                    sink.write(writer.recordHead(meta))
+                    sink.write(writer.rows(splicedExportRows({
+                        sequence: answer.sequence,
+                        runs: splicedRunsFor(entry.reading, answer),
+                        cds: answer.cds,
+                        palette,
+                        // The panel's own box, and only where the reader is
+                        // drawing the lane at all -- the same pair the genomic
+                        // path asks. A protein reading already is the amino
+                        // acids, so there is nothing to put over it.
+                        protein: withProtein && protein && entry.reading !== 'protein',
+                        gutters,
+                    })))
+                    sink.write(writer.recordTail())
+                    continue
+                }
 
                 const requests = entryRequests(entry, { collapse, hide, shape })
                 // A location asks a tile at a time, so there can be many class

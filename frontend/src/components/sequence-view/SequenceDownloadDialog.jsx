@@ -88,7 +88,7 @@ export default function SequenceDownloadDialog({
                 <p className={`mb-4 text-xs ${muted}`}>
                     {[
                         request.targetLabel,
-                        `${groupDigits(bases)} bp`,
+                        bases > 0 ? `${groupDigits(bases)} ${request.unit || 'bp'}` : '',
                         coloured ? `about ${formatBytes(estimate)}` : '',
                     ].filter(Boolean).join(' · ')}
                 </p>

@@ -713,9 +713,13 @@ function getViewActiveCapacity(viewId) {
   if (viewId === 'feature_explorer') return Number.POSITIVE_INFINITY
   if (viewId === 'neighbourhood') return Number.POSITIVE_INFINITY
   if (viewId === 'structural_variation') return 3
-  // One genome at a time, and the pill for it says so: the strip showed every
-  // genome half-lit, including the one actually on screen.
-  if (viewId === 'sequence') return 1
+  // The sequence view reads one genome at a time and has a control of its own
+  // for choosing which. That control offers the *active* genomes, so a capacity
+  // of one emptied the very list it exists to fill: a reader could not bring a
+  // second genome up to switch to it, and pressing a half-lit pill put that
+  // genome away instead of promoting it. Drawing one at a time is the view's
+  // business; how many are available to draw is not.
+  if (viewId === 'sequence') return Number.POSITIVE_INFINITY
   if (TWO_GENOME_VIEWS.has(viewId)) return 2
   return 0
 }

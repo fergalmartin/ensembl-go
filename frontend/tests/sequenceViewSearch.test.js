@@ -3,9 +3,14 @@ import assert from 'node:assert/strict'
 
 import {
     COORDINATE_WINDOW,
+    clampNote,
+    clampToChromosome,
     parseSearchQuery,
     withinOpenRegion,
 } from '../src/utils/sequenceViewSearch.js'
+
+// Chromosome 1 of GRCh38, which is the case this was written for.
+const CHR1 = { start: 1, end: 248_956_422 }
 
 test('a range names both of its ends, on a chromosome or on the one already open', () => {
     assert.deepEqual(parseSearchQuery('1:1000-2000', '7'), {
@@ -109,4 +114,86 @@ test('nothing is inside a region that is not open yet', () => {
     assert.equal(withinOpenRegion(parseSearchQuery('500', '1'), '1', null), false)
     assert.equal(withinOpenRegion(null, '1', open.location), false)
     assert.equal(withinOpenRegion(parseSearchQuery('PHGDH'), '1', open.location), false)
+})
+
+
+// ---- holding a typed range inside the chromosome --------------------------
+
+test('a range past the end of the chromosome is brought back to it', () => {
+    const typed = parseSearchQuery('1:1-999,999,999', '1')
+    const held = clampToChromosome(typed, CHR1)
+    assert.equal(held.start, 1)
+    assert.equal(held.end, CHR1.end)
+    assert.ok(held.clamped)
+})
+
+test('a range that fits is left exactly as it was typed', () => {
+    const typed = parseSearchQuery('1:1,000-2,000', '1')
+    const held = clampToChromosome(typed, CHR1)
+    assert.equal(held.start, 1000)
+    assert.equal(held.end, 2000)
+    assert.ok(!held.clamped, 'and is not reported as having been moved')
+})
+
+test('a range touching the last base is not a range that was moved', () => {
+    const typed = parseSearchQuery(`1:1-${CHR1.end}`, '1')
+    assert.ok(!clampToChromosome(typed, CHR1).clamped)
+})
+
+test('a range entirely past the end collapses onto the last base', () => {
+    // Not nothing, and not an error: the reader named somewhere that is not
+    // there, and the nearest place that is there is the end.
+    const typed = parseSearchQuery('1:900,000,000-999,000,000', '1')
+    const held = clampToChromosome(typed, CHR1)
+    assert.equal(held.start, CHR1.end)
+    assert.equal(held.end, CHR1.end)
+    assert.ok(held.clamped)
+})
+
+test('a range starting before the first base is brought forward to it', () => {
+    const held = clampToChromosome(
+        { kind: 'range', query: '', chrom: '1', start: -50, end: 400 }, CHR1,
+    )
+    assert.equal(held.start, 1)
+    assert.equal(held.end, 400)
+    assert.ok(held.clamped)
+})
+
+test('a bare coordinate is held inside, and so is the window around it', () => {
+    const typed = parseSearchQuery('999,999,999', '1')
+    const held = clampToChromosome(typed, CHR1)
+    assert.equal(held.at, CHR1.end, 'the destination itself')
+    assert.equal(held.end, CHR1.end, 'and the screenful framed around it')
+    assert.ok(held.start <= held.end)
+})
+
+test('a coordinate near the start does not frame a window before base one', () => {
+    const typed = parseSearchQuery('10', '1')
+    const held = clampToChromosome(typed, CHR1)
+    assert.equal(held.at, 10)
+    assert.equal(held.start, 1, `not ${10 - COORDINATE_WINDOW}`)
+})
+
+test('a chromosome nobody has measured yet clamps nothing', () => {
+    // Refusing to move until a lookup has arrived is worse than moving to a
+    // region the backend will clip a moment later anyway.
+    const typed = parseSearchQuery('1:1-999,999,999', '1')
+    const held = clampToChromosome(typed, null)
+    assert.equal(held.end, 999_999_999)
+    assert.ok(!held.clamped)
+})
+
+test('a name is not a range and passes through untouched', () => {
+    const typed = parseSearchQuery('PHGDH', '1')
+    assert.equal(clampToChromosome(typed, CHR1), typed)
+    assert.equal(clampToChromosome(null, CHR1), null)
+})
+
+test('the note says how long the chromosome is and what is being shown', () => {
+    const held = clampToChromosome(parseSearchQuery('1:1-999,999,999', '1'), CHR1)
+    const note = clampNote(held, CHR1, '1')
+    assert.ok(note.includes('248,956,422'), 'how long it actually is')
+    assert.ok(note.includes('1\u2013248,956,422') || note.includes('248,956,422'), 'and where the reader is')
+    // Nothing to say where nothing was moved.
+    assert.equal(clampNote(clampToChromosome(parseSearchQuery('1:10-20', '1'), CHR1), CHR1, '1'), '')
 })

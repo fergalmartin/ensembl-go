@@ -106,6 +106,9 @@ export default function SequenceDownloadPanel({
         () => (bare ? withFlank(bare, { five, three }) : null),
         [bare, five, three],
     )
+    // A transcript read in its own coordinates, rather than a stretch of
+    // chromosome. Two of the questions below do not apply to one.
+    const spliced = bare?.kind === 'reading'
     const bases = target?.bases || 0
     const coloured = formatIsColoured(format)
     const descriptor = exportFormat(format)
@@ -163,8 +166,14 @@ export default function SequenceDownloadPanel({
                                         <span className={`min-w-0 flex-1 truncate text-[11px] ${muted}`}>
                                             {item.detail}
                                         </span>
+                                        {/* Blank rather than a nought where a
+                                            reading has not been fetched yet:
+                                            not knowing its length and it
+                                            having none are different facts. */}
                                         <span className={`flex-none text-[11px] ${muted}`}>
-                                            {`${groupDigits(item.bases)} bp`}
+                                            {item.bases > 0
+                                                ? `${groupDigits(item.bases)} ${item.unit || 'bp'}`
+                                                : ''}
                                         </span>
                                     </span>
                                 </label>
@@ -206,6 +215,12 @@ export default function SequenceDownloadPanel({
                     </section>
                 ) : null}
 
+                {/* A reading is already the right way round: a transcript's
+                    own sequence is spelled 5' to 3' whichever strand it is on,
+                    and there is no forward strand of a protein. The same goes
+                    for the shape -- nothing was collapsed, because nothing was
+                    laid out over a stretch of chromosome. */}
+                {spliced ? null : (
                 <section data-download-orientation="true">
                     <h4 className={`mb-1.5 text-[11px] font-semibold uppercase tracking-wide ${heading}`}>
                         Orientation
@@ -236,6 +251,7 @@ export default function SequenceDownloadPanel({
                         ))}
                     </div>
                 </section>
+                )}
 
                 {/* Only the coloured formats have anything to include: a FASTA
                     has no gutters to print and no lane to draw. */}
@@ -253,6 +269,9 @@ export default function SequenceDownloadPanel({
                                 <input type="checkbox" checked={headings} onChange={() => setHeadings((on) => !on)} />
                                 <span className={`text-sm ${text}`}>A heading per record</span>
                             </label>
+                            {/* Nothing to draw it over where the protein *is*
+                                the sequence. */}
+                            {bare?.reading === 'protein' ? null : (
                             <label className={`flex items-center gap-2 ${proteinAvailable ? 'cursor-pointer' : 'cursor-default opacity-50'}`}>
                                 <input
                                     type="checkbox"
@@ -264,13 +283,15 @@ export default function SequenceDownloadPanel({
                                     The protein over its codons
                                 </span>
                             </label>
+                            )}
                         </div>
                     </section>
                 ) : null}
                 </div>
 
                 <div className="flex-1 min-w-0 space-y-4">
-                <section>
+                {spliced ? null : (
+                <section data-download-shape="true">
                     <h4 className={`mb-1.5 text-[11px] font-semibold uppercase tracking-wide ${heading}`}>
                         Shape
                     </h4>
@@ -318,6 +339,7 @@ export default function SequenceDownloadPanel({
                         </label>
                     </div>
                 </section>
+                )}
 
                 <section>
                     <h4 className={`mb-1.5 text-[11px] font-semibold uppercase tracking-wide ${heading}`}>
@@ -374,7 +396,7 @@ export default function SequenceDownloadPanel({
                     <p className={`mt-1.5 text-center text-[11px] ${muted}`}>
                         {[
                             target.entries.length > 1 ? `${target.entries.length} records` : '',
-                            `${groupDigits(bases)} bp`,
+                            bases > 0 ? `${groupDigits(bases)} ${target.unit || 'bp'}` : '',
                             coloured ? `~${formatBytes(estimate)}` : '',
                         ].filter(Boolean).join(' · ')}
                     </p>

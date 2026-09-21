@@ -52,10 +52,24 @@ than in one of its own:
 
 The explorer's controls also carry the applied value under their name, and
 Features does not. That form earns its place where the value is one word that
-changes what the canvas means -- Colour, Zoom, Gaps. Here it was four
+changes what the canvas means -- Display, Select, Colour, Zoom. Here it was four
 independent switches abbreviated to fit a control, which is a worse version of
 the menu one click away, and it made the bar's widest control the one saying the
 least.
+
+**The two lines are the other way up from the explorer's**, which sets the name
+as a small grey caption over the value in white. Read along a bar, that says a
+row of settings with their labels whispered: the eye lands on "Interactive" and
+"Drag" and has to work back up to find out what they are answers to -- and it
+made the two-line controls look like a different kind of object from Features and
+Colour standing beside them. So the name is the control, in the same type every
+other control on this bar says its name in, and the value is a quiet note
+underneath saying what it is set to.
+
+Whether a tool is *on* is a third thing, and neither line is the place for it:
+the value line is already answering what the tool is set to. Select says it
+beside its name instead, as a small accent `✓ On`, with the whole control in the
+accent frame the bar uses for anything in hand.
 
 `components/sequence-view/controls.css` states those shapes against the view's own
 `--sv-*` tokens rather than importing `alignment-explorer/explorer.css`, which is
@@ -970,12 +984,247 @@ which emits a start codon only where the bases read `ATG`, a stop only where the
 read `TAA`, `TAG` or `TGA`, and a splice site only where the dinucleotide is
 canonical `GT`/`AG`. A non-canonical junction is therefore not marked, silently.
 
+## Three displays
+
+The view draws the sequence one of three ways, chosen from **Display** on the
+bar. `utils/sequenceViewPlain.js` owns the choice and everything that falls out
+of it.
+
+| | what a base is | selecting | colour |
+|---|---|---|---|
+| **Interactive** | an element, with a question behind it | the Select tool | fills the cell |
+| **Plain text** | a character in a line | the browser's cursor | inks the letter |
+| **Plain FASTA** | a character in a line | the browser's cursor | inks the letter |
+
+**Interactive is the default and is the view this document otherwise describes.**
+A cell per base is what buys clicking one to ask about it, dragging a stretch,
+the protein lane, the gene marks and the highlight — and it costs sixty elements
+a row. It also means the sequence is not *text*: a drag draws the view's own
+selection rather than the browser's, `Ctrl-C` has nothing selected to copy, and
+`Ctrl-F` finds nothing, because no run of bases exists as a string anywhere in
+the document.
+
+**The plain displays give that back**, for readers who would rather have the
+browser's own cursor than the view's. They differ from each other in exactly the
+way a reader wanting text differs from one moment to the next:
+
+- **Plain text** is the view written out: coordinates down both margins, markers
+  where sequence is collapsed. What you see is what you copy.
+- **Plain FASTA** is what you paste into something else: a header line and sixty
+  bases a row, nothing in the margins, and no markers among the letters.
+
+### The same rows, written differently
+
+The plain displays are not a second view. They are the same document, the same
+layout, the same collapse, the same reading direction and the same scroll model;
+only what the mounted slab contains changes. `SequenceCanvas` keeps the scroller
+and swaps `SequenceRow`s for one `SequencePlainText` — the same substitution the
+far view already makes for `SequenceOverview`, and for the same reason: a second
+row model that had to agree with this one about gutters, buffering and where a
+coordinate is would drift, and the one nobody exercised would be the broken one.
+
+Everything downstream therefore keeps working without being told: the buffers are
+asked for the same rows, a search still scrolls to a coordinate, and the focus
+drawer is unaffected.
+
+**One `<pre>`, not one element per row.** That is the whole trick. A browser
+selects, copies and finds across text nodes in document order, and a stack of
+absolutely positioned rows is not that — a drag across it would select in
+whatever order the boxes happen to lie, and a copy would come back with the
+gutters run together. Inside a single `<pre>` the characters are in reading
+order, so a copy gives back exactly what the rows show and a find searches the
+lines as lines.
+
+### What the plain displays do not draw
+
+The bases, and nothing over them: no protein lane, no gene-boundary marks, no
+overlap rule, no highlight, no base box and no hover readout. There is nowhere in
+a line of text to put an outline or a letter above a base, and a reader who chose
+text chose not to have them. `paintDisplayRow` is called with all of it switched
+off, so none of it is computed either.
+
+Three controls go with them. The **Select tool** is disabled, because the gesture
+is the browser's and arming a second kind of selection over a text highlight
+would put two shapes on the screen saying different things. **Zoom** is disabled,
+because zooming out ends in a canvas of coloured rectangles, which is the
+opposite of a display whose point is that it is text. And the **protein lane** is
+the one switch a reader can have turned on and then not find, so the bar says so
+in a note rather than leaving it looking broken.
+
+### Colour is the letters' own ink
+
+On by default in both plain displays, and switchable from the Display menu —
+which is where it belongs, because it is a fact about this display rather than
+about the palette. *Which* classes those colours are for is still the Colour
+menu's question, and this changes none of them.
+
+A fill behind each base would be the interactive display drawn a second, worse
+way — sixty elements a row, in a mode chosen for not having them — and it would
+put a box around the very characters the reader is trying to select. So the class
+colours the palette fills a cell with are used as the letter's ink instead.
+
+**That needs a correction, and not a cosmetic one.** The palette is a set of
+*backgrounds*, chosen to be told apart behind a letter of the opposite weight:
+the intron's `#4a5568` is nearly the colour of the dark page, and printed as the
+letter it is sequence nobody can read. `plainInk` therefore keeps a colour only
+where it already clears 4.5:1 against the page — which most of the palette does,
+so a coding base is the same blue it is everywhere else — and otherwise walks it
+towards white or black in small steps until it does. The hue survives, which is
+the point: the legend under the sequence goes on meaning what it means.
+
+The contrast is measured properly, with the gamma step. `hexLuminance` in
+`featureColors.js` is a weighted average of the raw channels, which is close
+enough for choosing between a black and a white letter on a known fill and not
+close enough to decide whether a colour can be read at all — it rates the intron
+slate about a third brighter than it is.
+
+Neighbouring bases of one class are drawn as **one span**, so a screen of
+intronic sequence costs one element rather than twenty-four hundred.
+
+### The FASTA header
+
+A record's header line is written by `fastaHeaderLine`, which the download's
+files are headed by too: a reader who copies a region off the screen and
+downloads the same region should not be handed two different names for one thing.
+
+A collection's records each carry a header row in the document already, and in
+the plain displays that row is drawn as the record's `>` line — in both of them,
+so that a copied collection is one parseable thing rather than two.
+
+**A plain region has no such row**, being a document of one record with no name,
+so its header is pinned above the sequence instead. That is also the better place
+for it: a record filling twenty screens has its name on the first of them, and a
+reader copying from the nineteenth would otherwise take bases with nothing saying
+what they are. It is ordinary selectable text laid out over the same width as the
+block below it, so a drag that starts on it and runs into the sequence gives back
+a whole FASTA record — which is the only reason a header is worth drawing at all.
+While a record's own header row is on the screen the pinned line is a copy of it
+held at the top, which is what a sticky table header is.
+
+The region is named after whatever the reader came here by — the gene or the
+transcript in focus — because that is the name the download writes on the same
+stretch. A location and a dragged selection have no name: those really are
+stretches of chromosome, and the header says so.
+
+### A collapse is not sequence
+
+Plain text keeps its markers, because it is the view written down and the view
+draws them. FASTA drops them: a run of dashes among the letters is not sequence,
+and a file with them in it is not a FASTA file. A collapsed row therefore comes
+out **short** in that display rather than padded back to sixty, which is the
+honest shape — the bases either side of a collapse really are not adjacent, and a
+full row would say they were.
+
+### Finding, and how far it reaches
+
+A browser can only find what is in the document, and this view mounts a window.
+So in the plain displays whatever is placed is the whole of what `Ctrl-F` can
+reach and the whole of what a select-all can take, and the overscan is sized for
+that rather than for drawing: `overscanRows({ plain: true })` mounts three
+screens either side against the interactive display's third of one. A plain row
+is a line of text with a span or two on it, so several screens of them still cost
+less than one screen of cells.
+
+It is a window, though, and saying otherwise would be a lie — the sequence for a
+whole region is not in memory and mostly has not been fetched. A reader looking
+for something further away has the location box, which searches the annotation
+rather than the screen.
+
+### Keeping the reader's place
+
+Switching displays must leave the reader where they were, and the displays do not
+agree about how tall a row is: the plain ones draw no protein lane, so a document
+with lanes in it is a different height in each.
+
+The existing anchor mechanism already covers this — the view holds the coordinate
+at the top of the screen and restores *it* rather than a pixel offset whenever the
+geometry changes — and the display is now one of the things that counts as a
+change of geometry.
+
+The anchor itself had to be found a better way. It was the row at the overscan's
+offset into the mounted slab, which is the first visible row only when the slab
+is a full margin above the screen and the margin is the size the finder assumes.
+Both are false here: the plain margin is many times the interactive one, and near
+the top of a document there is no margin at all. It is read from
+`visibleRowRange`'s own `anchorRow` now, which is the row the scroll position
+actually lands on, whatever the margin happens to be.
+
+**The sideways geometry does not carry over, and should not.** An interactive
+cell is stretched to whatever width makes sixty of them fill the panel; a
+character is the width the font draws it. So a plain block is narrower, is set at
+a reading size rather than at the cell's size, and is centred in the panel. The
+block is sized in `ch` — one `ch` is the advance of a digit in whatever font
+actually rendered — so it is exactly as wide as its own text even if the webfont
+never arrived. The boxes around it are given the same width in pixels, because a
+slab wider than its contents is a horizontal scrollbar under sequence that fits.
+
+### Room on the bar, and where it sits
+
+**Display comes before Select.** What the screen *is* settles what can be done on
+it — the plain displays hand selecting to the browser and put that tool out of
+reach — so the control that decides stands before the one that is decided for,
+and a reader who finds Select greyed out reads why one control to its left.
+
+The bar scrolls sideways rather than wrapping, so room for a new control has to
+come from somewhere. The find box went from 232 px to 176 — still seventeen
+characters, which is a versioned transcript ID — the zoom slider from 92 to 76,
+and the controls' padding and the bar's gaps each gave up a couple of pixels.
+
+**Nothing on the bar changes width any more.** It used to do it twice over. The
+genome pill was sized to its own text and ran from 123 px for "Norway rat GRCr8"
+to 249 px for "Egyptian spiny mouse ASM2989020v1", at the *left-hand* end, so
+changing genome slid every other control along. It has the genome browser's
+fixed column now — 180 px, the same number, so the two views keep their furniture
+in the same place — and a longer name ellipsises with the whole of it on the
+tooltip, which is what the app's pills do everywhere else. The two-line controls
+are likewise held at the width of their longest value.
+
+**The stretch on screen is no longer reported.** It sat at the far end of the
+bar, was the widest thing on it, and was the one piece of furniture standing
+where the next control has to go. It is also written down the margins of every
+row already: the gutters carry the first and last coordinate of each line, so a
+reader asking "where am I now" is answered by the row their eye is on rather than
+by a caption three hundred pixels away. The one thing it said that the gutters do
+not — how much sequence is on screen, which is not the distance between its ends
+once a collapse or a record boundary falls inside — went with it, and the breaks
+are drawn in the sequence itself where they are easier to see than to count.
+
+That took a second `visibleRowRange` and a second pass over the rows with it,
+which ran on every scroll frame to answer a question only the caption was asking.
+What is reported up now is the mounted rows and nothing else, which is what the
+buffers were always the consumer of.
+
+What stays is the hidden count, and only when something is hidden: something not
+being drawn has to be visible somewhere, or it is a bug report waiting to happen.
+With nothing hidden the far end of the bar is empty, which is the point.
+
 ## Selecting bases
 
-Armed, not always on: the button carries the dashed rectangle every other view
-in the app arms a selection with, and shows it is in hand with the browser's
-inset ring. A drag with the tool down does nothing, which leaves the gesture
-free for whatever else may want it later.
+Everything in this section is the **interactive** display's. The plain ones hand
+the gesture to the browser and disable this tool — see **Three displays**.
+
+Turned on, not always on: a drag with the tool off does nothing, which leaves the
+gesture free for whatever else may want it later.
+
+**And it stays on until the reader puts it down.** It used to put itself away
+the moment a selection was drawn, on the reasoning that somebody who had just
+selected something wanted to do something with it rather than select again. In
+practice they select again, and re-arming between every one is a press for
+nothing.
+
+What made the tool put itself away was a real problem, though: with it still in
+hand, a stray press on the sequence replaced whatever had been drawn with a
+one-base selection before the pointer had moved a pixel. So a press no longer
+reports anything until it moves onto another base. A press that goes nowhere is
+not a selection and leaves the one that is there alone; a drag that comes back
+to the base it started on is, because by then the reader has drawn it.
+
+The control is a split — the face turns the tool on and off, the chevron beside
+it chooses which of the two ways it selects. The face was a square glyph with no
+words on it, which said that something could be turned on but not what, and had
+nowhere to put a second way of doing it. It carries the same two lines Display
+does now, so which way is in hand can be read off the bar rather than found by
+opening the menu.
 
 **What is shown while dragging is the selection itself, not a rectangle.** A
 rectangle is what the hand does; it is not what gets selected, and drawing both
@@ -1086,6 +1335,335 @@ It is now built from its two numbers and memoised on them, so it keeps its
 identity while they hold. The re-anchoring still fires when the layout genuinely
 changes, which is what it is for: collapsing the introns moves every coordinate
 to a different row, and the reader should stay where they were.
+
+## Finding something
+
+**Find** is on the bar beside Select, because the two are the same question
+asked the two ways a reader can ask it: one says where to look by pointing, the
+other by describing.
+
+The model is the alignment explorer's, shared rather than copied:
+`utils/findPatterns.js` holds the ordered list of patterns — each a string or a
+regular expression, with a colour and a switch — and the rule that where two of
+them cover a base, the one nearer the top of the list is drawn. That rule is
+the reason the list is a list and not a set. The explorer has had it for years
+under the name *motif*; the name is Find in both views now, and the module is
+one so that the two cannot drift about what a regex means.
+
+### Two modes, one control
+
+A split button, like Select. The face opens the box; the chevron opens the list.
+
+```
+[ Find   ✓On  |  v ]          the bar
+  3 of 148
+┌──────────────────────────────────────────────────────────────┐
+│ ATGGC________________  Aa .*  [Q]  3 of 148   ^  v   ×       │   simple
+└──────────────────────────────────────────────────────────────┘
+        ...or...
+┌──────────────────────────────────────────────────────────────┐
+│ ⠿ P1 ☑ ■ ATGGC_____ [String v]  34  ×                        │   full
+│ ⠿ P2 ☑ ■ CCTG______ [String v] 252  ×                        │
+│ + Add a pattern            …            Cancel      Apply    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**One or the other, never both.** They are two ways of saying the same thing
+rather than a small version and a big version of one thing, and a band that
+showed the list underneath the box invited a reader to use both at once and
+then wonder which of them was in force.
+
+**It is a band under the bar, not a menu hanging off it.** Everything else on
+that bar is a setting — read, changed, dismissed — and a find box is not. The
+reader types in it, looks at the sequence, steps to the next match and looks
+again; a panel that dismissed itself on the first click into the page would be
+shut every time it was used. It sits inside the sequence column, so it reaches
+as far as the drawer and no further: the drawer is not what is being searched.
+
+`Ctrl-F` opens the simple box, bound on the window so it works without
+something inside the view having been clicked first. In the plain displays that
+takes a keystroke the browser would otherwise have; ours counts the whole
+region, which is the one thing the browser's cannot do, so it is offered first
+and the browser's is a second `Ctrl-F` away.
+
+### Nothing happens until it is asked for
+
+The simple box has a magnifier beside it, the same pair the location box is,
+and nothing is searched until it is pressed. It searched as the reader typed
+at first, which is the right shape for a find box over a page and the wrong one
+for a scan of a chromosome: typing `ATGGC` started five of them and threw four
+away.
+
+The full list has **Cancel and Apply**, which is how the alignment explorer
+edits several things at once and for the same reason — reordering three
+patterns one keystroke at a time would start three scans, two of them of no
+interest to anybody.
+
+While a search is running the button is a spinner and the count says so. The
+count area is empty whenever the box has been edited since it was last
+submitted, so a reader is never shown a number that belongs to something other
+than what they are looking at.
+
+### `[P1,P2]`: the list, named from the box
+
+**Apply hands back to the simple box**, and writes there the patterns it
+applied — as their places in the list, in the order it applied them.
+
+That notation is what makes the two modes one control. After Apply the reader
+is in an ordinary simple search whose text happens to name the list: countable,
+steppable, and editable without opening the list again. And a reader who knows
+the notation can type it — `[P2,P1]` to change which of two patterns wins the
+bases they share, `[P1,P3]` to drop one for a moment — without going near the
+list at all.
+
+The order is a priority, so it is not decoration: reversing `[P1,P2]` on two
+patterns that overlap moves the shared bases from one colour to the other while
+the total stays the same.
+
+**The list always has a row in it.** Deleting the last pattern empties that row
+rather than taking it away: a list with no rows has nothing to type into, so a
+reader who cleared their one pattern would have to press *Add a pattern* before
+they could search again — a step between them and the thing they came to do.
+
+The places are read off the list's own order, so deleting from the middle of
+`P1 P2 P3` leaves `P1 P2` rather than a gap. They have to be contiguous,
+because they are what the reader types into the simple box to name them.
+
+`resolveQuery` is the whole of it. An empty box asks for nothing; a `[P…]` asks
+for those saved patterns in that order, switched on whether or not the list has
+them switched on, because naming one is asking for it; anything else is one
+pattern read as the switch beside the box says. A place past the end of the
+list is skipped rather than refused — a reader pruning the list should not find
+every search they saved broken.
+
+### The colour swatch says what is already decided
+
+The simple box shows a colour only when what is in it **is** one of the
+reader's saved patterns. An ad-hoc search has a colour too, but it is one this
+view picked, and a swatch offering to change it is a setting nobody asked for
+on a box they opened to type one word into. Typing what is already in the list
+gets that pattern's colour, so typing it and picking it look the same.
+
+The last thing searched for is remembered on the device — beside the pattern
+list rather than in it, because what was typed into the simple box is usually
+not something the reader wants kept, and writing it into the list would grow a
+list of everything anyone ever looked for. The box comes back with it in and
+waits to be asked.
+
+### What is searched, and how much of it
+
+**The whole region in focus, not what is on the screen.** The view holds a few
+screens of sequence at a time, and a count that changed as the reader scrolled
+would be worse than no count at all — "3 of 148" has to mean the same thing at
+the top of a gene and the bottom of it. So the scan is the backend's.
+
+However large the region is, which is meant literally: a location focus can be
+a whole chromosome. `sequence_view/find.py` walks it in blocks and never holds
+more than one, the way `/fasta` streams for the same reason. Chromosome 1 —
+249 Mb — scans in about three seconds.
+
+**The seam where the blocks meet is the whole of the difficulty.** A match lying
+across a boundary would be found by neither block: the first runs out before the
+pattern ends and the second starts after it began. So each block reaches back
+into the one before it, which makes the seam invisible, and then claims only the
+matches *beginning* in its own share, which is what stops the ones in the
+overlap being reported twice. A match beginning in the overlap belongs to the
+next block, which sees it whole. The one thing this cannot do is a single match
+longer than the overlap, which is a megabase.
+
+**The count is exact; the list of positions is not necessarily complete.**
+`ATG` over chromosome 1 is 4,110,209 matches — half a gigabyte of JSON if every
+position were sent. Counting costs the scan, which is being paid anyway, so the
+count is always right; the positions stop at a hundred thousand and the box says
+so. Nobody steps through four million matches one at a time.
+
+**The search is on the sequence as displayed.** A reader reading the reverse
+complement and looking for `ATG` means the `ATG` they can see, not its
+complement on the forward strand — so a reversed region is cut from the far end
+and complemented before it is scanned, and the offsets are turned back into
+genomic coordinates the other way round. Case is ignored either way: soft-masked
+repeats are lower case and everything else is upper, and a reader typing `ATG`
+means the bases rather than the typography.
+
+### Drawing a match
+
+A **bar under the run** in the pattern's colour, and the one match the reader is
+standing on **boxed** in the same colour so the two read as one object. A bar
+rather than a fill for the reason the selection is not a fill either: the whole
+subject of this view is what colour a base is, and a wash over a match comes out
+a different shade over every annotation it crosses.
+
+The box goes round the *outside* of the run and nowhere else. Every cell used
+to ring itself, which drew a rule between every pair of bases — a six-base
+match looked like six boxes — and the ring and the bar both landed on the
+bottom edge, so one side came out half again as thick as the other three. The
+sides are decided the way the selection's are: a side where the neighbour is
+not in the match too, and the ends of a row always count, because a match that
+wraps really does stop there on the screen. One thickness all round, and no bar
+under the current match — the bar is how a match the reader is *not* standing
+on is marked, and drawing both put two marks on one edge.
+
+**None of the find colours is one this view paints annotation with.** The
+default was the genome palette's first entry, the Ensembl blue, which is a mid
+tone that sits close to the page on the dark theme and is a hair from the blue
+an exon is filled with — so a match inside an exon was a blue mark on a blue
+block. `FIND_COLOURS` starts at a green and avoids the exon blue, the UTR
+violet, the intron slate, the splice orange, the start teal, the stop fuchsia
+and the amber the selection and the overlap rule share. The genome palette is
+still in the colour picker behind them.
+
+In the plain displays it *is* a fill, because there is no annotation colour in
+the cell to fight and a found word on a coloured ground is what every reader
+already knows a find to look like. The class ink survives underneath it: a run
+is broken by a change of annotation *or* a change of match, so a row with a
+match on it keeps its colours everywhere else and a match spanning two classes
+is still one highlight.
+
+The matches travel as a channel of their own beside the sequence, the classes
+and the selection mask — one base-36 digit a cell, naming which pattern claimed
+it. A channel rather than two more bits in the marks, because the marks are read
+back with `parseInt(_, 32)` and there is no room left in a base-32 digit.
+Overlaps are resolved once per answer rather than once per cell, and coordinates
+are turned into columns once per record rather than once per row: a screen is
+forty rows, and doing either per row did the same work forty times.
+
+### Pressing a match
+
+**A press on a base that is part of a match is about the match**, not about the
+base. The reader went looking for it and it is drawn as found; asking them to
+press it and then be told which genes cover it would be answering a question
+they had already stopped asking. A press anywhere else still opens the base box.
+
+Two things happen at once, because they are one thing to the reader: the match
+pressed becomes the one they are standing on — ringed, if it was not already —
+and a bar opens over it. Pressing the match they are already on just opens the
+bar, which is how someone who closed it gets it back.
+
+**The bar is the selection's bar.** A match is a stretch of sequence the reader
+has picked out, which is the same kind of thing a selection is, and most of what
+they might want to do with one they might want to do with the other: copy it as
+FASTA, download it, show it in the browser. So `SelectionBar` serves both, and
+what differs is the line under the coordinates — *Match 3 of 903* rather than
+*6 bp selected* — and that closing it puts the bar away rather than throwing the
+search away.
+
+**Not *Set as the location*, though.** That is the one action on this bar that
+changes what the whole view is reading, which is why it is the one said in
+words rather than drawn as a mark. It earns that for a selection, which the
+reader drew deliberately around something they want to read. A match is a
+handful of bases they are passing through on the way to the next one, and
+reframing the view around each as they step is almost never what pressing next
+meant. The button is drawn only where a handler is given for it.
+
+**The bar points at the match**, rather than sitting at the end of the row the
+way a selection's does. A selection is usually rows long, so there is no one
+place along a row that is *where it is*; a match is a handful of bases, and a
+bar at the far end describing them is a bar the reader has to look away from
+the match to read. Three placements, the first that fits wholly inside the row
+winning:
+
+1. **Left edges level**, so the eye runs straight down from the coordinates to
+   the bases they name.
+2. **Centred over it**, where the bar is too wide to start there without
+   running off the end.
+3. **Right edges level**, where even centred it would overhang — a match near
+   the end of a row.
+
+Nothing may leave the row: a bar half off the side of the sequence window is
+worse than one that is merely not where you would have put it, so the last
+resort is to clamp. A match that wraps is pointed at by its first row's share
+of itself, which is the row the bar is over.
+
+The bar's width is whatever its contents come to, so it is measured after
+layout and placed before paint — `useLayoutEffect`, which is the one thing that
+is for. In an ordinary effect the reader would see it at the end of the row for
+a frame and then jump.
+
+It is tied to the current match, so stepping carries it along — and it carries
+its own pair of chevrons for stepping, beside the count they move. *Match 3 of
+903* is the thing those two change, and a reader working with the bar under
+their pointer should not have to go back up to the find box to move on. They
+are the same mark the find box steps with, which is the app's own
+`VerticalChevronGlyph` in both places rather than two drawings of one idea.
+
+The other actions behind the bar are the selection's own handlers, which take a
+range rather than reading the selection for exactly this reason.
+
+Download is the one that is not free. The download panel offers the levels of
+the focus, and an ad-hoc stretch is only one of them by being the *selection* —
+so downloading a match makes it the selection and opens the panel on it. That
+is visible: the stretch outlines and the rest of the page dims, which is the
+honest account of what is about to be written to a file.
+
+**So downloading is a handover, and the match's bar closes as it happens.** The
+stretch now has a selection's bar over it saying the same coordinates; leaving
+the match's there stacked two bars on one row, and stepping to the next match
+then moved one of them and not the other — which read as the view refusing to
+jump.
+
+**Two bars can still want the same row**, where a reader has a selection *and*
+is stepping through matches inside it. Both are held at the top of the screen
+once the reader has scrolled past what they belong to, so anywhere near each
+other they pin to the same place. The match's goes below the selection's, which
+was there first and was put there by hand.
+
+The plain displays have none of this. There a press belongs to the browser,
+which is the whole reason to be in one.
+
+### Stepping between them
+
+`Enter` for the next, `Shift-Enter` for the previous, and the buttons beside the
+count for both. Stepping **wraps**, because a find box wraps.
+
+**A search starts at the match nearest where the reader is looking**, not at
+the first one in the region. On a chromosome the first is a very long way from
+wherever they are reading — 63 kb away against 9 kb for the nearest, on the
+gene this was measured against — so a search jumped them somewhere else
+entirely and stepping walked back towards them one match at a time.
+
+Nearest to the middle of the screen, because that is where attention is. The
+coordinate is read once, at the moment the answer lands: a reader who has
+already stepped somewhere is left alone, and scrolling afterwards does not move
+the mark.
+
+Stepping from there is **in reading order**, which is down the screen:
+ascending coordinates normally,
+and descending where the reader has the sequence turned round, because 5′ to 3′
+then runs the other way along the chromosome. The backend answers in ascending
+genomic order and knows nothing about which way it is being read.
+
+**Priority breaks a tie.** Two patterns can match at the same base, and one of
+them is drawn over the other; stepping onto the one underneath first would show
+the reader a match they cannot see before the one they can. The order the
+patterns were asked in is the order they win in, so it is the order they are
+stepped in. Sorted on arrival rather than asked for in that order, because the
+search key deliberately sorts the patterns by id — reordering the list must not
+throw away matches that are still correct — so the backend is never told which
+of them outranks which.
+
+**And the match in hand is drawn on top of whatever outranks it.** The priority
+order is right while the reader is looking at all the matches at once and wrong
+the moment they step onto one of the losers: a match you have jumped to and
+cannot see is a match you have not been shown. `raiseSpan` cuts the one in hand
+out of its neighbours and puts it above them, for as long as it is the one in
+hand.
+
+**The match lands in the middle of the screen, on every step.** It used to
+scroll only where the match had gone off the screen, on the grounds that moving
+the page under a reader stepping through a cluster would lose them their place.
+The cure was worse: the page stood still for three presses and then jumped, so
+where a match would appear was never predictable. Centring every time is one
+rule, and the reader always knows where to look.
+
+*Near* the middle at the ends of a document, where there is not half a screen
+of sequence above the match to put there. The arithmetic is in rows rather than
+pixels, because for a very large region the spacer is compressed and a scroll
+position is not a distance. When it does scroll, the match lands a
+third of the way down rather than at the top — what is above a match is usually
+as much of the answer as the match itself.
+
+Which match the reader is standing on is forgotten whenever the matches change
+underneath it. Match three of the old search is not match three of the new one.
 
 ## Collecting records
 
@@ -1204,6 +1782,32 @@ to see and copy — its exons joined, and the protein those spell — and neithe
 them is a stretch of chromosome. A bar over the sequence switches between all
 four, and the panel below it draws whichever is chosen.
 
+### What a transcript has, before anything is pressed
+
+**A non-coding transcript never offers CDS or Protein.** It used to offer both,
+and only on being pressed discover there was nothing there — putting the reader
+back on Transcript and greying the two it had just offered. Which of them exist
+is a fact about the transcript, and the view already has it: the reading frame
+comes with the annotation it fetches to draw with, so no CDS segments means no
+coding readings, known before the bar is drawn.
+
+While that annotation is still coming there is no frame *yet*, which is not the
+same as there being none. Acting on it then would be the same confusion a moment
+earlier, so the bar waits: the two are offered only once it is settled that they
+exist, and the fallback that puts a reader back on Transcript fires only once it
+is settled that they do not.
+
+**Every reading's length is on the bar from the start**, not after the reading
+has been opened. The bar prints how long each one is, and a bar that knew only
+the reading already on screen answered nothing: finding out how long a protein
+is by opening it is not an answer to the question the bar exists to ask.
+
+So all of them are fetched, one after another, the one on screen first because
+that is the one somebody is waiting for. Each is small — a spliced transcript is
+kilobases, not megabases — and the backend caches them, so switching back and
+forth pays for none of it twice. A non-coding transcript asks for one reading
+and no more, because the other two are requests whose answer is already known.
+
 ### The bar over the sequence
 
 Four readings — **Genomic, Transcript, CDS, Protein** — on a floating bar in a band
@@ -1256,16 +1860,38 @@ button says which in its own title, so nothing is guessed. The highlight's own
 facts are a **second row under the first**, present only while there is one, so
 the bar grows rather than something appearing elsewhere.
 
-`Set as the location` and `Show in the genome browser` are on that row too, and
-they are the two that are not always available:
+`Set as the location` and `Show in the genome browser` are on that row too:
 
 | | copy, download | set as location, genome browser |
 |---|---|---|
-| no highlight | the whole reading | refused — "highlight a stretch first" |
+| no highlight | the whole reading | the stretch of chromosome the reading covers |
 | genomic, transcript, CDS | the highlight | the stretch it covers |
-| protein | the highlight | refused |
+| protein, highlighted | the highlight | refused |
 
-The protein row is a judgement, not a limitation. A residue *does* have a genomic
+**Without a highlight they act on the whole reading**, which they did not used
+to: they needed one, and so were dead controls most of the time — needlessly,
+because a reading *is* a stretch of chromosome. `readingRange` is
+`selectionRange(focus.custom)` falling back to `genomicExtentOf(answer)`, and
+placing it moves to the genomic reading, as placing a highlight always has: the
+stretch only exists as a stretch there.
+
+The extent is read off the reading's **segments**, not off the answer's
+`genomic` field — that is the transcript's own span whatever kind was asked
+for, and the coding extent of a transcript is not its extent. Taken from the
+segments, the three readings of PHGDH's ENST00000641023 place where they
+actually are:
+
+```
+Transcript  1:119,711,934-119,744,215
+CDS         1:119,712,023-119,744,040
+Protein     1:119,712,023-119,744,040   its codons, which is its CDS
+```
+
+Introns included, because a reading that spans one still covers it. The same
+extent is what a coloured export writes in the record's heading.
+
+A protein as a whole is its CDS, and goes where the CDS goes. A *highlight* in
+one still does not, and that row is a judgement, not a limitation. A residue *does* have a genomic
 span, through its codons, and this view works it out — it is what the tip prints
 and what carries the highlight between readings. Jumping a genome browser to it
 was judged to read as a non-sequitur, so it is refused, and the title says to
@@ -1311,6 +1937,54 @@ A genomic stretch spanning an intron clips to what is still there when it become
 a spliced one: 81 genomic bases across an intron are 27 bases of the transcript.
 That is what the reader meant, and refusing it because the ends fall in an intron
 would be answering a different question.
+
+### The codons, and the protein over them
+
+**The stripes are the CDS.** A spliced reading gets its codon striping from
+`codonRuns`, which alternates two shades three bases at a time — but the
+backend's annotation also carries one flat `cds` run over the whole coding
+region, and that was being laid *over* the stripes. It covered every one of
+them, so the striping simply never appeared in the Transcript or CDS readings.
+The flat block is dropped now: the stripes are what says `cds` here, being the
+same class in two shades, so nothing is lost. The start and stop codons still
+go over the top, because they say where the reading begins and ends and a
+stripe across them would hide the first thing a reader looks for.
+
+**The protein lane is drawn here too**, on the reader's own switch — the same
+one in the Features menu that the genomic reading obeys. It was genomic-only,
+which made the switch look broken in the two readings where a codon is easiest
+to see. Same convention as the genomic lane: one letter over the *middle* base
+of each codon, and `*` where the codon is a stop, which is the terminal one for
+most transcripts and is where the protein ends. Here it is arithmetic rather
+than a search — the sequence is already spliced, so a codon is three
+consecutive positions from the start of the CDS and there are no junctions to
+walk across.
+
+Every row is the same height when the lane is on, rather than only the rows
+carrying coding sequence being taller. A spliced reading's CDS is one unbroken
+stretch, so a lane on some rows and not others would step the sequence up and
+down the page as the reader scrolled through the UTR. The genomic view's
+per-row height index is the right answer there and the wrong one here.
+
+Never on the Protein reading: every cell there already *is* an amino acid.
+
+**The letters are translated with the standard table**, as the genomic lane's
+are. A mitochondrial transcript's lane is therefore wrong in the same way the
+genomic one is — the Protein reading, which the backend translates, is the
+right answer for those and says which table it used.
+
+### The legend lists what is on the screen
+
+`legendGroupsFor` narrows a reading's key to the classes actually in its runs.
+The protein reading is where this shows. Its stop is an *internal* one — the
+terminal stop is stripped the way Ensembl's own pep file strips it — so most
+proteins have none, and the legend was promising a colour that never appeared
+anywhere in the sequence. A readthrough or a frameshift still gets its swatch,
+because then there is something to explain.
+
+The runs it reads are the ones the surface draws, from `splicedRunsFor`. One
+writer, because a legend built from a second idea of what is on the screen is
+a legend that will eventually disagree with it.
 
 ### It is the view, not a text box
 
@@ -1453,9 +2127,23 @@ genomic reading uses. For a spliced reading it leads with the position, then the
 letter, then where that lands on the chromosome and in which exon, because the
 position is what the gutters beside it are counting.
 
-**Dragging needs no tool here.** The genomic reading arms a rectangle first,
-because a drag there might have meant something else; in a spliced reading it
-could not, so a drag is always a highlight.
+**Dragging needs the tool here too.** It did not: a drag anywhere in a spliced
+reading marked a stretch, on the reasoning that a drag there could not have
+meant anything else. Two things were wrong with that. A reader who armed the
+tool found it had nothing to arm, and the two-click way of selecting — the one
+that exists precisely for a selection longer than a screen — could not be used
+at all, because the first click was being swallowed by a drag that had already
+begun. The cursor said one thing in one reading and another in the next, which
+is how it showed.
+
+It is the same tool now, in both styles, with the same cursor and the same rule
+about a press that never moves.
+
+One thing had to be put right for that to work at all. The watcher that puts
+the tool down when a press lands outside the sequence looks for the scroller's
+own marker, and only the genomic scroller carried it — so every press *on* a
+spliced reading counted as outside, and the tool was disarmed before the drag
+it had been armed for could begin. Both scrollers carry it.
 
 ### What is on offer
 
@@ -1482,10 +2170,38 @@ surface. The bar prints how long each reading is and greys what is not on offer;
 the surface draws whichever is chosen. A store inside the surface would have left
 the bar unable to see it, and two stores would have fetched everything twice.
 
-Only the reading being drawn is fetched. The other two are a request each that a
-reader who never switches would never need, and the bar says nothing about a
-length it has not been told rather than a nought — which would be a claim that the
-transcript has none.
+Every reading a transcript has is fetched, the one being drawn first — see
+*What a transcript has, before anything is pressed* for why the lengths have to
+be there before anything is pressed. Until an answer is in, nothing is said
+about that reading's length rather than a nought, which would be a claim that
+the transcript has none.
+
+**The download panel reads the same store.** `readingTargets` builds a target
+per reading, with its length beside it and a protein counted in residues, and
+`orderTargets` lists them **under the transcript they are readings of** rather
+than above everything:
+
+```
+Location                253,356 bp
+Gene           PHGDH      95,817 bp
+Transcript (genomic)     32,282 bp   the stretch of chromosome, introns and all
+Transcript (sequence)     1,866 bp   spliced
+CDS                       1,602 bp
+Protein                     533 aa
+```
+
+The transcript appears twice and neither row is simply *the transcript*, so
+both say which they are — and only when both are listed, because with nothing
+to tell it from, `Transcript` is the whole of what it is. In a file there is
+nothing to confuse it with either, so the FASTA header says `Transcript
+sequence` without the brackets. The panel opens on the reading in front of the
+reader, because a reader looking at one and pressing Download almost always
+means *that* rather than the stretch of chromosome under it. Two of the panel's questions are then not
+asked: a reading is already the right way round, whichever strand it is on, and
+nothing was collapsed because nothing was laid out over a stretch of chromosome.
+The file is written from the same run list the surface draws from
+(`splicedExportRows`), so a coloured export of a CDS carries the codon stripes
+and the protein over them exactly as the screen does.
 
 
 ## How the small facts are written
@@ -1533,6 +2249,64 @@ In the drawer, position *is* level: the sections stack outermost first, the list
 you drill into lives inside the section you are already in, and the levels above
 are how you come back out. There is no breadcrumb and no back button because the
 stack is both.
+
+### Switching genome
+
+**One genome is drawn; every active one is offered.** The view reads one genome
+at a time and has a control of its own for choosing which, and that control
+offers the genomes the app has active. The app used to cap the sequence view at
+one fully active genome, which emptied the very list the control exists to fill:
+a reader could not bring a second genome up to switch to it, and pressing a
+half-lit pill put that genome away instead of promoting it. Drawing one at a
+time is this view's business; how many are available to draw is not.
+
+**Switching never leaves the previous genome's reading on the screen.** It used
+to: where the new genome had nowhere known to go, the view set the key and
+returned, so the old chromosome, region, gene list, picked records and selection
+stayed under the new genome's name — the one state a view of two genomes must
+never be in.
+
+There are three answers and no fourth:
+
+1. **Where the reader has read this genome here before, back to where they
+   were.** The view keeps a place per genome, written whenever the focus
+   settles. That is a better answer than the app's, which knows where a genome
+   was last opened in the *browser* — a different place.
+2. **Otherwise wherever the app last had it**, which is what arriving from the
+   browser or a panel leaves behind.
+3. **Otherwise nothing at all.** The focus is emptied and the seeding effect
+   asks the backend for somewhere to start. That leaves the view briefly blank,
+   and blank is the honest state: nothing is known about this genome yet.
+
+The hidden list is cleared too. The ids would not collide — they are one
+genome's genes — but a view quietly keeping a list of things to leave out of a
+genome the reader has never looked at is a view lying about what it is showing.
+Picks need no such clearing: a pick carries the scope it was made in and the
+genome is part of that scope, so a set made under one genome is recognised as
+stale under the next rather than shown against it.
+
+### A range is held inside its chromosome
+
+A reader can type `1:1-999,999,999`, and the view used to believe them. The
+backend clips every read, so the sequence drawn was always right — but the
+header said `1:1-999,999,999`, the ruler counted to a base that does not exist,
+and the share of the region the screen covered was a fiction.
+
+So a typed range and a typed coordinate are both held inside the chromosome
+before anything is done with them, and the bar says so for a few seconds when an
+end had to be moved: *"1 is 248,956,422 bases long. Showing 1:1–248,956,422."*
+A note rather than an error — the reader asked for more chromosome than there is
+and got all of it, which is what they meant — and it clears itself, because a
+note about a move is only about that move.
+
+How long a chromosome is comes from `/api/browse/regions`, which is where the
+genome browser's own chromosome menu comes from: a fact the app already had and
+this view was not asking for. Asked once per genome and held, with the synonyms
+in the answer indexed alongside the primary name, so `chr1` and `NC_000001.11`
+are held inside the same chromosome as `1`.
+
+Where the lookup has not arrived, nothing is clamped. Refusing to move until it
+has would be worse than moving to a region the backend will clip anyway.
 
 ### The chevrons fold sections
 
@@ -1627,6 +2401,11 @@ never imports `main`; it is handed the eight functions it needs, each as a lambd
 because all of them are defined further down that file than the `include_router`
 call.
 
+`POST /find` is the only one with a body rather than a query string. A regular
+expression is not a word — it is full of the characters a URL reserves — and
+several of them at five hundred characters apiece is past what a proxy will
+forward.
+
 | route | what |
 |---|---|
 | `GET /sequence` | one window, ≤100 kb, `softmask=1` to report repeats |
@@ -1640,6 +2419,7 @@ call.
 | `GET /search` | a gene or transcript by symbol or identifier |
 | `GET /transcript-sequence` | one transcript in its own coordinates: `kind=transcript\|cds\|protein` |
 | `GET /fasta` | the focused region as plain FASTA, streamed; `download=1` for a file |
+| `POST /find` | where a set of patterns match in the region, however large it is — see **Finding something** |
 
 **Soft-masking is kept as runs, not as case.** The assemblies are soft-masked and
 `/api/browse/sequence` discards that with `.upper()`. Here the runs are computed
@@ -1837,16 +2617,48 @@ The pure modules carry the load: `sequenceViewScroll`, `sequenceViewRows`,
 `sequenceViewDisplay`, `sequenceViewPaint`, `sequenceViewDocument`,
 `sequenceViewPicks`, `sequenceViewPopup`, `sequenceViewProtein`,
 `sequenceViewPrefs`, `sequenceViewHeights`, `sequenceViewColours`,
-`sequenceViewHidden` and `transcriptSequenceView` on the frontend;
+`sequenceViewHidden`, `sequenceViewPlain`, `findPatterns` and
+`transcriptSequenceView` on the frontend;
 `test_sequence_view_classes`, `test_sequence_view_windows`,
-`test_sequence_view_spans`, `test_sequence_view_spliced` and
-`test_sequence_view_api` on the backend. The API tests drive the endpoint
+`test_sequence_view_spans`, `test_sequence_view_spliced`,
+`test_sequence_view_find` and `test_sequence_view_api` on the backend. The API tests drive the endpoint
 coroutines directly with a throwaway SQLite database, in the house style, and
 pass `main`'s real derivation functions rather than stand-ins — those are the part
 that verifies codons against the sequence, and a fake would prove nothing.
 
 The document tests hold the same kind of invariant one level up: every row of a
 document resolves to exactly one thing, and none resolves twice.
+
+Find is tested at both ends and mostly at the seam. `test_sequence_view_find`
+walks a region in blocks of nine characters with an overlap of three -- sizes
+small enough to see, against the megabases it ships with -- and asserts that a
+hundred matches scattered across it are each found exactly once, including the
+ones lying inside an overlap and the one cut in half by a boundary. It also
+holds the two things easy to get backwards: that past the position limit the
+*count* is still exact, and that a reversed region searches what the reader can
+see and answers in ascending genomic coordinates, which are opposite orders.
+
+`findPatterns.test.js` holds the model both views share -- what a stored list is
+worth after an upgrade, that the top pattern wins an overlap and that reordering
+or recolouring does not throw away matches still correct -- and, at the end,
+that the explorer resolves overlaps identically through its own spelling of the
+same objects, and that a list stored before the rename still loads.
+
+It also holds the `[P1,P2]` notation, where the risk is a reader's own typing
+being mistaken for it: `[ACGT]` and `[ACGT]{3}` are sequence patterns, `P1` is
+a plausible thing to type, and none of them names a saved pattern. Round-tripping
+is asserted both ways, since the notation is written by Apply and read back from
+a box the reader may have edited in between.
+
+`sequenceViewPlain.test.js` holds the two rules the plain displays stand on.
+First, that what is drawn and what is copied cannot come apart: a line's text and
+its coloured runs come from one writer, and the width the block is given is the
+length of the line that writer produces. Second, that every colour the palette
+can draw comes out readable as ink on both themes — measured with the real
+relative luminance, since the naive one the palette flips its letter colour on
+rates the intron slate about a third brighter than it is. The header writer is
+checked against `documentHeader` in the same file, so the screen and the download
+cannot start naming one record two ways.
 
 Hiding is tested where it actually happens — in the runs. A hidden gene's
 `mixed` is gone and the sequence it alone covered is intergenic again; a hidden

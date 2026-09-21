@@ -4,6 +4,9 @@ import test from 'node:test'
 import {
   KINDS,
   KIND_CDS,
+  aminoRow,
+  legendGroupsFor,
+  splicedRunsFor,
   KIND_GENOMIC,
   KIND_PROTEIN,
   KIND_TRANSCRIPT,
@@ -12,6 +15,7 @@ import {
   codonRuns,
   codonSpan,
   genomicAt,
+  genomicExtentOf,
   overlayRuns,
   proteinRuns,
   rowClasses,
@@ -28,6 +32,7 @@ import {
   splicedRows,
 } from '../src/utils/transcriptSequenceView.js'
 import { CLASS_CODES, CLASS_NONE } from '../src/utils/sequenceViewPalette.js'
+import { NO_AMINO } from '../src/utils/sequenceViewProtein.js'
 
 // The two exons of a plus-strand transcript, and the same two read the other
 // way round. Spliced position 1 is the transcript's first base on both: on the
@@ -414,4 +419,149 @@ test('a record wraps at sixty, the width the rows are read at', () => {
 
 test('nothing to write is no record at all', () => {
   assert.equal(readingFasta({ transcriptId: 'T', sequence: '' }), null)
+})
+
+
+// ---- the protein over the codons ------------------------------------------
+
+// A CDS starting at position 4 of a transcript: three bases of 5' UTR, then
+// ATG GCC TAA -- a start, an alanine and a stop.
+const TX = 'CCCATGGCCTAA'
+const TX_CDS = { s: 4, e: 12 }
+const row = (col0, length) => ({ col0, length })
+
+test('a letter sits over the middle base of its codon', () => {
+  // Positions 4-6 are the start codon, so the M goes on 5 -- index 4 of a row
+  // that begins at position 1.
+  const lane = aminoRow(row(0, 12), TX, TX_CDS)
+  assert.equal(lane.length, 12)
+  assert.equal(lane[4], 'M', 'over the T of ATG')
+  assert.equal(lane[7], 'A', 'over the C of GCC')
+  assert.equal(lane[10], '*', 'and the stop is marked, as it is in the genomic lane')
+})
+
+test('everything but the middle bases is blank', () => {
+  const lane = aminoRow(row(0, 12), TX, TX_CDS)
+  const lettered = [...lane].map((c, i) => (c === NO_AMINO ? null : i)).filter((i) => i !== null)
+  assert.deepEqual(lettered, [4, 7, 10], 'one letter a codon and no more')
+})
+
+test('bases outside the coding sequence spell nothing', () => {
+  // The three bases of UTR before the CDS.
+  const lane = aminoRow(row(0, 12), TX, TX_CDS)
+  assert.equal(lane.slice(0, 3), NO_AMINO.repeat(3))
+})
+
+test('the lane is built for the row asked for, not the whole sequence', () => {
+  // A second row of a longer transcript: positions 7-12.
+  const lane = aminoRow(row(6, 6), TX, TX_CDS)
+  assert.equal(lane.length, 6)
+  assert.equal(lane[1], 'A', 'position 8, the middle of GCC')
+  assert.equal(lane[4], '*', 'position 11, the middle of TAA')
+})
+
+test('a codon running off the end of what is there spells nothing', () => {
+  // A CDS the sequence does not finish, which is an incomplete annotation.
+  assert.equal(aminoRow(row(0, 6), 'ATGGC', { s: 1, e: 6 })[4], NO_AMINO)
+})
+
+test('no coding sequence is no lane at all', () => {
+  assert.equal(aminoRow(row(0, 12), TX, null), '')
+  assert.equal(aminoRow(row(0, 12), TX, { s: 9, e: 4 }), '', 'and neither is an inverted one')
+  assert.equal(aminoRow(row(0, 0), TX, TX_CDS), '')
+})
+
+// ---- what is coloured, and what the legend says ---------------------------
+
+const ANSWER = {
+  status: 'ok',
+  sequence: TX,
+  cds: TX_CDS,
+  runs: [
+    { s: 1, e: 3, c: 'utr5' },
+    { s: 4, e: 6, c: 'start_codon' },
+    { s: 7, e: 9, c: 'cds' },
+    { s: 10, e: 12, c: 'stop_codon' },
+  ],
+}
+
+test('the codon stripes are not buried under the annotation’s flat CDS block', () => {
+  // The bug: the backend sends one `cds` run over the whole coding region, and
+  // laid over the stripes it covered every one of them.
+  const runs = splicedRunsFor(KIND_TRANSCRIPT, ANSWER)
+  const classes = rowClasses(row(0, 12), runs)
+  assert.ok(classes.includes(CLASS_CODES.cds) || classes.includes(CLASS_CODES.cds1),
+    'the coding bases carry a stripe class')
+  // The two shades alternate a codon at a time, which is the whole point.
+  const shades = [...classes].filter((c) => c === CLASS_CODES.cds || c === CLASS_CODES.cds1)
+  assert.ok(new Set(shades).size === 2 || shades.length <= 3, 'both shades are used')
+})
+
+test('the start and stop codons still win over the stripes under them', () => {
+  const classes = rowClasses(row(0, 12), splicedRunsFor(KIND_TRANSCRIPT, ANSWER))
+  assert.equal(classes.slice(3, 6), CLASS_CODES.start_codon.repeat(3))
+  assert.equal(classes.slice(9, 12), CLASS_CODES.stop_codon.repeat(3))
+  assert.equal(classes.slice(0, 3), CLASS_CODES.utr5.repeat(3), 'and the UTR is untouched')
+})
+
+test('the legend lists only what is on the screen', () => {
+  // A protein with no internal stop has no stop to explain. The terminal one
+  // is stripped the way Ensembl's own pep file strips it, so most proteins
+  // have none -- and the legend was promising a colour that never appeared.
+  const clean = { status: 'ok', sequence: 'MAAA', runs: [] }
+  assert.deepEqual(
+    legendGroupsFor(KIND_PROTEIN, splicedRunsFor(KIND_PROTEIN, clean)),
+    ['start_codon'],
+  )
+  const readthrough = { status: 'ok', sequence: 'MA*AA', runs: [] }
+  assert.deepEqual(
+    legendGroupsFor(KIND_PROTEIN, splicedRunsFor(KIND_PROTEIN, readthrough)),
+    ['start_codon', 'stop_codon'],
+  )
+})
+
+test('a legend asked without runs still answers with the level’s whole key', () => {
+  assert.deepEqual(legendGroupsFor(KIND_CDS), ['cds', 'start_codon', 'stop_codon'])
+  assert.equal(legendGroupsFor(KIND_GENOMIC), null, 'the genomic reading keeps every group')
+})
+
+test('a transcript’s legend keeps the stripes it is actually drawing', () => {
+  const groups = legendGroupsFor(KIND_TRANSCRIPT, splicedRunsFor(KIND_TRANSCRIPT, ANSWER))
+  assert.ok(groups.includes('cds'), 'the stripes are still a cds swatch')
+  assert.ok(groups.includes('utr'))
+  assert.ok(!groups.includes('noncoding'), 'and nothing here is non-coding')
+})
+
+test('a reading covers the chromosome its own segments cover', () => {
+    // A transcript of two exons, whose coding part starts inside the first
+    // and ends inside the second.
+    const transcript = {
+        status: 'ok',
+        genomic: { s: 1000, e: 2000 },
+        segments: [
+            { s: 1, e: 100, gs: 1000, ge: 1099 },
+            { s: 101, e: 200, gs: 1901, ge: 2000 },
+        ],
+    }
+    const cds = {
+        status: 'ok',
+        // The answer says the transcript's span whatever kind was asked for,
+        // which is exactly why this is not read off it.
+        genomic: { s: 1000, e: 2000 },
+        segments: [
+            { s: 1, e: 50, gs: 1050, ge: 1099 },
+            { s: 51, e: 110, gs: 1901, ge: 1960 },
+        ],
+    }
+    assert.deepEqual(genomicExtentOf(transcript), { start: 1000, end: 2000 })
+    assert.deepEqual(genomicExtentOf(cds), { start: 1050, end: 1960 })
+
+    // Nothing to place from an answer that is not one, and the transcript's
+    // own span where there are no segments to read.
+    assert.equal(genomicExtentOf(null), null)
+    assert.equal(genomicExtentOf({ status: 'no_cds', genomic: { s: 1, e: 9 } }), null)
+    assert.deepEqual(
+        genomicExtentOf({ status: 'ok', segments: [], genomic: { s: 1000, e: 2000 } }),
+        { start: 1000, end: 2000 },
+    )
 })

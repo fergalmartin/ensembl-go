@@ -13,6 +13,7 @@ half-open; ``_read_window`` converts, and nothing else in the package does.
 
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -34,11 +35,14 @@ from .classes import (
     spliced_classes,
     transcript_classes,
 )
+from .find import Pattern, compile_pattern, matches_in_region
 from .spans import MAX_INTRON_COLLAPSE_GENES, spans_for_level
 from .windows import (
     FASTA_LINE_WIDTH,
     FASTA_STREAM_BP,
     MAX_CLIPBOARD_BP,
+    MAX_FIND_MATCHES,
+    MAX_FIND_PATTERNS,
     MAX_TILE_BP,
     apply_strand_flanks,
     clip_to_chromosome,
@@ -208,6 +212,44 @@ class ClassesResponse(BaseModel):
     # How many features the answer was computed without, so the view can say so
     # rather than leaving a reader to wonder where a gene went.
     hidden: int = 0
+
+
+
+class FindPattern(BaseModel):
+    """One thing to look for: a string, or a regular expression."""
+
+    id: str = Field(min_length=1, max_length=100)
+    pattern: str = Field(default="", max_length=500)
+    kind: str = "literal"
+
+
+class FindRequest(BaseModel):
+    """A region, and what to look for in it.
+
+    A body rather than a query string: a regular expression is not a word, and
+    twenty of them do not fit in a URL anybody's proxy will forward.
+    """
+
+    genome: str = "reference"
+    chrom: str = ""
+    start: int = Field(ge=1)
+    end: int = Field(ge=1)
+    # Which way the reader has the sequence turned. The search is done on what
+    # is displayed, so this decides what the patterns are matched against.
+    strand: str = "+"
+    patterns: List[FindPattern] = Field(default_factory=list)
+    limit: int = MAX_FIND_MATCHES
+
+
+class FindResponse(BaseModel):
+    # `[start, end, patternId]`, genomic and 1-based inclusive, ascending.
+    matches: List[List[Any]] = Field(default_factory=list)
+    # Exact, whether or not every position is listed.
+    total: int = 0
+    truncated: bool = False
+    counts: Dict[str, int] = Field(default_factory=dict)
+    start: int = 0
+    end: int = 0
 
 
 def create_router(
@@ -1437,6 +1479,72 @@ def create_router(
             name = f"{resolved}_{low}-{high}{'_rev' if reverse else ''}.fa"
             headers["Content-Disposition"] = f'attachment; filename="{name}"'
         return StreamingResponse(_pieces(), media_type="text/plain; charset=utf-8", headers=headers)
+
+
+    # ---- finding a pattern ----------------------------------------------
+
+    @router.post("/find", response_model=FindResponse)
+    async def find(body: FindRequest):
+        """Where a set of patterns match, across the whole region being read.
+
+        Not across what is on the screen: the view holds a few screens of
+        sequence at a time, and a count of matches that changed as the reader
+        scrolled would be worse than no count at all. So the region in focus is
+        scanned end to end, however large, and the answer is the same whatever
+        the reader happens to be looking at.
+
+        However large is meant literally -- a location focus can be a whole
+        chromosome. The walk that makes that affordable, and the seam where its
+        blocks meet, are in `find.py`.
+
+        The count is exact. The list of positions is not necessarily complete --
+        a short pattern over a chromosome is tens of millions of them -- and
+        says so.
+        """
+        if body.end < body.start:
+            raise HTTPException(status_code=400, detail="The end must not come before the start")
+        if len(body.patterns) > MAX_FIND_PATTERNS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"At most {MAX_FIND_PATTERNS} patterns can be searched for at once",
+            )
+
+        wanted = [item for item in body.patterns if item.pattern]
+        if not wanted:
+            return FindResponse(start=body.start, end=body.end)
+
+        compiled = []
+        for item in wanted:
+            try:
+                compiled.append(Pattern(item.id, compile_pattern(item.pattern, item.kind)))
+            except re.error as error:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{item.pattern} is not a valid regular expression: {error}",
+                ) from error
+
+        limit = max(0, min(int(body.limit or MAX_FIND_MATCHES), MAX_FIND_MATCHES))
+
+        def _query():
+            fasta = fasta_provider(body.genome)
+            resolved, chrom_length = _resolve_chrom(fasta, body.genome, body.chrom)
+            window = clip_to_chromosome(body.start, body.end, chrom_length)
+            if not window:
+                raise HTTPException(status_code=404, detail="Region not found")
+            low, high = window
+            result = matches_in_region(
+                lambda begin, stop: fasta.fetch(resolved, begin, stop),
+                low, high, compiled,
+                reverse=body.strand == "-",
+                complement=_reverse_complement,
+                limit=limit,
+            )
+            return FindResponse(
+                matches=result.matches, total=result.total, truncated=result.truncated,
+                counts=result.counts, start=low, end=high,
+            )
+
+        return await run_in_threadpool(_query)
 
     return router
 

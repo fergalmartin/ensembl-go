@@ -5,10 +5,87 @@ import { FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from '../FocusGeneDrawer'
 import { getGenomeKey } from '../../utils/genomeIdentity'
 import { classesForLevel, defaultHighlights, LEVELS } from '../../utils/sequenceViewPalette'
 import { readPrefs, writePrefs } from '../../utils/sequenceViewPrefs'
+
+/**
+ * Where the reader's Find patterns are kept.
+ *
+ * Its own store rather than a field in the view's preferences: what somebody is
+ * looking for is not how they like to read, and the two are wanted at different
+ * moments. Its own store rather than the explorer's, too -- the patterns worth
+ * having over a chromosome are not the ones worth having over a protein
+ * alignment.
+ */
+const FIND_STORAGE_KEY = 'ensemblGo.sequenceView.find.v1'
+
+/** How long a note about a search stays on the bar. Long enough to read twice. */
+const SEARCH_NOTE_MS = 8000
+
+/**
+ * The last thing the reader searched for, so the box comes back with it in.
+ *
+ * Beside the pattern list rather than in it: what was last typed into the
+ * simple box is not one of the reader's kept patterns -- it is usually not
+ * kept at all -- and writing it into the list would grow a list of everything
+ * anyone ever looked for.
+ */
+const FIND_QUERY_KEY = 'ensemblGo.sequenceView.find.last.v1'
+
+/** One frozen empty list, so a memo depending on it does not see a new one. */
+const EMPTY_READINGS = Object.freeze([])
+
+function loadFindQuery() {
+    try {
+        return String(JSON.parse(globalThis.localStorage?.getItem(FIND_QUERY_KEY) || '{}')?.query || '')
+    } catch {
+        return ''
+    }
+}
+
+function loadFindKind() {
+    try {
+        const held = JSON.parse(globalThis.localStorage?.getItem(FIND_QUERY_KEY) || '{}')
+        return held?.kind === FIND_REGEX ? FIND_REGEX : FIND_LITERAL
+    } catch {
+        return FIND_LITERAL
+    }
+}
+
+function writeFindQuery(query, kind) {
+    try {
+        globalThis.localStorage?.setItem(FIND_QUERY_KEY, JSON.stringify({ query, kind }))
+    } catch {
+        // A private window refuses, and a find box is not worth failing over.
+    }
+}
+import { isDisplayMode, isPlainDisplay } from '../../utils/sequenceViewPlain'
+import {
+    FIND_LITERAL,
+    FIND_REGEX,
+    formatPatternRefs,
+    loadPatterns,
+    raiseSpan,
+    resolvePatternSpans,
+    resolveQuery,
+    savePatterns,
+} from '../../utils/findPatterns'
+import useSequenceFind from './useSequenceFind'
+import useChromExtents from './useChromExtents'
+import FindBar from './FindBar'
 import { DEFAULT_COLOURS, buildPalette } from '../../utils/sequenceViewColours'
 import { buildDocument } from '../../utils/sequenceViewDocument'
-import { parseSearchQuery, withinOpenRegion } from '../../utils/sequenceViewSearch'
-import { exportFileName, exportTargets, targetBases } from '../../utils/sequenceViewExport'
+import {
+    clampNote,
+    clampToChromosome,
+    parseSearchQuery,
+    withinOpenRegion,
+} from '../../utils/sequenceViewSearch'
+import {
+    exportFileName,
+    exportTargets,
+    orderTargets,
+    readingTargets,
+    targetBases,
+} from '../../utils/sequenceViewExport'
 import {
     EMPTY_PICKS,
     clearPicks,
@@ -64,13 +141,14 @@ import {
     KIND_PROTEIN,
     KIND_TRANSCRIPT,
     counted,
+    genomicExtentOf,
     genomicRangeFor,
     highlightFor,
     isSpliced,
     legendGroupsFor,
+    splicedRunsFor,
     readingFasta,
 } from '../../utils/transcriptSequenceView'
-import { saveTextFile } from '../../utils/saveTextFile'
 import './controls.css'
 
 // One frozen empty list rather than a fresh one per render: it is a memo
@@ -146,13 +224,27 @@ export default function SequenceView({
     const [viewRoot, setViewRoot] = useState(null)
     const [wideSlot, setWideSlot] = useState(null)
     const [drawerOpen, setDrawerOpen] = useState(true)
-    const [viewport, setViewport] = useState({ start: 0, end: 0, anchor: 0, intervals: [] })
+    const [viewport, setViewport] = useState({ start: 0, end: 0, anchor: 0, centre: 0, intervals: [] })
     // What the reader has ticked off the lists, and what it was ticked from.
     // Held whole rather than by id, because the list only offers what is near
     // the rows on screen and a record has to outlive its row scrolling away.
     const [picks, setPicks] = useState(EMPTY_PICKS)
     const [scrollTo, setScrollTo] = useState(null)
     const [searchError, setSearchError] = useState('')
+    /**
+     * Something worth saying about a search that nevertheless worked.
+     *
+     * Not an error: the reader asked for more chromosome than there is and got
+     * all of it, which is what they meant. It clears itself, because a note
+     * about a move is only about that move -- left on the bar it would sit
+     * there describing a region the reader had long since left.
+     */
+    const [searchNote, setSearchNote] = useState('')
+    useEffect(() => {
+        if (!searchNote) return undefined
+        const timer = setTimeout(() => setSearchNote(''), SEARCH_NOTE_MS)
+        return () => clearTimeout(timer)
+    }, [searchNote])
     const [searching, setSearching] = useState(false)
     // A tool in hand, not a preference: it is put down when the reader leaves,
     // the way the browser's and the alignment view's rectangles are.
@@ -210,6 +302,10 @@ export default function SequenceView({
         [genomes, startingPoints, resolveGenomeColour],
     )
     const genomeKey = chosenGenome || options[0]?.key || ''
+
+    // How long each of this genome's chromosomes is, so a typed range can be
+    // held inside one. See useChromExtents.js.
+    const chromExtents = useChromExtents(genomeKey)
 
     // Including the one nobody chose: opening the view with no genome named
     // settles on the first, and the strip should say so as plainly as if it had
@@ -727,16 +823,68 @@ export default function SequenceView({
      * does not does the view fall back to asking the backend for a starting
      * region, which is what the seeding effect above is for.
      */
+    /**
+     * Where the reader was in each genome, so switching back returns them there.
+     *
+     * A ref rather than state: nothing is drawn from it, it is written on every
+     * move, and rendering for it would re-render the view on every scroll that
+     * changes the focus. The app knows where a genome was last opened in the
+     * *browser*, which is what `startingPoints` carries; this is where it was
+     * last read *here*, which is a different place and the better answer.
+     */
+    const placeByGenome = useRef(new Map())
+    useEffect(() => {
+        if (!focus.genomeKey || !focus.chrom || !focus.location) return
+        placeByGenome.current.set(focus.genomeKey, { chrom: focus.chrom, focus })
+    }, [focus])
+
+    /**
+     * Switching genome.
+     *
+     * The one thing that must not happen is the view saying one genome and
+     * showing another's sequence -- which is what it did: where the new genome
+     * had no remembered place the function set the key and returned, leaving
+     * the old genome's chromosome, region, gene list, picked records and
+     * selection on the screen under the new genome's name.
+     *
+     * So there are three answers and no fourth. Where the reader has been here
+     * before, back to where they were. Where the app knows where they were
+     * looking elsewhere, there. Otherwise the focus is emptied and the seeding
+     * effect asks the backend for somewhere to start -- which leaves the view
+     * briefly blank, and blank is the honest state: nothing is known about this
+     * genome yet.
+     */
     const chooseGenome = useCallback((key) => {
         if (!key || key === genomeKey) return
         setGenomeKey(key)
+
+        const remembered = placeByGenome.current.get(key)
+        if (remembered?.focus?.location) {
+            // Settled, or the seeding effect reads the focus it has just been
+            // given as an empty frame and asks for a region nobody needs.
+            seeded.current = { key, settled: true }
+            dispatch({ type: 'reset', genomeKey: key, chrom: remembered.chrom, focus: remembered.focus })
+            return
+        }
+
         const start = focusFromStart(key, startingPoints?.[key])
-        if (!start) return
-        // Settled, or the seeding effect reads the focus it has just been given
-        // as an empty frame and asks for a starting region nobody needs.
-        seeded.current = { key, settled: true }
-        dispatch({ type: 'reset', ...start })
+        if (start) {
+            seeded.current = { key, settled: true }
+            dispatch({ type: 'reset', ...start })
+            return
+        }
+
+        // Nothing known. Empty the frame and let the seeding effect find a
+        // starting region -- and leave `seeded` alone, because it is the flag
+        // that lets the effect run at all.
+        dispatch({ type: 'reset', genomeKey: key, chrom: '' })
     }, [genomeKey, startingPoints])
+
+    // Hiding is about what is on the screen, and after a switch none of it is.
+    // The ids would not collide -- they are this genome's genes -- but a view
+    // that quietly kept a list of things to leave out of a genome the reader
+    // has never looked at is a view that is lying about what it is showing.
+    useEffect(() => { setHidden(EMPTY_HIDDEN) }, [genomeKey])
 
     const jumpToCoord = useCallback((coord) => {
         setScrollTo({ coord, nonce: Date.now() })
@@ -828,9 +976,16 @@ export default function SequenceView({
         const query = String(text || '').trim()
         if (!query) return
         setSearchError('')
+        setSearchNote('')
 
-        const parsed = parseSearchQuery(query, focus.chrom)
-        if (parsed?.kind === 'range' || parsed?.kind === 'coordinate') {
+        const typed = parseSearchQuery(query, focus.chrom)
+        if (typed?.kind === 'range' || typed?.kind === 'coordinate') {
+            // Held inside the chromosome before anything is done with it. A
+            // reader can ask for more chromosome than there is, and the view
+            // used to believe them -- see utils/sequenceViewSearch.js.
+            const extent = chromExtents.get(typed.chrom) || null
+            const parsed = clampToChromosome(typed, extent)
+            if (parsed.clamped) setSearchNote(clampNote(parsed, extent, typed.chrom))
             if (withinOpenRegion(parsed, focus.chrom, focus.location)) {
                 // A bare coordinate inside what is already open moves the page
                 // there and leaves the region alone. Only ever a coordinate --
@@ -889,7 +1044,7 @@ export default function SequenceView({
         } finally {
             setSearching(false)
         }
-    }, [genomeKey, focus.chrom, focus.location, jumpToCoord, say])
+    }, [genomeKey, focus.chrom, focus.location, chromExtents, jumpToCoord, say])
 
     const handleJump = useCallback(() => {
         const range = rangeFor()
@@ -911,10 +1066,6 @@ export default function SequenceView({
     // the scroller, and follows the reader down a selection longer than the
     // screen. See SelectionBar.jsx.
 
-    // Drawn and done with: the tool goes back in the drawer, because a reader
-    // who has just selected something wants to do something with it, not
-    // select it again. Both ways of drawing one end the same way.
-    const handleSelectionDone = useCallback(() => setSelectMode(false), [])
 
     // Read as a location rather than as a selection: the reader has chosen
     // where they want to be, so this is a jump like any other, and the
@@ -945,15 +1096,21 @@ export default function SequenceView({
         setWideSlot('download')
     }, [])
 
-    const browseSelection = useCallback(() => {
-        const range = selectionRange(focus.custom)
+    // Taken by a range rather than reading the selection, because the bar over
+    // a Find match offers the same actions and a match is a range too. The
+    // selection's own handlers are these with `focus.custom` put in.
+    const browseRange = useCallback((range) => {
         if (!range || !focus.chrom) return
         onFocusLocationSelect?.(genomeKey, { chrom: focus.chrom, start: range.start, end: range.end })
         onNavigateToBrowser?.(genomeKey)
-    }, [focus.custom, focus.chrom, genomeKey, onFocusLocationSelect, onNavigateToBrowser])
+    }, [focus.chrom, genomeKey, onFocusLocationSelect, onNavigateToBrowser])
 
-    const copySelection = useCallback(async () => {
-        const range = selectionRange(focus.custom)
+    const browseSelection = useCallback(
+        () => browseRange(selectionRange(focus.custom)),
+        [browseRange, focus.custom],
+    )
+
+    const copyRange = useCallback(async (range) => {
         if (!range || !focus.chrom) return
         let text = ''
         try {
@@ -985,7 +1142,33 @@ export default function SequenceView({
         } catch {
             say('Copy failed')
         }
-    }, [focus.custom, focus.chrom, genomeKey, genomeLabel, reverse, say])
+    }, [focus.chrom, genomeKey, genomeLabel, reverse, say])
+
+    const copySelection = useCallback(
+        () => copyRange(selectionRange(focus.custom)),
+        [copyRange, focus.custom],
+    )
+
+    /**
+     * Downloading a stretch that is not the selection.
+     *
+     * The download panel offers the levels of the focus, and an ad-hoc stretch
+     * is only one of them by being the selection -- so this makes it the
+     * selection and opens the panel on it. Visibly: the stretch is outlined and
+     * the rest of the page dims, which is the honest account of what is about
+     * to be written to a file.
+     *
+     * And it is a *handover*, which is why the caller puts its own bar away.
+     * The stretch now has a selection's bar over it, saying the same
+     * coordinates; leaving the other one there stacked two bars on one row,
+     * and stepping to the next match then moved one of them and not the other.
+     */
+    const openDownloadFor = useCallback((range) => {
+        if (!range) return
+        dispatch({ type: 'setCustom', custom: range })
+        setPreferSelection(true)
+        setWideSlot('download')
+    }, [])
 
     // Against the level being drawn, which is the records' while a collection is
     // on screen -- the panel offers that level's switches, so it must save them
@@ -1039,21 +1222,65 @@ export default function SequenceView({
     const atTranscript = focus.level === LEVEL_TRANSCRIPT && Boolean(focus.transcript?.id)
     if (mode !== KIND_GENOMIC && !atTranscript) setMode(KIND_GENOMIC)
 
+    /**
+     * Whether the transcript in focus has a coding sequence.
+     *
+     * From the annotation this view has already fetched to draw with, so it is
+     * known before the reader presses anything -- which is the point. The bar
+     * used to offer CDS and Protein on a lncRNA, and only on being pressed
+     * discover there was nothing there, put the reader back on Transcript and
+     * grey the two it had just offered.
+     *
+     * `settled` is the other half: while the annotation is still coming there
+     * is no frame *yet*, which is not the same as there being none, and acting
+     * on it would be the same confusion a moment earlier.
+     */
+    const transcriptCoding = atTranscript && frameAvailable
+    const codingSettled = atTranscript && !annotations.pending
+
+    /** Which of a transcript's own readings exist, for the bar and the panel. */
+    const availableReadings = useMemo(() => {
+        if (!atTranscript) return EMPTY_READINGS
+        return transcriptCoding
+            ? [KIND_TRANSCRIPT, KIND_CDS, KIND_PROTEIN]
+            : [KIND_TRANSCRIPT]
+    }, [atTranscript, transcriptCoding])
+
     const readings = useTranscriptReadings({
         genomeKey,
         transcriptId: atTranscript ? focus.transcript.id : '',
         kind: mode,
+        coding: transcriptCoding,
     })
 
     // A transcript with no CDS keeps neither of the two coding readings, so a
-    // reader who was on one is put back on the transcript rather than left
-    // looking at a message where a sequence was.
-    if (!readings.coding && (mode === KIND_CDS || mode === KIND_PROTEIN)) setMode(KIND_TRANSCRIPT)
+    // reader who was on one -- having come from a transcript that had them --
+    // is put back on the transcript rather than left looking at a message where
+    // a sequence was. Only once it is settled that there is none.
+    if (codingSettled && !readings.coding && (mode === KIND_CDS || mode === KIND_PROTEIN)) {
+        setMode(KIND_TRANSCRIPT)
+    }
 
     const splicedMode = atTranscript && isSpliced(mode)
 
     /**
-     * Go to the stretch of chromosome the highlight covers.
+     * The stretch of chromosome the bar's two placing actions act on.
+     *
+     * The highlight where there is one, and the whole reading where there is
+     * not. Both used to need a highlight, which left them dead most of the
+     * time and needlessly: a reading is a stretch of chromosome too -- the
+     * transcript's span, or the coding sequence's -- and the answer comes back
+     * with the sequence, so it costs nothing to know.
+     */
+    const readingRange = useMemo(() => {
+        const range = selectionRange(focus.custom)
+        if (range) return range
+        if (!splicedMode) return region
+        return genomicExtentOf(readings.answer)
+    }, [focus.custom, splicedMode, readings.answer, region])
+
+    /**
+     * Go to the stretch of chromosome it covers.
      *
      * Back to the genomic reading as well as to the region, because that is what
      * was asked for: the stretch only exists as a stretch there. Staying in the
@@ -1061,15 +1288,20 @@ export default function SequenceView({
      * different question.
      */
     const focusHighlight = useCallback(() => {
-        const range = selectionRange(focus.custom)
-        if (!range || !focus.chrom) return
+        if (!readingRange || !focus.chrom) return
         setMode(KIND_GENOMIC)
         dispatch({
             type: 'enterLocation',
             chrom: focus.chrom,
-            location: { start: range.start, end: range.end },
+            location: { start: readingRange.start, end: readingRange.end },
         })
-    }, [focus.custom, focus.chrom])
+    }, [readingRange, focus.chrom])
+
+    /** And the same stretch, shown in the genome browser. */
+    const browseReading = useCallback(
+        () => browseRange(readingRange),
+        [browseRange, readingRange],
+    )
 
     // ---- one highlight, in whichever reading is on screen -----------------
 
@@ -1144,11 +1376,20 @@ export default function SequenceView({
         }
     }, [readingRecord, focus.custom, copySelection, handleCopy, mode, say])
 
+    /**
+     * Downloading from the reading bar opens the panel, as everywhere else.
+     *
+     * It used to write a `.fa` on the spot, which is one format of four and no
+     * choice at all: no colours, no plain text, no say in the file name, and
+     * no way to take a different reading than the one on screen. The panel is
+     * where those questions are answered, so the press goes there -- opened on
+     * the reading in front of the reader, which is what they meant.
+     */
     const downloadReading = useCallback(() => {
-        const built = readingRecord()
-        if (!built) { (focus.custom ? downloadSelection : () => setWideSlot('download'))(); return }
-        saveTextFile(built)
-    }, [readingRecord, focus.custom, downloadSelection])
+        setPreferReading(splicedMode ? mode : '')
+        setPreferSelection(!splicedMode && Boolean(focus.custom))
+        setWideSlot('download')
+    }, [splicedMode, mode, focus.custom])
 
     const wideWidth = WIDE_SLOT_WIDTH[wideSlot] || SETTINGS_WIDTH
 
@@ -1159,21 +1400,31 @@ export default function SequenceView({
     // every level of the chain that is actually set, from the location down to
     // the exon in focus.
     const downloadTargets = useMemo(
-        () => exportTargets({ focus, records }),
-        [focus, records],
+        () => orderTargets(
+            exportTargets({ focus, records }),
+            // A transcript's own readings, listed under the transcript they
+            // are readings of rather than above the whole ladder.
+            readingTargets({ focus, readings: availableReadings, answers: readings.answers }),
+        ),
+        [focus, records, availableReadings, readings.answers],
     )
 
 // Whether the panel was opened from the bar over a selection, and so should
     // open on it rather than on the level in focus.
     const [preferSelection, setPreferSelection] = useState(false)
+    // And which reading, where the panel was opened from the bar over one.
+    const [preferReading, setPreferReading] = useState('')
 
-    // What the panel offers before the reader chooses. A collection is what the
-    // rows are showing, so it wins; otherwise it is the level in focus, which is
-    // the thing the reader pressed Download while looking at. Defaulting to the
-    // location instead made every download of an exon two clicks.
-    const preferredDownloadId = preferSelection && focus.custom
-        ? `level:${LEVEL_CUSTOM}`
-        : (records.length ? 'records' : `level:${focus.level}`)
+    // What the panel offers before the reader chooses. The reading in front of
+    // them wins where they pressed Download while looking at one; then a
+    // collection, which is what the rows are showing; then the level in focus,
+    // which is the thing they pressed Download while looking at. Defaulting to
+    // the location instead made every download of an exon two clicks.
+    const preferredDownloadId = preferReading
+        ? `reading:${preferReading}`
+        : preferSelection && focus.custom
+            ? `level:${LEVEL_CUSTOM}`
+            : (records.length ? 'records' : `level:${focus.level}`)
 
     // What the save box is asking about, or null while it is shut. Held here
     // rather than in the panel because the panel closes with the drawer's wide
@@ -1215,6 +1466,246 @@ export default function SequenceView({
         setPrefs((previous) => ({ ...previous, colours: { ...DEFAULT_COLOURS } }))
     }, [])
 
+    // ---- how the sequence is drawn --------------------------------------
+
+    // `display` is already the collapse layout in this file -- what is drawn --
+    // and this is the kind of thing it is drawn as.
+    const shownAs = prefs.display
+    const plainDisplay = isPlainDisplay(shownAs)
+
+    const setDisplay = useCallback((next) => {
+        if (!isDisplayMode(next)) return
+        setPrefs((previous) => ({ ...previous, display: next }))
+    }, [])
+
+    const setPlainColour = useCallback((on) => {
+        setPrefs((previous) => ({ ...previous, plainColour: Boolean(on) }))
+    }, [])
+
+    // ---- finding something in the region --------------------------------
+    //
+    // Kept out of `prefs` and in a store of its own, the way the explorer keeps
+    // its patterns: what a reader is looking for is not how they like to read,
+    // and a half-typed regular expression has no business in the same object as
+    // the colour switches.
+
+    const [findPatterns, setFindPatterns] = useState(() => loadPatterns(FIND_STORAGE_KEY))
+    const [findSaved, setFindSaved] = useState(true)
+    // '' shut, 'simple' the box, 'full' the list. One or the other, never both.
+    const [findOpen, setFindOpen] = useState('')
+    // What is in the box, and what was last submitted from it. Two, because
+    // nothing is searched until the reader asks: a scan of a chromosome behind
+    // every keystroke is four scans thrown away for every one kept.
+    const [findQuery, setFindQuery] = useState(() => loadFindQuery())
+    const [findKind, setFindKind] = useState(() => loadFindKind())
+    const [findApplied, setFindApplied] = useState('')
+
+    const rememberPatterns = useCallback((next) => {
+        setFindPatterns(next)
+        setFindSaved(savePatterns(FIND_STORAGE_KEY, next))
+    }, [])
+
+    const submitFind = useCallback((text = null, kind = null) => {
+        const query = String(text ?? findQuery).trim()
+        if (kind) setFindKind(kind)
+        setFindQuery(query)
+        setFindApplied(query)
+        writeFindQuery(query, kind ?? findKind)
+    }, [findQuery, findKind])
+
+    /**
+     * Applying the list: search it, and hand back to the simple box.
+     *
+     * What is written there is the list's own notation -- `[P1,P2]` -- so that
+     * what the reader ends up with is an ordinary simple search whose text
+     * happens to name the list. Everything the simple box can do to a search,
+     * it can now do to this one.
+     */
+    const applyFindPatterns = useCallback((next) => {
+        const places = next
+            .map((item, index) => ({ item, place: index + 1 }))
+            .filter(({ item }) => item.enabled && item.pattern)
+            .map(({ place }) => place)
+        const query = formatPatternRefs(places)
+        setFindQuery(query)
+        setFindApplied(query)
+        writeFindQuery(query, findKind)
+        setFindOpen('simple')
+    }, [findKind])
+
+    // What the submitted box is actually asking for: one pattern, or the saved
+    // ones it named. See utils/findPatterns.js.
+    const findAsking = useMemo(
+        () => resolveQuery(findApplied, { kind: findKind, patterns: findPatterns }),
+        [findApplied, findKind, findPatterns],
+    )
+
+    const finds = useSequenceFind({
+        genome: genomeKey,
+        chrom: focus.chrom,
+        region,
+        reverse,
+        patterns: findAsking,
+        // Searched while the box is open, and forgotten when it is shut. A scan
+        // of a chromosome is not something to leave running behind a closed
+        // panel, and a reader who shut the box has stopped looking.
+        enabled: Boolean(findOpen),
+        // Where they are looking, so the answer starts near them.
+        near: viewport.centre,
+    })
+
+    /**
+     * The matches as the canvas wants them: `[start, end, lane]`, the lane being
+     * the pattern's place in the reader's list.
+     *
+     * Overlaps are resolved here rather than while drawing, once per answer
+     * rather than once per cell -- the upper pattern wins, which is what makes
+     * the list an order of priority. `resolvePatternSpans` works in half-open
+     * spans, so the ends are converted back on the way out.
+     */
+    const findSpans = useMemo(() => {
+        if (!findOpen || !finds.matches.length) return null
+        const byPattern = {}
+        for (const [from, to, id] of finds.matches) {
+            (byPattern[id] ||= []).push([from, to + 1])
+        }
+        const lanes = new Map(findAsking.map((item, index) => [item.colour, index]))
+        const resolved = resolvePatternSpans(findAsking, byPattern)
+            .map(([from, to, colour]) => [from, to - 1, lanes.get(colour) ?? 0])
+        // The one in hand goes on top of whatever outranks it. The priority
+        // order is right while the reader is looking at all the matches at
+        // once and wrong the moment they step onto one of the losers: a match
+        // you have jumped to and cannot see is a match you have not been
+        // shown. Only for as long as it is the one in hand.
+        if (!finds.match) return resolved
+        const lane = lanes.get(findAsking.find((item) => item.id === finds.match[2])?.colour)
+        return raiseSpan(resolved, [finds.match[0], finds.match[1], lane ?? 0])
+    }, [findOpen, finds.matches, finds.match, findAsking])
+
+    const findColours = useMemo(
+        () => (findOpen ? findAsking.map((item) => item.colour) : null),
+        [findOpen, findAsking],
+    )
+
+    // Whichever match the reader is standing on, for the ring and the scroll.
+    const findAt = useMemo(
+        () => (finds.match ? [finds.match[0], finds.match[1]] : null),
+        [finds.match],
+    )
+
+    /**
+     * Pressing a base that is part of a match.
+     *
+     * Two things at once, because they are one thing to the reader: the match
+     * they pressed becomes the one they are standing on -- if it was not
+     * already -- and the bar over it opens. Pressing the match they are already
+     * standing on just opens the bar, which is how a reader who closed it gets
+     * it back.
+     */
+    const [findBarOpen, setFindBarOpen] = useState(false)
+    const handleFindClick = useCallback((coord) => {
+        const index = finds.indexAt(coord)
+        if (index < 0) return
+        if (index !== finds.at) finds.goTo(index)
+        setFindBarOpen(true)
+        // A box about one base and a bar about a stretch containing it would be
+        // two answers to one press.
+        closeBasePopup()
+    }, [finds, closeBasePopup])
+
+    // The bar goes when there is nothing for it to be a bar for.
+    useEffect(() => {
+        if (!findOpen || !finds.searching) setFindBarOpen(false)
+    }, [findOpen, finds.searching])
+
+    /**
+     * What the bar over the current match offers.
+     *
+     * The selection's own actions, pointed at the match instead: they are
+     * written against a range, and a match is a range. `Set as the location`
+     * and `Show in the genome browser` both take the reader somewhere, so they
+     * go through the same reducer and the same handler a selection's do.
+     */
+    const findBar = useMemo(() => {
+        if (!findBarOpen || !findAt) return null
+        const range = { start: findAt[0], end: findAt[1] }
+        return {
+            range,
+            caption: `Match ${(finds.at + 1).toLocaleString()} of ${finds.total.toLocaleString()}`,
+            // Stepping from the bar itself. It is tied to the current match, so
+            // it simply follows -- the reader never has to go back up to the
+            // find box while the bar is under their pointer.
+            onPrev: () => finds.step(-1),
+            onNext: () => finds.step(1),
+            // No "Set as the location". A match is a handful of bases the
+            // reader is stepping through, and reframing the whole view around
+            // each one is almost never what they mean by pressing next.
+            onCopy: () => copyRange(range),
+            // Hands the stretch to the selection, which brings its own bar.
+            onDownload: () => { openDownloadFor(range); setFindBarOpen(false) },
+            onBrowse: () => browseRange(range),
+            onClose: () => setFindBarOpen(false),
+        }
+    }, [findBarOpen, findAt, finds, copyRange, openDownloadFor, browseRange])
+
+    // Ctrl-F is what a reader presses to find something, and in a view whose
+    // whole subject is text they will press it. The browser's own find would
+    // search the forty rows that happen to be mounted; this searches the region.
+    //
+    // On the window rather than on the view's own element: a shortcut that only
+    // worked once something inside the view had been clicked is a shortcut that
+    // does not work. The listener is mounted with the view and goes with it, so
+    // it is only ever live while this is the view on screen.
+    //
+    // In the plain displays it opens the box rather than preventing the
+    // browser's own -- there the sequence really is text, and a reader may
+    // genuinely want the browser's find over what is on the page. Ours counts
+    // the whole region, which is the one thing theirs cannot do, so it is
+    // offered first and theirs is a second Ctrl-F away.
+    useEffect(() => {
+        const onKey = (event) => {
+            if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f') return
+            if (event.shiftKey || event.altKey) return
+            event.preventDefault()
+            setFindOpen((previous) => previous || 'simple')
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+    }, [])
+
+    /**
+     * What to call the sequence when the document has no name for it.
+     *
+     * A plain region is a document of one record with nothing above it -- the
+     * commonest thing this view draws -- so its FASTA header would otherwise
+     * fall through to the chromosome. What the reader came here by has a name,
+     * and it is the name the download writes on the same stretch, so the two
+     * say the same thing about it. A location and a dragged selection have none:
+     * those really are stretches of chromosome, and the header says so.
+     */
+    const unnamedRecord = useMemo(() => {
+        if (focus.level === LEVEL_GENE) return focus.gene?.name || focus.gene?.id || ''
+        if (focus.level === LEVEL_TRANSCRIPT) return focus.transcript?.id || ''
+        if (focus.level === LEVEL_FEATURE && focus.feature) {
+            return `${focus.feature.kind || 'feature'} ${focus.feature.index ?? ''}`.trim()
+        }
+        return ''
+    }, [focus.level, focus.gene, focus.transcript, focus.feature])
+
+    // What the interactive display was in the middle of, put away when it goes.
+    //
+    // The tool first: left armed, it would come back armed the next time the
+    // reader returned to the interactive display -- a crosshair over sequence
+    // they had not asked to select, left over from a decision they made about
+    // something else. And the base box, which hangs off a cell that is no longer
+    // drawn: a panel describing one base, with an arrow pointing at a row of
+    // text that has no cells in it.
+    useEffect(() => {
+        if (!plainDisplay) return
+        setSelectMode(false)
+        closeBasePopup()
+    }, [plainDisplay, closeBasePopup])
+
     // The height every row has, before a lane is added to the ones that carry
     // one. Uniform again the moment the lane is off -- and at any zoom short of
     // full size, where there is no lane to add.
@@ -1237,12 +1728,10 @@ export default function SequenceView({
                 genomeKey={genomeKey}
                 isLight={isLight}
                 onGenomeChange={chooseGenome}
-                focus={focus}
-                region={region}
-                viewport={viewport}
                 onSearch={handleSearch}
                 searchError={searchError}
-                onClearSearchError={() => setSearchError('')}
+                searchNote={searchNote}
+                onClearSearchError={() => { setSearchError(''); setSearchNote('') }}
                 searching={searching}
                 pending={buffer.pending || annotations.pending || collection.pending}
                 indexBuilding={annotations.indexBuilding}
@@ -1250,6 +1739,18 @@ export default function SequenceView({
                 onSelectModeChange={setSelectMode}
                 selectStyle={selectStyle}
                 onSelectStyleChange={setSelectStyle}
+                display={shownAs}
+                onDisplayChange={setDisplay}
+                findOpen={findOpen}
+                findQuery={findApplied || findQuery}
+                findMatches={finds}
+                onFindOpen={setFindOpen}
+                plainColour={prefs.plainColour}
+                onPlainColourChange={setPlainColour}
+                // A transcript's spliced readings are a surface of their own --
+                // residues and spliced coordinates, not a stretch of chromosome
+                // -- so there is no plain display of them to switch to.
+                displayLocked={splicedMode}
                 zoom={zoom}
                 onZoomChange={(next) => setZoom(clampZoom(next))}
                 collapse={prefs.collapse}
@@ -1296,6 +1797,38 @@ export default function SequenceView({
 
             <div className="flex min-h-0 flex-1">
                 <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                    {/* Under the bar, over the sequence: a band the reader
+                        types in while they read, rather than a panel that
+                        shuts on the first click into the page. See
+                        FindBar.jsx.
+
+                        Inside this column rather than above it, so it reaches
+                        as far as the drawer and no further. Full width it
+                        pushed the drawer down its own height -- and the drawer
+                        is not what a reader is searching, so it had no business
+                        moving for it. The reading bar below is in this column
+                        for the same reason. */}
+                    {findOpen ? (
+                        <FindBar
+                            mode={findOpen}
+                            query={findQuery}
+                            kind={findKind}
+                            applied={findApplied}
+                            patterns={findPatterns}
+                            matches={finds}
+                            saved={findSaved}
+                            isLight={isLight}
+                            config={config}
+                            onQuery={setFindQuery}
+                            onKind={setFindKind}
+                            onSubmit={submitFind}
+                            onPatterns={rememberPatterns}
+                            onApplyPatterns={applyFindPatterns}
+                            onMode={setFindOpen}
+                            onClose={() => setFindOpen('')}
+                        />
+                    ) : null}
+
                     {/* Which of the transcript's readings is on screen, in a
                         band of its own between the control bar and the first
                         row. Absent where there is no transcript in focus, since
@@ -1314,8 +1847,9 @@ export default function SequenceView({
                             onChange={setMode}
                             onCopy={copyReading}
                             onDownload={downloadReading}
+                            wholeRange={readingRange}
                             onFocusRegion={focusHighlight}
-                            onBrowse={browseSelection}
+                            onBrowse={browseReading}
                             onClearHighlight={clearSelection}
                         />
                     ) : null}
@@ -1335,6 +1869,9 @@ export default function SequenceView({
                             // and survives the move.
                             key={`${focus.transcript?.id || ''}|${mode}`}
                             kind={mode}
+                            protein={prefs.protein}
+                            selectMode={selectMode}
+                            selectStyle={selectStyle}
                             answer={readings.answer}
                             error={readings.error}
                             loading={readings.loading}
@@ -1353,13 +1890,14 @@ export default function SequenceView({
                             rowHeight={rowHeight}
                             laneHeight={protein ? PROTEIN_LANE_PX : 0}
                             zoom={zoom}
+                            display={shownAs}
+                            plainColour={prefs.plainColour}
                             palette={palette}
                             isLight={isLight}
                             buffer={buffer}
                             selection={focus.custom}
                             selectMode={selectMode}
                             selectStyle={selectStyle}
-                            onSelectionDone={handleSelectionDone}
                             onSelectionFocus={focusSelection}
                             onSelectionCopy={copySelection}
                             onSelectionDownload={downloadSelection}
@@ -1370,6 +1908,12 @@ export default function SequenceView({
                             // rows would be the same four buttons twice.
                             showSelectionBar={!atTranscript}
                             markedCoord={basePopup?.coord ?? null}
+                            unnamed={unnamedRecord}
+                            finds={findSpans}
+                            findColours={findColours}
+                            findAt={findAt}
+                            findBar={findBar}
+                            onFindClick={handleFindClick}
                             preview={previewLock?.span || preview}
                             scrollTo={scrollTo}
                             onSelectionChange={handleSelection}
@@ -1415,13 +1959,14 @@ export default function SequenceView({
                                 ...request,
                                 targetLabel: request.target.label,
                                 bases: targetBases(request.target),
+                                unit: request.target.unit || 'bp',
                                 suggestedName: exportFileName({
                                     target: request.target,
                                     format: request.format,
                                     chrom: focus.chrom,
                                 }),
                             })}
-                            onClose={() => { setWideSlot(null); setPreferSelection(false) }}
+                            onClose={() => { setWideSlot(null); setPreferSelection(false); setPreferReading('') }}
                         />
                     ) : wideSlot === 'settings' ? (
                         <SequenceFocusSettings
@@ -1524,7 +2069,7 @@ export default function SequenceView({
             <SequenceLegend
                 level={drawnLevel}
                 coarse={drawnLevel === LEVEL_LOCATION && annotations.detail === 'plain'}
-                only={splicedMode ? legendGroupsFor(mode) : null}
+                only={splicedMode ? legendGroupsFor(mode, splicedRunsFor(mode, readings.answer)) : null}
                 palette={palette}
                 isLight={isLight}
             />

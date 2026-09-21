@@ -17,6 +17,8 @@ import {
     selectionLength,
     selectionRange,
     selectionTopGap,
+    barAlongRow,
+    rowToCentre,
 } from '../src/utils/sequenceViewSelect.js'
 
 test('there are two ways of drawing a selection, and only those two', () => {
@@ -173,4 +175,68 @@ test('the row nearest a press is the one it is least outside of', () => {
     assert.equal(gapToBand(96, 100, 200), 4, 'just above')
     assert.equal(gapToBand(203, 100, 200), 3, 'just below')
     assert.equal(gapToBand(null, 100, 200), Infinity)
+})
+
+
+// ---- pointing the bar at what it is about ---------------------------------
+
+// A row block a thousand pixels wide, and a bar three hundred of them.
+const ROW = 1000
+const BAR = 300
+
+test('the bar starts where the match starts, where there is room', () => {
+    assert.equal(barAlongRow({ matchLeft: 100, matchRight: 160, barWidth: BAR, rowWidth: ROW }), 100)
+    assert.equal(barAlongRow({ matchLeft: 0, matchRight: 40, barWidth: BAR, rowWidth: ROW }), 0)
+})
+
+test('too far along to start there, it centres over the match instead', () => {
+    // Starting at 800 would put its right edge at 1100, off the end.
+    const at = barAlongRow({ matchLeft: 800, matchRight: 860, barWidth: BAR, rowWidth: ROW })
+    assert.equal(at, Math.round((800 + 860) / 2 - BAR / 2))
+    assert.ok(at + BAR <= ROW, 'and it is wholly inside the row')
+})
+
+test('too far along even to centre, the right edges go level', () => {
+    const at = barAlongRow({ matchLeft: 960, matchRight: 1000, barWidth: BAR, rowWidth: ROW })
+    assert.equal(at, 1000 - BAR, 'its right edge on the match’s right edge')
+    assert.ok(at + BAR <= ROW)
+})
+
+test('a match at the very start cannot centre or right-align outside the row', () => {
+    // Centring on a match at the left edge would want a negative offset, and
+    // right-aligning would want a more negative one; the left edge wins.
+    assert.equal(barAlongRow({ matchLeft: 0, matchRight: 20, barWidth: BAR, rowWidth: ROW }), 0)
+})
+
+test('nothing ever leaves the row, whatever the numbers say', () => {
+    for (const [left, right] of [[-500, -400], [1200, 1400], [0, 5000]]) {
+        const at = barAlongRow({ matchLeft: left, matchRight: right, barWidth: BAR, rowWidth: ROW })
+        assert.ok(at >= 0 && at + BAR <= ROW, `${left}-${right} stayed inside`)
+    }
+})
+
+test('a bar wider than the row starts at the beginning of it', () => {
+    assert.equal(barAlongRow({ matchLeft: 400, matchRight: 460, barWidth: 1200, rowWidth: ROW }), 0)
+})
+
+test('nonsense places nothing rather than placing it somewhere wrong', () => {
+    assert.equal(barAlongRow({}), null)
+    assert.equal(barAlongRow({ matchLeft: 1, matchRight: 2, barWidth: 3 }), null)
+})
+
+// ---- putting a row in the middle ------------------------------------------
+
+test('a row is centred by putting half a screen above it', () => {
+    assert.equal(rowToCentre(100, 21), 90)
+    assert.equal(rowToCentre(100, 20), 90.5, 'fractional, so a caller can round once')
+})
+
+test('a row near the top of the document goes as high as it can and no higher', () => {
+    assert.equal(rowToCentre(3, 21), 0, 'not a negative scroll')
+    assert.equal(rowToCentre(0, 21), 0)
+})
+
+test('a screen of one row is that row', () => {
+    assert.equal(rowToCentre(40, 1), 40)
+    assert.equal(rowToCentre(40, 0), 40, 'and an unmeasured screen moves nothing')
 })

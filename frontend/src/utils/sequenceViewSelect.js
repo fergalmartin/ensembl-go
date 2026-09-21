@@ -9,20 +9,22 @@
 /** Dragged from one end to the other, as every other view in the app does it. */
 export const SELECT_DRAG = 'drag'
 
-/** Click the first base, then the last. */
+/** Click the first base, then the last, scrolling in between if need be. */
 export const SELECT_ENDS = 'ends'
 
 export const SELECT_MODES = Object.freeze([
     {
         id: SELECT_DRAG,
         label: 'Drag',
-        hint: 'Press on the first base and drag to the last.',
+        hint: 'Press on the first base and drag to the last. '
+            + 'Quickest when both ends are on the screen.',
     },
     {
         id: SELECT_ENDS,
         label: 'Two clicks',
-        hint: 'Click the first base, then the last. The page is yours in between, '
-            + 'so a selection can be longer than a screen without holding the button down.',
+        hint: 'Click the first base, then click the last. '
+            + 'You can scroll between the two clicks, so the selection can be '
+            + 'longer than one screen.',
     },
 ])
 
@@ -183,4 +185,61 @@ export function gapToBand(y, top, bottom) {
     if (at < from) return from - at
     if (at > to) return at - to
     return 0
+}
+
+/**
+ * Where along the row a bar sits, so that it points at what it is about.
+ *
+ * The selection's bar is right-aligned with the sequence and always has been:
+ * a selection is usually rows long, so there is no one place along a row that
+ * is *where it is*. A Find match is different -- it is a handful of bases, and
+ * a bar at the far end of the row describing them is a bar the reader has to
+ * look away from the match to read.
+ *
+ * Three placements, in the order a reader would want them, and the first that
+ * fits wholly inside the row wins:
+ *
+ *   1. **Left edges level.** The bar starts where the match starts, so the eye
+ *      runs straight down from the coordinates to the bases they name.
+ *   2. **Centred over it**, where the bar is too wide to start there without
+ *      running off the end.
+ *   3. **Right edges level**, where even centred it would overhang -- which
+ *      happens for a match near the end of a row.
+ *
+ * Nothing may leave the row: a bar half off the side of the sequence window is
+ * worse than a bar that is merely not where you would have put it, so the last
+ * resort is to clamp. Everything is in pixels along the row block, which is
+ * what the track the bar sits in is as wide as.
+ */
+export function barAlongRow({ matchLeft, matchRight, barWidth, rowWidth } = {}) {
+    const left = num(matchLeft)
+    const right = num(matchRight)
+    const bar = num(barWidth)
+    const row = num(rowWidth)
+    if (left === null || right === null || bar === null || row === null) return null
+    // A bar wider than the row it is in has nowhere to be but the start of it.
+    if (bar >= row) return 0
+
+    const lo = Math.min(left, right)
+    const hi = Math.max(left, right)
+    const fits = (x) => x >= 0 && x + bar <= row
+    for (const candidate of [lo, (lo + hi) / 2 - bar / 2, hi - bar]) {
+        if (fits(candidate)) return Math.round(candidate)
+    }
+    return Math.round(Math.min(Math.max(lo, 0), row - bar))
+}
+
+/**
+ * Where to scroll so a row sits in the middle of the screen.
+ *
+ * In rows rather than in pixels, because for a very large region the spacer is
+ * compressed and a scroll position is not a distance -- the caller turns the
+ * answer back into one. Fractional: the caller rounds, and rounding here would
+ * lose half a screen on a tall viewport.
+ */
+export function rowToCentre(row, viewportRows) {
+    const at = num(row)
+    const screen = num(viewportRows)
+    if (at === null || screen === null || screen <= 0) return at
+    return Math.max(0, at - (screen - 1) / 2)
 }

@@ -9,7 +9,14 @@ import {
     zoomFraction,
     zoomLabel,
 } from '../../utils/sequenceViewZoom'
+import {
+    DISPLAY_RICH,
+    displayModeLabel,
+    isPlainDisplay,
+} from '../../utils/sequenceViewPlain'
 import ColourTool from './ColourTool'
+import DisplayTool from './DisplayTool'
+import FindTool from './FindTool'
 import FeatureTool from './FeatureTool'
 import GenomeTool from './GenomeTool'
 import SelectTool from './SelectTool'
@@ -68,11 +75,11 @@ export default function SequenceControlBar({
     genomeKey,
     onGenomeChange,
     isLight = false,
-    focus,
-    region,
-    viewport,
     onSearch,
     searchError,
+    // Something worth saying about a search that nevertheless worked -- a range
+    // held inside the chromosome it named. It clears itself; see SequenceView.
+    searchNote = '',
     onClearSearchError,
     searching,
     pending,
@@ -81,6 +88,19 @@ export default function SequenceControlBar({
     onSelectModeChange,
     selectStyle,
     onSelectStyleChange,
+    // How the sequence is drawn, and whether the plain displays ink their
+    // letters. See utils/sequenceViewPlain.js and DisplayTool.jsx.
+    display = DISPLAY_RICH,
+    onDisplayChange,
+    plainColour = true,
+    onPlainColourChange,
+    displayLocked = false,
+    // Looking for something. See FindTool.jsx for the control and FindBar.jsx
+    // for the band it opens under this one.
+    findOpen = '',
+    findQuery = '',
+    findMatches = null,
+    onFindOpen,
     zoom = 1,
     onZoomChange,
     collapse,
@@ -115,6 +135,7 @@ export default function SequenceControlBar({
         onSearch(draft)
     }
 
+    const plain = isPlainDisplay(display)
     const hidden = layout?.hidden || 0
     const breaks = layout?.gaps || 0
     const anyCollapse = Boolean(collapse?.intergenic?.on || collapse?.intron?.on)
@@ -125,6 +146,7 @@ export default function SequenceControlBar({
     const notes = []
     if (searchError) notes.push({ key: 'search', warn: true, text: searchError })
     else if (searching) notes.push({ key: 'searching', text: 'Searching…' })
+    else if (searchNote) notes.push({ key: 'search-note', text: searchNote })
     else if (indexBuilding) {
         notes.push({
             key: 'index',
@@ -169,8 +191,17 @@ export default function SequenceControlBar({
         })
     }
 
-    // Nothing to say until the first rows have been placed and measured.
-    const screen = viewport?.screen?.end ? viewport.screen : null
+    // A setting that is on and is not being drawn has to say so somewhere, or it
+    // reads as the setting being broken. The plain displays draw the bases and
+    // nothing over them, so the protein lane is the one switch a reader can have
+    // turned on and then not find.
+    if (plain && protein) {
+        notes.push({
+            key: 'plain-display',
+            text: `${displayModeLabel(display)} shows the bases and nothing over them, `
+                + 'so the protein is not drawn. The interactive display has it.',
+        })
+    }
 
     return (
         // The tokens are on the view's root, not here: a menu is portalled into
@@ -214,16 +245,50 @@ export default function SequenceControlBar({
 
                 <div className="sv-divider" />
 
-                {/* Armed rather than always on, which is how a rectangle works
-                    everywhere else in the app -- but said in words, since there
-                    are now two ways of drawing one and a glyph cannot say
+                {/* Display first, and Select after it. What the screen *is*
+                    settles what can be done on it -- the plain displays hand
+                    selecting to the browser and put this tool out of reach --
+                    so the control that decides comes before the one that is
+                    decided for. See DisplayTool.jsx. */}
+                <DisplayTool
+                    display={display}
+                    colour={plainColour}
+                    root={root}
+                    disabled={displayLocked}
+                    disabledReason="A transcript’s spliced readings are drawn one way only."
+                    onDisplay={onDisplayChange}
+                    onColour={onPlainColourChange}
+                />
+
+                {/* Turned on rather than always on, which is how a rectangle
+                    works everywhere else in the app -- but said in words, since
+                    there are now two ways of drawing one and a glyph cannot say
                     which. */}
                 <SelectTool
                     armed={selectMode}
                     mode={selectStyle}
                     root={root}
+                    // In the plain displays the gesture is the browser's: a drag
+                    // highlights text, which is the whole reason to be in one. A
+                    // second kind of selection on top of it would put two shapes
+                    // on the screen saying different things.
+                    disabled={plain}
+                    disabledReason={`${displayModeLabel(display)} selects with the browser’s own `
+                        + 'cursor — drag across the bases and copy with Ctrl-C.'}
                     onArm={onSelectModeChange}
                     onMode={onSelectStyleChange}
+                />
+
+                {/* Beside Select, because the two are the same question asked
+                    the two ways a reader can ask it: one says where to look by
+                    pointing, the other by describing. */}
+                <FindTool
+                    open={findOpen}
+                    query={findQuery}
+                    matches={findMatches}
+                    disabled={displayLocked}
+                    disabledReason="A transcript’s spliced readings are not searched from here."
+                    onOpen={onFindOpen}
                 />
 
                 <FeatureTool
@@ -259,7 +324,13 @@ export default function SequenceControlBar({
                         should not read as a stray label with a slider after
                         it. The cross stands outside the box because it is an
                         action rather than part of the setting. */}
-                    <label className="sv-zoom-box" title="Zoom out to see more of the region at once">
+                    <label
+                        className={`sv-zoom-box ${plain ? 'sv-disabled' : ''}`}
+                        title={plain
+                            ? `${displayModeLabel(display)} is text, and text is read at its own size. `
+                                + 'Zoom out in the interactive display.'
+                            : 'Zoom out to see more of the region at once'}
+                    >
                         <span className="sv-control-name">Zoom</span>
                         <input
                             type="range"
@@ -267,6 +338,7 @@ export default function SequenceControlBar({
                             max={ZOOM_FULL}
                             step={ZOOM_STEP}
                             value={zoom}
+                            disabled={plain}
                             data-sequence-zoom-slider="true"
                             // The track is painted from this rather than left to
                             // the browser, which fills to the middle of the
@@ -279,7 +351,7 @@ export default function SequenceControlBar({
                         />
                         <span className="sv-zoom-value">{zoomLabel(zoom)}</span>
                     </label>
-                    {zoom < ZOOM_FULL ? (
+                    {zoom < ZOOM_FULL && !plain ? (
                         <button
                             type="button"
                             className="sv-icon-button"
@@ -293,46 +365,27 @@ export default function SequenceControlBar({
                     ) : null}
                 </div>
 
-                <div className="sv-divider" />
+                {/* Something not being drawn has to be visible somewhere, or
+                    it is a bug report waiting to happen. Only where there is
+                    something: the far end of the bar is room for controls
+                    otherwise, which is what it is short of.
 
-                <div className="sv-bar-context sv-readout">
-                    {/* What is on the screen, not what is in focus.
-                        The focus region is named twice over already -- in the
-                        drawer's band, and again in the section it belongs to --
-                        and it never changed as the reader scrolled, so the one
-                        readout that could have answered "where am I now" was
-                        answering a question nothing had asked.
-
-                        The count is the sequence actually drawn rather than the
-                        distance between the ends: collapsed, and in a
-                        collection, the rows jump, and a screen showing two
-                        hundred bases either side of an intron is not showing the
-                        intron and should not say that it is. How many stretches
-                        that came in is left unsaid -- the breaks are drawn in
-                        the sequence itself, where they are easier to see than
-                        to count. */}
-                    {screen ? (
-                        <span title={region
-                            ? `On screen, within ${focus.chrom}:${region.start.toLocaleString()}\u2013${region.end.toLocaleString()}`
-                            : 'On screen'}>
-                            <strong>
-                                {focus.chrom}:{screen.start.toLocaleString()}&ndash;{screen.end.toLocaleString()}
-                            </strong>
-                            {' '}
-                            <strong>{screen.bases.toLocaleString()}</strong> bp
-                        </span>
-                    ) : null}
-                    {hiddenCount > 0 ? (
-                        // Something not being drawn has to be visible somewhere,
-                        // or it is a bug report waiting to happen.
+                    The stretch on screen used to be reported here too. It was
+                    the widest thing on the bar and it is written down the
+                    margins of every row already -- the gutters carry the first
+                    and last coordinate of each line, so a reader asking "where
+                    am I now" is answered by the row their eye is on rather than
+                    by a caption three hundred pixels away. */}
+                {hiddenCount > 0 ? (
+                    <div className="sv-bar-context sv-readout">
                         <span>
                             {hiddenCount} hidden
                             <button type="button" className="sv-link ml-1.5" onClick={onShowEverything}>
                                 Show all
                             </button>
                         </span>
-                    ) : null}
-                </div>
+                    </div>
+                ) : null}
             </div>
 
             {notes.length ? (

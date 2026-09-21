@@ -2,22 +2,27 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { DEFAULT_PALETTE } from '../../utils/sequenceViewColours'
 import { SELECT_NONE, selectionMask } from '../../utils/sequenceViewPaint'
-import { columnAtX, gapToBand } from '../../utils/sequenceViewSelect'
+import {
+    SELECT_DRAG,
+    SELECT_ENDS,
+    columnAtX,
+    gapToBand,
+} from '../../utils/sequenceViewSelect'
 import {
     KIND_PROTEIN,
+    aminoRow,
     codonPlace,
-    codonRuns,
     genomicAt,
-    overlayRuns,
-    proteinRuns,
     rowClasses,
     splicedRows,
+    splicedRunsFor,
 } from '../../utils/transcriptSequenceView'
 import SequenceHoverTip from './SequenceHoverTip'
 import SequenceRow from './SequenceRow'
 import {
     BASE_ROW_PX,
     BASES_PER_ROW,
+    PROTEIN_LANE_PX,
     SPLICED_GUTTER_WIDTH,
     rowMetrics,
 } from './sequenceViewLayout'
@@ -29,10 +34,16 @@ import {
 // putting a hundred thousand cells in the document.
 const OVERSCAN_ROWS = 4
 
-// No lane over the bases: the protein is its own reading here rather than a
-// track above the codons, so every row is the same height and the height index
-// the genomic view needs has nothing to do.
+// A row's height, with and without the protein lane over the codons.
+//
+// Two numbers rather than the genomic view's height index: there, a lane is
+// drawn over the rows that carry coding sequence and not the rest, so the
+// height is a per-row question. A spliced reading's CDS is one unbroken
+// stretch, and a lane on some rows and not others would step the sequence up
+// and down the page as the reader scrolled through the UTR -- so where the
+// lane is on, every row has one, empty where there is nothing to say.
 const ROW_HEIGHT = BASE_ROW_PX
+const ROW_HEIGHT_WITH_LANE = BASE_ROW_PX + PROTEIN_LANE_PX
 
 // Neither the marks channel nor the mask is ever anything but blank on a row
 // outside a selection, so both are cut once and shared. `SequenceRow` is
@@ -77,6 +88,13 @@ const MOLECULE_WORD = { mitochondrion: 'mitochondrial', plastid: 'plastid' }
  */
 export default function SplicedSequenceView({
     kind,
+    // Whether the Select tool is in hand, and which way it draws -- the same
+    // two the genomic reading takes, because it is the same tool.
+    selectMode = false,
+    selectStyle = SELECT_DRAG,
+    // Whether to draw the protein over the codons: the reader's own switch,
+    // from the Features menu, which the genomic reading obeys too.
+    protein = false,
     answer,
     error = '',
     loading = false,
@@ -97,19 +115,37 @@ export default function SplicedSequenceView({
 
     const scrollerRef = useRef(null)
     const dragRef = useRef(null)
+    /**
+     * The first of the two clicks, while the second is still to come.
+     *
+     * State rather than a ref, because the half-made highlight is drawn from
+     * it -- and carrying the arming it belongs to, so that putting the tool
+     * down forgets it. The house pattern for state derived from a prop, the
+     * same one `useTranscriptReadings` uses: replaced during the render that
+     * notices, rather than in an effect a frame later.
+     */
+    const [pending, setPending] = useState({ armed: selectMode, column: null })
+    if (pending.armed !== selectMode) setPending({ armed: selectMode, column: null })
+    const pendingEnd = pending.armed === selectMode ? pending.column : null
     const strand = transcript?.strand || '+'
 
     const sequence = answer?.status === 'ok' ? (answer.sequence || '') : ''
     const length = sequence.length
 
-    const runs = useMemo(() => {
-        if (!answer || answer.status !== 'ok') return []
-        if (kind === KIND_PROTEIN) return proteinRuns(sequence)
-        // The codon stripes go under the annotation's own runs: the start and
-        // stop codons say where the reading begins and ends, and a stripe over
-        // them would hide the first thing a reader looks for.
-        return overlayRuns(answer.runs, codonRuns(answer.cds, 0))
-    }, [answer, kind, sequence])
+    // What the colours are, from the one writer the legend beside this reads
+    // too -- see `splicedRunsFor`.
+    const runs = useMemo(() => splicedRunsFor(kind, answer), [kind, answer])
+
+    /**
+     * Whether the protein is drawn over the codons.
+     *
+     * The reader's own switch, from the Features menu -- the same one the
+     * genomic reading obeys -- and only where there is a coding sequence to
+     * translate. Never on the protein reading: every cell there already *is* an
+     * amino acid, and a lane of them over themselves would say it twice.
+     */
+    const lane = Boolean(protein) && kind !== KIND_PROTEIN && Boolean(answer?.cds)
+    const rowHeight = lane ? ROW_HEIGHT_WITH_LANE : ROW_HEIGHT
 
     const rows = useMemo(() => splicedRows(length), [length])
     const metrics = useMemo(() => rowMetrics(width, 12, SPLICED_GUTTER_WIDTH), [width])
@@ -119,8 +155,8 @@ export default function SplicedSequenceView({
     const selection = span ? { lo: span.s - 1, hi: span.e - 1 } : null
     const selecting = Boolean(span) && span.e > span.s
 
-    const viewportRows = Math.max(1, Math.ceil(viewportPx / ROW_HEIGHT))
-    const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS)
+    const viewportRows = Math.max(1, Math.ceil(viewportPx / rowHeight))
+    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS)
     const last = Math.min(rows.length, first + viewportRows + OVERSCAN_ROWS * 2)
 
     // ---- measuring -------------------------------------------------------
@@ -189,38 +225,65 @@ export default function SplicedSequenceView({
         onHighlight?.({ s: Math.min(from, to) + 1, e: Math.max(from, to) + 1 })
     }, [onHighlight])
 
+    /**
+     * The gesture belongs to the Select tool here, as it does in the genomic
+     * reading.
+     *
+     * It used to be always on: a drag anywhere marked a stretch, on the
+     * reasoning that a drag in a spliced reading could not have meant anything
+     * else. Two things were wrong with that. A reader who armed the tool found
+     * it had nothing to arm, and the two-click way of selecting -- the one that
+     * exists precisely for a selection longer than a screen -- could not be
+     * used at all, because the first click was being swallowed by a drag that
+     * had already begun. And the cursor said one thing in one reading and
+     * another in the next.
+     */
     const handlePointerDown = useCallback((event) => {
-        if (event.button !== 0) return
+        if (event.button !== 0 || !selectMode) { dragRef.current = null; return }
         const column = columnAt(event)
         if (column === null) return
         // Taken over from the browser, which would otherwise start a text
         // selection across the cells and the numbers between them.
         event.preventDefault()
+
+        // Two clicks: the first marks an end and nothing is captured, so the
+        // page is the reader's between them.
+        if (selectStyle === SELECT_ENDS) {
+            if (pendingEnd === null) {
+                setPending({ armed: selectMode, column })
+                mark(column, column)
+                return
+            }
+            setPending({ armed: selectMode, column: null })
+            mark(pendingEnd, column)
+            return
+        }
+
         event.currentTarget.setPointerCapture?.(event.pointerId)
-        dragRef.current = { anchor: column, moved: false }
-        mark(column, column)
-    }, [columnAt, mark])
+        // Nothing marked yet: the tool stays in hand after a stretch is drawn,
+        // so a stray press has to leave what is there alone. It begins at the
+        // first move onto another base.
+        dragRef.current = { anchor: column, drew: false }
+    }, [selectMode, selectStyle, pendingEnd, columnAt, mark])
 
     const handlePointerMove = useCallback((event) => {
         const column = columnAt(event)
         if (column === null) return
-        if (dragRef.current) {
-            dragRef.current.moved = dragRef.current.moved || column !== dragRef.current.anchor
+        if (selectMode && dragRef.current
+            && (dragRef.current.drew || column !== dragRef.current.anchor)) {
+            dragRef.current = { ...dragRef.current, drew: true }
             mark(dragRef.current.anchor, column)
         }
+        // Between the two clicks the loose end follows the pointer, so the
+        // reader sees what the second click is about to take.
+        if (pendingEnd !== null) mark(pendingEnd, column)
         setHover({ column, x: event.clientX, y: event.clientY })
-    }, [columnAt, mark])
+    }, [selectMode, columnAt, mark, pendingEnd])
 
     const handlePointerUp = useCallback((event) => {
         event.currentTarget.releasePointerCapture?.(event.pointerId)
-        const drag = dragRef.current
         dragRef.current = null
-        // A press that never moved is a click, and a click clears rather than
-        // marks one cell: a one-base highlight is not what anyone drags for, and
-        // leaving it would make every stray click look like a mark the reader
-        // had made.
-        if (drag && !drag.moved) mark(null, null)
-    }, [mark])
+    }, [])
 
     // ---- where this is on the chromosome ---------------------------------
 
@@ -349,22 +412,32 @@ export default function SplicedSequenceView({
                 onPointerUp={handlePointerUp}
                 onPointerCancel={handlePointerUp}
                 onPointerLeave={() => setHover(null)}
+                // The same mark the genomic scroller carries. What reads it is
+                // the watcher that puts the Select tool down when a press
+                // lands outside the sequence -- and without this, every press
+                // *on* a spliced reading counted as outside, so the tool was
+                // disarmed before the drag it had been armed for could begin.
+                data-sequence-view-scroller="true"
                 // The pointer says a stretch can be taken from here; the rest
                 // says the browser must not be the one taking it. Without
                 // `userSelect` a drag runs a document text selection along
                 // behind the one being drawn, and it does not stop at the
                 // sequence -- it reaches up and highlights the toolbar.
-                style={{ cursor: 'text', touchAction: 'none', userSelect: 'none' }}
+                style={{
+                    cursor: selectMode ? 'crosshair' : 'default',
+                    touchAction: 'none',
+                    userSelect: 'none',
+                }}
             >
                 <div
                     className="relative"
                     style={{
-                        height: `${rows.length * ROW_HEIGHT}px`,
+                        height: `${rows.length * rowHeight}px`,
                         width: `${metrics.rowWidth}px`,
                         margin: '0 auto',
                     }}
                 >
-                    <div style={{ transform: `translateY(${first * ROW_HEIGHT}px)` }}>
+                    <div style={{ transform: `translateY(${first * rowHeight}px)` }}>
                         {rows.slice(first, last).map((row) => (
                             <SequenceRow
                                 key={row.index}
@@ -377,7 +450,9 @@ export default function SplicedSequenceView({
                                 edges={NO_EDGES.slice(0, row.length)}
                                 labels={{ left: row.first, right: row.last }}
                                 palette={palette}
-                                rowHeight={ROW_HEIGHT}
+                                rowHeight={rowHeight}
+                                lane={lane}
+                                amino={lane ? aminoRow(row, sequence, answer.cds) : ''}
                                 cellWidth={metrics.cellWidth}
                                 fontSize={metrics.fontSize}
                                 gutterWidth={SPLICED_GUTTER_WIDTH}

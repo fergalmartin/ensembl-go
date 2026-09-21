@@ -29,7 +29,7 @@
 
 import { BASES_PER_ROW } from './sequenceViewRows.js'
 import { CLASS_CODES, CLASS_NONE } from './sequenceViewPalette.js'
-import { STOP_AMINO } from './sequenceViewProtein.js'
+import { NO_AMINO, STOP_AMINO, translateCodon } from './sequenceViewProtein.js'
 
 export { BASES_PER_ROW }
 
@@ -122,12 +122,39 @@ export function counted(count, kind) {
  *
  * `null` means every group the level has, which is the genomic reading.
  */
-export function legendGroupsFor(kind) {
-    if (kind === KIND_TRANSCRIPT) return ['cds', 'utr', 'noncoding', 'start_codon', 'stop_codon']
-    if (kind === KIND_CDS) return ['cds', 'start_codon', 'stop_codon']
-    if (kind === KIND_PROTEIN) return ['start_codon', 'stop_codon']
-    return null
+export function legendGroupsFor(kind, runs = null) {
+    if (kind === KIND_GENOMIC) return null
+    const all = kind === KIND_TRANSCRIPT
+        ? ['cds', 'utr', 'noncoding', 'start_codon', 'stop_codon']
+        : kind === KIND_CDS
+            ? ['cds', 'start_codon', 'stop_codon']
+            : kind === KIND_PROTEIN ? ['start_codon', 'stop_codon'] : null
+    if (!all || !Array.isArray(runs)) return all
+
+    // Narrowed to what is actually on the screen. A legend is a key to the
+    // colours in front of the reader, and a swatch for something not there is
+    // a colour they will go looking for. The protein reading is where this
+    // shows: its stop is an *internal* one -- the terminal stop is stripped the
+    // way Ensembl's own pep file strips it -- so most proteins have none, and
+    // the legend was promising a colour that never appeared.
+    const present = new Set()
+    for (const run of runs) {
+        const group = GROUP_OF_CLASS[String(run?.c || '')]
+        if (group) present.add(group)
+    }
+    return all.filter((group) => present.has(group))
 }
+
+/** Which legend group each class belongs to, for narrowing the key to what is drawn. */
+const GROUP_OF_CLASS = Object.freeze({
+    cds: 'cds',
+    cds1: 'cds',
+    utr5: 'utr',
+    utr3: 'utr',
+    noncoding: 'noncoding',
+    start_codon: 'start_codon',
+    stop_codon: 'stop_codon',
+})
 
 /** Whether a reading is spliced, and so drawn in the transcript's own space. */
 export function isSpliced(kind) {
@@ -374,6 +401,36 @@ export function genomicRangeFor(kind, answer, strand, span) {
 }
 
 /**
+ * The whole of a reading, as a stretch of chromosome.
+ *
+ * Off its segments rather than the answer's `genomic`, which is the
+ * transcript's own span whatever kind was asked for: the coding extent of a
+ * transcript is not its extent, and a CDS placed at the transcript's ends
+ * would be a hundred bases out at each. The segments are the reading itself,
+ * so their outermost genomic edges are the stretch it covers -- introns
+ * included, because a reading that spans one still covers it.
+ */
+export function genomicExtentOf(answer) {
+    if (!answer || answer.status !== 'ok') return null
+    const segments = Array.isArray(answer.segments) ? answer.segments : []
+    let low = Infinity
+    let high = -Infinity
+    for (const segment of segments) {
+        const s = Number(segment?.gs)
+        const e = Number(segment?.ge)
+        if (Number.isFinite(s)) low = Math.min(low, s)
+        if (Number.isFinite(e)) high = Math.max(high, e)
+    }
+    if (low <= high) return { start: low, end: high }
+    // A reading with no segments is not a stretch of anything; the
+    // transcript's own span is the nearest true thing about it.
+    const span = answer.genomic
+    return Number.isFinite(span?.s) && Number.isFinite(span?.e)
+        ? { start: Math.min(span.s, span.e), end: Math.max(span.s, span.e) }
+        : null
+}
+
+/**
  * What is worth marking on a protein, as class runs.
  *
  * The residues carry no annotation of their own -- every class this view draws
@@ -399,6 +456,70 @@ export function proteinRuns(protein) {
         if (letters[index] === STOP_AMINO) runs.push({ s: index + 1, e: index + 1, c: 'stop_codon' })
     }
     return runs
+}
+
+/**
+ * The protein over the codons of a spliced reading, one row at a time.
+ *
+ * The same lane the genomic reading draws, and the same convention: a letter
+ * over the *middle* base of each codon, so it sits centred over the three it
+ * is a reading of. Here it is arithmetic rather than a search -- the sequence
+ * is already spliced, so a codon is three consecutive positions from the start
+ * of the CDS, and there are no junctions to walk across.
+ *
+ * `*` where the codon is a stop, which is the terminal one for most
+ * transcripts. The genomic reading marks it and this one did not, and it is
+ * the single most useful letter in the lane: it is where the protein ends.
+ *
+ * Positions are 1-based, as everything in a spliced reading is. Bases outside
+ * the CDS -- a transcript's UTRs -- get no letter, because they spell nothing.
+ */
+export function aminoRow(row, sequence, cds) {
+    const length = Math.max(0, Math.floor(Number(row?.length) || 0))
+    if (!length) return ''
+    const from = Math.floor(Number(cds?.s))
+    const to = Math.floor(Number(cds?.e))
+    const text = String(sequence || '')
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return ''
+
+    const out = new Array(length).fill(NO_AMINO)
+    const first = row.col0 + 1
+    for (let i = 0; i < length; i += 1) {
+        const position = first + i
+        // The middle base of a codon inside the CDS, and nothing else.
+        if (position < from || position > to || (position - from) % 3 !== 1) continue
+        const codon = text.slice(position - 2, position + 1)
+        // A codon running off the end of an incomplete CDS spells nothing.
+        if (codon.length === 3) out[i] = translateCodon(codon)
+    }
+    return out.join('')
+}
+
+/**
+ * Everything a spliced reading is coloured by, as runs in its own space.
+ *
+ * One writer, because two things read it: the surface, which draws the colours,
+ * and the legend beside it, which says what they mean. Built in two places
+ * those two would eventually disagree about what is on the screen.
+ *
+ * A protein's marks are facts about its letters and are worked out here; the
+ * nucleotide readings take the backend's annotation and put the codon stripes
+ * under it.
+ */
+export function splicedRunsFor(kind, answer) {
+    if (!answer || answer.status !== 'ok') return []
+    if (kind === KIND_PROTEIN) return proteinRuns(answer.sequence || '')
+    // The start and stop codons go over the stripes: they say where the reading
+    // begins and ends, and a stripe over them would hide the first thing a
+    // reader looks for.
+    //
+    // The annotation's own `cds` run does not. It is one flat block over the
+    // whole coding region, and laid on top it covered every stripe -- which is
+    // why the striping never appeared. The stripes are what says `cds` here:
+    // the same class in two shades, so nothing is lost by dropping the block
+    // they replace.
+    const annotation = (answer.runs || []).filter((run) => run?.c !== 'cds')
+    return overlayRuns(annotation, codonRuns(answer.cds, 0))
 }
 
 /**

@@ -64,6 +64,36 @@ export async function sequenceApi(path, params = {}, signal = undefined) {
     return response.json()
 }
 
+/**
+ * One call that carries a body rather than a query string.
+ *
+ * Find is the only one. A regular expression is not a word -- it is full of the
+ * characters a URL reserves -- and several of them at five hundred characters
+ * apiece is past what a proxy will forward, so what is being looked for goes in
+ * the body where its length and its punctuation are nobody else's business.
+ */
+export async function sequenceApiPost(path, body = {}, signal = undefined) {
+    const response = await apiFetch(`${API_BASE}/api/sequence-view${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+    })
+    if (!response.ok) {
+        let detail = ''
+        try {
+            detail = (await response.json())?.detail || ''
+        } catch {
+            detail = response.statusText
+        }
+        const error = new Error(detail || `Request failed (${response.status})`)
+        error.status = response.status
+        error.retryable = response.status === 425 || response.status === 429 || response.status >= 500
+        throw error
+    }
+    return response.json()
+}
+
 /** The address of a region's FASTA, for handing to a download. */
 export function sequenceFastaUrl(params = {}) {
     return `${API_BASE}/api/sequence-view/fasta?${queryString(params)}`

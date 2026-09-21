@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { markWheelHandled } from '../../utils/browsingControls'
+import { FONT_MONO } from '../../utils/typography'
 import { paintDisplayRow } from '../../utils/sequenceViewPaint'
 import {
     columnAtCoord,
@@ -14,6 +15,7 @@ import {
     documentRowsForRange,
     documentRowOfCoord,
     rowOfRecord,
+    sectionAtRow,
     sectionForCoord,
 } from '../../utils/sequenceViewDocument'
 import SequenceRecordHeading from './SequenceRecordHeading'
@@ -34,6 +36,7 @@ import {
     SELECT_ENDS,
     columnAtX,
     gapToBand,
+    rowToCentre,
     selectionBarPlacement,
     selectionRange,
     selectionTopGap,
@@ -41,8 +44,18 @@ import {
 import SelectionBar from './SelectionBar'
 import { zoomedGeometry } from '../../utils/sequenceViewZoom'
 import SequenceOverview from './SequenceOverview'
+import SequencePlainText from './SequencePlainText'
 import SequenceRow from './SequenceRow'
 import { rowMetrics } from './sequenceViewLayout'
+import {
+    DISPLAY_FASTA,
+    DISPLAY_RICH,
+    isPlainDisplay,
+    plainBlockWidth,
+    plainFontSize,
+    plainLineChars,
+    sectionHeaderLine,
+} from '../../utils/sequenceViewPlain'
 
 
 // How the view keeps scrolling while a selection drag is held past the edge.
@@ -58,6 +71,12 @@ import { rowMetrics } from './sequenceViewLayout'
 const AUTOSCROLL_FULL_SPEED_PX = 120
 const AUTOSCROLL_MIN_ROWS_PER_FRAME = 0.5
 const AUTOSCROLL_MAX_ROWS_PER_FRAME = 3
+
+// What the scroller's own bar costs, held back from the width available to the
+// text. The same allowance `rowMetrics` makes for the cells, and for the same
+// reason: without it the block is exactly as wide as the space, and the vertical
+// scrollbar turns that into a horizontal one.
+const SCROLLBAR_PX = 12
 
 // How far a pointer may travel and still be a click rather than a drag. A
 // reader steadying their hand on a cell should not be told they meant something
@@ -107,6 +126,11 @@ export default function SequenceCanvas({
     // behaves as it always has; short of it the rows are drawn as one canvas
     // instead. See utils/sequenceViewZoom.js.
     zoom = 1,
+    // Whether the sequence is drawn as a view or written out as text, and
+    // whether the text is inked in the annotation's colours. See
+    // utils/sequenceViewPlain.js.
+    display = DISPLAY_RICH,
+    plainColour = true,
     palette,
     isLight,
     buffer,
@@ -115,7 +139,6 @@ export default function SequenceCanvas({
     // How a selection is drawn: dragged from end to end, or clicked at each
     // end. See utils/sequenceViewSelect.js.
     selectStyle = SELECT_DRAG,
-    onSelectionDone,
     // What the bar over a finished selection offers. See SelectionBar.jsx.
     onSelectionFocus,
     onSelectionCopy,
@@ -128,6 +151,24 @@ export default function SequenceCanvas({
     // four buttons twice.
     showSelectionBar = true,
     markedCoord = null,
+    // What to call a record that has no name of its own -- which is the plain
+    // region, the commonest thing this view draws. See sectionHeaderLine.
+    unnamed = '',
+    // Where the reader's Find patterns matched, in genomic coordinates:
+    // `[start, end, lane]` ascending, the lane being the pattern's place in
+    // their list. `findColours` looks a lane up; `findAt` is the one match they
+    // are standing on. See useSequenceFind.js.
+    finds = null,
+    findColours = null,
+    findAt = null,
+    // What to do with the match the reader is standing on, and what to call it.
+    // Drawn with the same bar a selection gets -- see SelectionBar.jsx -- since
+    // a match is the same kind of thing and wants the same things done to it.
+    findBar = null,
+    // A press on a base that is part of a match is about that match, not about
+    // the base. Answered with the coordinate; which match that is belongs to
+    // whoever holds the list.
+    onFindClick,
     preview = null,
     scrollTo,
     onSelectionChange,
@@ -168,18 +209,50 @@ export default function SequenceCanvas({
     // here. Zoomed out the whole block -- cells, gutters and all -- shrinks
     // together, and the row height that comes back is what the scroll model is
     // built on, so the virtualiser follows without being told about zoom.
+    // A display written as text has no zoom and no protein lane. Zooming out is
+    // a way of seeing the shape of a region when the letters are too small to
+    // read, and it ends in a canvas of coloured rectangles -- which is the
+    // opposite of a display whose whole point is that it is text. The lane goes
+    // for the same reason: it is a second row of letters over the bases, and
+    // there is no second line to put it on inside a line of text.
+    const plain = isPlainDisplay(display)
+    const drawnZoom = plain ? 1 : zoom
     const geometry = useMemo(
-        () => zoomedGeometry(zoom, full, { protein: laneHeight > 0 }),
-        [zoom, full, laneHeight],
+        () => zoomedGeometry(drawnZoom, full, { protein: !plain && laneHeight > 0 }),
+        [drawnZoom, full, laneHeight, plain],
     )
     const overview = geometry.overview
-    const metrics = useMemo(() => (overview
-        ? { ...full, cellWidth: geometry.cellWidth, rowWidth: geometry.rowWidth, fits: true }
-        : full), [full, geometry, overview])
+    // The plain displays set their text at a reading size that fits the panel
+    // rather than at whatever size a cell happens to be. The pinned header is
+    // set in the same type, so that it reads as the first line of the block
+    // under it rather than as a caption over it.
+    // Sized against the space actually measured rather than against the row
+    // width, which has a floor: below it the cells stop shrinking and the row is
+    // allowed to overflow, on the grounds that illegible sequence is worse than
+    // a sideways scrollbar. Text has no such floor to respect until it reaches
+    // its own, so a narrow panel gets smaller type and keeps its lines whole.
+    const plainFont = useMemo(
+        () => plainFontSize(Math.max(0, availablePx - SCROLLBAR_PX), plainLineChars(display)),
+        [availablePx, display],
+    )
+    const metrics = useMemo(() => {
+        // A plain block is as wide as its own text, which is narrower than a row
+        // of cells -- a cell is stretched to fill the panel and a character is
+        // the width the font draws it. Left at the row's width, the spacer and
+        // the slab would hang a hundred pixels past the text and put a
+        // horizontal scrollbar under sequence that fits.
+        if (plain) {
+            const width = plainBlockWidth(plainLineChars(display), plainFont)
+            return { ...full, rowWidth: width, fits: width <= availablePx }
+        }
+        return overview
+            ? { ...full, cellWidth: geometry.cellWidth, rowWidth: geometry.rowWidth, fits: true }
+            : full
+    }, [full, geometry, overview, plain, display, plainFont, availablePx])
 
     const totalRows = doc?.totalRows || 0
     const drawnRowHeight = overview ? geometry.rowHeight : rowHeight
-    const drawnLaneHeight = overview ? 0 : laneHeight
+    const drawnLaneHeight = overview || plain ? 0 : laneHeight
     const model = useMemo(
         () => createScrollModel({
             totalRows,
@@ -220,13 +293,18 @@ export default function SequenceCanvas({
         measure()
     }, [])
 
-    // A share of the screen rather than a fixed three rows -- and a bigger
-    // share in the far view, where a row is a handful of rectangles rather than
-    // sixty elements. What is placed is also what is asked for, so this is most
-    // of what keeps a fast scroll supplied.
+    // A share of the screen rather than a fixed three rows -- and a bigger share
+    // where a row is cheap. In the far view a row is a handful of rectangles; in
+    // the plain displays it is a line of text with a span or two on it, against
+    // sixty elements in the interactive one. What is placed is also what is
+    // asked for, so this is most of what keeps a fast scroll supplied -- and in
+    // the plain displays it is more than that, since what is mounted is exactly
+    // what the browser can select and find. A screenful either side is a
+    // screenful `Ctrl-F` can reach.
     const overscan = useMemo(
-        () => overscanRows(drawnRowHeight > 0 ? viewportPx / drawnRowHeight : 0, { cheap: overview }),
-        [viewportPx, drawnRowHeight, overview],
+        () => overscanRows(drawnRowHeight > 0 ? viewportPx / drawnRowHeight : 0,
+            { cheap: overview, plain }),
+        [viewportPx, drawnRowHeight, overview, plain],
     )
 
     const window_ = useMemo(
@@ -234,33 +312,13 @@ export default function SequenceCanvas({
         [model, scrollTop, overscan],
     )
 
+    /** Roughly how many rows the reader can see, for placing things in the middle. */
+    const visibleRows = drawnRowHeight > 0 ? Math.max(1, Math.floor(viewportPx / drawnRowHeight)) : 1
+
     const rows = useMemo(
         () => documentRowsForRange(doc, window_.firstRow, window_.count),
         [doc, window_.firstRow, window_.count],
     )
-
-    // The same question without the overscan: which rows the reader can see,
-    // and therefore which stretch of the chromosome the bar should name. Asked
-    // separately rather than trimmed off `rows`, because how many rows the
-    // overscan covers at each end depends on where the scroll happens to sit.
-    const onScreen = useMemo(() => {
-        const range = visibleRowRange(model, scrollTop, 0)
-        const pieces = []
-        for (const entry of documentRowsForRange(doc, range.firstRow, range.count)) {
-            if (entry.kind !== 'sequence') continue
-            const line = displayRow(entry.section.layout, entry.local)
-            for (const piece of line?.pieces || []) pieces.push({ s: piece.s, e: piece.e })
-        }
-        const intervals = mergeIntervals(pieces)
-        return {
-            start: intervals.length ? intervals[0].s : 0,
-            end: intervals.length ? intervals[intervals.length - 1].e : 0,
-            // How much sequence is on the screen, which is not the distance
-            // between its ends: collapsed, and in a collection, the rows jump.
-            bases: intervals.reduce((total, piece) => total + (piece.e - piece.s + 1), 0),
-            pieces: intervals.length,
-        }
-    }, [doc, model, scrollTop])
 
     // A selection lives inside one record. Two records can be far apart or
     // overlap, so a range of coordinates means nothing across them -- and
@@ -277,6 +335,69 @@ export default function SequenceCanvas({
         if (from === null || to === null) return null
         return { lo: Math.min(from, to), hi: Math.max(from, to) }
     }, [selection, selectionSection])
+
+    /**
+     * The matches, turned from coordinates into the columns a row is drawn in.
+     *
+     * Once per section rather than once per row: a screen is forty rows and the
+     * conversion is a binary search apiece, so doing it per row did the same
+     * work forty times. Sorted here too, because `findMask` walks a row and its
+     * spans together and needs them in order to stop early.
+     *
+     * A match outside the record's own extent is dropped rather than clamped --
+     * `columnAtCoord` would happily answer with the nearest column of a record
+     * the match is nowhere near, which is how a highlight appears against
+     * sequence that does not contain it.
+     */
+    const findsIn = useCallback((section) => {
+        if (!finds?.length) return null
+        const region = section?.layout?.region
+        if (!region) return null
+        const out = []
+        for (const [from, to, lane] of finds) {
+            if (to < region.start || from > region.end) continue
+            const lo = columnAtCoord(section.layout, Math.max(region.start, from))
+            const hi = columnAtCoord(section.layout, Math.min(region.end, to))
+            if (lo === null || hi === null) continue
+            // Read backwards, the first base of a match is its rightmost
+            // column, so the pair arrives the other way round.
+            out.push(lo <= hi ? [lo, hi, lane] : [hi, lo, lane])
+        }
+        out.sort((a, b) => a[0] - b[0])
+        return out.length ? out : null
+    }, [finds])
+
+    /**
+     * Whether a coordinate is part of something the reader was looking for.
+     *
+     * Binary search over the resolved spans, which are sorted and disjoint --
+     * the same list the rows are painted from, so what answers yes here is
+     * exactly what has a bar drawn under it on the screen.
+     */
+    const inFind = useCallback((coord) => {
+        const list = finds
+        if (!list?.length || !Number.isFinite(coord)) return false
+        let low = 0
+        let high = list.length - 1
+        while (low <= high) {
+            const mid = (low + high) >>> 1
+            if (coord < list[mid][0]) high = mid - 1
+            else if (coord > list[mid][1]) low = mid + 1
+            else return true
+        }
+        return false
+    }, [finds])
+
+    /** The one match the reader is standing on, in this section's columns. */
+    const findAtIn = useCallback((section) => {
+        if (!findAt) return null
+        const region = section?.layout?.region
+        if (!region || findAt[1] < region.start || findAt[0] > region.end) return null
+        const lo = columnAtCoord(section.layout, Math.max(region.start, findAt[0]))
+        const hi = columnAtCoord(section.layout, Math.min(region.end, findAt[1]))
+        if (lo === null || hi === null) return null
+        return lo <= hi ? [lo, hi] : [hi, lo]
+    }, [findAt])
 
     /**
      * Where the selection begins and ends in the document, and where its bar
@@ -311,7 +432,7 @@ export default function SequenceCanvas({
     const topGap = settled && selectionRows ? selectionTopGap(selectionRows.first) : 0
 
     const selectionBar = useMemo(() => {
-        if (!showSelectionBar || !settled || !selectionRows || !model?.heights) return null
+        if (plain || !showSelectionBar || !settled || !selectionRows || !model?.heights) return null
         const offsetOf = (row) => model.heights.offsetOfRow(row)
         const base = window_.slabTopPx + topGap - offsetOf(window_.firstRow)
         const placed = selectionBarPlacement({
@@ -324,8 +445,81 @@ export default function SequenceCanvas({
             viewportPx,
         })
         return placed?.visible ? placed : null
-    }, [showSelectionBar, settled, selectionRows, model, window_.slabTopPx, window_.firstRow,
+    }, [plain, showSelectionBar, settled, selectionRows, model, window_.slabTopPx, window_.firstRow,
         topGap, scrollTop, viewportPx])
+
+    /**
+     * Where along the row the current match is drawn, in pixels.
+     *
+     * Its first row's share of it: a match that wraps starts on one row and
+     * finishes on the next, and the bar sits over the first -- so it is the
+     * first row's piece the bar should point at. Measured from the row block's
+     * own left edge, which is what the bar's track is aligned to.
+     */
+    const findAlong = useMemo(() => {
+        if (plain || !findBar?.range) return null
+        const section = sectionForCoord(doc, findBar.range.start)
+        if (!section) return null
+        const width = section.layout.width || 1
+        const from = columnAtCoord(section.layout, findBar.range.start)
+        const to = columnAtCoord(section.layout, findBar.range.end)
+        if (from === null || to === null) return null
+        const lo = Math.min(from, to)
+        const hi = Math.max(from, to)
+        const row = Math.floor(lo / width)
+        // Clipped to the row the bar is over. Past its end the match carries
+        // on below, and the bar has nothing there to point at.
+        const startOffset = lo - row * width
+        const endOffset = Math.min(hi - row * width, width - 1)
+        return {
+            left: metrics.gutter + startOffset * metrics.cellWidth,
+            right: metrics.gutter + (endOffset + 1) * metrics.cellWidth,
+        }
+    }, [plain, findBar, doc, metrics.cellWidth, metrics.gutter])
+
+    /**
+     * Where the bar over the current match goes.
+     *
+     * The same placement the selection's bar gets, and for the same reasons:
+     * over the match's first row, held at the top of the screen once the
+     * reader has scrolled past it, gone when the match is nowhere near. It
+     * follows them from match to match as they step, which is what tying it to
+     * the current match means.
+     *
+     * No `topGap`. That gap exists to stop a selection's bar covering the very
+     * first row of the document when a selection starts there, and it is part
+     * of the layout -- the rows move down for it. A second gap for a second bar
+     * would move them twice, so the match's bar makes do with the room the
+     * selection's has already asked for.
+     */
+    const findBarPlacement = useMemo(() => {
+        if (plain || !findBar?.range || !model?.heights) return null
+        const first = documentRowOfCoord(doc, findBar.range.start)
+        const last = documentRowOfCoord(doc, findBar.range.end)
+        if (first === null || last === null) return null
+        const offsetOf = (row) => model.heights.offsetOfRow(row)
+        const base = window_.slabTopPx + topGap - offsetOf(window_.firstRow)
+        const placed = selectionBarPlacement({
+            firstRowTop: base + offsetOf(Math.min(first, last)),
+            lastRowBottom: base + offsetOf(Math.max(first, last))
+                + rowHeightAt(model, Math.max(first, last)),
+            scrollTop,
+            viewportPx,
+        })
+        if (!placed?.visible) return null
+
+        // Two bars can want the same row. Both are held at the top of the
+        // screen once the reader has scrolled past what they belong to, so a
+        // selection and a match that are anywhere near each other pin to the
+        // same place and stack -- two boxes over one stretch, saying nearly
+        // the same thing. The match's moves down, because the selection's was
+        // there first and is the one the reader put there by hand.
+        if (selectionBar && Math.abs(selectionBar.top - placed.top) < SELECTION_BAR_HEIGHT) {
+            return { ...placed, top: selectionBar.top + SELECTION_BAR_HEIGHT }
+        }
+        return placed
+    }, [plain, findBar, doc, model, window_.slabTopPx, window_.firstRow, topGap, scrollTop,
+        viewportPx, selectionBar])
 
     // What each row is, before anything is painted onto it.
     //
@@ -361,8 +555,17 @@ export default function SequenceCanvas({
         const view = viewFor?.(section.key) || {}
         const line = entry.line
         const reverse = Boolean(section.layout.reverse)
-        const lane = rowHasLane(model, entry.row)
+        // The plain displays draw the bases and nothing over them, so none of
+        // the marks are worked out for them. Not an optimisation so much as the
+        // definition: there is nowhere in a line of text to put an outline, a
+        // rule under a base or a letter above one, and a reader who chose text
+        // chose not to have them.
+        const lane = !plain && rowHasLane(model, entry.row)
+        const found = findsIn(section)
+        const at = findAtIn(section)
         return {
+            findAtLo: at ? at[0] : -1,
+            findAtHi: at ? at[1] : -1,
             ...entry,
             reverse,
             lane,
@@ -380,19 +583,22 @@ export default function SequenceCanvas({
                 // A selection lives inside one record: two records can be far
                 // apart, or overlap, so a range of coordinates means nothing
                 // across them.
-                selection: selectionIn(section),
+                selection: plain ? null : selectionIn(section),
+                // Drawn in both kinds of display: a reader who went looking
+                // for something wants to see it wherever they are reading.
+                finds: found,
                 // Where more than one gene covers the sequence, drawn as a rule
                 // under the bases rather than as a colour over them.
-                overlaps: view.overlaps || EMPTY_GENES,
+                overlaps: plain ? EMPTY_GENES : (view.overlaps || EMPTY_GENES),
                 // The base a popup is open about, ringed so that the box and
                 // the base it describes are visibly one thing.
-                marked: markedCoord,
+                marked: plain ? null : markedCoord,
                 // The feature the pointer is resting on in the list: its bases
                 // underlined, and its first and last marked by the same amber
                 // edge the annotation's own boundaries use -- which is the part
                 // a reader is usually pointing at it to find.
-                preview,
-                genes: preview ? [{ id: 'preview', s: preview.s, e: preview.e }] : EMPTY_GENES,
+                preview: plain ? null : preview,
+                genes: !plain && preview ? [{ id: 'preview', s: preview.s, e: preview.e }] : EMPTY_GENES,
                 // Only the rows that carry a lane are translated, and those are
                 // exactly the rows the height index made room for. One answer,
                 // so a letter can never land on a row with nowhere to draw it.
@@ -401,12 +607,21 @@ export default function SequenceCanvas({
                 width: section.layout.width,
             }),
         }
-    })), [overview, lines, viewFor, buffer, selectionIn, markedCoord, preview, model])
+    })), [overview, plain, lines, viewFor, buffer, selectionIn, findsIn, findAtIn,
+        markedCoord, preview, model])
 
     // What the reader is looking at, reported up so the buffers know what to
     // fetch. `intervals` is the part that matters: the rows on screen can
     // straddle records half a chromosome apart, and asking for everything
     // between them would fetch all of it.
+    //
+    // This is the *mounted* rows, overscan and all, which is what the buffers
+    // want: they are asked about the rows either side as well, so the next
+    // screenful is in hand before the reader reaches it. It once also carried
+    // the rows strictly on screen, for a readout on the bar that named them --
+    // a second `visibleRowRange` and a second pass over the rows on every
+    // scroll frame. The bar no longer has that readout, and the row gutters
+    // were always the better answer to the question it was asking.
     const visible = useMemo(() => {
         const pieces = []
         const sequenceLines = lines.filter((item) => item.kind === 'sequence')
@@ -414,23 +629,34 @@ export default function SequenceCanvas({
             for (const piece of item.line.pieces) pieces.push({ s: piece.s, e: piece.e })
         }
         const intervals = mergeIntervals(pieces)
-        const anchorItem = sequenceLines[Math.min(overscan, sequenceLines.length - 1)] || null
+        // The first row the reader can actually see, which is what the view is
+        // put back to when the geometry changes underneath them. Found by the
+        // row number rather than by counting the overscan off the front of the
+        // slab: how many rows the overscan covers depends on the display -- a
+        // line of text is cheap enough to mount a hundred of -- and on how close
+        // to the top of the document the reader is, so the same offset means a
+        // different row from one moment to the next. Switching between displays
+        // is exactly the moment it would be wrong.
+        const anchorRow = Math.floor(Number(window_.anchorRow) || 0)
+        const anchorItem = sequenceLines.find((item) => item.row >= anchorRow)
+            || sequenceLines[0]
+            || null
         const anchor = anchorItem?.line?.firstCoord ?? intervals[0]?.s ?? 0
+        // The middle of the screen, which is where a reader's attention is and
+        // therefore where a new search should start from. Half a screen down
+        // from the anchor row, in rows, which is one lookup rather than another
+        // pass over the slab.
+        const middleRow = anchorRow + Math.floor(visibleRows / 2)
+        const middleItem = sequenceLines.find((item) => item.row >= middleRow) || anchorItem
         return {
             start: intervals.length ? intervals[0].s : 0,
             end: intervals.length ? intervals[intervals.length - 1].e : 0,
             anchor,
             anchorKey: anchorItem?.section?.key || '',
+            centre: middleItem?.line?.firstCoord ?? anchor,
             intervals,
-            // What is literally on the screen, which is not what the buffers
-            // want: those are asked about the rows either side as well, so they
-            // have the next screenful before the reader gets to it. A readout
-            // fed the buffered range would name three rows the reader cannot
-            // see, and would name them differently at the top and the bottom of
-            // the same page.
-            screen: onScreen,
         }
-    }, [lines, onScreen, overscan])
+    }, [lines, window_.anchorRow, visibleRows])
 
     anchorCoordRef.current = visible.anchor
         ? { coord: visible.anchor, key: visible.anchorKey }
@@ -476,8 +702,13 @@ export default function SequenceCanvas({
             setScrollTop(target)
         }
         // Only when the geometry changes, never when the scroll position does.
+        // The display is in here because switching to or from a plain one drops
+        // the protein lane, which is a different height for every row that had
+        // one -- and because the reader's place is the one thing that must
+        // survive the switch, whether or not this particular screen has lanes
+        // on it.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [rowHeight, laneHeight, viewportPx, totalRows, doc])
+    }, [rowHeight, laneHeight, viewportPx, totalRows, doc, display])
 
     // Put a coordinate at the top of the screen, when something outside asks --
     // a gene picked from the list, a search that matched. Keyed on a nonce
@@ -495,6 +726,59 @@ export default function SequenceCanvas({
         setScrollTop(target)
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [scrollTo?.nonce])
+
+    /**
+     * The FASTA header of the record at the top of the screen.
+     *
+     * Pinned above the sequence rather than drawn among it, because a record
+     * that fills twenty screens has its name on the first of them and a reader
+     * copying from the nineteenth would take bases with nothing saying what
+     * they are. It is ordinary selectable text in its own right, so a drag that
+     * starts on it and runs down into the sequence gives back a whole FASTA
+     * record -- which is the only reason a header is worth drawing at all.
+     *
+     * A collection's records carry a header row of their own as well, and while
+     * one of those is on the screen the pinned line is simply a copy of it held
+     * at the top -- the same thing a sticky table header is.
+     */
+    const pinnedHeader = useMemo(() => {
+        if (display !== DISPLAY_FASTA || !doc?.totalRows) return ''
+        const section = sectionAtRow(doc, Math.floor(Number(window_.anchorRow) || 0))
+        return section ? sectionHeaderLine(section, chrom, unnamed) : ''
+    }, [display, doc, window_.anchorRow, chrom, unnamed])
+
+    /**
+     * Put the match the reader has stepped to in the middle of the screen.
+     *
+     * The middle, and on every step. It used to scroll only where the match
+     * had gone off the screen, on the grounds that moving the page under a
+     * reader stepping through a cluster of matches would lose them their
+     * place. The cure was worse: the page stood still for three presses and
+     * then jumped, so where a match would appear was never predictable.
+     * Centring every time is one rule, and the reader always knows where to
+     * look.
+     *
+     * *Near* the middle at the ends of a document, where there is not half a
+     * screen of sequence above the match to put there.
+     */
+    const findAtKey = findAt ? `${findAt[0]}:${findAt[1]}` : ''
+    useEffect(() => {
+        const element = scrollerRef.current
+        if (!element || !findAt || !doc || !model?.heights) return
+        const row = documentRowOfCoord(doc, findAt[0])
+        if (row === null) return
+        // In rows rather than in pixels: for a very large region the spacer is
+        // compressed, so a scroll position is not a distance. See
+        // utils/sequenceViewScroll.js.
+        const screenful = model.rowHeight > 0 ? viewportPx / model.rowHeight : 0
+        const target = scrollTopForRow(model, Math.round(rowToCentre(row, screenful)))
+        if (Math.abs(element.scrollTop - target) < 1) return
+        element.scrollTop = target
+        setScrollTop(target)
+        // Keyed on which match, not on the scroll position: moving the page by
+        // hand afterwards must not drag it back.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [findAtKey, viewportPx])
 
     const handleScroll = useCallback((event) => {
         setScrollTop(event.currentTarget.scrollTop)
@@ -616,6 +900,12 @@ export default function SequenceCanvas({
         const place = placeAt(at.index, at.offset)
         const coord = place ? coordAtColumn(place.layout, place.column) : null
         if (coord === null || place.section.key !== dragRef.current.sectionKey) return
+        // A press that has not left the base it began on is not yet a
+        // selection. Once it has, every move is -- including a move back onto
+        // the first base, which is a one-base selection the reader drew rather
+        // than a press they happened to make.
+        if (!dragRef.current.drew && coord === dragRef.current.anchor) return
+        dragRef.current.drew = true
         dragRef.current.head = coord
         onSelectionChange?.({ start: dragRef.current.anchor, end: coord })
     }, [placeAt, onSelectionChange])
@@ -639,6 +929,10 @@ export default function SequenceCanvas({
     }, [pendingEnd, placeAt, onSelectionChange])
 
     const handleHover = useCallback((event) => {
+        // Nothing to describe and nothing being drawn: the plain displays have
+        // no cells for the pointer to be over, and a readout following it
+        // across text the reader is trying to select would be in the way.
+        if (plain) return
         const press = pressRef.current
         if (press && !press.moved) {
             const travelled = Math.abs(event.clientX - press.x) + Math.abs(event.clientY - press.y)
@@ -677,7 +971,7 @@ export default function SequenceCanvas({
         })
         extendDrag(at)
         extendPending(at)
-    }, [cellAt, nearestCell, extendDrag, extendPending, pendingEnd, placeAt, painted, viewFor])
+    }, [plain, cellAt, nearestCell, extendDrag, extendPending, pendingEnd, placeAt, painted, viewFor])
 
     /** How far past the top or bottom of the sequence a point is, in pixels. */
     const edgeAt = useCallback((y) => {
@@ -731,6 +1025,11 @@ export default function SequenceCanvas({
 
     const handlePointerDown = useCallback((event) => {
         if (event.button !== 0) return
+        // In the plain displays the gesture is the browser's: a press begins a
+        // text selection, and taking it -- for a drag, or to remember where a
+        // click started so a release can open a base box -- is precisely what
+        // this display exists not to do.
+        if (plain) return
         // Where the press began, so that a release in the same place can be told
         // from a drag. A click is a press that did not move: the reader asking
         // about one base, rather than gathering a run of them.
@@ -764,7 +1063,6 @@ export default function SequenceCanvas({
             }
             setPendingEnd(null)
             onSelectionChange?.({ start: pendingEnd.coord, end: coord })
-            onSelectionDone?.()
             revealSelection(pendingEnd.coord, coord, place.section.key)
             return
         }
@@ -779,8 +1077,13 @@ export default function SequenceCanvas({
         pointerRef.current = { x: event.clientX, y: event.clientY }
         setEdgeHold(0)
         setDragging(true)
-        onSelectionChange?.({ start: coord, end: coord })
-    }, [selectMode, selectStyle, pendingEnd, nearestCell, placeAt, onSelectionChange, onSelectionDone, revealSelection])
+        // Nothing is reported yet. The tool stays in hand after a selection is
+        // drawn -- a reader who has drawn one usually wants another, and
+        // putting it away meant re-arming it every time -- so a stray press on
+        // the sequence has to be harmless. Reported here, it replaced whatever
+        // they had drawn with a one-base selection before they had moved a
+        // pixel. It begins at the first move instead; see `extendDrag`.
+    }, [plain, selectMode, selectStyle, pendingEnd, nearestCell, placeAt, onSelectionChange, revealSelection])
 
     const endDrag = useCallback((event) => {
         // A press released where it began is a question about that base. Not
@@ -788,11 +1091,19 @@ export default function SequenceCanvas({
         // and a box opening mid-selection would be in the way.
         const press = pressRef.current
         pressRef.current = null
-        if (press && !press.moved && !press.consumed && !selectMode && onBaseClick && event) {
+        if (press && !press.moved && !press.consumed && !selectMode && event) {
             const at = cellAt(event)
             const place = at ? placeAt(at.index, at.offset) : null
             const coord = place ? coordAtColumn(place.layout, place.column) : null
-            if (coord !== null) {
+            // A press on a base that is part of a match is about the match. The
+            // reader went looking for it and it is drawn as found; asking them
+            // to press it and then be told which genes cover it would be
+            // answering a question they had already stopped asking.
+            if (coord !== null && inFind(coord)) {
+                onFindClick?.(coord)
+                return
+            }
+            if (coord !== null && onBaseClick) {
                 const cell = document.elementFromPoint(event.clientX, event.clientY)
                 const box = cell?.getBoundingClientRect?.()
                 onBaseClick({
@@ -812,20 +1123,15 @@ export default function SequenceCanvas({
         }
         if (!dragRef.current) return
         scrollerRef.current?.releasePointerCapture?.(dragRef.current.pointerId ?? event?.pointerId)
-        const { anchor, head, sectionKey } = dragRef.current
-        const drew = head !== anchor
+        const { anchor, head, sectionKey, drew } = dragRef.current
         dragRef.current = null
         pointerRef.current = null
         setEdgeHold(0)
         setDragging(false)
-        // The tool is put down as soon as it has been used. Leaving it armed
-        // meant the next click anywhere threw the selection away and started a
-        // new one of a single base, which is never what the click was for.
         if (drew) {
-            onSelectionDone?.()
             revealSelection(anchor, head, sectionKey)
         }
-    }, [selectMode, onBaseClick, cellAt, placeAt, onSelectionDone, revealSelection])
+    }, [selectMode, onBaseClick, inFind, onFindClick, cellAt, placeAt, revealSelection])
 
     // Held past the top or bottom edge, the view keeps going, so a selection can
     // reach past what is on screen. It runs until the pointer comes back inside
@@ -887,113 +1193,176 @@ export default function SequenceCanvas({
     if (!doc?.totalRows) return null
 
     return (
-        <div
-            ref={attachScroller}
-            onScroll={handleScroll}
-            onWheel={handleWheel}
-            onPointerMove={(event) => { trackPointer(event); handleHover(event) }}
-            onPointerLeave={handleLeave}
-            onPointerDown={handlePointerDown}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-            className={`relative h-full overflow-y-auto ${metrics.fits ? 'overflow-x-hidden' : 'overflow-x-auto'}`}
-            style={selectMode ? { cursor: 'crosshair', userSelect: 'none' } : undefined}
-            data-sequence-view-scroller="true"
-        >
-            <div style={{ height: `${model.spacerPx + topGap}px`, width: `${metrics.rowWidth}px`, margin: '0 auto' }} />
-
-            {/* Inside the scroller, so it travels with the rows it belongs to
-                rather than having to be chased across the screen on every
-                scroll. Before the slab in the markup and above it by z-index,
-                since while the reader is scrolling through a long selection it
-                sits over the rows at the top of the screen. */}
-            {selectionBar ? (
-                <SelectionBar
-                    selection={selection}
-                    chrom={chrom}
-                    isLight={isLight}
-                    top={selectionBar.top}
-                    rowWidth={metrics.rowWidth}
-                    onFocusRegion={onSelectionFocus}
-                    onCopy={onSelectionCopy}
-                    onDownload={onSelectionDownload}
-                    onBrowse={onSelectionBrowse}
-                    onClear={onSelectionClear}
-                />
+        <div className="flex h-full min-h-0 flex-col">
+            {pinnedHeader ? (
+                <div
+                    className="sv-plain-pin"
+                    data-sequence-plain-header="true"
+                    style={{ fontFamily: FONT_MONO, fontSize: `${plainFont}px` }}
+                >
+                    <span style={{ width: `${metrics.rowWidth}px` }}>{pinnedHeader}</span>
+                </div>
             ) : null}
             <div
-                className="absolute top-0"
-                style={{
-                    transform: `translateY(${window_.slabTopPx + topGap}px)`,
-                    width: `${metrics.rowWidth}px`,
-                    // Centred in whatever the panel has left, rather than pinned
-                    // to the left edge with the spare room all on one side.
-                    left: '50%',
-                    marginLeft: `${-metrics.rowWidth / 2}px`,
-                }}
+                ref={attachScroller}
+                onScroll={handleScroll}
+                onWheel={handleWheel}
+                onPointerMove={(event) => { trackPointer(event); handleHover(event) }}
+                onPointerLeave={handleLeave}
+                onPointerDown={handlePointerDown}
+                onPointerUp={endDrag}
+                onPointerCancel={endDrag}
+                className={`relative min-h-0 flex-1 overflow-y-auto ${metrics.fits ? 'overflow-x-hidden' : 'overflow-x-auto'}`}
+                // `userSelect` is the whole difference between the two kinds of
+                // display. The interactive one turns it off while the Select tool
+                // is armed, because a drag there draws the view's own selection and
+                // a text highlight dragged along under it is a second shape saying
+                // something else. The plain ones turn it on and hand the gesture
+                // back, which is what they are for.
+                style={plain
+                    ? { userSelect: 'text' }
+                    : selectMode ? { cursor: 'crosshair', userSelect: 'none' } : undefined}
+                data-sequence-view-scroller="true"
+                data-sequence-display={display}
             >
-                {overview ? (
-                    <SequenceOverview
-                        doc={doc}
-                        rows={rows}
-                        viewFor={viewFor}
-                        geometry={geometry}
-                        model={model}
-                        palette={palette}
+                <div style={{ height: `${model.spacerPx + topGap}px`, width: `${metrics.rowWidth}px`, margin: '0 auto' }} />
+
+                {/* Inside the scroller, so it travels with the rows it belongs to
+                    rather than having to be chased across the screen on every
+                    scroll. Before the slab in the markup and above it by z-index,
+                    since while the reader is scrolling through a long selection it
+                    sits over the rows at the top of the screen. */}
+                {selectionBar ? (
+                    <SelectionBar
+                        selection={selection}
+                        chrom={chrom}
                         isLight={isLight}
-                        preview={preview}
-                        width={metrics.rowWidth}
-                        height={Math.max(1, (rows.length + 1) * geometry.rowHeight)}
-                        offsetPx={0}
+                        top={selectionBar.top}
+                        rowWidth={metrics.rowWidth}
+                        onFocusRegion={onSelectionFocus}
+                        onCopy={onSelectionCopy}
+                        onDownload={onSelectionDownload}
+                        onBrowse={onSelectionBrowse}
+                        onClear={onSelectionClear}
                     />
-                ) : painted.map((item) => (item.kind === 'header' ? (
-                    <SequenceRecordHeading
-                        key={item.key}
-                        record={item.section.record}
-                        layout={item.section.layout}
-                        rowHeight={rowHeight}
-                        width={metrics.rowWidth}
+                ) : null}
+
+                {/* And the same bar over the match the reader is standing on.
+                    A match is a stretch they picked out, which is the same
+                    kind of thing a selection is; what differs is the line
+                    under the coordinates and that closing it puts the bar away
+                    rather than throwing the search away. */}
+                {findBarPlacement && findBar ? (
+                    <SelectionBar
+                        selection={findBar.range}
+                        chrom={chrom}
                         isLight={isLight}
+                        top={findBarPlacement.top}
+                        rowWidth={metrics.rowWidth}
+                        caption={findBar.caption}
+                        clearLabel="Close"
+                        alignLeft={findAlong ? findAlong.left : -1}
+                        alignRight={findAlong ? findAlong.right : -1}
+                        onPrev={findBar.onPrev}
+                        onNext={findBar.onNext}
+                        onFocusRegion={findBar.onFocusRegion}
+                        onCopy={findBar.onCopy}
+                        onDownload={findBar.onDownload}
+                        onBrowse={findBar.onBrowse}
+                        onClear={findBar.onClose}
                     />
-                ) : (
-                    <SequenceRow
-                        key={item.key}
-                        // The document row, not the record's own: everything
-                        // that reads this attribute back -- hover, drag -- asks
-                        // the document which record a row belongs to, and the
-                        // spread carries an `index` of its own that would
-                        // silently answer with the wrong one.
-                        row={{ ...item.line, index: item.row }}
-                        sequence={item.sequence}
-                        classes={item.classes}
-                        mask={item.mask}
-                        edges={item.edges}
-                        amino={item.amino}
-                        lane={item.lane}
-                        labels={{ left: item.line.firstCoord, right: item.line.lastCoord }}
-                        rowHeight={item.height}
-                        palette={palette}
-                        cellWidth={metrics.cellWidth}
-                        fontSize={metrics.fontSize}
-                        isLight={isLight}
-                        // Whether anything is being pointed at in the list
-                        // beside the sequence. The row dims whatever is not
-                        // part of it, which is what makes the stretch itself
-                        // legible at a glance.
-                        previewing={Boolean(preview)}
-                        // A selection dims what is outside it, the way the
-                        // pointer's feature does -- from the first move of the
-                        // gesture rather than once it is let go. The dimming is
-                        // what shows the reader the stretch they are gathering:
-                        // waiting until the end meant dragging across an
-                        // unchanged page and only then seeing what had been
-                        // taken. It is the same while a two-click selection is
-                        // half made, where the second end follows the pointer.
-                        selecting={Boolean(selection)}
-                    />
-                )))}
+                ) : null}
+                <div
+                    className="absolute top-0"
+                    style={{
+                        transform: `translateY(${window_.slabTopPx + topGap}px)`,
+                        width: `${metrics.rowWidth}px`,
+                        // Centred in whatever the panel has left, rather than pinned
+                        // to the left edge with the spare room all on one side.
+                        left: '50%',
+                        marginLeft: `${-metrics.rowWidth / 2}px`,
+                    }}
+                >
+                    {plain ? (
+                        <SequencePlainText
+                            items={painted}
+                            display={display}
+                            colour={plainColour}
+                            palette={palette}
+                            isLight={isLight}
+                            chrom={chrom}
+                            unnamed={unnamed}
+                            findColours={findColours}
+                            rowHeight={rowHeight}
+                            fontSize={plainFont}
+                        />
+                    ) : overview ? (
+                        <SequenceOverview
+                            doc={doc}
+                            rows={rows}
+                            viewFor={viewFor}
+                            geometry={geometry}
+                            model={model}
+                            palette={palette}
+                            isLight={isLight}
+                            preview={preview}
+                            width={metrics.rowWidth}
+                            height={Math.max(1, (rows.length + 1) * geometry.rowHeight)}
+                            offsetPx={0}
+                        />
+                    ) : painted.map((item) => (item.kind === 'header' ? (
+                        <SequenceRecordHeading
+                            key={item.key}
+                            record={item.section.record}
+                            layout={item.section.layout}
+                            rowHeight={rowHeight}
+                            width={metrics.rowWidth}
+                            isLight={isLight}
+                        />
+                    ) : (
+                        <SequenceRow
+                            key={item.key}
+                            // The document row, not the record's own: everything
+                            // that reads this attribute back -- hover, drag -- asks
+                            // the document which record a row belongs to, and the
+                            // spread carries an `index` of its own that would
+                            // silently answer with the wrong one.
+                            row={{ ...item.line, index: item.row }}
+                            sequence={item.sequence}
+                            classes={item.classes}
+                            mask={item.mask}
+                            edges={item.edges}
+                            amino={item.amino}
+                            lane={item.lane}
+                            labels={{ left: item.line.firstCoord, right: item.line.lastCoord }}
+                            rowHeight={item.height}
+                            palette={palette}
+                            cellWidth={metrics.cellWidth}
+                            fontSize={metrics.fontSize}
+                            isLight={isLight}
+                            // Whether anything is being pointed at in the list
+                            // beside the sequence. The row dims whatever is not
+                            // part of it, which is what makes the stretch itself
+                            // legible at a glance.
+                            previewing={Boolean(preview)}
+                            // A selection dims what is outside it, the way the
+                            // pointer's feature does -- from the first move of the
+                            // gesture rather than once it is let go. The dimming is
+                            // what shows the reader the stretch they are gathering:
+                            // waiting until the end meant dragging across an
+                            // unchanged page and only then seeing what had been
+                            // taken. It is the same while a two-click selection is
+                            // half made, where the second end follows the pointer.
+                            selecting={Boolean(selection)}
+                        finds={item.finds}
+                        findColours={findColours}
+                        findAtLo={item.findAtLo}
+                        findAtHi={item.findAtHi}
+                        />
+                    )))}
+                </div>
+                <SequenceHoverTip hover={hover} isLight={isLight} chrom={chrom} palette={palette} />
             </div>
-            <SequenceHoverTip hover={hover} isLight={isLight} chrom={chrom} palette={palette} />
         </div>
     )
 }

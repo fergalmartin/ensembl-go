@@ -1,8 +1,23 @@
-# Motif preparation and rendering
+# Find: pattern preparation and rendering
+
+> **The word is Find.** This engine was built for the alignment explorer under
+> the name *motif*, which named what a biologist looks for rather than what the
+> control does — and left the sequence view with nothing to call the same thing
+> when it grew one. Everything a reader sees now says Find.
+>
+> The identifiers did not change: the colour scheme's id, the storage key and
+> the `/motif-jobs` routes below are all still `motif`. They are written into
+> stored workspaces and into a running server, and renaming them would cost a
+> migration to change a word nobody sees.
+>
+> The *model* — the ordered list of patterns, their colours and switches, and
+> which of two overlapping patterns wins a base — is now
+> `frontend/src/utils/findPatterns.js`, shared with the sequence view. See
+> **Finding something** in `SEQUENCE_VIEW.md` for the other half.
 
 The alignment explorer's Colour, Select, Zoom and Hide menus use draft settings
-with Apply and Cancel. Colour → Motif remembers definitions on Apply. Cancelling
-preparation keeps the previous applied view; remembered definitions remain
+with Apply and Cancel. Colour → Find remembers patterns on Apply. Cancelling
+preparation keeps the previous applied view; remembered patterns remain
 available for another attempt.
 
 ## Pipeline

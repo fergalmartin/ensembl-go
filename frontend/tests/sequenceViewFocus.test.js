@@ -4,6 +4,9 @@ import test from 'node:test'
 import {
   DEFAULT_FLANKS,
   FOCUS_CHAIN,
+  LEVEL_GENE,
+  LEVEL_LOCATION,
+  LEVEL_TRANSCRIPT,
   emptyFocus,
   focusFromStart,
   focusReducer,
@@ -263,4 +266,49 @@ test('a genome nobody has been reading has nothing to say', () => {
   // Half a gene is not a place: without coordinates there is nowhere to go.
   assert.equal(focusFromStart('g4', { gene: { id: 'G1' } }), null)
   assert.equal(focusFromStart('g4', { location: { start: 1, end: 2 } }), null, 'nor a region with no chromosome')
+})
+
+// ---- switching genome -----------------------------------------------------
+
+test('a reset to another genome carries nothing at all from the old one', () => {
+  // The bug this guards: the view set the genome key and, where it had nowhere
+  // to send the reader, returned -- leaving the previous genome's chromosome,
+  // region, gene, transcript and selection on the screen under the new
+  // genome's name. A reset with no focus has to be genuinely empty.
+  const busy = {
+    genomeKey: 'rat', chrom: '7', level: LEVEL_TRANSCRIPT,
+    location: { start: 100, end: 900 },
+    gene: { id: 'G1', name: 'ABC', start: 200, end: 800, strand: '+' },
+    transcript: { id: 'T1', start: 200, end: 800, strand: '+' },
+    feature: { kind: 'exon', index: 2, s: 300, e: 400 },
+    custom: { start: 310, end: 320 },
+    previousLevel: LEVEL_GENE,
+  }
+  const after = focusReducer(busy, { type: 'reset', genomeKey: 'human', chrom: '' })
+  assert.equal(after.genomeKey, 'human')
+  assert.equal(after.chrom, '')
+  for (const key of ['location', 'gene', 'transcript', 'feature', 'custom']) {
+    assert.equal(after[key], null, `${key} survived a genome switch`)
+  }
+  assert.equal(after.level, LEVEL_LOCATION, 'and the level is back at the top')
+})
+
+test('a reset to a remembered place restores exactly that place', () => {
+  // The other half: switching back to a genome the reader has read before
+  // returns them to where they were, rather than to wherever the app last
+  // opened it somewhere else.
+  const remembered = {
+    level: LEVEL_GENE,
+    location: { start: 5_000_000, end: 5_010_000 },
+    gene: { id: 'G9', name: 'XYZ', start: 5_001_000, end: 5_009_000, strand: '-' },
+  }
+  const after = focusReducer(
+    emptyFocus('human', '1'),
+    { type: 'reset', genomeKey: 'rat', chrom: '2', focus: remembered },
+  )
+  assert.equal(after.genomeKey, 'rat')
+  assert.equal(after.chrom, '2')
+  assert.equal(after.level, LEVEL_GENE)
+  assert.deepEqual(after.location, remembered.location)
+  assert.equal(after.gene.id, 'G9')
 })

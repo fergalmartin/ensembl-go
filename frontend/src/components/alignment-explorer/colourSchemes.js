@@ -30,9 +30,12 @@ export const COLOUR_SCHEMES = [
   { id: 'representation', label: 'Presence', cohort: true, ramp: buildRepresentationRamp, index: representationIndex, legend: representationLegend, palettes: 'ramp',
     hint: 'How much of the cohort each column actually holds, with agreement left out of it.',
     status: 'Cohort presence' },
-  { id: 'motif', label: 'Motif', cohort: false,
-    hint: 'Highlight sequence strings or regular expressions using your own ordered colours.',
-    status: 'Motif matches' },
+  // The id stays `motif`: it is written into stored workspaces and into the
+  // backend's own routes, and renaming it would cost a migration to change a
+  // word nobody sees. What the reader sees is Find.
+  { id: 'motif', label: 'Find', cohort: false,
+    hint: 'Highlight the strings or regular expressions you are looking for, in your own ordered colours.',
+    status: 'Find matches' },
 ]
 
 /** What `bases` does once a column is too narrow to be a base.

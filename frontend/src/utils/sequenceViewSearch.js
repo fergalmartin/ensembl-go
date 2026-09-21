@@ -89,3 +89,51 @@ export function withinOpenRegion(parsed, chrom, location) {
     if (!location || parsed.chrom !== chrom) return false
     return parsed.start >= location.start && parsed.end <= location.end
 }
+
+/**
+ * A typed range or coordinate, held inside the chromosome it names.
+ *
+ * A reader typing `1:1-999,999,999` has asked for more chromosome than there
+ * is. The backend clips every read, so the sequence drawn was always right --
+ * but the view believed the region it was given, so the header said
+ * `1:1-999,999,999`, the ruler counted to a base that does not exist, and the
+ * proportion of the region the screen covered was a fiction. What a reader can
+ * be shown is what is there.
+ *
+ * `extent` is the chromosome's own `{start, end}`, or null where the view does
+ * not know it yet -- in which case nothing is clamped, because refusing to move
+ * until a lookup has arrived is worse than moving to a region that will be
+ * clipped a moment later anyway.
+ *
+ * `clamped` says an end was actually moved, which is what the view tells the
+ * reader about. A range that merely touches the last base is not clamped.
+ */
+export function clampToChromosome(parsed, extent) {
+    if (!parsed || (parsed.kind !== 'range' && parsed.kind !== 'coordinate')) return parsed
+    const low = Number(extent?.start)
+    const high = Number(extent?.end)
+    if (!Number.isFinite(low) || !Number.isFinite(high) || high < low) return { ...parsed, clamped: false }
+
+    const start = Math.min(Math.max(parsed.start, low), high)
+    const end = Math.min(Math.max(parsed.end, low), high)
+    // A bare coordinate is a destination rather than a region, so the point
+    // itself is held inside the chromosome as well as the window around it.
+    const at = parsed.kind === 'coordinate'
+        ? Math.min(Math.max(Number(parsed.at), low), high)
+        : undefined
+    return {
+        ...parsed,
+        start: Math.min(start, end),
+        end: Math.max(start, end),
+        ...(at === undefined ? null : { at }),
+        clamped: start !== parsed.start || end !== parsed.end,
+    }
+}
+
+/** What to tell a reader whose range ran off the end of the chromosome. */
+export function clampNote(parsed, extent, chrom = '') {
+    if (!parsed?.clamped) return ''
+    const where = chrom || parsed.chrom || ''
+    return `${where} is ${Number(extent.end).toLocaleString()} bases long. `
+        + `Showing ${where}:${parsed.start.toLocaleString()}–${parsed.end.toLocaleString()}.`
+}

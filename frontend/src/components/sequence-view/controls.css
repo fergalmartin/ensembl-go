@@ -49,8 +49,12 @@
 .sv-bar {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 8px;
+  /* Tightened when the Display control joined the bar. The bar scrolls
+     sideways rather than wrapping, so the cost of one more control is paid in
+     the readout at the far end being pushed off -- and that readout is the
+     answer to "where am I", which should not need scrolling to. */
+  gap: 6px;
+  padding: 5px 7px;
   min-height: 59px;
   border-bottom: 1px solid var(--sv-border);
   background: var(--sv-bar);
@@ -116,28 +120,36 @@
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 9px;
+  gap: 7px;
   height: 46px;
-  padding: 6px 10px;
+  padding: 6px 8px;
   text-align: left;
   min-width: var(--sv-w, auto);
 }
-.sv-control-label { display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 0; flex: 1; }
+.sv-control-label { display: flex; flex-direction: column; align-items: stretch; gap: 2px; min-width: 0; flex: 1; }
+/* The control's name is the control, and the value under it is a note on what
+   it is set to. It was the other way round -- the name a small grey caption over
+   the value in white -- which read as a row of settings with their labels
+   whispered, and made the bar's two-line controls look like a different kind of
+   thing from Features and Colour beside them. Now every control on the bar says
+   its own name in the same type, and the ones with something to report say it
+   underneath. */
 .sv-control-name {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  color: var(--sv-muted); font-size: 10px; font-weight: 400; line-height: 12px; white-space: nowrap;
+  color: var(--sv-text); font-size: 12px; font-weight: 600; line-height: 16px; white-space: nowrap;
 }
 .sv-control-value {
-  display: block; color: var(--sv-text); font-size: 12px; font-weight: 600; line-height: 16px;
+  display: block; color: var(--sv-muted); font-size: 10px; font-weight: 400; line-height: 13px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* Whether the tool is in hand, beside its name rather than under it: what it is
+   set to and whether it is on are two different facts, and the line underneath
+   is already answering the first. */
 .sv-control-active { color: var(--sv-accent); font-size: 9px; font-weight: 600; }
-/* A control whose face is its name alone. The two-line form's name is a caption
-   over a value; standing by itself it is the label, and takes the value's size.
-   Select is the other one: a switch with nothing to report, so its word is set
-   at the size the words on every other control are. */
-.sv-control > .sv-control-name,
-.sv-split-main > .sv-control-name { color: var(--sv-text); font-size: 12px; font-weight: 600; line-height: 16px; }
+/* Held at the width of its longest value, for the reason the split beside it is:
+   a control that shrank when the reader chose a shorter word would slide the
+   rest of the bar along under their pointer. */
+.sv-control-display { --sv-w: 88px; }
 .sv-control-chevron { flex-shrink: 0; color: var(--sv-muted); transition: transform .12s; }
 .sv-bar .menu-open { border-color: var(--sv-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sv-accent) 28%, transparent); }
 .sv-bar .menu-open .sv-control-chevron { transform: rotate(180deg); color: var(--sv-accent); }
@@ -146,27 +158,50 @@
 /* A control whose face is a switch and whose chevron is its settings: one press
    to turn the thing off and on, a second target for the how. The explorer's
    Gaps control is the same object. */
-.sv-split { display: inline-flex; align-items: stretch; height: 46px; border: 1px solid var(--sv-border); border-radius: 5px; overflow: hidden; }
+/* Wide enough for the longest thing its second line holds -- "Two clicks", or
+   "Inactive" where the display has taken the tool away -- so the control keeps
+   its width as the reader changes what it is set to, and the bar beside it does
+   not shuffle along. */
+.sv-split { display: inline-flex; align-items: stretch; height: 46px; min-width: 116px; border: 1px solid var(--sv-border); border-radius: 5px; overflow: hidden; }
 .sv-split button { border: 0 !important; border-radius: 0 !important; background: transparent !important; }
 .sv-split button:hover:not(:disabled) { background: color-mix(in srgb, var(--sv-accent) 12%, transparent) !important; }
-.sv-split-main { flex: 1; min-width: 0; text-align: left; padding: 5px 9px !important; display: flex; align-items: center; }
+.sv-split-main { flex: 1; min-width: 0; text-align: left; padding: 5px 8px !important; display: flex; align-items: center; }
 .sv-split-arrow { width: 30px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; padding: 0 !important; border-left: 1px solid var(--sv-border) !important; }
 .sv-split.selected { border-color: var(--sv-accent); background: color-mix(in srgb, var(--sv-accent) 12%, var(--sv-panel)); }
 /* The seam between the switch and its chevron, drawn in the same colour as
    the frame around them: left grey inside an accent border it read as a
    join that had been missed rather than a second target. */
 .sv-split.selected .sv-split-arrow { border-left-color: color-mix(in srgb, var(--sv-accent) 45%, transparent) !important; }
+/* Find reports what is being looked for and how many of it there are, and both
+   are unbounded: a five-hundred-character regular expression, and a count that
+   reaches four million on a chromosome. A minimum would not hold it, so the
+   width is fixed and the line under the name ellipsises -- the whole of the
+   pattern is in the box one press away, and on the tooltip. */
+.sv-split-find { width: 124px; }
 
 /* ---- the genome in hand ------------------------------------------------- */
 
 /* The pill itself is the control. It keeps the height of the field beside it so
    the bar's first row still lines up, and the chevron sits outside the pill:
-   the pill says which genome, the chevron says there are others. */
+   the pill says which genome, the chevron says there are others.
+
+   **A fixed width, condensed, the way the genome browser's toolbar wears one.**
+   Sized to content it ran from 123 px for "Norway rat GRCr8" to 249 px for
+   "Egyptian spiny mouse ASM2989020v1" -- a swing wider than a whole control, at
+   the left-hand end of the bar, so every other control slid along when the
+   reader changed genome. The browser's toolbar settled this long ago by giving
+   the genome a column of its own; this is the same column, so the two views
+   keep their furniture in the same place. A name too long for it ellipsises,
+   which is what the app's own pills do everywhere else, and the whole of it is
+   on the tooltip. */
 .sv-bar .sv-genome {
   display: inline-flex; align-items: center; gap: 5px;
-  height: 30px; max-width: 250px; padding: 0 4px 0 0;
+  height: 30px; width: 180px; padding: 0 4px 0 0;
   background: transparent; border: 1px solid transparent; border-radius: 999px;
 }
+/* Fills the column, and shrinks inside it. In the menu below, where the point is
+   to read the names, the pills are still as wide as their own text. */
+.sv-bar .sv-genome > .sv-genome-pill { flex: 1; }
 .sv-bar .sv-genome:hover:not(:disabled) { border-color: var(--sv-border); background: transparent; }
 .sv-bar .sv-genome.menu-open { border-color: var(--sv-accent); box-shadow: none; }
 .sv-genome-pill {
@@ -212,7 +247,9 @@
 .sv-icon-button[aria-pressed=true] { box-shadow: 0 0 0 2px var(--sv-bar) inset; }
 
 .sv-find { display: flex; align-items: center; gap: 5px; }
-.sv-find input { width: 232px; height: 30px; box-sizing: border-box; background: var(--sv-field); }
+/* Narrower than it was, and still wide enough for the longest thing anyone
+   types into it -- `ENST00000646664.1` is seventeen characters. */
+.sv-find input { width: 176px; height: 30px; box-sizing: border-box; background: var(--sv-field); }
 .sv-bar select { height: 30px; box-sizing: border-box; padding: 0 6px; background: var(--sv-field); max-width: 220px; }
 
 .sv-divider { width: 1px; height: 28px; background: var(--sv-border); }
@@ -314,6 +351,11 @@
   width: 100%; padding: 6px 8px !important; text-align: left;
   background: transparent !important; border-color: transparent !important;
 }
+/* The bar keeps its buttons on one line, which is right for a control and wrong
+   for a row whose second line is a sentence: the sentence was being cut off
+   mid-word at the edge of the menu. Written against the element as well as the
+   class, because `.sv-menu button` is the rule it has to outrank. */
+.sv-menu button.sv-menu-option { white-space: normal; }
 .sv-menu-option:hover:not(:disabled) { border-color: var(--sv-accent) !important; }
 .sv-menu-option strong { font-size: 11.5px; }
 .sv-menu-option small { color: var(--sv-muted); line-height: 1.4; }
@@ -361,9 +403,9 @@
 .sv-bar .sv-zoom-box {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   height: 46px;
-  padding: 6px 10px;
+  padding: 6px 8px;
   box-sizing: border-box;
   background: var(--sv-panel);
   color: var(--sv-text);
@@ -372,12 +414,11 @@
   cursor: pointer;
 }
 .sv-bar .sv-zoom-box:hover { border-color: var(--sv-accent); }
+/* Zoom is not something text does, so the plain displays put it out of reach.
+   The same weight a disabled button is drawn at, because that is what it is. */
+.sv-bar .sv-zoom-box.sv-disabled { opacity: .4; cursor: default; }
+.sv-bar .sv-zoom-box.sv-disabled:hover { border-color: var(--sv-border); }
 .sv-bar .sv-zoom-box:focus-within { border-color: var(--sv-accent); }
-/* The same type the single-line controls set their name in, so "Zoom" and
-   "Features" are the same words at the same size. */
-.sv-bar .sv-zoom-box .sv-control-name {
-  color: var(--sv-text); font-size: 12px; font-weight: 600; line-height: 16px;
-}
 .sv-zoom-value {
   font-size: 12px; font-weight: 600; line-height: 16px;
   font-variant-numeric: tabular-nums; min-width: 34px; text-align: right;
@@ -386,7 +427,7 @@
 .sv-zoom-box input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  width: 92px;
+  width: 76px;
   height: 12px;
   /* The bar styles inputs generally -- a border, a radius, a background -- and
      turning the native appearance off is what lets those reach a range input
@@ -584,6 +625,10 @@
 .sv-selection-bar .sv-selection-set:hover:not(:disabled) { background: var(--sv-primary-hover); border-color: var(--sv-primary-hover); }
 .sv-selection-bar .sv-selection-set:disabled { opacity: .45; cursor: default; }
 .sv-selection-acts { display: inline-flex; align-items: center; gap: 1px; }
+/* Stepping between matches, beside the count it moves rather than out with
+   the actions: these change *which* stretch the bar is about, where the marks
+   at the far end do something to the stretch it is already about. */
+.sv-selection-step { display: inline-flex; align-items: center; gap: 1px; margin-left: 2px; }
 .sv-selection-bar .sv-selection-mark {
   display: inline-flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; padding: 0;
@@ -592,3 +637,167 @@
 }
 .sv-selection-bar .sv-selection-mark:hover:not(:disabled) { color: var(--sv-text); background: color-mix(in srgb, var(--sv-accent) 14%, transparent); }
 .sv-selection-bar .sv-selection-mark:disabled { opacity: .35; cursor: default; }
+
+/* ---- the plain displays ------------------------------------------------ */
+
+/* The FASTA header of the record at the top of the screen, held above the
+   sequence rather than drawn among it: a record twenty screens long has its
+   name on the first of them, and a reader copying from the nineteenth would
+   otherwise take bases with nothing saying what they are.
+
+   It is ordinary selectable text, and it is laid out over the same width the
+   rows are centred in, so a drag that begins on it and runs into the sequence
+   gives back a whole FASTA record rather than a header with a ragged margin. */
+.sv-plain-pin {
+  display: flex;
+  justify-content: center;
+  flex: none;
+  padding: 5px 0 4px;
+  border-bottom: 1px solid var(--sv-border);
+  background: var(--sv-bar);
+  color: var(--sv-muted);
+  font-weight: 600;
+  white-space: pre;
+  overflow: hidden;
+  user-select: text;
+}
+.sv-plain-pin > span { overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- the find box ------------------------------------------------------ */
+
+/* A band under the control bar rather than a menu hanging off it. Everything
+   else on that bar is a setting -- read, changed, dismissed -- and a find box
+   is not: the reader types in it, looks at the sequence, steps to the next
+   match and looks again. A panel that dismissed itself on the first click into
+   the page would be shut every time it was used. */
+.sv-findbar {
+  flex: none;
+  min-width: 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--sv-border);
+  background: color-mix(in srgb, var(--sv-accent) 5%, var(--sv-bar));
+  color: var(--sv-text);
+  font: 12px/1.45 Lato, system-ui, sans-serif;
+  box-sizing: border-box;
+}
+.sv-findbar-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sv-findbar button,
+.sv-findbar select,
+.sv-findbar input:not([type=checkbox]) {
+  background: var(--sv-panel); color: var(--sv-text);
+  border: 1px solid var(--sv-border); border-radius: 5px;
+  padding: 5px 8px; font: inherit; min-width: 0;
+}
+.sv-findbar button { cursor: pointer; white-space: nowrap; }
+.sv-findbar button:hover:not(:disabled) {
+  border-color: var(--sv-accent);
+  background: color-mix(in srgb, var(--sv-accent) 9%, var(--sv-panel));
+}
+.sv-findbar button:disabled { opacity: .4; cursor: default; }
+.sv-findbar .selected { border-color: var(--sv-accent); background: color-mix(in srgb, var(--sv-accent) 14%, var(--sv-panel)); }
+.sv-findbar :focus-visible { outline: 2px solid var(--sv-accent); outline-offset: 2px; }
+.sv-findbar input[type=checkbox] { accent-color: var(--sv-accent); flex: none; }
+
+/* The box itself takes whatever the row has spare: what is typed into it can
+   be five hundred characters of regular expression, and every other thing on
+   the row is a fixed handful of pixels. */
+.sv-find-box {
+  flex: 1; min-width: 90px; height: 28px; box-sizing: border-box;
+  background: var(--sv-field) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
+}
+.sv-find-box[aria-invalid="true"] { border-color: var(--sv-warn) !important; }
+
+/* Which colour the match is drawn in, as the button that changes it.
+   A rounded square, which is what a colour is in this app -- the palette
+   swatches in the Colour menu and the explorer's own pattern colours are both
+   this shape. A circle here read as a status light rather than as something to
+   press.
+
+   Exactly the size of the checkbox it stands beside, because in the full list
+   the two are a pair -- whether this pattern is being searched for, and what it
+   is drawn in -- and one of them half again the size of the other read as the
+   more important of the two. 3px of radius rather than 5, which is what
+   `.sv-swatch` uses at this size: a radius that looks right on a 22px square
+   is most of a 13px one. */
+.sv-find-colour {
+  flex: none; width: 13px; height: 13px; padding: 0 !important;
+  border-radius: 3px !important; border: 1px solid var(--sv-border) !important;
+}
+
+/* String or pattern, on the row rather than behind a menu: it changes what the
+   same typing means, so it has to be visible without going to look. */
+.sv-find-kind { display: inline-flex; flex: none; }
+.sv-findbar .sv-find-kind button {
+  width: 30px; padding: 5px 0 !important; text-align: center;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px;
+  border-radius: 0 !important;
+}
+.sv-findbar .sv-find-kind button:first-child { border-radius: 5px 0 0 5px !important; }
+.sv-findbar .sv-find-kind button:last-child { border-radius: 0 5px 5px 0 !important; margin-left: -1px; }
+
+/* "3 of 148". Fixed width and tabular, so stepping through matches does not
+   shuffle the buttons beside it along one pixel at a time. */
+.sv-find-count {
+  flex: none; min-width: 92px; text-align: right;
+  font-size: 11px; font-variant-numeric: tabular-nums; color: var(--sv-muted);
+}
+.sv-find-count.none { color: var(--sv-warn); }
+
+.sv-findbar .sv-icon-button {
+  flex: none; width: 28px; height: 28px; padding: 0 !important;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+/* The button that submits, the way the location box beside it has one. */
+.sv-findbar .sv-find-go { border-color: var(--sv-accent) !important; }
+.sv-findbar .sv-find-go:disabled { border-color: var(--sv-border) !important; }
+
+.sv-find-error { padding: 5px 2px 0 30px; font-size: 11px; color: var(--sv-warn); }
+.sv-find-note { padding: 5px 2px 0 30px; font-size: 11px; color: var(--sv-muted); }
+
+/* ---- the full list ----------------------------------------------------- */
+
+.sv-find-list { display: flex; flex-direction: column; gap: 5px; }
+.sv-find-list > small { color: var(--sv-muted); font-size: 10.5px; line-height: 1.4; }
+.sv-find-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sv-find-row.off { opacity: .55; }
+.sv-find-row.drop { outline: 1px dashed var(--sv-accent); outline-offset: 2px; }
+.sv-findbar .sv-find-grip {
+  flex: none; cursor: grab; padding: 4px 5px !important; line-height: 1;
+  color: var(--sv-muted); background: transparent !important; border-color: transparent !important;
+}
+.sv-findbar .sv-find-delete {
+  flex: none; width: 24px; padding: 4px 0 !important; text-align: center;
+  color: var(--sv-muted); background: transparent !important; border-color: transparent !important;
+}
+.sv-findbar .sv-find-delete:hover:not(:disabled) { color: var(--sv-warn); }
+/* How many this one found, beside the pattern that found them: with several
+   patterns at once the total says nothing about which is doing the work. */
+.sv-find-tally {
+  flex: none; min-width: 52px; text-align: right;
+  font-size: 11px; font-variant-numeric: tabular-nums; color: var(--sv-muted);
+}
+.sv-find-row .sv-find-error { flex: 1 0 100%; padding-left: 30px; }
+/* Which place in the list a pattern holds, because that is what the reader
+   types into the simple box to name it: `[P1,P2]`. Set in the box's own
+   typeface, since it is a thing to be typed rather than a label. */
+.sv-find-place {
+  flex: none; min-width: 20px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px;
+  color: var(--sv-muted);
+}
+/* Apply on the right, where every other menu in these two views puts it, with
+   the note pushing it there. */
+.sv-find-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 3px; }
+.sv-find-actions small { flex: 1; min-width: 220px; color: var(--sv-muted); font-size: 10.5px; line-height: 1.4; }
+.sv-findbar .primary {
+  color: #fff; background: var(--sv-primary) !important; border-color: var(--sv-primary) !important;
+}
+.sv-findbar .primary:hover:not(:disabled) {
+  background: var(--sv-primary-hover) !important; border-color: var(--sv-primary-hover) !important;
+}
+.sv-findbar .primary:disabled { opacity: .45; }
+.sv-find-preview {
+  padding: 8px 12px; border-radius: 5px; text-align: center;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; font-weight: 600;
+}
