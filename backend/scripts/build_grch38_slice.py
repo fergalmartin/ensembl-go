@@ -21,14 +21,16 @@ Deterministic: same inputs, same bytes. Re-run and commit the result.
 
     python3 backend/scripts/build_grch38_slice.py
 
-The source assembly is not in this repository. It is a genome the app itself downloaded;
-point --fasta/--gff at any Ensembl GRCh38 pair if the default is not where yours lives.
+The source assembly is not in this repository. It is a genome the app itself downloaded,
+so it lives wherever that installation keeps its data. Set ENSEMBL_GO_LOCAL_DATA to that
+directory for working defaults, or point --fasta/--gff at any Ensembl GRCh38 pair.
 """
 
 from __future__ import annotations
 
 import argparse
 import gzip
+import os
 import re
 import shutil
 import tempfile
@@ -58,13 +60,27 @@ ASSEMBLY_NAME = "GRCh38-REG4-slice"
 ORGANISM = "Homo sapiens (demo slice)"
 TAXID = "9606"
 
-DEFAULT_FASTA = Path(
-    "/Users/fergal/Desktop/ensembl_go_section_demo/local_data/Homo_sapiens/"
-    "GCA_000001405.29/assembly/GCA_000001405.29.softmasked.fa.bgz"
-)
-DEFAULT_GFF = Path(
-    "/Users/fergal/Desktop/ensembl_go_section_demo/local_data/Homo_sapiens/"
-    "GCA_000001405.29/datasets/ensembl/2025_12/GCA_000001405.29.gff3.gz"
+# Where the downloaded GRCh38 lives is a property of the installation, not of this
+# repository: the app writes it to its own data directory, whose location is recorded in
+# the config (``~/Library/Application Support/Ensembl Go/config.json`` on macOS). This
+# used to hardcode one machine's absolute paths, which worked only on that machine and
+# put a home directory in a public file. Point ENSEMBL_GO_LOCAL_DATA at that directory to
+# get the defaults back; with it unset, --fasta/--gff become required rather than
+# silently defaulting to something that does not exist.
+LOCAL_DATA_ENV = "ENSEMBL_GO_LOCAL_DATA"
+HUMAN_SUBDIR = Path("Homo_sapiens") / "GCA_000001405.29"
+
+
+def default_source(*parts: str) -> Path | None:
+    root = os.environ.get(LOCAL_DATA_ENV)
+    if not root:
+        return None
+    return Path(root).expanduser() / HUMAN_SUBDIR / Path(*parts)
+
+
+DEFAULT_FASTA = default_source("assembly", "GCA_000001405.29.softmasked.fa.bgz")
+DEFAULT_GFF = default_source(
+    "datasets", "ensembl", "2025_12", "GCA_000001405.29.gff3.gz"
 )
 
 FASTA_LINE = 60
@@ -214,8 +230,12 @@ def write_assembly_report(out_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fasta", type=Path, default=DEFAULT_FASTA)
-    parser.add_argument("--gff", type=Path, default=DEFAULT_GFF)
+    parser.add_argument(
+        "--fasta", type=Path, default=DEFAULT_FASTA, required=DEFAULT_FASTA is None
+    )
+    parser.add_argument(
+        "--gff", type=Path, default=DEFAULT_GFF, required=DEFAULT_GFF is None
+    )
     args = parser.parse_args()
 
     for path in (args.fasta, args.gff):

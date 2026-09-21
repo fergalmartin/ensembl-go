@@ -16,7 +16,8 @@ catalogue, and overlay geometry. Preserve those changes and build on them.
 
 ## Verified data and proposed slices
 
-Source root: `/Users/fergal/Desktop/ensembl_go_section_demo/local_data`.
+Source root: the installation's own data directory, the one `ENSEMBL_GO_LOCAL_DATA`
+points at.
 The human and mouse annotations are stored as Ensembl datasets. Use those as the
 intended Ensembl/GENCODE sources, retaining the actual provider and release metadata;
 verify their GENCODE provenance before assigning a more specific GENCODE release label.

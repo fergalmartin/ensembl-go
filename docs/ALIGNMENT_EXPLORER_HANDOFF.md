@@ -1,6 +1,6 @@
 # Alignment Explorer — engineering handoff
 
-Updated: 10 September 2026. Repository: `/Users/fergal/Desktop/ensembl_local`.
+Updated: 10 September 2026.
 
 This document describes the current implementation and the decisions needed to continue it. [ALIGNMENT_EXPLORER.md](ALIGNMENT_EXPLORER.md) is the usage guide. The final section proposes efficient local genome association through identifiers, k-mer fingerprints and sequence verification, with explicit TSV precedence. This handoff is a working-tree snapshot, not a release certification or a claim that the original multi-stage proposal is complete.
 
@@ -286,7 +286,7 @@ The latest visual pass was not a repeat of every earlier feature acceptance exer
 Local real-file reproduction:
 
 ```text
-Source: /Users/fergal/Downloads/10_primates.epo.1_1.maf.gz
+Source: 10_primates.epo.1_1.maf.gz (downloaded locally, not in this repository)
 Cached dataset ID: d3fb44a7c283a0bfc68306290171225f
 Observed index: 200 blocks; 1,363 sequence IDs
 Total block columns: 43,017,264; largest block: 1,000,000 columns
