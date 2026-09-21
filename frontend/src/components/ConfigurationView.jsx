@@ -211,7 +211,27 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
     const [configPath, setConfigPath] = useState('')
     const [loadingConfig, setLoadingConfig] = useState(false)
     const [desktopPath, setDesktopPath] = useState('')
+    // Settings files the backend could not read. Shown rather than swallowed: the user
+    // is otherwise left guessing why an app that remembered them yesterday does not
+    // today, and the working directory itself is still perfectly usable.
+    const [configWarnings, setConfigWarnings] = useState([])
     const saveInputRef = useRef(null)
+
+    useEffect(() => {
+        let cancelled = false
+        const loadWarnings = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/api/config/warnings`)
+                if (!res.ok) return
+                const payload = await res.json()
+                if (!cancelled) setConfigWarnings(payload?.warnings || [])
+            } catch {
+                // Never let the warning banner be the thing that breaks the page.
+            }
+        }
+        loadWarnings()
+        return () => { cancelled = true }
+    }, [config?.output_dir, config?.working_dir])
 
     useEffect(() => {
         if (saveInputRef.current) {
@@ -636,6 +656,22 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
     return (
         <div className="h-full overflow-y-auto pr-2">
             <div className="max-w-3xl mx-auto space-y-4 pb-8">
+
+                {configWarnings.length > 0 && (
+                    <div className={`rounded-lg border px-4 py-3 text-sm space-y-2 ${isLight ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-amber-900/20 border-amber-700/50 text-amber-300'}`}>
+                        <div className="font-medium">Some settings could not be read</div>
+                        {configWarnings.map((warning) => (
+                            <div key={warning.key} className="text-xs leading-relaxed">
+                                {warning.message}
+                                {warning.path && (
+                                    <div className={`mt-0.5 font-mono break-all ${isLight ? 'text-amber-700' : 'text-amber-400/80'}`}>
+                                        {warning.path}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
 
                 <FileBrowserModal
                     isOpen={modalOpen}

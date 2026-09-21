@@ -5891,6 +5891,127 @@ def _output_dir_playlist_store_path(output_dir: Any) -> Optional[Path]:
         return None
 
 
+# --- Sidecar schema version, migrations, and load warnings -----------------------
+#
+# The sidecar has always written ``"version": 1`` and nothing has ever read it, so a
+# format change had no hook to hang a conversion on and no test to catch the breakage.
+# Reading it costs little and buys two things: an old file can be converted on the way
+# in, and a file written by a *newer* version is recognised as unreadable rather than
+# being parsed on a guess and then overwritten with a downgrade.
+#
+# The rule for an unreadable file — wrong version, corrupt JSON, anything — is the same
+# throughout: say so, decline to load it, and leave it alone. A working directory whose
+# settings cannot be read still holds the genomes, indices and notes that took hours to
+# build, and must stay usable.
+SIDECAR_SCHEMA_VERSION = 1
+
+#: from-version -> converter, applied in ascending order until the current version.
+_SIDECAR_MIGRATIONS: Dict[int, Callable[[Dict[str, Any]], Dict[str, Any]]] = {}
+
+
+def sidecar_migration(from_version: int):
+    """Register a converter from ``from_version`` to ``from_version + 1``.
+
+    When the sidecar format changes: raise SIDECAR_SCHEMA_VERSION, and register one of
+    these for the version it replaced. Old directories then convert on first read.
+    """
+    def register(fn):
+        _SIDECAR_MIGRATIONS[from_version] = fn
+        return fn
+    return register
+
+
+_config_warnings_guard = threading.Lock()
+#: key -> warning. Keyed so that re-reading the same bad file does not pile up.
+_config_warnings: Dict[str, Dict[str, Any]] = {}
+
+
+def record_config_warning(key: str, message: str, path: Any = None) -> None:
+    with _config_warnings_guard:
+        _config_warnings[key] = {
+            "key": key,
+            "message": message,
+            "path": str(path) if path else "",
+            "at": time.time(),
+        }
+    logger.warning(message)
+
+
+def clear_config_warning(key: str) -> None:
+    with _config_warnings_guard:
+        _config_warnings.pop(key, None)
+
+
+def get_config_warnings() -> List[Dict[str, Any]]:
+    with _config_warnings_guard:
+        return sorted(_config_warnings.values(), key=lambda item: item["at"])
+
+
+def _migrate_sidecar_document(doc: Any, path: Path) -> Optional[Dict[str, Any]]:
+    """Bring a sidecar document up to the current schema, or refuse it.
+
+    Returns None when the document cannot be read at this version, having recorded a
+    warning for the user. Callers treat None as "there is no sidecar here" and carry on.
+    """
+    key = f"sidecar:{path}"
+    if not isinstance(doc, dict):
+        record_config_warning(key, f"{path.name} is not a configuration document; ignoring it.", path)
+        return None
+
+    try:
+        version = int(doc.get("version") or SIDECAR_SCHEMA_VERSION)
+    except (TypeError, ValueError):
+        record_config_warning(key, f"{path.name} has an unreadable version; ignoring it.", path)
+        return None
+
+    if version > SIDECAR_SCHEMA_VERSION:
+        record_config_warning(
+            key,
+            f"{path.name} was written by a newer version of Ensembl Go "
+            f"(format {version}, this version reads {SIDECAR_SCHEMA_VERSION}). "
+            f"Its settings have not been loaded and the file has been left unchanged.",
+            path,
+        )
+        return None
+
+    while version < SIDECAR_SCHEMA_VERSION:
+        migrate = _SIDECAR_MIGRATIONS.get(version)
+        if migrate is None:
+            record_config_warning(
+                key,
+                f"{path.name} uses format {version}, which this version cannot convert. "
+                f"Its settings have not been loaded.",
+                path,
+            )
+            return None
+        try:
+            doc = migrate(doc)
+        except Exception as exc:
+            record_config_warning(key, f"Could not convert {path.name} from format {version}: {exc}", path)
+            return None
+        version += 1
+
+    clear_config_warning(key)
+    return doc
+
+
+def _read_sidecar_document(path: Path) -> Optional[Dict[str, Any]]:
+    """Parse and migrate a sidecar, or record why it could not be read."""
+    key = f"sidecar:{path}"
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except Exception as exc:
+        record_config_warning(
+            key,
+            f"{path.name} could not be read ({exc}). Its settings have not been loaded "
+            f"and the file has been left unchanged; the rest of this directory is unaffected.",
+            path,
+        )
+        return None
+    return _migrate_sidecar_document(doc, path)
+
+
 def _output_dir_config_store_path(output_dir: Any) -> Optional[Path]:
     output_dir_text = str(output_dir or "").strip()
     if not output_dir_text:
@@ -5969,13 +6090,10 @@ def _normalize_output_dir_config_state(data: Any) -> Dict[str, Any]:
 
 
 def _load_config_state_from_path(path: Path) -> Optional[Dict[str, Any]]:
-    try:
-        with open(path, encoding="utf-8") as f:
-            state = _normalize_output_dir_config_state(json.load(f))
-        return state or None
-    except Exception as exc:
-        logger.warning(f"Failed to load configuration from {path}: {exc}")
+    doc = _read_sidecar_document(path)
+    if doc is None:
         return None
+    return _normalize_output_dir_config_state(doc) or None
 
 
 def _load_config_state_for_config(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -6004,59 +6122,92 @@ def _merge_output_dir_config_state(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-# Settings the sidecar must not lose to an empty incoming value.
+# Whether a configuration is allowed to rewrite the sidecar.
 #
-# Every key in the configuration is rewritten to the sidecar on every save, from whatever
-# is in memory at the time. That is fine once a configuration has adopted what is already
-# in the directory, and destructive before it has: point a fresh install at an existing
-# data directory and the first save writes `{}` over the colours the user assigned each
-# genome, the palette they mixed and their per-genome overrides — silently, and with no
-# copy left anywhere. The genomes and notes survive because they live in their own files;
-# these live only here.
+# Every key is rewritten on every save from whatever is in memory, so the question that
+# decides whether a save is safe is not what the values are — it is whether this
+# configuration has read what is already in the directory. A configuration that has is
+# entitled to write anything, including emptiness: deselecting every genome, clearing a
+# playlist and putting the colours back to the default are all states the user chose and
+# expects to find again. A configuration that has not read the directory has defaults for
+# a quite different reason, and used to write them straight over the real thing.
 #
-# So for these keys an empty incoming value never replaces a populated stored one. The
-# guard is deliberately narrow. It cannot cover every key, because the frontend relies on
-# writing empty strings to clear stale index paths (see the cascade note in update_config),
-# and it is restricted to emptiness rather than to "looks like a default" so that setting
-# a value back to its default still propagates. The cost is that deliberately emptying one
-# of these does not reach the sidecar on its own — recoverable by setting it again or
-# deleting the sidecar, where the loss it prevents was not.
-SIDECAR_PRESERVE_WHEN_EMPTY = frozenset({
-    "genome_colors",
-    "genome_color_palette",
-    "genome_browser_colors",
-    "genome_file_overrides",
-    "genome_analysis_reports",
-    "manual_species",
-    "deregistered_genome_keys",
-})
+# Guessing from the values cannot tell those apart. It also cannot see most of the
+# settings at all: a fresh configuration has ``dim_non_selected_genes=True`` and the stock
+# ``active_app_buttons``, which are not empty and not distinguishable from a deliberate
+# choice. So the sidecar carries a revision, a configuration records the revision it
+# adopted, and a write is refused unless the two agree.
+SIDECAR_REVISION_KEY = "_sidecar_revisions"
 
 
-def _is_empty_config_value(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, (str, list, dict, tuple, set)):
-        return len(value) == 0
-    return False
+def _sidecar_paths_for_config(config: Dict[str, Any]) -> List[Path]:
+    return _config_store_paths_for_config(config) + _playlist_store_paths_for_config(config)
 
 
-def _guard_sidecar_state(
-    state: Dict[str, Any], stored: Optional[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """Keep stored values the incoming state would blank out. See SIDECAR_PRESERVE_WHEN_EMPTY."""
-    if not stored:
-        return state
-    guarded = dict(state)
-    for key in SIDECAR_PRESERVE_WHEN_EMPTY:
-        if _is_empty_config_value(guarded.get(key)) and not _is_empty_config_value(stored.get(key)):
-            guarded[key] = stored[key]
-    return guarded
+def _read_sidecar_revision(path: Path) -> Optional[int]:
+    """The revision stored in a sidecar, or None if it cannot be read.
+
+    None is what protects a damaged file: no revision can be matched against it, so no
+    write is permitted, and the bytes stay on disk for the user to recover rather than
+    being replaced by whatever this process happens to hold.
+    """
+    doc = _read_sidecar_document(path)
+    if doc is None:
+        return None
+    try:
+        return int(doc.get("revision") or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_sidecar_revisions(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Record the revisions this configuration has now read. Call after adopting them."""
+    revisions = dict(config.get(SIDECAR_REVISION_KEY) or {})
+    for path in _sidecar_paths_for_config(config):
+        if not path.exists():
+            continue
+        revision = _read_sidecar_revision(path)
+        if revision is not None:
+            revisions[str(path)] = revision
+    if not revisions:
+        return config
+    return {**config, SIDECAR_REVISION_KEY: revisions}
+
+
+def _may_write_sidecar(config: Dict[str, Any], path: Path, force: bool) -> Optional[int]:
+    """The revision to write, or None to leave the file alone."""
+    if not path.exists():
+        return 1
+    stored = _read_sidecar_revision(path)
+    if stored is None:
+        if force:
+            return 1
+        return None
+    if force:
+        return stored + 1
+    adopted = (config.get(SIDECAR_REVISION_KEY) or {}).get(str(path))
+    if adopted != stored:
+        logger.warning(
+            f"Not rewriting {path}: this configuration has not read it "
+            f"(adopted revision {adopted!r}, on disk {stored!r})"
+        )
+        return None
+    return stored + 1
+
+
+def _note_written_revision(config: Dict[str, Any], path: Path, revision: int) -> None:
+    """Keep the in-memory configuration current so consecutive saves are allowed."""
+    revisions = config.get(SIDECAR_REVISION_KEY)
+    if not isinstance(revisions, dict):
+        revisions = {}
+        config[SIDECAR_REVISION_KEY] = revisions
+    revisions[str(path)] = revision
 
 
 def _backup_sidecar(path: Path) -> None:
     """Keep the previous sidecar beside the new one.
 
-    The guard above stops the known way of flattening these settings; this is for the
+    The revision check stops the known way of flattening these settings; this is for the
     ones not yet known. A single `.bak` turns any future clobber into something the user
     can recover by hand rather than something they discover months later.
     """
@@ -6068,26 +6219,29 @@ def _backup_sidecar(path: Path) -> None:
         logger.warning(f"Failed to back up {path}: {exc}")
 
 
-def _save_output_dir_config_state(config: Dict[str, Any]) -> None:
+def _save_output_dir_config_state(
+    config: Dict[str, Any], force: bool = False
+) -> None:
     paths = _config_store_paths_for_config(config)
     if not paths:
         return
-    state = {
+    payload = {
         key: config.get(key, default)
         for key, default in DEFAULT_CONFIG.items()
     }
     for path in paths:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            payload = _guard_sidecar_state(
-                state, _load_config_state_from_path(path) if path.exists() else None
-            )
+            revision = _may_write_sidecar(config, path, force)
+            if revision is None:
+                continue
             _backup_sidecar(path)
             tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
             try:
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                     json.dump({
-                        "version": 1,
+                        "version": SIDECAR_SCHEMA_VERSION,
+                        "revision": revision,
                         "config": payload,
                     }, f, indent=2)
                 os.replace(tmp_path, path)
@@ -6097,6 +6251,7 @@ def _save_output_dir_config_state(config: Dict[str, Any]) -> None:
                 except OSError:
                     pass
                 raise
+            _note_written_revision(config, path, revision)
         except Exception as exc:
             logger.warning(f"Failed to persist configuration to {path}: {exc}")
 
@@ -6118,12 +6273,10 @@ def _load_output_dir_playlist_state(output_dir: Any) -> Optional[Dict[str, Any]]
 
 
 def _load_playlist_state_from_path(path: Path) -> Optional[Dict[str, Any]]:
-    try:
-        with open(path, encoding="utf-8") as f:
-            return _normalize_output_dir_playlist_state(json.load(f))
-    except Exception as exc:
-        logger.warning(f"Failed to load genome playlists from {path}: {exc}")
+    doc = _read_sidecar_document(path)
+    if doc is None:
         return None
+    return _normalize_output_dir_playlist_state(doc)
 
 
 def _load_playlist_state_for_config(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -6154,7 +6307,15 @@ def _merge_output_dir_playlist_state(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _save_output_dir_playlist_state(config: Dict[str, Any]) -> None:
+def _save_output_dir_playlist_state(
+    config: Dict[str, Any], force: bool = False
+) -> None:
+    """Persist the playlists beside the data they refer to.
+
+    Emptying them is a real thing a user does, so this writes whatever it is given —
+    but only once the configuration has read what is already there. See
+    SIDECAR_REVISION_KEY.
+    """
     paths = _playlist_store_paths_for_config(config)
     if not paths:
         return
@@ -6165,11 +6326,27 @@ def _save_output_dir_playlist_state(config: Dict[str, Any]) -> None:
     for path in paths:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "version": 1,
-                    **state,
-                }, f, indent=2)
+            payload = dict(state)
+            revision = _may_write_sidecar(config, path, force)
+            if revision is None:
+                continue
+            _backup_sidecar(path)
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "version": SIDECAR_SCHEMA_VERSION,
+                        "revision": revision,
+                        **payload,
+                    }, f, indent=2)
+                os.replace(tmp_path, path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+            _note_written_revision(config, path, revision)
         except Exception as exc:
             logger.warning(f"Failed to persist genome playlists to {path}: {exc}")
 
@@ -6208,21 +6385,64 @@ def invalidate_config_cache() -> None:
         _config_cache = None
 
 
+def _preserve_unreadable_config(path: Path) -> Optional[Path]:
+    """Move a configuration we cannot parse aside so the next save cannot erase it."""
+    target = path.parent / f"{path.name}.corrupt"
+    try:
+        if target.exists():
+            target.unlink()
+        shutil.copy2(path, target)
+        return target
+    except OSError as exc:
+        logger.warning(f"Could not preserve the unreadable configuration {path}: {exc}")
+        return None
+
+
 def _load_config_uncached() -> dict:
+    """Read the saved configuration, falling back to defaults.
+
+    A configuration that cannot be read used to be swallowed whole: the exception was
+    discarded and a *default* configuration returned, with nothing said to anyone. The
+    user then saw an app that had forgotten them, and the next save wrote those defaults
+    over the copy in their working directory — turning one damaged file into two. So the
+    two failures are now kept apart. Nothing saved yet is ordinary and silent. A file
+    that exists and will not parse is reported, kept (under `.corrupt`), and does not
+    become the authority for anything: the sidecars refuse writes from a configuration
+    that has not read them, so the working directory survives intact.
+    """
+    saved: Optional[dict] = None
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE) as f:
                 saved = json.load(f)
-            # Merge with defaults so new keys are always present
-            merged = {**DEFAULT_CONFIG, **saved}
-            merged = _merge_output_dir_config_state(merged)
-            merged = _merge_output_dir_playlist_state(merged)
-            _ensure_output_dir_config_state(merged)
-            _ensure_output_dir_playlist_state(merged)
-            return _enrich_config_genome_labels(merged)
-        except Exception:
-            pass
-    return _enrich_config_genome_labels(dict(DEFAULT_CONFIG))
+            if not isinstance(saved, dict):
+                raise ValueError("configuration is not an object")
+            clear_config_warning("config-file")
+        except Exception as exc:
+            saved = None
+            kept = _preserve_unreadable_config(CONFIG_FILE)
+            record_config_warning(
+                "config-file",
+                f"Your saved settings could not be read ({exc}). Ensembl Go has started "
+                f"with default settings"
+                + (f"; the file was kept as {kept.name}" if kept else "")
+                + ". Any settings stored in your working directory are unaffected and "
+                "will be loaded when you point at it again.",
+                CONFIG_FILE,
+            )
+
+    merged = {**DEFAULT_CONFIG, **(saved or {})}
+    try:
+        merged = _merge_output_dir_config_state(merged)
+        merged = _merge_output_dir_playlist_state(merged)
+        merged = _record_sidecar_revisions(merged)
+        _ensure_output_dir_config_state(merged)
+        _ensure_output_dir_playlist_state(merged)
+    except Exception as exc:
+        # The sidecars are best-effort: their own readers already report what they could
+        # not read. Never let one stop the application starting.
+        logger.warning(f"Could not merge the working directory configuration: {exc}")
+    return _enrich_config_genome_labels(merged)
 
 
 def load_config() -> dict:
@@ -6256,8 +6476,15 @@ def load_config() -> dict:
     return copy.deepcopy(loaded)
 
 
-def save_config(config: dict, path: Optional[Path] = None):
-    """Persist config to disk using an atomic write (temp file + rename)."""
+def save_config(
+    config: dict, path: Optional[Path] = None, *, force_sidecar: bool = False
+):
+    """Persist config to disk using an atomic write (temp file + rename).
+
+    ``force_sidecar`` writes the output-directory sidecars even though this
+    configuration has not adopted them — for importing a configuration file, where
+    overwriting what is in the directory is the whole point.
+    """
     if path is None:
         path = CONFIG_FILE
     path = Path(path)
@@ -6275,13 +6502,23 @@ def save_config(config: dict, path: Optional[Path] = None):
         raise
     invalidate_config_cache()
     if path == CONFIG_FILE:
-        _save_output_dir_config_state(config)
-        _save_output_dir_playlist_state(config)
+        _save_output_dir_config_state(config, force=force_sidecar)
+        _save_output_dir_playlist_state(config, force=force_sidecar)
 
 
 @app.get("/api/config")
 async def get_config():
     return load_config()
+
+
+@app.get("/api/config/warnings")
+async def get_config_warnings_endpoint():
+    """Settings files that could not be read, for the UI to show.
+
+    Kept off /api/config so that a warning never becomes a configuration field that the
+    frontend would post back and the sidecar would have to filter out again.
+    """
+    return {"warnings": get_config_warnings()}
 
 
 @app.get("/api/config/output-dir")
@@ -6413,6 +6650,8 @@ async def update_config(config: ConfigUpdate):
                     **output_dir_config_state,
                     **path_fields,
                 }
+                # Adopted, so this configuration may now write these sidecars.
+                merged = _record_sidecar_revisions(merged)
                 incoming_playlists = incoming_playlists or output_dir_config_state.get("genome_playlists")
         if directory_changed and not incoming_playlists:
             output_dir_state = _load_playlist_state_for_config(merged)
@@ -6422,6 +6661,7 @@ async def update_config(config: ConfigUpdate):
                     "genome_playlists": output_dir_state["genome_playlists"],
                     "selected_genome_playlist_id": output_dir_state["selected_genome_playlist_id"],
                 }
+                merged = _record_sidecar_revisions(merged)
 
     if (
         "genome_playlists" in incoming_fields
@@ -6477,8 +6717,10 @@ async def load_custom_config(request: LoadConfigRequest):
         loaded_config = _normalize_output_dir_config_state(data)
         merged = {**DEFAULT_CONFIG, **loaded_config}
         
-        # Also update session cache so auto-save works with loaded values
-        save_config(merged)
+        # Also update session cache so auto-save works with loaded values. This one
+        # overrides the sidecar deliberately: importing a configuration is a request to
+        # replace what the directory holds, not to merge with it.
+        save_config(merged, force_sidecar=True)
         
         return merged
     except Exception as e:

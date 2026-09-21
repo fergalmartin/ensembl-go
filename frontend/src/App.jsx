@@ -3644,12 +3644,32 @@ function App() {
     if (!nextConfig || isTutorialSandboxActive()) return false
     window.electronAPI?.saveElectronConfig?.(nextConfig)
     try {
-      await fetch(`${API_BASE}/api/config`, {
+      const res = await fetch(`${API_BASE}/api/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nextConfig)
       })
-      savedConfigRef.current = { ...nextConfig }
+      // What comes back is not always what went out. The backend merges in whatever the
+      // output directory already held the first time a configuration is pointed at one,
+      // and that merge used to be discarded here: the next autosave then wrote this
+      // pre-adoption state straight back over the user's colours, playlists and
+      // selections. Take the server's answer as the saved state, so the settings the
+      // directory carried survive into the session that just adopted them.
+      let saved = nextConfig
+      if (res.ok) {
+        try {
+          const payload = await res.json()
+          const adopted = withoutTutorialSandboxFields(payload?.config)
+          if (adopted && Object.keys(adopted).length) saved = adopted
+        } catch (parseError) {
+          console.error(`Could not read the saved ${label} back:`, parseError)
+        }
+      }
+      savedConfigRef.current = { ...saved }
+      if (saved !== nextConfig) {
+        configRef.current = { ...configRef.current, ...saved }
+        setConfig((prev) => ({ ...prev, ...saved }))
+      }
       return true
     } catch (e) {
       console.error(`Failed to save ${label}:`, e)
