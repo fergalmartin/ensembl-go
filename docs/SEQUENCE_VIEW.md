@@ -38,8 +38,10 @@ than the largest thing that has one.
 
 The bar across the top is where a control belongs when it is about the *reading*
 rather than about the thing being read -- the focus drawer on the right owns the
-latter. It is drawn in the app's two existing control-bar idioms rather than in
-one of its own:
+latter, and the bar floating over the sequence owns the one case where the thing
+being read is what the reader came for (see **A transcript read in its own
+coordinates**). It is drawn in the app's two existing control-bar idioms rather
+than in one of its own:
 
 - **The bar is the genome browser's**: the same background (`#f1f3f5` / `#1E2938`),
   the same rule under it, the same height and padding, so moving between the two
@@ -1170,6 +1172,297 @@ that have to end up in one file. That is affordable only because the things a
 reader ticks are bounded — a gene, a transcript, an exon — rather than the
 unbounded region a plain view can be.
 
+## A transcript read in its own coordinates
+
+The sequence view is genomic. A transcript has two other readings a reader wants
+to see and copy — its exons joined, and the protein those spell — and neither of
+them is a stretch of chromosome. A bar over the sequence switches between all
+four, and the panel below it draws whichever is chosen.
+
+### The bar over the sequence
+
+Four readings — **Genomic, Transcript, CDS, Protein** — on a floating bar in a band
+of its own between the control bar and the first row, centred on the sequence.
+Choosing one changes what the whole panel is showing.
+
+**It was a drawer panel first, and that was the mistake.** The reasoning was the
+bar's own rule: a control belongs on the control bar when it is about the
+*reading* and in the focus drawer when it is about the *thing being read*, and a
+transcript's CDS and its protein are the thing being read. The rule is right and
+the conclusion was wrong, because it answered the wrong question. Where a control
+*belongs* is not where a reader will *find* it, and these three are not a setting
+a reader adjusts once — they are most of why somebody opens a transcript at all.
+Behind an icon in a drawer they were, in the first report back, "way too hard to
+find".
+
+So it is drawn as the floating pill the selection bar is drawn as — same panel
+colour, accent border, radius and shadow — because the two are the same kind of
+thing: a control belonging to the sequence rather than to the toolbar. It is not
+on the control bar, which would have made it a seventh control among six and one
+that meant nothing at a location or a gene.
+
+**It keeps a band rather than lying over the rows**, which is the one place it
+differs from the genomic view's selection bar: that one is transient and may
+cover a row while it lasts; this is always there, and a bar that permanently
+covered the top line would take a row from every reader for the whole time they
+read. The scroller starts below it.
+
+At a transcript this bar is the only one: the genomic view is told not to draw
+its own (`showSelectionBar`), because two bars would be the same four buttons
+twice. At a location or a gene, where this one is absent, the genomic view keeps
+its bar exactly as it was.
+
+**Absent, not empty, where there is no transcript in focus.** At a location or a
+gene there is one reading, so a bar offering four of which three are unusable
+would be a control saying nothing and a band of furniture over every screen of
+sequence. The mode falls back to genomic the moment the reader leaves a
+transcript, decided while rendering rather than from an effect: a protein of the
+transcript they have just left is the one thing the screen must not be showing.
+
+### The reading and the highlight are one bar
+
+They were two floating bars for a while, stacked, and both carried copy and
+download — the same two actions differing only in how much they acted on. Two
+bars, four buttons, two answers to "copy what?".
+
+Merged, there is **one row of actions**, and what they act on is whether anything
+is highlighted: the stretch if there is, the whole reading if there is not. Every
+button says which in its own title, so nothing is guessed. The highlight's own
+facts are a **second row under the first**, present only while there is one, so
+the bar grows rather than something appearing elsewhere.
+
+`Set as the location` and `Show in the genome browser` are on that row too, and
+they are the two that are not always available:
+
+| | copy, download | set as location, genome browser |
+|---|---|---|
+| no highlight | the whole reading | refused — "highlight a stretch first" |
+| genomic, transcript, CDS | the highlight | the stretch it covers |
+| protein | the highlight | refused |
+
+The protein row is a judgement, not a limitation. A residue *does* have a genomic
+span, through its codons, and this view works it out — it is what the tip prints
+and what carries the highlight between readings. Jumping a genome browser to it
+was judged to read as a non-sequitur, so it is refused, and the title says to
+switch to CDS rather than leaving a dead control unexplained. Re-enabling it is
+removing one term from `placeable`.
+
+**What the actions act on is the reading's own answer, not the mere existence of
+a highlight.** A stretch can be held and have no positions in the reading on
+screen; then there is nothing of it to take and the actions fall back to the
+whole reading. Keying the titles off the stretch existing made them promise "the
+highlighted stretch" and hand over ten thousand bases.
+
+### One highlight, in whichever reading is on screen
+
+The highlight is held once, as a stretch of chromosome. `focus.custom` already
+was that for the genomic reading, so the spliced ones write to it rather than
+keeping one of their own — which is what makes it survive a change of reading,
+and what makes the genomic reading's own selection, the drawer's Selection
+section and `Set as the location` go on meaning what they always did.
+
+Each reading works out its own positions from the one range: nothing is converted
+from one reading's positions into another's, so there is no pair of readings that
+has to agree about anything. `splicedRangeFor` clips a genomic range into a
+spliced one and `genomicRangeFor` goes back the other way; `highlightFor` is the
+pair applied to whichever reading is current, and for a protein it turns CDS
+positions into residues **outward**, because a codon the stretch touches at all
+is a codon the reader meant.
+
+The same 2,639 bases of chromosome read four ways:
+
+```
+Genomic     13:32,316,521-32,319,159   2,639 bases
+Transcript  260-349                       90 bases
+CDS         61-150                        90 bases
+Protein     21-50                         30 residues
+```
+
+A stretch that covers none of the reading on screen — a 5′ UTR highlight looked
+at as CDS — keeps its range and has no positions, and the bar says *Not in this
+CDS* rather than going blank, which would read as the highlight having been lost.
+
+A genomic stretch spanning an intron clips to what is still there when it becomes
+a spliced one: 81 genomic bases across an intron are 27 bases of the transcript.
+That is what the reader meant, and refusing it because the ends fall in an intron
+would be answering a different question.
+
+### It is the view, not a text box
+
+A spliced sequence gets everything the genomic one has: sixty to a row, a number
+down either margin, the annotation in the same colours, a drag to select, a bar
+over the selection and a tip under the pointer. `SplicedSequenceView` draws with
+`SequenceRow` — the same component the genomic reading uses — which takes a handful
+of equal-length strings and knows nothing about what a position means, and it
+reports what is dragged upward as positions, which is turned into the one
+genomic range every reading shares. That is what made this affordable: a second
+way of showing sequence in one application is a second set of answers to every
+one of those questions.
+
+**It is mounted under a key of the transcript and the reading**, so moving to
+either throws it away and builds it again — which resets the pointer and the
+scroll position, neither of which means anything in the next reading. The
+highlight is deliberately not among them: it is held above as a stretch of
+chromosome and survives the move.
+
+**The legend follows the reading, not just the level.** Its own rule is that it
+is a key to what is on screen rather than a catalogue of what the view can draw,
+and a spliced sequence has no introns or splice sites left in it, no soft-masking
+reported on it, and — for a protein — no nucleotide class at all beyond the two
+codons that are marked. `legendGroupsFor` says which groups survive each reading.
+
+**Nothing selectable, whatever the cursor says.** The surface takes the press on
+both `pointerdown` and `mousedown`. Preventing the pointer event stops this
+element's own default; the browser starts its text selection off the compatibility
+*mouse* event, which is dispatched whether or not the pointer one was prevented.
+Without both, a drag pulls a document selection along behind the one being drawn,
+and it does not stop at the sequence — it reaches up and highlights the toolbar.
+
+What it does **not** borrow is the scroll model, the buffering or the collapsing.
+A spliced transcript has no introns left to hide, arrives in one piece, and is
+short enough that every row can be placed with a multiply — the longest human
+one is TTN's, at about 109 kb, which is 1,821 rows. So `utils/transcriptSequenceView.js`
+builds its own rows and the panel windows them; `MAX_SPLICED_BP` (250 kb) is a
+guard against a malformed annotation rather than a limit anyone should meet.
+
+The gutters are narrower here (`SPLICED_GUTTER_WIDTH`, 64 px against 92). A
+genomic coordinate needs room for nine figures; a spliced position counts to
+about a hundred thousand and a residue to about thirty. The width saved goes to
+the cells, which grow into it — a protein at 16 px a residue is a good deal easier
+to read along than one at 11.
+
+### Positions are not coordinates
+
+This is the one place in the subsystem where a position is not a 1-based genomic
+coordinate on the forward strand. A **spliced position** counts from the
+transcript's first base, 5′ to 3′, introns already gone — so on the minus strand
+it rises as the coordinate falls.
+
+`/transcript-sequence` answers in that space, including its class runs.
+`spliced_classes` projects each feature interval through the segment map and
+*then* paints it, rather than painting genomically and projecting the runs
+afterwards: painting first would decide precedence between features that are
+adjacent on the genome and may be far apart once the introns are gone, and the
+reader is looking at the spliced sequence. Introns and splice sites project to
+nothing, which is how they drop out without a special case — neither is in the
+sequence being described.
+
+`genomicRangeFor` and `splicedRangeFor` are the only conversions, and everything
+above them talks about positions while everything below them talks about
+coordinates — the same discipline `flankSides` keeps for 5′ and 3′. They are
+tested against each other over both strands rather than only against fixed
+answers, because that is what catches the mistakes worth catching: an off-by-one
+or a strand mixed up survives every assertion about a single coordinate and fails
+a round trip.
+
+A highlight therefore has two spans that are both true and do not match, and the
+bar prints both: the positions a reader drew, which is what the gutters beside
+them count, and the genomic stretch those cover, which is longer because the
+introns the highlight reads across lie between its ends. Printing only the second
+would name a range whose length contradicts the count; printing only the first
+would leave a reader nothing to look the stretch up by.
+
+### The protein is translated on the backend
+
+The obvious thing is to hand the client the CDS and let it translate what it
+already has. The lane over the codons does exactly that, for the reason in
+**The protein over the codons** above. It is the wrong answer here, and the first
+version of this panel got it wrong.
+
+There is **one** translation in this application, in `backend/translation.py`,
+reached here through the `translate_transcript` provider. It is the only one that
+knows a mitochondrial contig uses a different genetic code, that Ensembl renders a
+non-ATG initiation codon as M, that a terminal stop is stripped and an internal
+one kept, and that a CDS beginning mid-codon starts with an X. A browser-side
+codon table gets all four wrong, silently, and would disagree with the protein the
+Feature Explorer already shows for the same transcript. On real data the
+difference is not subtle: every mitochondrial gene comes out full of stops, and
+MYC's CTG initiator reads L instead of M.
+
+The lane and the panel are not the same computation and the split is deliberate.
+The lane is per row, over bases already on screen, and its job is to sit on its
+codons. The panel is a whole protein a reader will copy, and its job is to be the
+one Ensembl publishes.
+
+**A residue's segments are in codon-aligned CDS bases, not in residues.** Residue
+*n* is always at positions `3n-2 .. 3n`, which is what lets one residue be mapped
+back to the three bases that spell it — and they can be in two different exons,
+which the readout says when they are. A 5′-incomplete CDS is padded on the left
+by `(3 - phase) % 3` virtual bases precisely so that this stays arithmetic; those
+positions map to no genomic base, which is the honest answer for bases the
+annotation does not have.
+
+Those segments cover the residues **plus the stop codon**, because the stop is in
+the CDS and not in the protein. The obvious assertion is three bases per residue
+exactly, and it is wrong by one codon on every complete transcript there is.
+
+### What the bar says in words
+
+A row of sentences under the bar, which is where and why the control bar puts
+what it has to say about what it is drawing. Only for the protein, and only what
+a reader could not work out from the letters:
+a CDS that does not begin with ATG, one that begins mid-codon, trailing bases that
+do not make a whole codon, an internal stop, and a non-nuclear genetic code. Each
+changes how the residues above should be read, and each would otherwise have to
+be inferred from a count that does not divide or from an X that looks like a bug
+in the view.
+
+The initiator and every stop are marked in the sequence itself, in the same
+colours the CDS reading uses for them. A stop still in a protein from this
+application is an *internal* one — the terminal one is already stripped — so it is
+a readthrough, a frameshift or a mis-annotation, and it is the single thing in a
+protein most worth seeing.
+
+### A highlight, not what the pointer is over
+
+The decision worth recording, because it was made the other way first. The
+drawer's lists preview on hover and so did the first version of this. What those
+rows preview is a *feature*, a stretch worth marking, and marking anything means
+dimming everything else — so mirroring a hover dimmed the whole view in order to
+point at one base, and did it again for every base the pointer crossed on the way
+anywhere. A highlight is a stretch the reader deliberately drew, so the dimming
+is proportionate and lasts as long as they want it to.
+
+What the pointer is over is answered by the tip — the same `SequenceHoverTip` the
+genomic reading uses. For a spliced reading it leads with the position, then the
+letter, then where that lands on the chromosome and in which exon, because the
+position is what the gutters beside it are counting.
+
+**Dragging needs no tool here.** The genomic reading arms a rectangle first,
+because a drag there might have meant something else; in a spliced reading it
+could not, so a drag is always a highlight.
+
+### What is on offer
+
+Genomic always. The other three need a transcript in focus, for the same reason
+the protein lane appears only where one reading frame is being read: a gene has
+as many readings as it has isoforms, and a location as many as it has genes.
+
+The two coding readings stay available until an answer actually says there is no
+CDS, and then both go together, because they are one fact about the transcript
+rather than two about the readings. Not guessed from the biotype: a transcript
+annotated protein coding whose CDS is missing is a real thing, and so is a
+non-coding biotype the annotation gives a CDS to. `modeOffer` is the one place
+that is decided, and it answers with the reason as well as the verdict — which is
+what a control that cannot be used says in its title.
+
+A reader sitting on a coding reading when an answer says there is none is put
+back on the transcript, rather than left looking at a message where a sequence
+was.
+
+### One fetch, two readers
+
+`useTranscriptReadings` holds the answers a level above both the bar and the
+surface. The bar prints how long each reading is and greys what is not on offer;
+the surface draws whichever is chosen. A store inside the surface would have left
+the bar unable to see it, and two stores would have fetched everything twice.
+
+Only the reading being drawn is fetched. The other two are a request each that a
+reader who never switches would never need, and the bar says nothing about a
+length it has not been told rather than a nought — which would be a claim that the
+transcript has none.
+
+
 ## How the small facts are written
 
 The same three facts — what kind of thing it is, which strand it is on, how long
@@ -1320,6 +1613,7 @@ call.
 | `GET /focus/features` | a transcript's exons and introns, numbered 5′ to 3′ |
 | `GET /spans` | where the genes are and where their exons are, so the client can work out what to collapse |
 | `GET /search` | a gene or transcript by symbol or identifier |
+| `GET /transcript-sequence` | one transcript in its own coordinates: `kind=transcript\|cds\|protein` |
 | `GET /fasta` | the focused region as plain FASTA, streamed; `download=1` for a file |
 
 **Soft-masking is kept as runs, not as case.** The assemblies are soft-masked and
@@ -1492,6 +1786,10 @@ staler copy of the FASTA.
 
 ## Not yet built
 
+- **The same readings for an exon.** A coding exon's own residues are the obvious
+  next thing, and the projection and the segment map already answer it; what it
+  needs is a decision about the partial codons at each end, which belong as much
+  to the neighbouring exon as to this one.
 - **RTF download.** There is no rich-text export anywhere in the app yet.
 - **Acting from the base box.** It reports; it does nothing. Switching a class
   off from it, or focusing the gene under the cursor, would both fit.
@@ -1513,9 +1811,10 @@ The pure modules carry the load: `sequenceViewScroll`, `sequenceViewRows`,
 `sequenceViewLayout`, `sequenceViewDistance`, `sequenceViewPalette`,
 `sequenceViewDisplay`, `sequenceViewPaint`, `sequenceViewDocument`,
 `sequenceViewPicks`, `sequenceViewPopup`, `sequenceViewProtein`,
-`sequenceViewPrefs`, `sequenceViewHeights`, `sequenceViewColours` and
-`sequenceViewHidden` on the frontend; `test_sequence_view_classes`,
-`test_sequence_view_windows`, `test_sequence_view_spans` and
+`sequenceViewPrefs`, `sequenceViewHeights`, `sequenceViewColours`,
+`sequenceViewHidden` and `transcriptSequenceView` on the frontend;
+`test_sequence_view_classes`, `test_sequence_view_windows`,
+`test_sequence_view_spans`, `test_sequence_view_spliced` and
 `test_sequence_view_api` on the backend. The API tests drive the endpoint
 coroutines directly with a throwaway SQLite database, in the house style, and
 pass `main`'s real derivation functions rather than stand-ins — those are the part

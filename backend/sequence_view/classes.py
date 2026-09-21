@@ -457,3 +457,86 @@ def base_class_in_transcript(transcript: Dict[str, Any], coord: int) -> Optional
         if low <= at <= high:
             return _RESIDUAL_EXON_CLASS
     return GENE_CLASS_INTRON
+
+
+def project_to_spliced(
+    segments: Sequence[Dict[str, Any]],
+    strand: str,
+    start: int,
+    end: int,
+) -> List[Tuple[int, int]]:
+    """Where a genomic stretch lands in a spliced sequence, as ranges.
+
+    ``segments`` is what ``_build_mode_segments`` returns: 5' to 3' order, each
+    with ``coord_start``/``coord_end`` in spliced 1-based space and
+    ``genomic_start``/``genomic_end`` in genomic 1-based space, both inclusive.
+
+    A stretch can land in several segments -- an intron-spanning CDS is the
+    ordinary case -- so the answer is a list. It can also land in none, which is
+    what an intron does: an intron is exactly the sequence a spliced transcript
+    has taken out, so projecting one is meant to give nothing rather than to
+    fail.
+
+    On the minus strand the spliced offset falls as the genomic coordinate
+    rises, which is the one thing here that is not the same arithmetic on both
+    strands. The ranges come back ascending in *spliced* space on both, because
+    that is the space everything downstream reads them in.
+    """
+    low = min(int(start), int(end))
+    high = max(int(start), int(end))
+    reverse = str(strand) == "-"
+    out: List[Tuple[int, int]] = []
+    for segment in segments:
+        g_low = int(segment["genomic_start"])
+        g_high = int(segment["genomic_end"])
+        if g_high < g_low:
+            g_low, g_high = g_high, g_low
+        piece = _clip(low, high, g_low, g_high)
+        if not piece:
+            continue
+        a, b = piece
+        base = int(segment["coord_start"])
+        if reverse:
+            out.append((base + (g_high - b), base + (g_high - a)))
+        else:
+            out.append((base + (a - g_low), base + (b - g_low)))
+    out.sort()
+    return out
+
+
+def spliced_classes(
+    intervals: Iterable[Dict[str, Any]],
+    segments: Sequence[Dict[str, Any]],
+    strand: str,
+    length: int,
+) -> List[Dict[str, Any]]:
+    """One transcript's *spliced* sequence described as runs.
+
+    The same intervals ``transcript_classes`` paints genomically, projected into
+    spliced space first and then painted by the same priority order -- rather
+    than painted genomically and the runs projected afterwards. Painting first
+    would decide precedence between features that are adjacent on the genome and
+    may be far apart once the introns are gone, and the reader is looking at the
+    spliced sequence.
+
+    An interval that projects to nothing simply contributes nothing, which is
+    what makes introns and splice sites drop out here without a special case:
+    neither is in the sequence being described.
+    """
+    span = max(0, int(length))
+    if span <= 0:
+        return []
+    painter = _Painter(1, span)
+    ordered = sorted(
+        (i for i in intervals if i.get("type") in _PRIORITY_RANK),
+        key=lambda i: (_PRIORITY_RANK[i["type"]], int(i["start"])),
+    )
+    for interval in ordered:
+        name = interval["type"]
+        if name == "exon":
+            name = _RESIDUAL_EXON_CLASS
+        for piece_start, piece_end in project_to_spliced(
+            segments, strand, int(interval["start"]), int(interval["end"]),
+        ):
+            painter.paint(piece_start, piece_end, name)
+    return painter.result()

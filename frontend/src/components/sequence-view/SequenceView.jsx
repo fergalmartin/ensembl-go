@@ -35,6 +35,9 @@ import SequenceFocusDrawer from './SequenceFocusDrawer'
 import SequenceDownloadDialog from './SequenceDownloadDialog'
 import SequenceDownloadPanel from './SequenceDownloadPanel'
 import SequenceFocusSettings from './SequenceFocusSettings'
+import SequenceReadingBar from './SequenceReadingBar'
+import SplicedSequenceView from './SplicedSequenceView'
+import useTranscriptReadings from './useTranscriptReadings'
 import SequenceLegend from './SequenceLegend'
 import useDisplayLayout from './useDisplayLayout'
 import useSequenceExport from './useSequenceExport'
@@ -55,6 +58,19 @@ import { SELECT_DRAG, selectionRange } from '../../utils/sequenceViewSelect'
 import { PROTEIN_LANE_PX, rowHeightFor } from './sequenceViewLayout'
 import { ZOOM_FULL, clampZoom } from '../../utils/sequenceViewZoom'
 import { proteinRowRuns } from '../../utils/sequenceViewProtein'
+import {
+    KIND_CDS,
+    KIND_GENOMIC,
+    KIND_PROTEIN,
+    KIND_TRANSCRIPT,
+    counted,
+    genomicRangeFor,
+    highlightFor,
+    isSpliced,
+    legendGroupsFor,
+    readingFasta,
+} from '../../utils/transcriptSequenceView'
+import { saveTextFile } from '../../utils/saveTextFile'
 import './controls.css'
 
 // One frozen empty list rather than a fresh one per render: it is a memo
@@ -1004,6 +1020,136 @@ export default function SequenceView({
      */
     const palette = useMemo(() => buildPalette(prefs.colours), [prefs.colours])
 
+    // ---- which reading is on screen --------------------------------------
+
+    /**
+     * Genomic, or one of the transcript's own.
+     *
+     * Held here rather than in the bar because two things below depend on it --
+     * which surface is drawn, and which reading is fetched -- and a mode living
+     * in the control that sets it would leave both asking the control.
+     *
+     * It falls back to genomic the moment there is no transcript in focus,
+     * decided while rendering rather than from an effect: the reader has moved
+     * to a gene or a location, and a protein of the transcript they have left is
+     * the one thing the screen must not be showing. Same answer the drawer gives
+     * its fold, for the same reason.
+     */
+    const [mode, setMode] = useState(KIND_GENOMIC)
+    const atTranscript = focus.level === LEVEL_TRANSCRIPT && Boolean(focus.transcript?.id)
+    if (mode !== KIND_GENOMIC && !atTranscript) setMode(KIND_GENOMIC)
+
+    const readings = useTranscriptReadings({
+        genomeKey,
+        transcriptId: atTranscript ? focus.transcript.id : '',
+        kind: mode,
+    })
+
+    // A transcript with no CDS keeps neither of the two coding readings, so a
+    // reader who was on one is put back on the transcript rather than left
+    // looking at a message where a sequence was.
+    if (!readings.coding && (mode === KIND_CDS || mode === KIND_PROTEIN)) setMode(KIND_TRANSCRIPT)
+
+    const splicedMode = atTranscript && isSpliced(mode)
+
+    /**
+     * Go to the stretch of chromosome the highlight covers.
+     *
+     * Back to the genomic reading as well as to the region, because that is what
+     * was asked for: the stretch only exists as a stretch there. Staying in the
+     * protein and quietly changing the location under it would be answering a
+     * different question.
+     */
+    const focusHighlight = useCallback(() => {
+        const range = selectionRange(focus.custom)
+        if (!range || !focus.chrom) return
+        setMode(KIND_GENOMIC)
+        dispatch({
+            type: 'enterLocation',
+            chrom: focus.chrom,
+            location: { start: range.start, end: range.end },
+        })
+    }, [focus.custom, focus.chrom])
+
+    // ---- one highlight, in whichever reading is on screen -----------------
+
+    /**
+     * The highlight is held once, as a stretch of chromosome.
+     *
+     * `focus.custom` already was that for the genomic reading, so the spliced
+     * ones write to it too rather than keeping a highlight of their own. Two
+     * consequences, both wanted:
+     *
+     * - **It survives a change of reading.** The same stretch is 151 bases of a
+     *   transcript, 151 bases of its CDS and 51 residues of its protein, and each
+     *   works out its own positions from the one range. Nothing is converted from
+     *   one reading's positions into another's, so there is no pair of readings
+     *   that has to agree about anything.
+     * - **It is the same highlight the genomic reading has**, so switching to it
+     *   finds the stretch already marked, and `Set as the location` and the
+     *   drawer's Selection section mean what they always did.
+     *
+     * A stretch that covers none of the reading on screen -- a 5' UTR highlight
+     * looked at as CDS -- keeps the range and has no positions. That is a real
+     * answer, and the bar says so rather than appearing to have lost it.
+     */
+    const highlight = useMemo(
+        () => (splicedMode ? highlightFor(mode, readings.answer, focus.transcript?.strand || '+', focus.custom) : null),
+        [splicedMode, mode, readings.answer, focus.transcript, focus.custom],
+    )
+
+    const markSpliced = useCallback((span) => {
+        if (!span) { dispatch({ type: 'clearCustom' }); return }
+        const range = genomicRangeFor(mode, readings.answer, focus.transcript?.strand || '+', span)
+        if (range) dispatch({ type: 'setCustom', custom: range })
+    }, [mode, readings.answer, focus.transcript])
+
+    /**
+     * What the bar's four actions act on: the highlight, or the whole reading.
+     *
+     * One record rather than two paths, because that is the whole of what
+     * merging the two bars meant. A highlight narrows what is taken; it does not
+     * change what taking it is.
+     *
+     * Null in the genomic reading, where there is no one sequence held in the
+     * browser to write: the region can be a chromosome, and what answers there is
+     * `/fasta`, streamed. So the actions hand that case back to the handlers the
+     * focus drawer already uses, and the reader gets the same file whichever
+     * control they pressed.
+     */
+    const readingRecord = useCallback(() => (splicedMode && readings.answer?.status === 'ok'
+        ? readingFasta({
+            transcriptId: focus.transcript?.id || '',
+            kind: mode,
+            chrom: focus.chrom,
+            strand: focus.transcript?.strand || '+',
+            sequence: readings.answer.sequence,
+            span: highlight,
+        })
+        : null), [splicedMode, readings.answer, mode, focus.transcript, focus.chrom, highlight])
+
+    const copyReading = useCallback(async () => {
+        const built = readingRecord()
+        // The genomic reading has no sequence held in the browser to write, so
+        // it goes to the handlers that stream one -- the highlighted stretch if
+        // there is one, and the region if there is not. Those are the drawer's
+        // own, so the same press gives the same file wherever it was made.
+        if (!built) { (focus.custom ? copySelection : handleCopy)(); return }
+        try {
+            if (!navigator?.clipboard?.writeText) { say('Clipboard unavailable'); return }
+            await navigator.clipboard.writeText(built.text)
+            say(`Copied ${counted(built.length, mode)}`)
+        } catch {
+            say('Copy failed')
+        }
+    }, [readingRecord, focus.custom, copySelection, handleCopy, mode, say])
+
+    const downloadReading = useCallback(() => {
+        const built = readingRecord()
+        if (!built) { (focus.custom ? downloadSelection : () => setWideSlot('download'))(); return }
+        saveTextFile(built)
+    }, [readingRecord, focus.custom, downloadSelection])
+
     const wideWidth = WIDE_SLOT_WIDTH[wideSlot] || SETTINGS_WIDTH
 
     // ---- downloading -----------------------------------------------------
@@ -1149,8 +1295,57 @@ export default function SequenceView({
             ) : null}
 
             <div className="flex min-h-0 flex-1">
-                <div className="min-w-0 flex-1 overflow-hidden">
-                    {doc.totalRows ? (
+                <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                    {/* Which of the transcript's readings is on screen, in a
+                        band of its own between the control bar and the first
+                        row. Absent where there is no transcript in focus, since
+                        then there is only one reading and a bar offering four
+                        would be furniture over every screen of sequence. */}
+                    {atTranscript ? (
+                        <SequenceReadingBar
+                            mode={mode}
+                            answers={readings.answers}
+                            hasTranscript
+                            coding={readings.coding}
+                            isLight={isLight}
+                            span={highlight}
+                            range={selectionRange(focus.custom)}
+                            chrom={focus.chrom}
+                            onChange={setMode}
+                            onCopy={copyReading}
+                            onDownload={downloadReading}
+                            onFocusRegion={focusHighlight}
+                            onBrowse={browseSelection}
+                            onClearHighlight={clearSelection}
+                        />
+                    ) : null}
+
+                    {splicedMode ? (
+                        // Keyed on the transcript and the reading, so moving to
+                        // either throws the surface away and builds it again --
+                        // which is what resets the selection, the pointer and
+                        // the scroll position. Residue 40 is not base 40, so
+                        // none of the three mean anything in the next reading.
+                        <SplicedSequenceView
+                            // Keyed on the transcript and the reading, so moving
+                            // to either throws the surface away and builds it
+                            // again -- which resets the pointer and the scroll
+                            // position. The highlight is deliberately not among
+                            // them: it is held above as a stretch of chromosome
+                            // and survives the move.
+                            key={`${focus.transcript?.id || ''}|${mode}`}
+                            kind={mode}
+                            answer={readings.answer}
+                            error={readings.error}
+                            loading={readings.loading}
+                            transcript={focus.transcript}
+                            chrom={focus.chrom}
+                            palette={palette}
+                            isLight={isLight}
+                            span={highlight}
+                            onHighlight={markSpliced}
+                        />
+                    ) : doc.totalRows ? (
                         <SequenceCanvas
                             doc={doc}
                             viewFor={viewFor}
@@ -1170,6 +1365,10 @@ export default function SequenceView({
                             onSelectionDownload={downloadSelection}
                             onSelectionBrowse={browseSelection}
                             onSelectionClear={clearSelection}
+                            // At a transcript the bar above the sequence carries
+                            // the highlight's controls, so a second bar over the
+                            // rows would be the same four buttons twice.
+                            showSelectionBar={!atTranscript}
                             markedCoord={basePopup?.coord ?? null}
                             preview={previewLock?.span || preview}
                             scrollTo={scrollTo}
@@ -1325,6 +1524,7 @@ export default function SequenceView({
             <SequenceLegend
                 level={drawnLevel}
                 coarse={drawnLevel === LEVEL_LOCATION && annotations.detail === 'plain'}
+                only={splicedMode ? legendGroupsFor(mode) : null}
                 palette={palette}
                 isLight={isLight}
             />

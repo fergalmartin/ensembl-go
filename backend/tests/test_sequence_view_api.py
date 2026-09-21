@@ -128,6 +128,7 @@ class RouterHarness:
             chrom_resolver=lambda genome, requested, known: requested,
             tx_feature_intervals=main._build_tx_feature_intervals,
             mode_segments=main._build_mode_segments,
+            translate_transcript=main._sequence_view_protein,
             normalize_intervals=main._normalize_interval_list,
             ordered_five_to_three=main._ordered_five_to_three,
         )
@@ -774,6 +775,7 @@ class SequenceViewApiTest(unittest.TestCase):
             chrom_resolver=lambda genome, requested, known: requested,
             tx_feature_intervals=main._build_tx_feature_intervals,
             mode_segments=main._build_mode_segments,
+            translate_transcript=main._sequence_view_protein,
             normalize_intervals=main._normalize_interval_list,
             ordered_five_to_three=main._ordered_five_to_three,
         )

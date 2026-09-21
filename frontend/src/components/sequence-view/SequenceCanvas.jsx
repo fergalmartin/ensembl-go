@@ -122,6 +122,11 @@ export default function SequenceCanvas({
     onSelectionDownload,
     onSelectionBrowse,
     onSelectionClear,
+    // Whether this view draws the bar over a finished selection. It does
+    // everywhere it is the only thing on screen; at a transcript the bar above
+    // the sequence carries the same controls, and two bars would be the same
+    // four buttons twice.
+    showSelectionBar = true,
     markedCoord = null,
     preview = null,
     scrollTo,
@@ -306,7 +311,7 @@ export default function SequenceCanvas({
     const topGap = settled && selectionRows ? selectionTopGap(selectionRows.first) : 0
 
     const selectionBar = useMemo(() => {
-        if (!settled || !selectionRows || !model?.heights) return null
+        if (!showSelectionBar || !settled || !selectionRows || !model?.heights) return null
         const offsetOf = (row) => model.heights.offsetOfRow(row)
         const base = window_.slabTopPx + topGap - offsetOf(window_.firstRow)
         const placed = selectionBarPlacement({
@@ -319,7 +324,8 @@ export default function SequenceCanvas({
             viewportPx,
         })
         return placed?.visible ? placed : null
-    }, [settled, selectionRows, model, window_.slabTopPx, window_.firstRow, topGap, scrollTop, viewportPx])
+    }, [showSelectionBar, settled, selectionRows, model, window_.slabTopPx, window_.firstRow,
+        topGap, scrollTop, viewportPx])
 
     // What each row is, before anything is painted onto it.
     //

@@ -30,6 +30,8 @@ from .classes import (
     gene_union_classes,
     location_classes,
     location_gene_classes,
+    project_to_spliced,
+    spliced_classes,
     transcript_classes,
 )
 from .spans import MAX_INTRON_COLLAPSE_GENES, spans_for_level
@@ -87,6 +89,15 @@ MAX_BASE_GENES = 12
 # tens of exons; a hundred is past anything a reader would ask for and well
 # under what a URL will carry.
 MAX_FASTA_SEGMENTS = 100
+
+# The longest spliced sequence one transcript read will answer with.
+#
+# The longest spliced human transcript is TTN's, at about 109 kb, so this is
+# roughly twice the worst case anything real will ask for. It is a guard against
+# a malformed annotation -- a "transcript" spanning a chromosome -- rather than a
+# limit a reader should ever meet, and it is stated in the spliced length rather
+# than the genomic span because the spliced length is what is being sent.
+MAX_SPLICED_BP = 250_000
 
 
 class SequenceWindow(BaseModel):
@@ -208,6 +219,7 @@ def create_router(
     chrom_resolver: Callable[..., str],
     tx_feature_intervals: Callable[..., List[Dict[str, Any]]],
     mode_segments: Callable[..., Any],
+    translate_transcript: Callable[..., Dict[str, Any]],
     normalize_intervals: Callable[..., List[Dict[str, Any]]],
     ordered_five_to_three: Callable[..., List[Dict[str, Any]]],
 ) -> APIRouter:
@@ -696,6 +708,233 @@ def create_router(
                 "chrom": transcript["chrom"],
                 "strand": strand,
                 "features": features,
+            }
+
+        return await run_in_threadpool(_query)
+
+    # ---- a transcript's own sequence -------------------------------------
+
+    def _exon_number_at(exons_five_to_three, g_low: int, g_high: int) -> int:
+        """Which exon a stretch of genomic sequence belongs to, as a reader counts.
+
+        Numbered 5' to 3' by the same ordering ``/focus/features`` and the base
+        box use, so a CDS segment reported as exon 4 here is the exon 4 the
+        drawer lists. Nought where it belongs to none, which a CDS segment never
+        should -- but a malformed annotation is not worth a 500.
+        """
+        for number, exon in enumerate(exons_five_to_three, start=1):
+            if int(exon["start"]) <= g_low and g_high <= int(exon["end"]):
+                return number
+        return 0
+
+    @router.get("/transcript-sequence")
+    async def transcript_sequence(
+        genome: str = "reference",
+        transcript_id: str = "",
+        kind: str = "transcript",
+    ):
+        """One transcript's spliced sequence, with the annotation in its own space.
+
+        ``kind`` is ``transcript`` -- the exons joined -- ``cds``, the coding
+        segments joined, or ``protein``, what those spell. All three are written
+        5' to 3', which on the minus strand means reverse complemented; the
+        reader is looking at the transcript, not at the chromosome under it.
+
+        The runs come back in **spliced** coordinates, 1-based inclusive, which
+        is the one place in this package coordinates are not genomic. They are
+        the same runs ``/classes`` answers with, projected through the segment
+        map before they are painted rather than after -- see ``spliced_classes``
+        for why that order matters. A protein's positions are residues, and its
+        segments map each residue back to the three bases that spell it.
+
+        **The protein is translated here, not in the browser.** The obvious thing
+        is to hand the client the CDS and let it translate what it already has --
+        and the sequence view does exactly that for the lane it draws over the
+        codons. It is the wrong answer for a protein a reader will copy. This
+        application has one translation, in ``backend/translation.py``, and it is
+        the only one that knows a mitochondrial contig uses a different genetic
+        code, that Ensembl renders a non-ATG initiation codon as M, that a
+        terminal stop is stripped and an internal one is kept, and that a CDS
+        beginning mid-codon starts with an X. A browser-side codon table gets
+        every one of those wrong, quietly, and would disagree with the protein
+        the Feature Explorer shows for the same transcript.
+        """
+        wanted = str(kind or "transcript").strip().lower()
+        if wanted not in ("transcript", "cds", "protein"):
+            raise HTTPException(
+                status_code=400, detail="kind must be 'transcript', 'cds' or 'protein'",
+            )
+        if not transcript_id:
+            raise HTTPException(status_code=400, detail="A transcript_id is required")
+
+        def _query():
+            connection = _connect(db_provider(genome))
+            try:
+                transcript = _transcript_by_id(connection, transcript_id)
+            finally:
+                connection.close()
+
+            chrom = str(transcript["chrom"] or "")
+            strand = str(transcript["strand"] or "+")
+            fasta = fasta_provider(genome)
+            resolved, _chrom_length = _resolve_chrom(fasta, genome, chrom)
+
+            empty = {
+                "transcript_id": transcript_id,
+                "chrom": chrom,
+                "strand": strand,
+                "kind": wanted,
+                "length": 0,
+                "sequence": "",
+                "runs": [],
+                "segments": [],
+                "cds": None,
+                "phase": 0,
+                "pad": 0,
+                "startVerified": False,
+                "internalStops": 0,
+                "genomic": {"s": int(transcript["start"]), "e": int(transcript["end"])},
+            }
+
+            exons_ordered = ordered_five_to_three(transcript["exons"], strand)
+
+            def _named(pieces):
+                """Segments as the client reads them, each naming its exon.
+
+                ``s``/``e`` are in whatever space the answer is in -- spliced
+                bases for a transcript or a CDS, codon-aligned CDS bases for a
+                protein -- and ``gs``/``ge`` are always genomic.
+                """
+                out = []
+                for piece in pieces:
+                    g_low = min(int(piece["genomic_start"]), int(piece["genomic_end"]))
+                    g_high = max(int(piece["genomic_start"]), int(piece["genomic_end"]))
+                    out.append({
+                        "s": int(piece["coord_start"]),
+                        "e": int(piece["coord_end"]),
+                        "gs": g_low,
+                        "ge": g_high,
+                        "exon": _exon_number_at(exons_ordered, g_low, g_high),
+                    })
+                return out
+
+            if wanted == "protein":
+                if not transcript["cds_list"]:
+                    return {**empty, "status": "no_cds"}
+                translated = translate_transcript(
+                    genome, fasta, resolved, strand, transcript["cds_list"],
+                )
+                protein = str(translated.get("protein") or "")
+                if not protein:
+                    return {**empty, "status": "error"}
+                intervals = tx_feature_intervals(
+                    fasta, resolved, strand,
+                    transcript["exons"], transcript["cds_list"], transcript["utrs"],
+                )
+                return {
+                    **empty,
+                    "status": "ok",
+                    "length": len(protein),
+                    "sequence": protein,
+                    # The residues carry no annotation of their own; what marks
+                    # are worth drawing on them -- the initiator and any internal
+                    # stop -- the client works out from the letters, because they
+                    # are facts about the protein rather than about the genome.
+                    "runs": [],
+                    # In codon-aligned CDS bases, not in residues: residue n is at
+                    # positions 3n-2..3n, which is what lets one residue be
+                    # mapped back to the three bases that spell it -- and they can
+                    # be in two different exons.
+                    "segments": _named(translated.get("segments") or []),
+                    "phase": int(translated.get("phase") or 0),
+                    "pad": int(translated.get("pad") or 0),
+                    "codingLength": int(translated.get("cds_length") or 0),
+                    "droppedTrailing": int(translated.get("dropped_trailing") or 0),
+                    "table": int(translated.get("table") or 1),
+                    "molecule": str(translated.get("molecule") or "nuclear"),
+                    "internalStops": int(translated.get("internal_stops") or 0),
+                    "startVerified": any(i.get("type") == "start_codon" for i in intervals),
+                }
+
+            _, _, segments, status = mode_segments(
+                transcript["start"], transcript["end"], strand,
+                transcript["exons"], transcript["cds_list"], wanted,
+            )
+            if status == "no_cds":
+                return {**empty, "status": "no_cds"}
+            if status != "ok" or not segments:
+                return {**empty, "status": "error"}
+
+            length = int(segments[-1]["coord_end"])
+            if length > MAX_SPLICED_BP:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"{length:,} bases is more spliced sequence than this view will read "
+                        f"at once (up to {MAX_SPLICED_BP:,})."
+                    ),
+                )
+
+            # Read segment by segment in reading order. Each piece is oriented as
+            # it is read, which is the same rule /fasta's spliced path uses: the
+            # reverse complement of a joined sequence is its pieces' reverse
+            # complements taken in the opposite order, and the segments are
+            # already in that order.
+            pieces = []
+            for segment in segments:
+                g_low = min(int(segment["genomic_start"]), int(segment["genomic_end"]))
+                g_high = max(int(segment["genomic_start"]), int(segment["genomic_end"]))
+                raw = str(fasta.fetch(resolved, g_low - 1, g_high) or "").upper()
+                pieces.append(_reverse_complement(raw) if strand == "-" else raw)
+            sequence = "".join(pieces)
+
+            intervals = tx_feature_intervals(
+                fasta, resolved, strand,
+                transcript["exons"], transcript["cds_list"], transcript["utrs"],
+            )
+            runs = spliced_classes(intervals, segments, strand, length)
+
+            # Where the coding sequence sits in whatever space this answer is in.
+            # For a CDS answer that is the whole of it; for a transcript answer it
+            # is what tells the client which stretch to stripe by codon and which
+            # part it could translate.
+            cds_extent = None
+            if transcript["cds_list"]:
+                projected = []
+                for piece in transcript["cds_list"]:
+                    projected.extend(project_to_spliced(
+                        segments, strand, int(piece["start"]), int(piece["end"]),
+                    ))
+                if projected:
+                    cds_extent = {
+                        "s": min(p[0] for p in projected),
+                        "e": max(p[1] for p in projected),
+                    }
+
+            # Where translation starts inside the first coding segment. A CDS
+            # whose 5' end is missing from the annotation begins mid-codon, so a
+            # reader counting codons off the CDS tab has to be told where the
+            # first whole one starts.
+            phase = 0
+            if wanted == "cds":
+                raw_phase = segments[0].get("phase")
+                if raw_phase in (0, 1, 2):
+                    phase = int(raw_phase)
+
+            return {
+                **empty,
+                "status": "ok",
+                "length": length,
+                "sequence": sequence,
+                "runs": runs,
+                "segments": _named(segments),
+                "cds": cds_extent,
+                "phase": phase,
+                # Whether the annotation's own start codon reads ATG on the
+                # assembly. The view draws an unverified frame flat rather than
+                # striped; the panel says so in words rather than drawing
+                # nothing.
+                "startVerified": any(i.get("type") == "start_codon" for i in intervals),
             }
 
         return await run_in_threadpool(_query)

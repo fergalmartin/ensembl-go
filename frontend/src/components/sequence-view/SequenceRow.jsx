@@ -108,6 +108,12 @@ function SequenceRow({
     rowHeight,
     cellWidth,
     fontSize,
+    // Wide enough for a nine-figure genomic coordinate by default, which is the
+    // longest thing a gutter has to hold. A transcript read in its own
+    // coordinates counts to about a hundred thousand and a protein to about
+    // thirty, so those views pass a narrower one and spend the width on the
+    // bases instead.
+    gutterWidth = GUTTER_WIDTH,
     isLight,
     previewing = false,
     // Whether a finished selection is on the page at all. The mask says which
@@ -366,7 +372,7 @@ function SequenceRow({
         >
             <span
                 className={`text-right tabular-nums text-[11px] pr-3 ${gutter}`}
-                style={{ width: `${GUTTER_WIDTH}px` }}
+                style={{ width: `${gutterWidth}px` }}
             >
                 {Number.isFinite(labels.left) ? labels.left.toLocaleString() : ''}
             </span>
@@ -380,7 +386,7 @@ function SequenceRow({
             </span>
             <span
                 className={`text-left tabular-nums text-[11px] pl-3 ${gutter}`}
-                style={{ width: `${GUTTER_WIDTH}px` }}
+                style={{ width: `${gutterWidth}px` }}
             >
                 {Number.isFinite(labels.right) ? labels.right.toLocaleString() : ''}
             </span>
@@ -399,6 +405,7 @@ export default memo(SequenceRow, (before, after) => (
     && before.rowHeight === after.rowHeight
     && before.cellWidth === after.cellWidth
     && before.fontSize === after.fontSize
+    && before.gutterWidth === after.gutterWidth
     && before.isLight === after.isLight
     // Not one of the row's own strings, but a row with none of the pointed-at
     // feature in it has to repaint when one appears elsewhere -- that is the

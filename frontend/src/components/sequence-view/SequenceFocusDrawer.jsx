@@ -32,6 +32,7 @@ import {
 // "this one is hidden" looks the same wherever a reader meets it.
 const MUTED_EYE = (isLight) => (isLight ? '#adb5bd' : '#5c5f66')
 
+
 // The padding DrawerSectionHeading carries and the rows do not (`px-2`).
 const HEADING_INSET = 8
 

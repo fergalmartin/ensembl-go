@@ -10,6 +10,13 @@ import { groupDigits } from '../../utils/sequenceViewDisplay'
  * handlers, for something only ever true of one cell at a time. It is also how
  * the exact coordinate of an individual base is read, which the numbers in the
  * gutters cannot give.
+ *
+ * The same tip serves the spliced readings. What changes there is that the first
+ * fact is a position in the transcript's own sequence rather than a coordinate
+ * on the chromosome, and the coordinate becomes a second fact -- so `hover.at`
+ * and `hover.where` are set instead of `hover.coord`. It is one component
+ * because it is one thing: the answer to "what is this cell", wherever the
+ * reader is pointing.
  */
 export default function SequenceHoverTip({ hover, isLight, chrom, palette = DEFAULT_PALETTE }) {
     if (!hover) return null
@@ -32,6 +39,15 @@ export default function SequenceHoverTip({ hover, isLight, chrom, palette = DEFA
                         {chrom}:{hover.gap.s.toLocaleString()}&ndash;{hover.gap.e.toLocaleString()}
                     </span>
                 </>
+            ) : hover.at ? (
+                // A spliced reading: where this is in the transcript's own
+                // sequence, what it is, and only then where that lands on the
+                // chromosome -- which is the order the reader is thinking in,
+                // because the position is what the gutters beside them count.
+                <>
+                    <span className="tabular-nums">{hover.at}</span>
+                    <span className="font-semibold">{hover.base}</span>
+                </>
             ) : (
                 <>
                     <span className="tabular-nums">
@@ -40,6 +56,12 @@ export default function SequenceHoverTip({ hover, isLight, chrom, palette = DEFA
                     <span className="font-semibold">{hover.base}</span>
                 </>
             )}
+            {hover.where ? (
+                <span className="tabular-nums opacity-70">{hover.where}</span>
+            ) : null}
+            {hover.exon ? (
+                <span className="opacity-70">{hover.exon}</span>
+            ) : null}
             {style && !hover.gap ? (
                 // A swatch and its word are one fact, so they sit tight together
                 // while the facts themselves are spaced apart.

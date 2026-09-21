@@ -150,6 +150,7 @@ from translation import (
     autodetect_organelle_table,
     build_translation_layout,
     classify_contig_molecule,
+    internal_stop_count,
     translate_cds_dna,
     translation_table_for_lineage,
 )
@@ -501,6 +502,12 @@ app.include_router(create_sequence_view_router(
     chrom_resolver=lambda *args, **kwargs: _resolve_browse_chrom_name(*args, **kwargs),
     tx_feature_intervals=lambda *args, **kwargs: _build_tx_feature_intervals(*args, **kwargs),
     mode_segments=lambda *args, **kwargs: _build_mode_segments(*args, **kwargs),
+    # The one translation in this application. It is the Feature Explorer's, and
+    # it is the only one that knows about organelle genetic codes, non-ATG
+    # initiation and how Ensembl's own pep file renders an incomplete CDS -- so
+    # the sequence view asks it rather than carrying a second, simpler answer
+    # that would disagree with the protein rows a reader can already see.
+    translate_transcript=lambda *args, **kwargs: _sequence_view_protein(*args, **kwargs),
     normalize_intervals=lambda *args, **kwargs: _normalize_interval_list(*args, **kwargs),
     ordered_five_to_three=lambda *args, **kwargs: _ordered_five_to_three(*args, **kwargs)))
 API_TOKEN = os.environ.get("ENSEMBL_LOCAL_API_TOKEN", "").strip()
@@ -14488,6 +14495,61 @@ def _translate_cds(
         fasta, chrom, strand, cds_list, table=table
     )
     return protein
+
+
+def _sequence_view_protein(
+    genome: str,
+    fasta,
+    chrom: str,
+    strand: str,
+    cds_list: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """One transcript's protein, for the sequence view's panel.
+
+    The genetic code is resolved here rather than by the caller because resolving
+    it needs the genome's lineage and its assembly report, which is knowledge this
+    module has and ``sequence_view`` deliberately does not -- the package is
+    handed the functions it needs instead of importing this one.
+
+    The same call the Feature Explorer's protein rows go through, so the two
+    views cannot disagree about a residue. What comes back alongside the protein
+    is what the panel has to say about it in words: which code was used, and
+    whether the CDS begins mid-codon.
+    """
+    table, molecule, resolved = _resolve_translation_table(genome, chrom)
+    protein, layout, used_table = _translate_transcript(
+        fasta, chrom, strand, cds_list,
+        table=table, molecule=molecule, autodetect=not resolved,
+    )
+    return {
+        "protein": protein,
+        "phase": int(layout.start_phase or 0),
+        # Virtual bases standing in for the codon that began outside the CDS, so
+        # that residue n is always at positions 3n-2..3n. The padded positions
+        # map to no genomic base, which is the honest answer for bases the
+        # annotation does not have.
+        "pad": int(layout.pad or 0),
+        "cds_length": int(layout.cds_length or 0),
+        "dropped_trailing": int(layout.dropped_trailing or 0),
+        "table": int(used_table),
+        "molecule": str(molecule),
+        # An internal stop is real information about the annotation -- a
+        # readthrough, a frameshift, a mis-annotation -- and the panel says so
+        # rather than letting a reader find it by eye.
+        "internal_stops": internal_stop_count(protein),
+        # Plain dicts rather than the dataclass: `sequence_view` is handed the
+        # functions it needs instead of importing this module, and a dataclass
+        # crossing that line would be one more thing it had to know about.
+        "segments": [
+            {
+                "coord_start": int(segment.coord_start),
+                "coord_end": int(segment.coord_end),
+                "genomic_start": int(segment.genomic_start),
+                "genomic_end": int(segment.genomic_end),
+            }
+            for segment in layout.segments
+        ],
+    }
 
 
 def _translate_transcript(

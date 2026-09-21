@@ -36,6 +36,12 @@ export const MAX_CELL_WIDTH = 16
 // What a comfortable row costs, for callers that need a floor before measuring.
 export const MIN_ROW_WIDTH = GUTTER_WIDTH * 2 + MIN_CELL_WIDTH * BASES_PER_ROW
 
+// A gutter for a view whose numbers are its own rather than the chromosome's. A
+// spliced transcript counts to about a hundred thousand and a protein to about
+// thirty, neither of which needs room for nine figures -- and the width saved
+// goes to the bases, which is what a panel beside the sequence is short of.
+export const SPLICED_GUTTER_WIDTH = 64
+
 /** How tall a row is, given which extra tracks it carries.
  *
  * A row's own tracks, not the view's: the protein lane is drawn on the rows that
@@ -59,12 +65,13 @@ export function rowHeightFor(tracks = {}) {
  * answer than a sideways scrollbar, but it is not worth making the sequence
  * illegible to avoid one.
  */
-export function rowMetrics(available, scrollbarPx = 12) {
+export function rowMetrics(available, scrollbarPx = 12, gutter = GUTTER_WIDTH) {
+    const margin = Math.max(0, Math.floor(Number(gutter)) || 0)
     const usable = Math.max(0, Math.floor(Number(available) || 0) - Math.max(0, scrollbarPx))
-    const forCells = usable - GUTTER_WIDTH * 2
+    const forCells = usable - margin * 2
     const fitted = Math.floor(forCells / BASES_PER_ROW)
     const cellWidth = Math.min(MAX_CELL_WIDTH, Math.max(MIN_CELL_WIDTH, fitted))
-    const rowWidth = GUTTER_WIDTH * 2 + cellWidth * BASES_PER_ROW
+    const rowWidth = margin * 2 + cellWidth * BASES_PER_ROW
     return {
         cellWidth,
         rowWidth,
