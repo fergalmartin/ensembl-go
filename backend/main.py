@@ -6004,6 +6004,70 @@ def _merge_output_dir_config_state(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# Settings the sidecar must not lose to an empty incoming value.
+#
+# Every key in the configuration is rewritten to the sidecar on every save, from whatever
+# is in memory at the time. That is fine once a configuration has adopted what is already
+# in the directory, and destructive before it has: point a fresh install at an existing
+# data directory and the first save writes `{}` over the colours the user assigned each
+# genome, the palette they mixed and their per-genome overrides — silently, and with no
+# copy left anywhere. The genomes and notes survive because they live in their own files;
+# these live only here.
+#
+# So for these keys an empty incoming value never replaces a populated stored one. The
+# guard is deliberately narrow. It cannot cover every key, because the frontend relies on
+# writing empty strings to clear stale index paths (see the cascade note in update_config),
+# and it is restricted to emptiness rather than to "looks like a default" so that setting
+# a value back to its default still propagates. The cost is that deliberately emptying one
+# of these does not reach the sidecar on its own — recoverable by setting it again or
+# deleting the sidecar, where the loss it prevents was not.
+SIDECAR_PRESERVE_WHEN_EMPTY = frozenset({
+    "genome_colors",
+    "genome_color_palette",
+    "genome_browser_colors",
+    "genome_file_overrides",
+    "genome_analysis_reports",
+    "manual_species",
+    "deregistered_genome_keys",
+})
+
+
+def _is_empty_config_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (str, list, dict, tuple, set)):
+        return len(value) == 0
+    return False
+
+
+def _guard_sidecar_state(
+    state: Dict[str, Any], stored: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Keep stored values the incoming state would blank out. See SIDECAR_PRESERVE_WHEN_EMPTY."""
+    if not stored:
+        return state
+    guarded = dict(state)
+    for key in SIDECAR_PRESERVE_WHEN_EMPTY:
+        if _is_empty_config_value(guarded.get(key)) and not _is_empty_config_value(stored.get(key)):
+            guarded[key] = stored[key]
+    return guarded
+
+
+def _backup_sidecar(path: Path) -> None:
+    """Keep the previous sidecar beside the new one.
+
+    The guard above stops the known way of flattening these settings; this is for the
+    ones not yet known. A single `.bak` turns any future clobber into something the user
+    can recover by hand rather than something they discover months later.
+    """
+    if not path.exists():
+        return
+    try:
+        shutil.copy2(path, path.parent / f"{path.name}.bak")
+    except OSError as exc:
+        logger.warning(f"Failed to back up {path}: {exc}")
+
+
 def _save_output_dir_config_state(config: Dict[str, Any]) -> None:
     paths = _config_store_paths_for_config(config)
     if not paths:
@@ -6015,12 +6079,16 @@ def _save_output_dir_config_state(config: Dict[str, Any]) -> None:
     for path in paths:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            payload = _guard_sidecar_state(
+                state, _load_config_state_from_path(path) if path.exists() else None
+            )
+            _backup_sidecar(path)
             tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
             try:
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                     json.dump({
                         "version": 1,
-                        "config": state,
+                        "config": payload,
                     }, f, indent=2)
                 os.replace(tmp_path, path)
             except Exception:
