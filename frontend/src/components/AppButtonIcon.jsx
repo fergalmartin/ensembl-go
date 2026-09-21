@@ -5,8 +5,27 @@ export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
   const size = compact ? 18 : 24
   const strokeWidth = compact ? 1.8 : 2
 
-  // Rows of sequence with a coordinate gutter: what the view itself looks like.
-  if (buttonId === 'sequence') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M3 6h2M3 12h2M3 18h2M8 6h13M8 12h13M8 18h9"/></svg>
+  // Three codons, filling the tile.
+  //
+  // This went through abstract dashes, then letters with a magnifying glass over them.
+  // Both failed the same way: the icon renders at 18px, and anything layered over the
+  // lettering — a lens ring, a masked disc, a magnified glyph — collapses into noise at
+  // that size. What survives the reduction is the lettering itself, so the lettering is
+  // all there is, set as large as three rows will go.
+  //
+  // Height is the binding constraint, not width: three cap-heights plus gaps fit at
+  // about font-size 10 and no more, which is why the width is filled with letter-spacing
+  // rather than a larger face. Weight 800 rather than 700 because the extra stem width
+  // is what keeps the glyphs legible against the tile.
+  if (buttonId === 'sequence') return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <g fill="currentColor" fontFamily={FONT_MONO} fontSize="10" fontWeight="800" letterSpacing="2">
+        <text x="1" y="7.6">ATG</text>
+        <text x="1" y="15.6">CTC</text>
+        <text x="1" y="23.6">TAG</text>
+      </g>
+    </svg>
+  )
 
   if (buttonId === 'alignment_explorer') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4ZM3 12l9 4 9-4M3 17l9 4 9-4"/></svg>
 
