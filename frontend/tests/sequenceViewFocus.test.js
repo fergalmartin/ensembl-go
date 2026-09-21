@@ -5,10 +5,13 @@ import {
   DEFAULT_FLANKS,
   FOCUS_CHAIN,
   emptyFocus,
+  focusFromStart,
   focusReducer,
   focusWindow,
   levelIsSet,
   neighbours,
+  overlapsLocation,
+  spanOf,
 } from '../src/utils/sequenceViewFocus.js'
 
 const gene = { id: 'G1', name: 'BRCA1', start: 101, end: 200, strand: '-' }
@@ -163,14 +166,101 @@ test('a coordinate jump can cross chromosomes, and crossing clears the chain', (
   assert.equal(state.feature, null)
 })
 
-test('a jump within the same chromosome keeps the gene and transcript', () => {
-  const state = focusReducer(seeded(), { type: 'enterLocation', chrom: '17', location: { start: 5, end: 90 } })
+test('a jump keeps whatever it lands on top of', () => {
+  // Nudging the ends of a location must not cost the reader the gene they were
+  // reading: the chain is their way back to it.
+  const state = focusReducer(seeded(), { type: 'enterLocation', chrom: '17', location: { start: 120, end: 400 } })
   assert.equal(state.gene.id, 'G1')
   assert.equal(state.transcript.id, 'T1')
+  assert.equal(state.feature.start, 150)
+})
+
+test('a jump somewhere else on the chromosome arrives as a fresh location', () => {
+  // The gene is at 101-200 and the new window is nowhere near it. Leaving it in
+  // the drawer would offer a way back to somewhere the reader has just left.
+  const state = focusReducer(seeded(), { type: 'enterLocation', chrom: '17', location: { start: 5, end: 90 } })
+  assert.deepEqual(state.location, { start: 5, end: 90 })
+  assert.equal(state.gene, null)
+  assert.equal(state.transcript, null)
+  assert.equal(state.feature, null)
+  assert.equal(state.level, 'location')
+})
+
+test('overlapping at all is enough to survive a jump', () => {
+  // A gene wider than the window is still the gene the reader is standing in.
+  const inside = focusReducer(seeded(), { type: 'enterLocation', location: { start: 155, end: 160 } })
+  assert.equal(inside.gene.id, 'G1')
+  // Touching by one base counts; the base before it does not.
+  const edge = focusReducer(seeded(), { type: 'enterLocation', location: { start: 1, end: 101 } })
+  assert.equal(edge.gene.id, 'G1')
+  const short = focusReducer(seeded(), { type: 'enterLocation', location: { start: 1, end: 100 } })
+  assert.equal(short.gene, null)
 })
 
 test('a jump with no chromosome named stays on the one being read', () => {
-  const state = focusReducer(seeded(), { type: 'enterLocation', location: { start: 5, end: 90 } })
+  const state = focusReducer(seeded(), { type: 'enterLocation', location: { start: 150, end: 900 } })
   assert.equal(state.chrom, '17')
-  assert.equal(state.gene.id, 'G1', 'and so does not clear the chain')
+  assert.equal(state.gene.id, 'G1', 'and so keeps what it still covers')
+})
+
+test('a selection read as a location leaves the highlight behind', () => {
+  // What the panel over a selection does: the reader has chosen where to be, so
+  // it is a jump like any other and the selection has done its job.
+  const selected = focusReducer(seeded(), { type: 'setCustom', custom: { start: 160, end: 120 } })
+  assert.deepEqual(selected.custom, { start: 120, end: 160 })
+  const jumped = focusReducer(selected, { type: 'enterLocation', location: { start: 120, end: 160 } })
+  assert.equal(jumped.custom, null)
+  assert.equal(jumped.level, 'location')
+  assert.deepEqual(jumped.location, { start: 120, end: 160 })
+})
+
+test('a span is read however its ends are spelt', () => {
+  // Features arrive as s/e from the annotation lists and as start/end once the
+  // reducer has them, and both have to be placeable against a location.
+  assert.deepEqual(spanOf({ start: 10, end: 20 }), { start: 10, end: 20 })
+  assert.deepEqual(spanOf({ s: 10, e: 20 }), { start: 10, end: 20 })
+  assert.deepEqual(spanOf({ start: 20, end: 10 }), { start: 10, end: 20 }, 'either way round')
+  assert.equal(spanOf(null), null)
+  assert.equal(spanOf({ start: 10 }), null)
+  assert.equal(overlapsLocation({ s: 150, e: 170 }, { start: 100, end: 200 }), true)
+  assert.equal(overlapsLocation({ s: 150, e: 170 }, null), false)
+  assert.equal(overlapsLocation(null, { start: 1, end: 2 }), false)
+})
+
+test('switching genomes lands where that genome was being read', () => {
+  // A gene picked out elsewhere is the most particular answer, so it wins.
+  const withGene = focusFromStart('g2', {
+    gene: { id: 'G9', name: 'BRCA2', chrom: '13', start: 32315474, end: 32400266, strand: '+' },
+    location: { chrom: '13', start: 32300000, end: 32500000 },
+  })
+  assert.equal(withGene.chrom, '13')
+  assert.equal(withGene.focus.level, 'gene')
+  assert.equal(withGene.focus.gene.id, 'G9')
+  assert.deepEqual(withGene.focus.location, { start: 32300000, end: 32500000 },
+    'and the region on record stands above it')
+})
+
+test('a region from another chromosome is not the gene’s region', () => {
+  const crossed = focusFromStart('g2', {
+    gene: { id: 'G9', chrom: '13', start: 100, end: 200 },
+    location: { chrom: '7', start: 1, end: 5000 },
+  })
+  assert.equal(crossed.chrom, '13')
+  assert.deepEqual(crossed.focus.location, { start: 100, end: 200 }, 'the gene’s own span stands in')
+})
+
+test('a region alone is enough to open on', () => {
+  const region = focusFromStart('g3', { location: { chrom: '2', start: 90, end: 10 } })
+  assert.equal(region.chrom, '2')
+  assert.equal(region.focus.level, 'location')
+  assert.deepEqual(region.focus.location, { start: 10, end: 90 }, 'either way round')
+  assert.equal(region.focus.gene, undefined)
+})
+
+test('a genome nobody has been reading has nothing to say', () => {
+  assert.equal(focusFromStart('g4', null), null)
+  assert.equal(focusFromStart('g4', {}), null)
+  // Half a gene is not a place: without coordinates there is nowhere to go.
+  assert.equal(focusFromStart('g4', { gene: { id: 'G1' } }), null)
+  assert.equal(focusFromStart('g4', { location: { start: 1, end: 2 } }), null, 'nor a region with no chromosome')
 })

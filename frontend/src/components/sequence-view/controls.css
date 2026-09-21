@@ -133,8 +133,11 @@
 }
 .sv-control-active { color: var(--sv-accent); font-size: 9px; font-weight: 600; }
 /* A control whose face is its name alone. The two-line form's name is a caption
-   over a value; standing by itself it is the label, and takes the value's size. */
-.sv-control > .sv-control-name { color: var(--sv-text); font-size: 12px; font-weight: 600; line-height: 16px; }
+   over a value; standing by itself it is the label, and takes the value's size.
+   Select is the other one: a switch with nothing to report, so its word is set
+   at the size the words on every other control are. */
+.sv-control > .sv-control-name,
+.sv-split-main > .sv-control-name { color: var(--sv-text); font-size: 12px; font-weight: 600; line-height: 16px; }
 .sv-control-chevron { flex-shrink: 0; color: var(--sv-muted); transition: transform .12s; }
 .sv-bar .menu-open { border-color: var(--sv-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sv-accent) 28%, transparent); }
 .sv-bar .menu-open .sv-control-chevron { transform: rotate(180deg); color: var(--sv-accent); }
@@ -149,6 +152,52 @@
 .sv-split-main { flex: 1; min-width: 0; text-align: left; padding: 5px 9px !important; display: flex; align-items: center; }
 .sv-split-arrow { width: 30px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; padding: 0 !important; border-left: 1px solid var(--sv-border) !important; }
 .sv-split.selected { border-color: var(--sv-accent); background: color-mix(in srgb, var(--sv-accent) 12%, var(--sv-panel)); }
+/* The seam between the switch and its chevron, drawn in the same colour as
+   the frame around them: left grey inside an accent border it read as a
+   join that had been missed rather than a second target. */
+.sv-split.selected .sv-split-arrow { border-left-color: color-mix(in srgb, var(--sv-accent) 45%, transparent) !important; }
+
+/* ---- the genome in hand ------------------------------------------------- */
+
+/* The pill itself is the control. It keeps the height of the field beside it so
+   the bar's first row still lines up, and the chevron sits outside the pill:
+   the pill says which genome, the chevron says there are others. */
+.sv-bar .sv-genome {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 30px; max-width: 250px; padding: 0 4px 0 0;
+  background: transparent; border: 1px solid transparent; border-radius: 999px;
+}
+.sv-bar .sv-genome:hover:not(:disabled) { border-color: var(--sv-border); background: transparent; }
+.sv-bar .sv-genome.menu-open { border-color: var(--sv-accent); box-shadow: none; }
+.sv-genome-pill {
+  display: inline-flex; align-items: baseline; gap: 6px; min-width: 0;
+  padding: 4px 11px; border: 1px solid; border-radius: 999px;
+  font-size: 11.5px; line-height: 15px; white-space: nowrap; overflow: hidden;
+}
+.sv-genome-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.sv-genome-assembly { font-weight: 400; opacity: .78; overflow: hidden; text-overflow: ellipsis; }
+
+/* The list behind it: one row per active genome, the mark for the one in hand
+   in the margin where a radio would be, because that is what this is. */
+.sv-genome-list { display: flex; flex-direction: column; gap: 3px; }
+.sv-genome-row {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 4px 7px !important; text-align: left;
+  background: transparent !important; border-color: transparent !important;
+}
+.sv-genome-row:hover:not(:disabled) { border-color: var(--sv-accent) !important; }
+.sv-genome-row.selected { background: color-mix(in srgb, var(--sv-accent) 10%, transparent) !important; }
+.sv-genome-row .sv-genome-pill { max-width: 220px; }
+.sv-genome-tick {
+  flex: none; width: 13px; height: 13px; border-radius: 50%;
+  border: 1.5px solid var(--sv-border); box-sizing: border-box;
+}
+.sv-genome-row.selected .sv-genome-tick {
+  border-color: var(--sv-accent);
+  background: radial-gradient(circle, var(--sv-accent) 0 45%, transparent 47%);
+}
+/* Where that genome will open, for one the reader has been reading elsewhere. */
+.sv-genome-at { margin-left: auto; padding-left: 8px; white-space: nowrap; }
 
 /* The two square controls: the search button and the selection tool. Square
    because both are a glyph rather than a word, and the same height as the
@@ -252,6 +301,26 @@
 .sv-flank-grid > .sv-flank-head { font-size: 10px; color: var(--sv-muted); text-transform: uppercase; letter-spacing: .05em; text-align: right; }
 .sv-flank-grid label { display: flex; align-items: center; gap: 5px; justify-content: flex-end; font-size: 10px; color: var(--sv-muted); }
 .sv-flank-grid input { width: 62px; padding: 3px 5px; font-size: 11px; text-align: right; background: var(--sv-field); }
+
+/* ---- a menu that is a choice between ways of doing one thing ------------ */
+
+/* One row per way, each with its name over the sentence that says when it is
+   the better one. A radio group would be the literal reading, but the rows are
+   the only thing in the menu and pressing one applies it, so a row is the
+   control rather than a label beside one. */
+.sv-menu-options { display: flex; flex-direction: column; gap: 4px; }
+.sv-menu-option {
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  width: 100%; padding: 6px 8px !important; text-align: left;
+  background: transparent !important; border-color: transparent !important;
+}
+.sv-menu-option:hover:not(:disabled) { border-color: var(--sv-accent) !important; }
+.sv-menu-option strong { font-size: 11.5px; }
+.sv-menu-option small { color: var(--sv-muted); line-height: 1.4; }
+.sv-menu-option.selected {
+  border-color: var(--sv-accent) !important;
+  background: color-mix(in srgb, var(--sv-accent) 12%, transparent) !important;
+}
 
 /* ---- the colour list ---------------------------------------------------- */
 
@@ -369,3 +438,54 @@
 }
 .sv-controls.light .sv-zoom-box input[type="range"] { --sv-zoom-rail: #cbd5e1; }
 .sv-zoom-value { font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; opacity: .75; }
+
+/* ---- the bar over a selection ------------------------------------------ */
+
+/* Placed in the scrolling content rather than over the page, so it travels with
+   the rows it belongs to. The track is the width of a sequence row and pushes
+   the bar to its right-hand edge, which is the edge the eye already has a line
+   on from the coordinates down the margin. */
+.sv-selection-track {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+  z-index: 5;
+}
+.sv-selection-bar {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 38px;
+  padding: 0 7px 0 11px;
+  box-sizing: border-box;
+  background: var(--sv-panel);
+  border: 1px solid var(--sv-accent);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px #0006;
+  font: 12px/1.3 Lato, system-ui, sans-serif;
+  color: var(--sv-text);
+}
+.sv-selection-bar.light { box-shadow: 0 6px 18px #0000001f; }
+.sv-selection-what { display: flex; flex-direction: column; gap: 1px; white-space: nowrap; }
+.sv-selection-where { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 600; }
+.sv-selection-size { font-size: 9.5px; color: var(--sv-muted); }
+.sv-selection-bar .sv-selection-set {
+  flex: none; height: 26px; padding: 0 10px; font-size: 11px; font-weight: 600;
+  color: #fff; background: var(--sv-primary); border: 1px solid var(--sv-primary); border-radius: 5px;
+  white-space: nowrap; cursor: pointer;
+}
+.sv-selection-bar .sv-selection-set:hover:not(:disabled) { background: var(--sv-primary-hover); border-color: var(--sv-primary-hover); }
+.sv-selection-bar .sv-selection-set:disabled { opacity: .45; cursor: default; }
+.sv-selection-acts { display: inline-flex; align-items: center; gap: 1px; }
+.sv-selection-bar .sv-selection-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  color: var(--sv-muted); background: transparent; border: 1px solid transparent; border-radius: 5px;
+  cursor: pointer;
+}
+.sv-selection-bar .sv-selection-mark:hover:not(:disabled) { color: var(--sv-text); background: color-mix(in srgb, var(--sv-accent) 14%, transparent); }
+.sv-selection-bar .sv-selection-mark:disabled { opacity: .35; cursor: default; }

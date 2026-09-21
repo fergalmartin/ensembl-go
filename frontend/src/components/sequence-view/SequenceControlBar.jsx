@@ -11,6 +11,8 @@ import {
 } from '../../utils/sequenceViewZoom'
 import ColourTool from './ColourTool'
 import FeatureTool from './FeatureTool'
+import GenomeTool from './GenomeTool'
+import SelectTool from './SelectTool'
 
 function MagnifierGlyph() {
     return (
@@ -26,16 +28,6 @@ function CloseGlyph() {
     return (
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
             <path d="M6 6l12 12M18 6L6 18" />
-        </svg>
-    )
-}
-
-/** The rectangle every other view in the app arms a selection with. */
-function SelectGlyph() {
-    return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="2.5" y="2.5" width="16" height="16" rx="2.2" strokeWidth="2.2" strokeDasharray="3.2 2.2" />
-            <path d="M21 16.8v5.2M18.4 19.4h5.2" strokeWidth="2.2" />
         </svg>
     )
 }
@@ -75,6 +67,7 @@ export default function SequenceControlBar({
     options,
     genomeKey,
     onGenomeChange,
+    isLight = false,
     focus,
     region,
     viewport,
@@ -86,6 +79,8 @@ export default function SequenceControlBar({
     indexBuilding,
     selectMode,
     onSelectModeChange,
+    selectStyle,
+    onSelectStyleChange,
     zoom = 1,
     onZoomChange,
     collapse,
@@ -182,15 +177,15 @@ export default function SequenceControlBar({
         // that root and has to inherit them. See SequenceView and controls.css.
         <div>
             <div className="sv-bar">
-                <select
-                    value={genomeKey}
-                    onChange={(event) => onGenomeChange(event.target.value)}
-                    aria-label="Genome"
-                >
-                    {options.map((option) => (
-                        <option key={option.key} value={option.key}>{option.label}</option>
-                    ))}
-                </select>
+                {/* The genome as it is worn everywhere else in the app, with
+                    the others behind it. See GenomeTool.jsx. */}
+                <GenomeTool
+                    options={options}
+                    genomeKey={genomeKey}
+                    isLight={isLight}
+                    root={root}
+                    onChange={onGenomeChange}
+                />
 
                 {/* The box and its button are one control: the browser's search
                     has both, and someone who prefers pressing a button to
@@ -220,20 +215,16 @@ export default function SequenceControlBar({
                 <div className="sv-divider" />
 
                 {/* Armed rather than always on, which is how a rectangle works
-                    everywhere else in the app. The inset ring is the browser's
-                    way of showing a tool is in hand. */}
-                <button
-                    type="button"
-                    className="sv-icon-button"
-                    onClick={() => onSelectModeChange(!selectMode)}
-                    aria-pressed={selectMode}
-                    aria-label="Select bases"
-                    title={selectMode
-                        ? 'Selection tool in hand: drag a rectangle over the bases to select'
-                        : 'Select bases by dragging a rectangle over them'}
-                >
-                    <SelectGlyph />
-                </button>
+                    everywhere else in the app -- but said in words, since there
+                    are now two ways of drawing one and a glyph cannot say
+                    which. */}
+                <SelectTool
+                    armed={selectMode}
+                    mode={selectStyle}
+                    root={root}
+                    onArm={onSelectModeChange}
+                    onMode={onSelectStyleChange}
+                />
 
                 <FeatureTool
                     collapse={collapse}
@@ -316,7 +307,10 @@ export default function SequenceControlBar({
                         distance between the ends: collapsed, and in a
                         collection, the rows jump, and a screen showing two
                         hundred bases either side of an intron is not showing the
-                        intron and should not say that it is. */}
+                        intron and should not say that it is. How many stretches
+                        that came in is left unsaid -- the breaks are drawn in
+                        the sequence itself, where they are easier to see than
+                        to count. */}
                     {screen ? (
                         <span title={region
                             ? `On screen, within ${focus.chrom}:${region.start.toLocaleString()}\u2013${region.end.toLocaleString()}`
@@ -326,7 +320,6 @@ export default function SequenceControlBar({
                             </strong>
                             {' '}
                             <strong>{screen.bases.toLocaleString()}</strong> bp
-                            {screen.pieces > 1 ? ` in ${screen.pieces} parts` : ''}
                         </span>
                     ) : null}
                     {hiddenCount > 0 ? (

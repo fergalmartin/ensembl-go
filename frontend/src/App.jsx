@@ -713,6 +713,9 @@ function getViewActiveCapacity(viewId) {
   if (viewId === 'feature_explorer') return Number.POSITIVE_INFINITY
   if (viewId === 'neighbourhood') return Number.POSITIVE_INFINITY
   if (viewId === 'structural_variation') return 3
+  // One genome at a time, and the pill for it says so: the strip showed every
+  // genome half-lit, including the one actually on screen.
+  if (viewId === 'sequence') return 1
   if (TWO_GENOME_VIEWS.has(viewId)) return 2
   return 0
 }
@@ -928,6 +931,9 @@ function App() {
   // location note or alignment selection offering to take the reader to its
   // region. Consumed by the panel, which focuses it the same way a search does.
   const [browserLocationFocusByGenome, setBrowserLocationFocusByGenome] = useState({})
+  // The genome the sequence view is reading, reported by the view itself: it
+  // chooses its own, and the top bar has to light the same pill.
+  const [sequenceGenomeKey, setSequenceGenomeKey] = useState('')
   const alignmentInputsRef = useRef(alignmentInputs)
   const alignmentResolveControllersRef = useRef({})
   const alignmentResolveRequestTokenRef = useRef({})
@@ -5015,6 +5021,21 @@ function App() {
     }
     return next
   }, [browserFocusByGenome, browserRefGene, browserTgtGene, refGenomeKey, tgtGenomeKey])
+  // Where each genome is being read, gathered from wherever the reader left it:
+  // the gene in focus in the browser's panels, and any region pinned there. The
+  // sequence view opens on this when the reader switches genomes, rather than
+  // dropping them at that genome's default starting locus.
+  const genomeStartingPoints = useMemo(() => {
+    const out = {}
+    for (const [key, gene] of Object.entries(focusGeneByGenome || {})) {
+      if (gene) out[key] = { gene }
+    }
+    for (const [key, location] of Object.entries(browserLocationFocusByGenome || {})) {
+      if (location) out[key] = { ...(out[key] || {}), location }
+    }
+    return out
+  }, [focusGeneByGenome, browserLocationFocusByGenome])
+
   const neighbourhoodGenomes = useMemo(
     () => {
       const activeGenomes = dedupeSpeciesList(config?.active_species || []).filter((species) => Boolean(species?.files?.gff3))
@@ -5457,8 +5478,14 @@ function App() {
   const topListMode = 'all'
   const contextFullyActiveSpecies = useMemo(() => {
     const active = Array.isArray(config?.active_species) ? config.active_species : []
-    return getContextFullyActiveSpecies(active, currentView, dualViewFocus)
-  }, [config?.active_species, currentView, dualViewFocus, getContextFullyActiveSpecies])
+    // The sequence view keeps its own choice of genome rather than following
+    // the shared two-genome focus, so it says which one, and only for the
+    // strip: nothing here is written back to the configuration.
+    const focus = currentView === 'sequence' && sequenceGenomeKey
+      ? { primaryKey: sequenceGenomeKey, secondaryKey: '' }
+      : dualViewFocus
+    return getContextFullyActiveSpecies(active, currentView, focus)
+  }, [config?.active_species, currentView, dualViewFocus, sequenceGenomeKey, getContextFullyActiveSpecies])
   const selectedSpeciesKeysForView = useMemo(() => {
     if (currentView === 'structural_variation') {
       if (svFullyActiveSpeciesKeys.length) return new Set(svFullyActiveSpeciesKeys)
@@ -6486,7 +6513,7 @@ function App() {
               </div>
             </ErrorBoundary>
           ) : currentView === 'sequence' ? (
-            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Sequence…</div>}><SequenceView theme={theme} genomes={config?.active_species || []} incoming={sequenceViewEntry} onIncomingConsumed={() => setSequenceViewEntry(null)} onFocusLocationSelect={handleGenomeFocusLocationSelect} onNavigateToBrowser={() => setCurrentView('genome_browser')} /></React.Suspense></ErrorBoundary>
+            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Sequence…</div>}><SequenceView theme={theme} config={config} genomes={config?.active_species || []} startingPoints={genomeStartingPoints} onGenomeChange={setSequenceGenomeKey} incoming={sequenceViewEntry} onIncomingConsumed={() => setSequenceViewEntry(null)} onFocusLocationSelect={handleGenomeFocusLocationSelect} onNavigateToBrowser={() => setCurrentView('genome_browser')} /></React.Suspense></ErrorBoundary>
           ) : currentView === 'alignment_explorer' ? (
             <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Alignment Explorer…</div>}><AlignmentExplorerView theme={theme} config={config} genomes={config?.active_species || []} topBarGenomes={topBarSpecies} onAddGenome={handleSpeciesPillToggle} incoming={explorerIncoming} onIncomingConsumed={() => setExplorerIncoming(null)} onOpenGenome={handleOpenAlignmentExplorerLoci} /></React.Suspense></ErrorBoundary>
           ) : currentView === 'neighbourhood' ? (

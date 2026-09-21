@@ -25,6 +25,7 @@ import {
     emptyFocus,
     flankPair,
     focusReducer,
+    focusFromStart,
     focusWindow,
 } from '../../utils/sequenceViewFocus'
 import SequenceCanvas from './SequenceCanvas'
@@ -48,6 +49,9 @@ import {
     toggleHidden,
 } from '../../utils/sequenceViewHidden'
 import { drawnSegments, sequenceApi, sequenceFasta } from './api'
+import { genomeColorResolver } from '../../genomeColorSchemes'
+import { genomePillLabels } from '../GenomePill'
+import { SELECT_DRAG, selectionRange } from '../../utils/sequenceViewSelect'
 import { PROTEIN_LANE_PX, rowHeightFor } from './sequenceViewLayout'
 import { ZOOM_FULL, clampZoom } from '../../utils/sequenceViewZoom'
 import { proteinRowRuns } from '../../utils/sequenceViewProtein'
@@ -71,9 +75,28 @@ const SETTINGS_WIDTH = 260
 const DOWNLOAD_WIDTH = 560
 const WIDE_SLOT_WIDTH = { settings: SETTINGS_WIDTH, download: DOWNLOAD_WIDTH }
 
+/** Where a genome would open, in as few characters as say it. */
+function startingPointLabel(point) {
+    const gene = point?.gene
+    if (gene?.name || gene?.id) return gene.name || gene.id
+    const location = point?.location
+    if (!location?.chrom) return ''
+    const from = Number(location.start)
+    const to = Number(location.end)
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return ''
+    return `${location.chrom}:${Math.min(from, to).toLocaleString()}`
+}
+
 export default function SequenceView({
     theme,
+    config = null,
     genomes = [],
+    // Where each genome is being read elsewhere in the app, keyed by genome:
+    // `{ location, gene }`. What switching genomes here opens on.
+    startingPoints = null,
+    // Which genome is being read, for the top bar: the view chooses its own,
+    // and the strip has to light the same pill.
+    onGenomeChange = null,
     incoming = null,
     onIncomingConsumed = null,
     onFocusLocationSelect = null,
@@ -118,6 +141,9 @@ export default function SequenceView({
     // A tool in hand, not a preference: it is put down when the reader leaves,
     // the way the browser's and the alignment view's rectangles are.
     const [selectMode, setSelectMode] = useState(false)
+    // How a selection is drawn: dragged end to end, or clicked at each end.
+    // A preference rather than a tool, since it survives putting the tool down.
+    const [selectStyle, setSelectStyle] = useState(SELECT_DRAG)
     // How far out the reader is standing. Full size is the readable view; short
     // of it the rows are drawn as one canvas -- see utils/sequenceViewZoom.js.
     // A tool in hand rather than a preference: it is put down on the way out,
@@ -139,18 +165,42 @@ export default function SequenceView({
 
     // Whatever the reader picked, or the first genome they have active. Derived
     // rather than set from an effect, so the first render already has one.
+    const resolveGenomeColour = useMemo(() => genomeColorResolver(config), [config])
     const options = useMemo(
-        () => (Array.isArray(genomes) ? genomes : []).map((item) => ({
-            key: getGenomeKey(item),
-            label: item?.display_name || item?.species || getGenomeKey(item),
-            // What a FASTA header should say. The selection key identifies a
-            // genome to the backend but reads as machinery in a header someone
-            // pastes into a paper or a search box.
-            assembly: item?.assembly_name || item?.assembly_accession || item?.display_name || '',
-        })).filter((item) => item.key),
-        [genomes],
+        () => (Array.isArray(genomes) ? genomes : []).map((item) => {
+            const key = getGenomeKey(item)
+            const name = item?.display_name || item?.species || key
+            const start = startingPoints?.[key] || null
+            return {
+                key,
+                label: name,
+                // What a FASTA header should say. The selection key identifies a
+                // genome to the backend but reads as machinery in a header someone
+                // pastes into a paper or a search box.
+                assembly: item?.assembly_name || item?.assembly_accession || item?.display_name || '',
+                // How the genome is worn: the same pill the top bar and the
+                // browser draw, in the same colour.
+                pill: {
+                    name,
+                    assembly: item?.assembly_name || item?.assembly || '',
+                    colour: resolveGenomeColour(item),
+                    tooltip: genomePillLabels(item).pillTooltip,
+                },
+                // Where it would open, said in the list so that the switch does
+                // not arrive somewhere unexplained.
+                at: startingPointLabel(start),
+            }
+        }).filter((item) => item.key),
+        [genomes, startingPoints, resolveGenomeColour],
     )
     const genomeKey = chosenGenome || options[0]?.key || ''
+
+    // Including the one nobody chose: opening the view with no genome named
+    // settles on the first, and the strip should say so as plainly as if it had
+    // been picked from the list.
+    useEffect(() => {
+        if (genomeKey) onGenomeChange?.(genomeKey)
+    }, [genomeKey, onGenomeChange])
 
     // An opening region, so that arriving at the view without coming from
     // anywhere still shows sequence rather than an empty frame.
@@ -626,6 +676,52 @@ export default function SequenceView({
         return () => document.removeEventListener('pointerdown', away, true)
     }, [basePopup, closeBasePopup])
 
+    /**
+     * A press anywhere the tool could not be used puts it down.
+     *
+     * An armed tool changes what a press on the sequence means, so leaving it
+     * armed after the reader has gone off to do something else -- opened a
+     * menu, ticked a record, pressed a gene in the drawer -- means their next
+     * press on the bases draws a selection they did not ask for. The sequence
+     * itself is exempt, obviously; so is the control, which has its own switch;
+     * and so are the menus drawn over the page, since choosing how to select is
+     * not leaving.
+     */
+    useEffect(() => {
+        if (!selectMode) return undefined
+        const away = (event) => {
+            const target = event.target
+            if (!target?.closest) return
+            if (target.closest('[data-sequence-view-scroller]')) return
+            if (target.closest('[data-sequence-select]')) return
+            if (target.closest('.sv-menu')) return
+            setSelectMode(false)
+        }
+        // Captured, for the same reason the base box watches this way: the
+        // canvas stops some presses on their way up.
+        document.addEventListener('pointerdown', away, true)
+        return () => document.removeEventListener('pointerdown', away, true)
+    }, [selectMode])
+
+    /**
+     * Read another genome, starting where that genome is already being read.
+     *
+     * A reader switching here has nearly always been looking at this genome in
+     * the browser or one of the panels, and the app knows where. Only when it
+     * does not does the view fall back to asking the backend for a starting
+     * region, which is what the seeding effect above is for.
+     */
+    const chooseGenome = useCallback((key) => {
+        if (!key || key === genomeKey) return
+        setGenomeKey(key)
+        const start = focusFromStart(key, startingPoints?.[key])
+        if (!start) return
+        // Settled, or the seeding effect reads the focus it has just been given
+        // as an empty frame and asks for a starting region nobody needs.
+        seeded.current = { key, settled: true }
+        dispatch({ type: 'reset', ...start })
+    }, [genomeKey, startingPoints])
+
     const jumpToCoord = useCallback((coord) => {
         setScrollTo({ coord, nonce: Date.now() })
     }, [])
@@ -793,6 +889,88 @@ export default function SequenceView({
         dispatch({ type: 'setCustom', custom: range })
     }, [])
 
+    // ---- what to do with a selection ------------------------------------
+    //
+    // The bar that offers these is drawn over the selection's first row, inside
+    // the scroller, and follows the reader down a selection longer than the
+    // screen. See SelectionBar.jsx.
+
+    // Drawn and done with: the tool goes back in the drawer, because a reader
+    // who has just selected something wants to do something with it, not
+    // select it again. Both ways of drawing one end the same way.
+    const handleSelectionDone = useCallback(() => setSelectMode(false), [])
+
+    // Read as a location rather than as a selection: the reader has chosen
+    // where they want to be, so this is a jump like any other, and the
+    // highlight has done its job. Keeping it would leave the whole window
+    // outlined and everything outside it dimmed -- which is nothing, since the
+    // window is now all there is. Whatever the drawer was holding below the
+    // location survives only if it is still under the new one.
+    const focusSelection = useCallback(() => {
+        const range = selectionRange(focus.custom)
+        if (!range) return
+        dispatch({
+            type: 'enterLocation',
+            chrom: focus.chrom,
+            location: { start: range.start, end: range.end },
+        })
+    }, [focus.custom, focus.chrom])
+
+    const clearSelection = useCallback(() => {
+        dispatch({ type: 'clearCustom' })
+    }, [])
+
+    // The panel offers every level that is set, the selection among them, so
+    // this only says which one to open on. Focusing the selection first would
+    // have done that too, but at the price of reframing the whole view around
+    // it -- a download is a thing to take away, not a place to stand.
+    const downloadSelection = useCallback(() => {
+        setPreferSelection(true)
+        setWideSlot('download')
+    }, [])
+
+    const browseSelection = useCallback(() => {
+        const range = selectionRange(focus.custom)
+        if (!range || !focus.chrom) return
+        onFocusLocationSelect?.(genomeKey, { chrom: focus.chrom, start: range.start, end: range.end })
+        onNavigateToBrowser?.(genomeKey)
+    }, [focus.custom, focus.chrom, genomeKey, onFocusLocationSelect, onNavigateToBrowser])
+
+    const copySelection = useCallback(async () => {
+        const range = selectionRange(focus.custom)
+        if (!range || !focus.chrom) return
+        let text = ''
+        try {
+            // The stretch itself, end to end. Not the drawn segments: a
+            // collapse hides sequence the reader has nonetheless selected
+            // across, and a range that says where it starts and ends should
+            // hand back everything between.
+            text = await sequenceFasta({
+                genome: genomeKey,
+                chrom: focus.chrom,
+                start: range.start,
+                end: range.end,
+                strand: reverse ? '-' : '+',
+                label: genomeLabel,
+                download: false,
+            })
+        } catch (error) {
+            say(error?.message || 'Could not read the sequence', error?.tooLarge ? 6000 : 1600)
+            return
+        }
+        if (!text) return
+        try {
+            if (!navigator?.clipboard?.writeText) {
+                say('Clipboard unavailable')
+                return
+            }
+            await navigator.clipboard.writeText(text)
+            say(`Copied ${(range.end - range.start + 1).toLocaleString()} bases as FASTA`)
+        } catch {
+            say('Copy failed')
+        }
+    }, [focus.custom, focus.chrom, genomeKey, genomeLabel, reverse, say])
+
     // Against the level being drawn, which is the records' while a collection is
     // on screen -- the panel offers that level's switches, so it must save them
     // under it too, or ticking a gene's classes would rewrite a location's.
@@ -839,16 +1017,23 @@ export default function SequenceView({
         [focus, records],
     )
 
+// Whether the panel was opened from the bar over a selection, and so should
+    // open on it rather than on the level in focus.
+    const [preferSelection, setPreferSelection] = useState(false)
+
     // What the panel offers before the reader chooses. A collection is what the
     // rows are showing, so it wins; otherwise it is the level in focus, which is
     // the thing the reader pressed Download while looking at. Defaulting to the
     // location instead made every download of an exon two clicks.
-    const preferredDownloadId = records.length ? 'records' : `level:${focus.level}`
+    const preferredDownloadId = preferSelection && focus.custom
+        ? `level:${LEVEL_CUSTOM}`
+        : (records.length ? 'records' : `level:${focus.level}`)
 
     // What the save box is asking about, or null while it is shut. Held here
     // rather than in the panel because the panel closes with the drawer's wide
     // slot, and a file half written is not something to throw away with it.
     const [downloadRequest, setDownloadRequest] = useState(null)
+
 
     const exporting = useSequenceExport({
         genomeKey,
@@ -904,7 +1089,8 @@ export default function SequenceView({
                 root={viewRoot}
                 options={options}
                 genomeKey={genomeKey}
-                onGenomeChange={setGenomeKey}
+                isLight={isLight}
+                onGenomeChange={chooseGenome}
                 focus={focus}
                 region={region}
                 viewport={viewport}
@@ -916,6 +1102,8 @@ export default function SequenceView({
                 indexBuilding={annotations.indexBuilding}
                 selectMode={selectMode}
                 onSelectModeChange={setSelectMode}
+                selectStyle={selectStyle}
+                onSelectStyleChange={setSelectStyle}
                 zoom={zoom}
                 onZoomChange={(next) => setZoom(clampZoom(next))}
                 collapse={prefs.collapse}
@@ -975,6 +1163,13 @@ export default function SequenceView({
                             buffer={buffer}
                             selection={focus.custom}
                             selectMode={selectMode}
+                            selectStyle={selectStyle}
+                            onSelectionDone={handleSelectionDone}
+                            onSelectionFocus={focusSelection}
+                            onSelectionCopy={copySelection}
+                            onSelectionDownload={downloadSelection}
+                            onSelectionBrowse={browseSelection}
+                            onSelectionClear={clearSelection}
                             markedCoord={basePopup?.coord ?? null}
                             preview={previewLock?.span || preview}
                             scrollTo={scrollTo}
@@ -1027,7 +1222,7 @@ export default function SequenceView({
                                     chrom: focus.chrom,
                                 }),
                             })}
-                            onClose={() => setWideSlot(null)}
+                            onClose={() => { setWideSlot(null); setPreferSelection(false) }}
                         />
                     ) : wideSlot === 'settings' ? (
                         <SequenceFocusSettings

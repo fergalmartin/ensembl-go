@@ -110,6 +110,9 @@ function SequenceRow({
     fontSize,
     isLight,
     previewing = false,
+    // Whether a finished selection is on the page at all. The mask says which
+    // of this row's cells are in it; this says whether to dim the rest.
+    selecting = false,
 }) {
     // Whether there is a lane is the scroller's answer, not this row's: it is
     // what decided how tall the row is, and a row that drew one the height index
@@ -119,7 +122,6 @@ function SequenceRow({
     const laneHeight = lane ? PROTEIN_LANE_PX : 0
     const baseHeight = rowHeight - laneHeight
     const selectEdge = palette.selection.edge
-    const selectWash = palette.selection.wash
     const markedRing = palette.ring(isLight)
     const gutter = isLight ? 'text-gray-400' : 'text-gray-500'
     const plainText = isLight ? '#334155' : '#cbd5e1'
@@ -138,16 +140,32 @@ function SequenceRow({
         if (bits & EDGE_PREVIEW) previewedCells += 1
     }
 
-    // Dimming, and where to put it.
+    // What the row is attending to, and what it dims.
     //
+    // Two things can ask for it: the feature under the pointer in the list, and
+    // a finished selection. The pointer wins where both are true -- it is the
+    // transient one, and answering it is the whole reason it is transient.
+    //
+    // A selection used to be a wash of colour laid over its bases, which is the
+    // one thing that cannot be done to a view whose whole subject is what colour
+    // a base is: every annotation under it came out a different shade of the
+    // selection. It is the same dimming as the pointer's now, with the outline
+    // left on to say where it begins and ends, and the bases inside it wearing
+    // exactly the colours they wear everywhere else.
+    let attended = 0
+    if (previewing) attended = previewedCells
+    else if (selecting) {
+        for (let i = 0; i < mask.length; i += 1) if (mask[i] !== SELECT_NONE) attended += 1
+    }
+    const attending = previewing || selecting
     // Opacity on an element is a transparency layer the compositor has to keep,
     // and sixty cells a row over forty rows is two thousand of them -- which is
     // what turned scrolling with a gene held into a slideshow. Almost every row
-    // is wholly in or wholly out of the feature, so almost every row can carry
-    // one opacity instead of sixty; only the two rows its ends fall inside need
-    // deciding cell by cell.
-    const dimWholeRow = previewing && previewedCells === 0
-    const dimSomeCells = previewing && previewedCells > 0 && previewedCells < sequence.length
+    // is wholly in or wholly out, so almost every row can carry one opacity
+    // instead of sixty; only the rows an end falls inside need deciding cell by
+    // cell.
+    const dimWholeRow = attending && attended === 0
+    const dimSomeCells = attending && attended > 0 && attended < sequence.length
 
     const cells = []
     for (let i = 0; i < sequence.length; i += 1) {
@@ -207,7 +225,7 @@ function SequenceRow({
         const railRight = previewed && i === sequence.length - 1
         // A marker cell stands for sequence that is not on screen, so it belongs
         // to no feature and dims with everything else.
-        const dimmed = dimSomeCells && !previewed
+        const dimmed = dimSomeCells && !(previewing ? previewed : selected)
 
         cells.push(
             <span
@@ -269,7 +287,6 @@ function SequenceRow({
                             outlined ? `inset 0 -1px 0 0 ${style.bg}` : '',
                             outlined && !opensLeft ? `inset 1px 0 0 0 ${style.bg}` : '',
                             outlined && !opensRight ? `inset -1px 0 0 0 ${style.bg}` : '',
-                            selected ? `inset 0 0 0 100px ${selectWash}` : '',
                         ].filter(Boolean).join(', '),
                     } : null),
                     // Outermost of the inset rules, so the base being asked
@@ -310,7 +327,8 @@ function SequenceRow({
     const aminoCells = []
     for (let i = 0; lane && i < sequence.length; i += 1) {
         const letter = amino[i] || ' '
-        const dimmed = dimSomeCells && !(marks[i] & EDGE_PREVIEW)
+        const dimmed = dimSomeCells
+            && !(previewing ? (marks[i] & EDGE_PREVIEW) : mask[i] !== SELECT_NONE)
         aminoCells.push(
             <span
                 key={i}
@@ -387,6 +405,7 @@ export default memo(SequenceRow, (before, after) => (
     // whole of what dimming is. Left out, only the rows that already contained
     // the feature ever dimmed, which is precisely the rows that should not.
     && before.previewing === after.previewing
+    && before.selecting === after.selecting
     && before.row.index === after.row.index
     && before.labels.left === after.labels.left
     && before.labels.right === after.labels.right

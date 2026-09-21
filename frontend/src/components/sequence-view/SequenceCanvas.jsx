@@ -19,6 +19,7 @@ import {
 import SequenceRecordHeading from './SequenceRecordHeading'
 import {
     createScrollModel,
+    overscanRows,
     rowAtScrollTop,
     rowHasLane,
     rowHeightAt,
@@ -27,12 +28,22 @@ import {
     wheelTargetRow,
 } from '../../utils/sequenceViewScroll'
 import SequenceHoverTip from './SequenceHoverTip'
+import {
+    SELECTION_BAR_HEIGHT,
+    SELECT_DRAG,
+    SELECT_ENDS,
+    columnAtX,
+    gapToBand,
+    selectionBarPlacement,
+    selectionRange,
+    selectionTopGap,
+} from '../../utils/sequenceViewSelect'
+import SelectionBar from './SelectionBar'
 import { zoomedGeometry } from '../../utils/sequenceViewZoom'
 import SequenceOverview from './SequenceOverview'
 import SequenceRow from './SequenceRow'
 import { rowMetrics } from './sequenceViewLayout'
 
-const OVERSCAN = 3
 
 // How the view keeps scrolling while a selection drag is held past the edge.
 //
@@ -101,6 +112,16 @@ export default function SequenceCanvas({
     buffer,
     selection,
     selectMode = false,
+    // How a selection is drawn: dragged from end to end, or clicked at each
+    // end. See utils/sequenceViewSelect.js.
+    selectStyle = SELECT_DRAG,
+    onSelectionDone,
+    // What the bar over a finished selection offers. See SelectionBar.jsx.
+    onSelectionFocus,
+    onSelectionCopy,
+    onSelectionDownload,
+    onSelectionBrowse,
+    onSelectionClear,
     markedCoord = null,
     preview = null,
     scrollTo,
@@ -128,6 +149,11 @@ export default function SequenceCanvas({
     // completely different row once the introns are gone.
     const anchorCoordRef = useRef(null)
     const dragRef = useRef(null)
+    // The first of the two clicks, while the second is still to come. Held in
+    // state rather than a ref because the cursor and the half-made selection
+    // are both drawn from it.
+    const [pendingEnd, setPendingEnd] = useState(null)
+    const [dragging, setDragging] = useState(false)
     // A press that has not moved yet. Kept out of state: it changes on every
     // pointer event and nothing is drawn from it.
     const pressRef = useRef(null)
@@ -189,9 +215,18 @@ export default function SequenceCanvas({
         measure()
     }, [])
 
+    // A share of the screen rather than a fixed three rows -- and a bigger
+    // share in the far view, where a row is a handful of rectangles rather than
+    // sixty elements. What is placed is also what is asked for, so this is most
+    // of what keeps a fast scroll supplied.
+    const overscan = useMemo(
+        () => overscanRows(drawnRowHeight > 0 ? viewportPx / drawnRowHeight : 0, { cheap: overview }),
+        [viewportPx, drawnRowHeight, overview],
+    )
+
     const window_ = useMemo(
-        () => visibleRowRange(model, scrollTop, OVERSCAN),
-        [model, scrollTop],
+        () => visibleRowRange(model, scrollTop, overscan),
+        [model, scrollTop, overscan],
     )
 
     const rows = useMemo(
@@ -237,6 +272,54 @@ export default function SequenceCanvas({
         if (from === null || to === null) return null
         return { lo: Math.min(from, to), hi: Math.max(from, to) }
     }, [selection, selectionSection])
+
+    /**
+     * Where the selection begins and ends in the document, and where its bar
+     * therefore goes.
+     *
+     * The rows are placed inside the scroller rather than on the screen, so
+     * everything here is in the scroller's own coordinates: `slabTopPx` is
+     * where the mounted rows start, and a row's own offset is measured from
+     * there. That is the space the bar is positioned in too, which is what
+     * makes it travel with the sequence rather than having to be moved on
+     * every scroll.
+     */
+    const selectionRows = useMemo(() => {
+        const range = selectionRange(selection)
+        if (!range || !selectionSection) return null
+        const first = documentRowOfCoord(doc, range.start, selectionSection.key)
+        const last = documentRowOfCoord(doc, range.end, selectionSection.key)
+        if (first === null || last === null) return null
+        return { first: Math.min(first, last), last: Math.max(first, last) }
+    }, [doc, selection, selectionSection])
+
+    // A region is a region once the reader has let go of it. Until then the
+    // second end is still following their hand, and a bar that appeared over
+    // the first row would be a bar offering to act on something that is still
+    // being decided -- and, in the two-click mode, on a single base.
+    const settled = Boolean(selection) && !dragging && !pendingEnd
+
+    // Room above the first row for the bar, where the selection starts at the
+    // very top of the document and there is no row above it to sit over. Only
+    // once there is a bar to make room for: the sequence shifting under a drag
+    // that has not finished would move the very bases being dragged over.
+    const topGap = settled && selectionRows ? selectionTopGap(selectionRows.first) : 0
+
+    const selectionBar = useMemo(() => {
+        if (!settled || !selectionRows || !model?.heights) return null
+        const offsetOf = (row) => model.heights.offsetOfRow(row)
+        const base = window_.slabTopPx + topGap - offsetOf(window_.firstRow)
+        const placed = selectionBarPlacement({
+            firstRowTop: base + offsetOf(selectionRows.first),
+            lastRowBottom: base + offsetOf(selectionRows.last) + rowHeightAt(model, selectionRows.last),
+            // The top of the screen in the same coordinates: the gap, where
+            // there is one, is above the rows and below this, which is what
+            // leaves the bar somewhere to sit at the very top of a document.
+            scrollTop,
+            viewportPx,
+        })
+        return placed?.visible ? placed : null
+    }, [settled, selectionRows, model, window_.slabTopPx, window_.firstRow, topGap, scrollTop, viewportPx])
 
     // What each row is, before anything is painted onto it.
     //
@@ -325,7 +408,7 @@ export default function SequenceCanvas({
             for (const piece of item.line.pieces) pieces.push({ s: piece.s, e: piece.e })
         }
         const intervals = mergeIntervals(pieces)
-        const anchorItem = sequenceLines[Math.min(OVERSCAN, sequenceLines.length - 1)] || null
+        const anchorItem = sequenceLines[Math.min(overscan, sequenceLines.length - 1)] || null
         const anchor = anchorItem?.line?.firstCoord ?? intervals[0]?.s ?? 0
         return {
             start: intervals.length ? intervals[0].s : 0,
@@ -341,7 +424,7 @@ export default function SequenceCanvas({
             // the same page.
             screen: onScreen,
         }
-    }, [lines, onScreen])
+    }, [lines, onScreen, overscan])
 
     anchorCoordRef.current = visible.anchor
         ? { coord: visible.anchor, key: visible.anchorKey }
@@ -357,6 +440,10 @@ export default function SequenceCanvas({
     // between full and collapsed, or ticking another record onto the end, keeps
     // the reader's place -- that is what the anchor below is for.
     const documentKey = `${chrom}:${doc?.sections?.[0]?.key || ''}:${doc?.named ? 'records' : 'region'}`
+    useEffect(() => {
+        if (!selectMode) setPendingEnd(null)
+    }, [selectMode])
+
     useLayoutEffect(() => {
         const element = scrollerRef.current
         if (element) element.scrollTop = 0
@@ -454,6 +541,53 @@ export default function SequenceCanvas({
         return { offset, index }
     }, [])
 
+    /**
+     * The cell a press meant, rather than the one it hit.
+     *
+     * Selecting is a gesture over a region, not a click on one base, and asking
+     * a reader to start it exactly on a cell is asking more than the gesture
+     * needs. A row is 26 px of which the bases are about 20, so a press a
+     * couple of pixels high lands in the space between two rows; a press near
+     * the ends of a row lands on the coordinate margin. Both used to do nothing
+     * at all -- and doing nothing left the press to the browser, which took it
+     * as the start of a text selection and dragged a highlight across the
+     * numbers.
+     *
+     * So a press that missed is placed: the nearest row by how far outside it
+     * the press was, and within that row the base the press is level with,
+     * clamped to its ends. Only for the tool's own gestures -- what the readout
+     * says under the pointer, and which base a plain click asks about, are still
+     * answered by what was actually under it.
+     */
+    const nearestCell = useCallback((event) => {
+        const exact = cellAt(event)
+        if (exact) return exact
+        const scroller = scrollerRef.current
+        if (!scroller) return null
+        let best = null
+        let bestGap = Infinity
+        for (const line of scroller.querySelectorAll('[data-row-index]')) {
+            const box = line.getBoundingClientRect()
+            const gap = gapToBand(event.clientY, box.top, box.bottom)
+            if (gap < bestGap) {
+                best = line
+                bestGap = gap
+                if (gap === 0) break
+            }
+        }
+        const index = Number(best?.dataset.rowIndex)
+        const cells = best ? best.querySelectorAll('[data-offset]') : []
+        if (!Number.isFinite(index) || cells.length === 0) return null
+        const first = cells[0].getBoundingClientRect()
+        const last = cells[cells.length - 1].getBoundingClientRect()
+        const column = columnAtX(event.clientX, {
+            left: first.left, right: last.right, count: cells.length,
+        })
+        if (column === null) return null
+        const offset = Number(cells[column].dataset.offset)
+        return Number.isFinite(offset) ? { offset, index } : null
+    }, [cellAt])
+
     /** The record and column a document row and cell offset land in. */
     const placeAt = useCallback((index, offset) => {
         const entry = documentRow(doc, index)
@@ -461,6 +595,24 @@ export default function SequenceCanvas({
         const { layout } = entry.section
         return { section: entry.section, layout, column: entry.local * layout.width + offset }
     }, [doc])
+
+    /**
+     * Carry the live end of a drag to wherever the pointer has reached.
+     *
+     * A drag only ever moves between bases: a marker stands for sequence that
+     * is not on screen, so passing over it leaves the head where it was and the
+     * selection jumps the collapse in one step. It also stays in the record it
+     * began in, because a range running from one record into another describes
+     * neither of them.
+     */
+    const extendDrag = useCallback((at) => {
+        if (!dragRef.current || !at) return
+        const place = placeAt(at.index, at.offset)
+        const coord = place ? coordAtColumn(place.layout, place.column) : null
+        if (coord === null || place.section.key !== dragRef.current.sectionKey) return
+        dragRef.current.head = coord
+        onSelectionChange?.({ start: dragRef.current.anchor, end: coord })
+    }, [placeAt, onSelectionChange])
 
     const handleHover = useCallback((event) => {
         const press = pressRef.current
@@ -471,6 +623,10 @@ export default function SequenceCanvas({
         const at = cellAt(event)
         if (!at) {
             setHover(null)
+            // Nothing under the pointer to describe, but a drag in hand still
+            // has somewhere to be: over a margin or between two rows it keeps
+            // going from the base it is level with.
+            if (dragRef.current) extendDrag(nearestCell(event))
             return
         }
         const { index, offset } = at
@@ -493,16 +649,8 @@ export default function SequenceCanvas({
                 viewFor?.(place?.section?.key)?.overlaps, coord,
             ),
         })
-        // A drag only ever moves between bases: a marker stands for sequence
-        // that is not on screen, so passing over it leaves the head where it was
-        // and the selection jumps the collapse in one step. It also stays in the
-        // record it began in, because a range running from one record into
-        // another describes neither of them.
-        if (dragRef.current && coord !== null && place?.section.key === dragRef.current.sectionKey) {
-            dragRef.current.head = coord
-            onSelectionChange?.({ start: dragRef.current.anchor, end: coord })
-        }
-    }, [cellAt, placeAt, painted, viewFor, onSelectionChange])
+        extendDrag(at)
+    }, [cellAt, nearestCell, extendDrag, placeAt, painted, viewFor])
 
     /** How far past the top or bottom of the sequence a point is, in pixels. */
     const edgeAt = useCallback((y) => {
@@ -526,6 +674,34 @@ export default function SequenceCanvas({
 
     const handleLeave = useCallback(() => setHover(null), [])
 
+    /**
+     * Put a finished selection where its bar can be read.
+     *
+     * The bar's top against the top of the screen, and the selection's first
+     * row immediately under it. Wherever the reader was when they let go --
+     * three screens down a long drag, or at the far end of a two-click
+     * selection -- the region and the controls over it arrive in one place
+     * together, rather than the bar being somewhere off the top of the screen
+     * with the reader left to go looking for it.
+     *
+     * Where the selection starts at the very top of the document there is a gap
+     * above the rows for the bar to sit in, so the scroll is simply to the top.
+     */
+    const revealSelection = useCallback((from, to, sectionKey) => {
+        const element = scrollerRef.current
+        if (!element || !model?.heights) return
+        const low = Math.min(from, to)
+        const row = documentRowOfCoord(doc, low, sectionKey)
+        if (row === null) return
+        const height = rowHeightAt(model, row) || model.rowHeight || 1
+        // In rows rather than in pixels, because a scroll position is not a
+        // distance once the spacer is compressed -- see sequenceViewScroll.js.
+        const back = selectionTopGap(row) ? 0 : SELECTION_BAR_HEIGHT / height
+        const target = scrollTopForRow(model, Math.max(0, row - back))
+        element.scrollTop = target
+        setScrollTop(target)
+    }, [doc, model])
+
     const handlePointerDown = useCallback((event) => {
         if (event.button !== 0) return
         // Where the press began, so that a release in the same place can be told
@@ -536,12 +712,35 @@ export default function SequenceCanvas({
         // rectangle is something you arm first, and a drag that silently
         // selected would take the gesture away from whatever else might want it.
         if (!selectMode) return
-        const at = cellAt(event)
+        const at = nearestCell(event)
         if (!at) return
         const place = placeAt(at.index, at.offset)
         const coord = place ? coordAtColumn(place.layout, place.column) : null
         if (coord === null) return
         event.preventDefault()
+
+        // Two clicks: the first marks an end and nothing is captured, so the
+        // page is the reader's between them -- which is the point of this mode,
+        // since a selection longer than a screen cannot be dragged without
+        // holding the button while the page moves under it.
+        if (selectStyle === SELECT_ENDS) {
+            // Both clicks belong to the tool, so neither is also a question
+            // about the base under it. The second one especially: it puts the
+            // tool down, and the release that follows would otherwise arrive
+            // with the tool already down and read as an ordinary click,
+            // opening the base box over the selection just drawn.
+            pressRef.current.consumed = true
+            if (!pendingEnd || pendingEnd.sectionKey !== place.section.key) {
+                setPendingEnd({ coord, sectionKey: place.section.key })
+                onSelectionChange?.({ start: coord, end: coord })
+                return
+            }
+            setPendingEnd(null)
+            onSelectionChange?.({ start: pendingEnd.coord, end: coord })
+            onSelectionDone?.()
+            revealSelection(pendingEnd.coord, coord, place.section.key)
+            return
+        }
         // Captured on the scroller rather than the cell, so the drag survives
         // leaving the row it began on -- which it does immediately, since
         // selecting more than sixty bases means crossing into the next row.
@@ -552,8 +751,9 @@ export default function SequenceCanvas({
         }
         pointerRef.current = { x: event.clientX, y: event.clientY }
         setEdgeHold(0)
+        setDragging(true)
         onSelectionChange?.({ start: coord, end: coord })
-    }, [selectMode, cellAt, placeAt, onSelectionChange])
+    }, [selectMode, selectStyle, pendingEnd, nearestCell, placeAt, onSelectionChange, onSelectionDone, revealSelection])
 
     const endDrag = useCallback((event) => {
         // A press released where it began is a question about that base. Not
@@ -561,7 +761,7 @@ export default function SequenceCanvas({
         // and a box opening mid-selection would be in the way.
         const press = pressRef.current
         pressRef.current = null
-        if (press && !press.moved && !selectMode && onBaseClick && event) {
+        if (press && !press.moved && !press.consumed && !selectMode && onBaseClick && event) {
             const at = cellAt(event)
             const place = at ? placeAt(at.index, at.offset) : null
             const coord = place ? coordAtColumn(place.layout, place.column) : null
@@ -585,10 +785,20 @@ export default function SequenceCanvas({
         }
         if (!dragRef.current) return
         scrollerRef.current?.releasePointerCapture?.(dragRef.current.pointerId ?? event?.pointerId)
+        const { anchor, head, sectionKey } = dragRef.current
+        const drew = head !== anchor
         dragRef.current = null
         pointerRef.current = null
         setEdgeHold(0)
-    }, [selectMode, onBaseClick, cellAt, placeAt])
+        setDragging(false)
+        // The tool is put down as soon as it has been used. Leaving it armed
+        // meant the next click anywhere threw the selection away and started a
+        // new one of a single base, which is never what the click was for.
+        if (drew) {
+            onSelectionDone?.()
+            revealSelection(anchor, head, sectionKey)
+        }
+    }, [selectMode, onBaseClick, cellAt, placeAt, onSelectionDone, revealSelection])
 
     // Held past the top or bottom edge, the view keeps going, so a selection can
     // reach past what is on screen. It runs until the pointer comes back inside
@@ -660,14 +870,34 @@ export default function SequenceCanvas({
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
             className={`relative h-full overflow-y-auto ${metrics.fits ? 'overflow-x-hidden' : 'overflow-x-auto'}`}
-            style={selectMode ? { cursor: 'crosshair' } : undefined}
+            style={selectMode ? { cursor: 'crosshair', userSelect: 'none' } : undefined}
             data-sequence-view-scroller="true"
         >
-            <div style={{ height: `${model.spacerPx}px`, width: `${metrics.rowWidth}px`, margin: '0 auto' }} />
+            <div style={{ height: `${model.spacerPx + topGap}px`, width: `${metrics.rowWidth}px`, margin: '0 auto' }} />
+
+            {/* Inside the scroller, so it travels with the rows it belongs to
+                rather than having to be chased across the screen on every
+                scroll. Before the slab in the markup and above it by z-index,
+                since while the reader is scrolling through a long selection it
+                sits over the rows at the top of the screen. */}
+            {selectionBar ? (
+                <SelectionBar
+                    selection={selection}
+                    chrom={chrom}
+                    isLight={isLight}
+                    top={selectionBar.top}
+                    rowWidth={metrics.rowWidth}
+                    onFocusRegion={onSelectionFocus}
+                    onCopy={onSelectionCopy}
+                    onDownload={onSelectionDownload}
+                    onBrowse={onSelectionBrowse}
+                    onClear={onSelectionClear}
+                />
+            ) : null}
             <div
                 className="absolute top-0"
                 style={{
-                    transform: `translateY(${window_.slabTopPx}px)`,
+                    transform: `translateY(${window_.slabTopPx + topGap}px)`,
                     width: `${metrics.rowWidth}px`,
                     // Centred in whatever the panel has left, rather than pinned
                     // to the left edge with the spare room all on one side.
@@ -724,6 +954,12 @@ export default function SequenceCanvas({
                         // part of it, which is what makes the stretch itself
                         // legible at a glance.
                         previewing={Boolean(preview)}
+                        // A finished selection dims what is outside it, the way
+                        // the pointer's feature does. Not while it is being
+                        // drawn: the reader is watching the end follow their
+                        // hand, and the page going dark under it would be one
+                        // thing too many happening at once.
+                        selecting={Boolean(selection) && !dragging}
                     />
                 )))}
             </div>

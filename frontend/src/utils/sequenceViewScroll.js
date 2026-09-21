@@ -135,6 +135,28 @@ export function scrollTopForRow(model, row) {
  * is the price of the capped spacer: the slab's position is not derivable from
  * the spacer the way it would be in an ordinary virtual list.
  */
+/**
+ * How many rows to place either side of the screen.
+ *
+ * It was three, whatever the screen held. Three rows is a third of a second of
+ * unhurried scrolling at full size and a fortieth of one zoomed out, where a
+ * row is two pixels and a screen holds two hundred and fifty -- so the margin
+ * that was meant to hide the seam was the first thing the reader scrolled past,
+ * and the rows arrived visibly after the scroll that asked for them.
+ *
+ * It is a share of the screen instead, and a bigger share where the rows are
+ * cheap. `cheap` is the far view, which is rectangles on a canvas rather than an
+ * element per base: there the margin costs almost nothing to draw and buys the
+ * annotation behind it time to arrive, because what is placed is also what is
+ * asked for.
+ */
+export function overscanRows(viewportRows, { cheap = false } = {}) {
+    const rows = Math.max(0, Math.floor(Number(viewportRows) || 0))
+    return cheap
+        ? Math.max(12, Math.min(160, Math.round(rows * 0.6)))
+        : Math.max(3, Math.min(12, Math.round(rows * 0.3)))
+}
+
 export function visibleRowRange(model, scrollTop, overscan = 2) {
     if (!model || model.totalRows <= 0) {
         return { firstRow: 0, count: 0, anchorRow: 0, slabTopPx: 0 }

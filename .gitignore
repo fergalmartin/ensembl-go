@@ -105,9 +105,12 @@ test-data/
 .claude/*
 !.claude/skills/
 #
-# These two are the deliberate asymmetry with the snapshot: untracked here, but
+# These three are the deliberate asymmetry with the snapshot: untracked here, but
 # included there. They are working documents that exist in no other copy, so a
-# recovery archive without them loses them for good.
+# recovery archive without them loses them for good. The genome-links table was
+# tracked until it was moved here; no script regenerates it, so the snapshot names
+# it explicitly rather than sweeping all of outputs/, which is scratch.
 docs/browsing-controls-handoff.md
 docs/tutorial-builder-genome-playlists-handoff.md
+outputs/alignment-explorer-genome-links/44_mammals_epo_release115_genome_links.tsv
 

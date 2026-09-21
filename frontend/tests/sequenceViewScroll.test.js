@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  overscanRows,
   MAX_SCROLL_PX,
   createScrollModel,
   rowAtScrollTop,
@@ -123,4 +124,29 @@ test('a taller row changes the geometry without changing the mapping', () => {
   assert.equal(withTrack.compression, 1)
   assert.equal(scrollTopForRow(withTrack, 10), 440)
   assert.ok(Math.abs(rowAtScrollTop(withTrack, scrollTopForRow(withTrack, 777)) - 777) < 1e-6)
+})
+
+test('the margin either side is a share of the screen, not a fixed few rows', () => {
+  // It was three rows whatever the screen held: a third of a second of
+  // unhurried scrolling at full size, and a fortieth of one zoomed out, where a
+  // row is two pixels and a screen holds two hundred and fifty.
+  assert.ok(overscanRows(30) > 3)
+  assert.ok(overscanRows(60) > overscanRows(20))
+  // A bigger share where the rows are cheap to draw -- the far view is
+  // rectangles on a canvas rather than an element per base, and what is placed
+  // is also what is asked for.
+  assert.ok(overscanRows(250, { cheap: true }) > overscanRows(250))
+})
+
+test('the margin is bounded at both ends, however big or small the screen', () => {
+  // Never nothing, so there is always a row placed past the edge.
+  assert.ok(overscanRows(0) >= 3)
+  assert.ok(overscanRows(1) >= 3)
+  // Never so many that the readable view is placing hundreds of rows of
+  // elements nobody can see.
+  assert.ok(overscanRows(10_000) <= 12)
+  assert.ok(overscanRows(10_000, { cheap: true }) <= 160)
+  // Nonsense reads as an empty screen rather than as a negative margin.
+  assert.ok(overscanRows(NaN) >= 3)
+  assert.ok(overscanRows(-50) >= 3)
 })

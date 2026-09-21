@@ -114,6 +114,13 @@ do
   copy_if_exists "$rel_path"
 done
 
+# outputs/ is scratch and stays gitignored, but this one table is not scratch: it was
+# tracked until it moved out of the index, nothing in the codebase reads or writes it,
+# and no documented command regenerates it. It exists on disk and in git history and
+# nowhere else, so the archive carries it by name. Naming the file rather than syncing
+# outputs/ keeps the rest of that directory out, which is the point of ignoring it.
+copy_if_exists "outputs/alignment-explorer-genome-links/44_mammals_epo_release115_genome_links.tsv"
+
 # backend/data holds two different kinds of thing. The FASTA/GFF3 sample genomes are
 # hundreds of megabytes and are excluded, but project_classification.json and
 # taxonomy_classification.json in the same directory are shipped fallback artifacts the
@@ -253,6 +260,9 @@ Everything omitted is regenerable. Nothing here needs to be recovered by hand.
 `docs/browsing-controls-handoff.md` and `docs/tutorial-builder-genome-playlists-handoff.md`
 are gitignored working documents. They exist in no other copy, so the archive carries
 them.
+
+`outputs/alignment-explorer-genome-links/44_mammals_epo_release115_genome_links.tsv`
+is carried for the same reason. The rest of `outputs/` is scratch and is not included.
 RECOVERY_EOF
 
 TAR_PATH="$OUT_DIR/$ARCHIVE_BASENAME.tar.gz"

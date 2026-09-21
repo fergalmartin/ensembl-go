@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  LOOKAHEAD_CHUNKS,
   PLACEHOLDER_BASE,
   SEQUENCE_VIEW_CHUNK_BP,
   assembleRowSequence,
@@ -77,9 +78,16 @@ test('lookahead follows the direction of travel, and only while moving', () => {
   })
   const here = chunkIndexForCoord(100_001)
   const ahead = scrollingDown.find((chunk) => chunk.index === here + 1)
+  const further = scrollingDown.find((chunk) => chunk.index === here + 2)
   const behind = scrollingDown.find((chunk) => chunk.index === here - 1)
   assert.equal(ahead.priority, 2, 'the leading side comes first')
-  assert.equal(behind.priority, 3)
+  // Two ahead rather than one, in order, so a reader who outruns the first
+  // chunk finds the second already asked for. Each is behind the one before it,
+  // so the deeper lookahead costs nothing until the nearer one has landed.
+  assert.equal(further.priority, 3, 'and then the one beyond it')
+  assert.ok(ahead.priority < further.priority)
+  assert.ok(further.priority < behind.priority, 'the way back comes last of all')
+  assert.equal(behind.priority, 2 + LOOKAHEAD_CHUNKS)
 
   const scrollingUp = planSequenceChunks({
     region,
@@ -89,6 +97,7 @@ test('lookahead follows the direction of travel, and only while moving', () => {
     direction: -1,
   })
   assert.equal(scrollingUp.find((chunk) => chunk.index === here - 1).priority, 2)
+  assert.equal(scrollingUp.find((chunk) => chunk.index === here - 2).priority, 3)
 
   const still = planSequenceChunks({
     region,

@@ -23,6 +23,9 @@ export const SEQUENCE_VIEW_CHUNK_BP = 12_000
 // size as any other base so arrival never reflows the row.
 export const PLACEHOLDER_BASE = '·'
 
+/** How many chunks beyond the screen to ask for in the direction of travel. */
+export const LOOKAHEAD_CHUNKS = 2
+
 function num(value) {
     const parsed = Number(value)
     return Number.isFinite(parsed) ? parsed : null
@@ -97,10 +100,17 @@ export function planSequenceChunks({
     for (let i = firstVisible; i <= lastVisible; i += 1) want(i, 1)
 
     if (lookahead && direction !== 0) {
-        const leading = direction > 0 ? lastVisible + 1 : firstVisible - 1
+        // Two ahead rather than one. A chunk is twelve kilobases, which is two
+        // hundred rows -- ample for unhurried reading, and about a second of
+        // flick-scrolling, which is exactly the case where the reader outran
+        // the one chunk that had been asked for and watched the next arrive.
+        // The second is asked for behind the first, so it costs nothing until
+        // the first has landed.
+        for (let step = 1; step <= LOOKAHEAD_CHUNKS; step += 1) {
+            want(direction > 0 ? lastVisible + step : firstVisible - step, 1 + step)
+        }
         const trailing = direction > 0 ? firstVisible - 1 : lastVisible + 1
-        want(leading, 2)
-        want(trailing, 3)
+        want(trailing, 2 + LOOKAHEAD_CHUNKS)
     }
 
     return [...byIndex.entries()]

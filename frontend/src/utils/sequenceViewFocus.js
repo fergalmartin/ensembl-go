@@ -143,6 +143,82 @@ export function strandOf(focus, level = focus?.level) {
     return '+'
 }
 
+/** A span, however the thing carrying it spells its ends. */
+export function spanOf(thing) {
+    if (!thing) return null
+    const from = Number(thing.start ?? thing.s)
+    const to = Number(thing.end ?? thing.e)
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null
+    return { start: Math.min(from, to), end: Math.max(from, to) }
+}
+
+/**
+ * Whether something is still on screen's worth of the location being read.
+ *
+ * Overlap rather than containment: a gene wider than the window the reader has
+ * jumped to is still the gene they are standing in, and dropping it because its
+ * far end is off the page would be a stranger answer than keeping it.
+ */
+export function overlapsLocation(thing, location) {
+    const span = spanOf(thing)
+    const window = spanOf(location)
+    if (!span || !window) return false
+    return span.start <= window.end && span.end >= window.start
+}
+
+/**
+ * Where to open a genome the reader has just switched to.
+ *
+ * Every view in the app keeps its own idea of where each genome is being read:
+ * a region pinned in the browser, a gene picked out in one of the panels. A
+ * reader switching genomes here has almost always been looking at that genome
+ * somewhere else, and dropping them at its default starting locus instead
+ * throws that away and makes them find it again.
+ *
+ * The gene wins where there is one, because it is the more particular answer,
+ * and its own span stands in for the location when the region on record belongs
+ * to another chromosome. With neither, there is nothing to say and the caller
+ * falls back to asking the backend for a starting region.
+ */
+export function focusFromStart(genomeKey, point) {
+    const gene = point?.gene || null
+    const geneSpan = spanOf(gene)
+    const geneChrom = String(gene?.chrom || '').trim()
+    const location = point?.location || null
+    const locationSpan = spanOf(location)
+    const locationChrom = String(location?.chrom || '').trim()
+
+    if (gene && geneSpan && geneChrom) {
+        const sameChrom = locationChrom && locationChrom === geneChrom
+        return {
+            genomeKey,
+            chrom: geneChrom,
+            focus: {
+                level: LEVEL_GENE,
+                location: sameChrom && locationSpan ? locationSpan : geneSpan,
+                gene: {
+                    id: gene.id,
+                    name: gene.name,
+                    start: geneSpan.start,
+                    end: geneSpan.end,
+                    strand: gene.strand || '+',
+                    biotype: gene.biotype || '',
+                },
+            },
+        }
+    }
+
+    if (locationSpan && locationChrom) {
+        return {
+            genomeKey,
+            chrom: locationChrom,
+            focus: { level: LEVEL_LOCATION, location: locationSpan },
+        }
+    }
+
+    return null
+}
+
 export function focusReducer(state, action) {
     switch (action.type) {
         case 'reset':
@@ -154,14 +230,22 @@ export function focusReducer(state, action) {
             // Crossing invalidates the whole chain below.
             const chrom = action.chrom || state.chrom
             const moved = chrom !== state.chrom
+            const location = action.location || state.location
+            // And on the same chromosome, a jump keeps only what it lands on.
+            // The chain is the reader's way back to what they were reading; a
+            // gene a megabase off the page is not that, and leaving it in the
+            // drawer offers a way back to somewhere they have deliberately
+            // left. Anything still under the window survives, so nudging the
+            // ends of a location does not cost the reader their place.
+            const keeps = (thing) => (!moved && overlapsLocation(thing, location) ? thing : null)
             return {
                 ...state,
                 chrom,
                 level: LEVEL_LOCATION,
-                location: action.location || state.location,
-                gene: moved ? null : state.gene,
-                transcript: moved ? null : state.transcript,
-                feature: moved ? null : state.feature,
+                location,
+                gene: keeps(state.gene),
+                transcript: keeps(state.transcript),
+                feature: keeps(state.feature),
                 custom: null,
             }
         }

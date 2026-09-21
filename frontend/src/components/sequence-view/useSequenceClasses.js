@@ -105,6 +105,24 @@ function planClassRequests(focus, visibleStart, visibleEnd, intervals, hide) {
         }
     }
 
+    // One tile either side, behind everything on screen.
+    //
+    // Only what was visible was ever asked for, so the first rows past the edge
+    // of a tile arrived uncoloured and filled in a moment later -- most visibly
+    // zoomed out, where a screen crosses a tile boundary in a flick. Both sides
+    // rather than the leading one, because a tile is a single query over runs
+    // the backend caches, and a reader who scrolls back deserves the same.
+    if (wanted.size) {
+        const indices = [...wanted.keys()]
+        for (const index of [Math.min(...indices) - 1, Math.max(...indices) + 1]) {
+            if (index >= tileIndexForCoord(focus.start)
+                && index <= tileIndexForCoord(focus.end)
+                && !wanted.has(index)) {
+                wanted.set(index, 2)
+            }
+        }
+    }
+
     const out = []
     for (const [index, priority] of [...wanted.entries()].sort((a, b) => a[0] - b[0])) {
         const range = tileRange(index)
