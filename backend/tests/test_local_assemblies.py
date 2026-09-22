@@ -134,7 +134,7 @@ class LocalAssembliesTests(unittest.TestCase):
             fasta_path.write_bytes(b"\x1f\x8bFAKE")
             gff_path.write_bytes(b"\x1f\x8bFAKE")
 
-            items = asyncio.run(main.list_local_assemblies(str(root)))
+            items = main.list_local_assemblies(str(root))
             item = next((entry for entry in items if entry["assembly"] == "GCA_000005845.2"), None)
 
         self.assertIsNotNone(item)
@@ -167,7 +167,7 @@ class LocalAssembliesTests(unittest.TestCase):
             canonical_index = asm_dir / "GCF_002007445.2.gff3.index.db"
             _write_usable_index(canonical_index, gff_path)
 
-            items = asyncio.run(main.list_local_assemblies(str(root)))
+            items = main.list_local_assemblies(str(root))
             item = next((entry for entry in items if entry["assembly"] == "GCF_002007445.2"), None)
 
             self.assertIsNotNone(item)
@@ -216,7 +216,7 @@ class LocalAssembliesTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            items = asyncio.run(main.list_local_assemblies(str(root)))
+            items = main.list_local_assemblies(str(root))
             item = next((entry for entry in items if entry["assembly"] == "GCA_000005845.2"), None)
 
         self.assertIsNotNone(item)
@@ -273,7 +273,7 @@ class LocalAssembliesTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            items = asyncio.run(main.list_local_assemblies(str(root)))
+            items = main.list_local_assemblies(str(root))
             item = next((entry for entry in items if entry["assembly"] == "GCA_000005845.2"), None)
 
         self.assertIsNotNone(item)

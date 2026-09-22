@@ -110,6 +110,9 @@ import {
 
 const SELECTOR_PENDING_GENOMES_STORAGE_KEY = 'ensembl_selector_pending_genomes'
 const SELECTOR_REFRESH_EVENT = 'ensembl:selector-refresh'
+// How long leaving the configuration view waits for its save before going anyway.
+// A local save answers in tens of milliseconds; this only has to be longer than that.
+const CONFIG_SAVE_NAV_WAIT_MS = 1500
 const PREVIOUS_SESSION_PLAYLIST_ID = '__previous_session__'
 const NEXT_PREVIOUS_SESSION_PLAYLIST_ID = '__next_previous_session__'
 
@@ -861,6 +864,10 @@ function App() {
   const persistedGenomeColorsRef = useRef('')
   const persistGenomeColorsTimerRef = useRef(null)
   const persistConfigurationTimerRef = useRef(null)
+  // The save started by leaving the configuration view, while it is still in flight, so
+  // that a second view button pressed in the same moment joins it instead of starting
+  // another one.
+  const configSaveOnLeaveRef = useRef(null)
   const selectorRefreshCompletedTaskIdsRef = useRef(new Set())
 
   // Whether initial config has been loaded from backend
@@ -3797,11 +3804,49 @@ function App() {
     }
   }, [])
 
-  // Save config to backend with cascading clears applied.
-  // Called when navigating away from config view.
-  const handleConfigSave = async () => {
-    const cascaded = applyConfigCascade()
-    await persistConfigToBackend(cascaded, 'config')
+  // Leaving the configuration view saves it — but navigation must not be hostage to
+  // that save. The backend answers on a single event loop, so one slow request
+  // elsewhere leaves this POST queued behind it, and while it was awaited outright
+  // every view button did nothing at all: the click registered, the button showed its
+  // pressed state, and the view never changed until the backend came back, possibly
+  // minutes later. So wait only long enough for the ordinary save to land. The request
+  // is never cancelled, so a slow one still completes and still writes — it just
+  // finishes after the view has moved on, exactly as every other autosave here does.
+  const saveConfigurationBeforeLeaving = async () => {
+    let pending = configSaveOnLeaveRef.current
+    if (!pending) {
+      let cascaded
+      try {
+        // Synchronous state work: the dependent clears and browser reloads have to
+        // happen whether or not the backend ever answers, so they stay inline.
+        cascaded = applyConfigCascade()
+      } catch (error) {
+        console.error('Could not apply the configuration cascade:', error)
+        return
+      }
+      pending = persistConfigToBackend(cascaded, 'config')
+        .catch((error) => {
+          console.error('Failed to save the configuration on leaving it:', error)
+          return false
+        })
+        .finally(() => {
+          if (configSaveOnLeaveRef.current === pending) configSaveOnLeaveRef.current = null
+        })
+      configSaveOnLeaveRef.current = pending
+    }
+
+    let waitTimer = null
+    const waited = new Promise((resolve) => {
+      waitTimer = setTimeout(() => resolve('timeout'), CONFIG_SAVE_NAV_WAIT_MS)
+    })
+    try {
+      const outcome = await Promise.race([pending.then(() => 'saved'), waited])
+      if (outcome === 'timeout') {
+        console.warn('Configuration save is still in flight; continuing to the next view.')
+      }
+    } finally {
+      if (waitTimer) clearTimeout(waitTimer)
+    }
   }
 
   // Called after ConfigurationView's own Save/Generate actions POST to the backend.
@@ -6026,7 +6071,13 @@ function App() {
     if (!nextView || nextView === currentView) return
 
     if (currentView === 'configuration' && nextView !== 'configuration') {
-      await handleConfigSave()
+      // Never let this throw the navigation away with it. Whatever happened to the
+      // save, the view the user asked for still has to open.
+      try {
+        await saveConfigurationBeforeLeaving()
+      } catch (error) {
+        console.error('Could not save the configuration on leaving it:', error)
+      }
     }
 
     if (screenshotMode) {

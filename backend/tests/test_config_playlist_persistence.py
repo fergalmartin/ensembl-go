@@ -88,7 +88,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                     "output_dir": str(output_dir),
                 })
 
-                payload = asyncio.run(main.list_tracks())
+                payload = main.list_tracks()
 
                 sidecar = output_dir / "local_data" / main.OUTPUT_DIR_TRACK_REGISTRY_FILENAME
                 self.assertTrue(sidecar.exists())

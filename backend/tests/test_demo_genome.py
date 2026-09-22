@@ -93,7 +93,7 @@ class DemoGenomeInstallTests(unittest.TestCase):
             asyncio.run(main.post_demo_genome_install(
                 main.DemoGenomeInstallRequest(output_dir=tmpdir)
             ))
-            listed = asyncio.run(main.list_local_assemblies(output_dir=tmpdir))
+            listed = main.list_local_assemblies(output_dir=tmpdir)
             demo = next(x for x in listed if x["species_key"] == demo_genome.DEMO_SPECIES_KEY)
             self.assertTrue(demo["is_demo"])
             self.assertFalse(demo["retired_remote"])
@@ -151,7 +151,7 @@ class DemoGenomeEndpointTests(unittest.TestCase):
             asyncio.run(main.post_demo_genome_install(
                 main.DemoGenomeInstallRequest(output_dir=tmpdir)
             ))
-            listed = asyncio.run(main.list_local_assemblies(output_dir=tmpdir))
+            listed = main.list_local_assemblies(output_dir=tmpdir)
             keys = [(item.get("species_key"), item.get("assembly")) for item in listed]
             self.assertIn((demo_genome.DEMO_SPECIES_KEY, demo_genome.DEMO_ASSEMBLY), keys)
 

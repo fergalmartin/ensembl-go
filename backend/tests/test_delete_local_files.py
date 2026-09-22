@@ -85,7 +85,7 @@ class LegacyLayoutDeleteTests(unittest.TestCase):
             root = Path(tmpdir)
             self._legacy_genome(root)
 
-            items = asyncio.run(main.list_local_assemblies(str(root)))
+            items = main.list_local_assemblies(str(root))
             item = next(entry for entry in items if entry["assembly"] == ASSEMBLY)
 
             self.assertTrue(item["download_managed"])

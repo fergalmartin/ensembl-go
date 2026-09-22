@@ -3158,8 +3158,14 @@ def truncate_and_mask_alignment(result: AlignmentResult, cached_ref: int, cached
 
 
 @app.post("/api/align", response_model=AlignmentResult)
-async def align_transcripts(request: AlignmentRequest):
-    """Align two transcripts with flanking sequences."""
+def align_transcripts(request: AlignmentRequest):
+    """Align two transcripts with flanking sequences.
+
+    Defined with ``def`` rather than ``async def`` so FastAPI runs it on a worker
+    thread. Nothing in here awaits, and an alignment takes anything from seconds to
+    minutes; on the event loop that was minutes in which the process answered no
+    request at all, including the ones the rest of the UI needs to stay responsive.
+    """
     config = load_config()
     output_dir = config.get("output_dir")
     
@@ -3385,7 +3391,12 @@ async def align_transcripts(request: AlignmentRequest):
 
 
 @app.post("/api/align/multi", response_model=MultiAlignmentResult)
-async def align_multi(request: MultiAlignmentRequest):
+def align_multi(request: MultiAlignmentRequest):
+    """Align several genomes at once.
+
+    On a worker thread for the same reason as :func:`align_transcripts`, and more so:
+    this one's cost scales with the number of genomes in the alignment.
+    """
     if not request.rows:
         raise HTTPException(status_code=400, detail="At least one row is required.")
 
@@ -3904,8 +3915,12 @@ async def list_alignments(output_dir: str = ""):
 
 
 @app.post("/api/alignments/load")
-async def load_alignment(payload: LoadAlignmentRequest):
-    """Reconstruct a MultiAlignmentResult from a saved alignment, filtered to genome_keys."""
+def load_alignment(payload: LoadAlignmentRequest):
+    """Reconstruct a MultiAlignmentResult from a saved alignment, filtered to genome_keys.
+
+    On a worker thread: rebuilding a stored alignment is blocking work, and a large
+    one is not quick.
+    """
     if not payload.output_dir or not os.path.exists(payload.output_dir):
         raise HTTPException(status_code=400, detail="output_dir is not set or does not exist")
 
@@ -7942,7 +7957,7 @@ async def import_custom_annotation(request: CustomAnnotationRequest):
         }
     _write_genome_manifest(asm_dir, manifest)
 
-    refreshed = await list_local_assemblies(request.output_dir)
+    refreshed = await run_in_threadpool(list_local_assemblies, request.output_dir)
     assembly_record = next(
         (
             item for item in refreshed
@@ -8014,7 +8029,7 @@ async def set_dataset_default(request: DatasetDefaultRequest):
     manifest.setdefault("dataset_releases", {})
     _write_genome_manifest(asm_dir, manifest)
 
-    refreshed = await list_local_assemblies(request.output_dir)
+    refreshed = await run_in_threadpool(list_local_assemblies, request.output_dir)
     assembly_record = next(
         (
             item for item in refreshed
@@ -8843,8 +8858,14 @@ async def delete_tutorial_session():
 
 
 @app.get("/api/remote/local-assemblies")
-async def list_local_assemblies(output_dir: str):
-    """Scan output_dir/local_data/ and return all locally downloaded assemblies with file paths."""
+def list_local_assemblies(output_dir: str):
+    """Scan output_dir/local_data/ and return all locally downloaded assemblies with file paths.
+
+    On a worker thread. This walks the whole local data directory, reading a manifest
+    and scanning the files of every assembly it finds, and six different views fire it
+    on mount — so on the event loop a single large or slow-disk collection stalled the
+    entire backend every time the user moved between views.
+    """
     local_root = _resolve_local_data_root(output_dir)
     results = []
     if not local_root.is_dir():
@@ -18092,7 +18113,7 @@ async def sv_catalog(output_dir: str = ""):
     output_dir_text = _sv_effective_output_dir(output_dir)
     datasets, incomplete_scans = _list_sv_datasets(output_dir_text)
     try:
-        local_assemblies = await list_local_assemblies(output_dir_text) if output_dir_text else []
+        local_assemblies = await run_in_threadpool(list_local_assemblies, output_dir_text) if output_dir_text else []
     except Exception:
         local_assemblies = []
 
@@ -21741,8 +21762,11 @@ class TrackRegistryUpdateEntry(BaseModel):
 
 
 @app.get("/api/tracks")
-async def list_tracks(genome_key: Optional[str] = None):
-    """Return all registered tracks, optionally filtered by genome_key."""
+def list_tracks(genome_key: Optional[str] = None):
+    """Return all registered tracks, optionally filtered by genome_key.
+
+    On a worker thread: it reads the track registry and its sidecar from disk.
+    """
     config = _tracks_config()
     registry = _load_track_registry(config)
     _ensure_track_registry_sidecar(config)
@@ -21768,7 +21792,14 @@ async def discover_trackhub_tracks(request: TrackHubDiscoverRequest):
             "assembly_name": str(genome.assembly_name or "").strip(),
         })
 
-    grouped = list_tracks_for_genomes(genomes, refresh=bool(request.refresh))
+    # Runs on a worker thread. On a cache miss this crawls the remote Track Hub
+    # Registry: up to eighty paginated searches per filter candidate per genome, each
+    # with its own twenty-second timeout, and then a trackDb fetch per matching hub. A
+    # genome the registry has nothing for is the worst case, because it exhausts every
+    # candidate before giving up. Doing that on the event loop stopped the process
+    # answering anything at all for minutes, and this view discovers silently on mount,
+    # so the only visible symptom was the rest of the app going dead.
+    grouped = await run_in_threadpool(list_tracks_for_genomes, genomes, bool(request.refresh))
     items = []
     for genome in genomes:
         genome_key = genome["genome_key"]

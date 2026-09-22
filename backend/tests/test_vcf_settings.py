@@ -128,7 +128,7 @@ class VcfSettingsTests(unittest.TestCase):
                     "genome_key": "",
                 }
                 registry_path.write_text(json.dumps({"tracks": [legacy]}), encoding="utf-8")
-                payload = asyncio.run(list_tracks())
+                payload = list_tracks()
                 tracks = payload.get("tracks") or []
                 self.assertEqual(len(tracks), 1)
                 self.assertEqual(tracks[0]["display_mode"], "density_lollipop")

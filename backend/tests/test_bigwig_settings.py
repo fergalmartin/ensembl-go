@@ -149,7 +149,7 @@ class BigWigSettingsTests(unittest.TestCase):
             )
 
             with patch("main.TRACK_REGISTRY_FILE", registry_path):
-                payload = asyncio.run(list_tracks())
+                payload = list_tracks()
 
         tracks = payload.get("tracks") or []
         self.assertEqual(len(tracks), 1)

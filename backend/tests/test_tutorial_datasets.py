@@ -123,7 +123,7 @@ class TutorialDatasetTests(unittest.TestCase):
             ])
             self.assertEqual(len(demo_genome.tutorial_session_species()), 8)
             self.assertTrue(all(record["provider"] == "demo" for record in installed))
-            listed = asyncio.run(main.list_local_assemblies(output_dir=str(workspace)))
+            listed = main.list_local_assemblies(output_dir=str(workspace))
             self.assertEqual(len(listed), 8)
             self.assertTrue(all(record["provider"] == "demo" for record in listed))
             self.assertTrue(all(record["source_database"] == "demo" for record in listed))

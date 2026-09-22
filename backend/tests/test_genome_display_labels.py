@@ -113,7 +113,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
             )
 
             with patch.object(main.download_manager, "_species_cache", [summary]):
-                results = asyncio.run(main.list_local_assemblies(str(root)))
+                results = main.list_local_assemblies(str(root))
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["common_name"], "Moths")
@@ -174,7 +174,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
                 patch.object(main.download_manager, "_species_cache", [summary]),
                 patch.object(main.download_manager, "species_data", species_data),
             ):
-                results = asyncio.run(main.list_local_assemblies(str(root)))
+                results = main.list_local_assemblies(str(root))
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["assembly"], accession)
