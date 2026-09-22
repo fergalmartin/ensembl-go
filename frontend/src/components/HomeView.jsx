@@ -116,8 +116,8 @@ function HomeView({ theme, onNavigate }) {
     },
     {
       id: 'alignment',
-      title: 'Alignment',
-      description: 'Align genic regions across haplotypes or species in the context of annotation',
+      title: 'Feature Alignment',
+      description: 'Align annotated gene regions from two or more genomes',
       icon: (
         <div className="text-white" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', justifyItems: 'center', fontSize: '16px', fontWeight: '800', fontFamily: FONT_MONO, lineHeight: 1, gap: '0 2px' }}>
           <span>A</span><span>T</span><span>G</span>

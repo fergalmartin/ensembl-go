@@ -247,7 +247,7 @@ export default function SequenceView({
     }, [searchNote])
     const [searching, setSearching] = useState(false)
     // A tool in hand, not a preference: it is put down when the reader leaves,
-    // the way the browser's and the alignment view's rectangles are.
+    // the way the browser's and the Feature Alignment view's rectangles are.
     const [selectMode, setSelectMode] = useState(false)
     // How a selection is drawn: dragged end to end, or clicked at each end.
     // A preference rather than a tool, since it survives putting the tool down.

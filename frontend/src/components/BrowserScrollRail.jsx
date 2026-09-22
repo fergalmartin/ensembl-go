@@ -51,7 +51,7 @@ function layoutSignature(layout) {
  * still worth having, because one genome with every transcript expanded is an
  * easy three screens tall.
  */
-export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump, isActive, isLight }) {
+export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump, cyclePreview = null, isActive, isLight }) {
     const railRef = useRef(null)
     const indicatorRef = useRef(null)
     const readoutRef = useRef(null)
@@ -301,11 +301,20 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
     const { geometry, stops } = layout
     const { index: activeIndex, percent } = position
     const active = stops[activeIndex] || stops[0]
+    // While the Cycle wheel is open it covers the page, so the rail is lifted over
+    // its overlay rather than hidden under it — the reader keeps the map of where
+    // they are while choosing where to go. It is only a picture up there: the wheel
+    // owns the pointer, and any click on it confirms or cancels the wheel.
+    const cycling = Boolean(cyclePreview)
+    // The genome standing at the front of the drum. An inactive one is not on the
+    // page and so has no dot, which is itself the answer: there is nothing to jump
+    // to yet, the wheel is offering to add it.
+    const candidateIndex = cycling ? stops.findIndex((stop) => stop.key === cyclePreview.key) : -1
 
     return createPortal(
         <div
             ref={railRef}
-            className={`browser-scroll-rail ${isLight ? 'light' : ''} ${engaged ? 'engaged' : ''}`}
+            className={`browser-scroll-rail ${isLight ? 'light' : ''} ${engaged ? 'engaged' : ''} ${cycling ? 'cycling' : ''} ${cycling && cyclePreview.held ? 'held' : ''}`}
             style={{ top: geometry.top, left: geometry.left, height: geometry.height, width: SCROLL_RAIL_WIDTH }}
             // Chrome, not track surface: the view's wheel router and its
             // drag-to-scroll both stand down over anything marked this way.
@@ -336,7 +345,7 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
             {stops.map((stop, index) => (
                 <div
                     key={`band-${stop.key}`}
-                    className={`browser-scroll-rail-band ${index === activeIndex ? 'current' : ''}`}
+                    className={`browser-scroll-rail-band ${index === activeIndex ? 'current' : ''} ${index === candidateIndex ? 'candidate' : ''}`}
                     style={{
                         top: stop.offset,
                         height: Math.max(0, (stops[index + 1]?.offset ?? geometry.padding + geometry.track) - stop.offset),
@@ -356,7 +365,7 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
                     aria-hidden="true"
                     data-rail-stop={stop.key}
                     data-tour-id={`browser-scroll-rail-genome-${stop.tourId || stop.key}`}
-                    className={`browser-scroll-rail-stop ${index === activeIndex ? 'current' : ''}`}
+                    className={`browser-scroll-rail-stop ${index === activeIndex ? 'current' : ''} ${index === candidateIndex ? 'candidate' : ''}`}
                     style={{ top: stop.offset, '--dot': stop.color }}
                     title={`Jump to ${stop.label}`}
                 >

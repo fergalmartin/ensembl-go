@@ -4,7 +4,7 @@ Sequence laid out the way a file lays it out: sixty bases to a row, with the
 coordinate of the first and last base of each row down either margin, and the
 annotation painted onto the bases themselves.
 
-The colours are the Alignment view's, from `frontend/src/utils/featureColors.js`
+The colours are the Feature Alignment view's, from `frontend/src/utils/featureColors.js`
 — the same blue for coding sequence, the same alternating pair for codons, the
 same orange for a splice site. A reader who has learned one view can read the
 other.

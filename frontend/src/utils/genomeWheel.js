@@ -46,6 +46,55 @@ export function cyclePointerIntent(x, y, rail, count, defaultAction) {
     ? (dx < -22 ? 'focus' : dx > 22 ? 'add' : defaultAction) : null }
 }
 
+/** The box the wheel is drawn in.
+ *
+ *  The browser's own scroll container, which runs from the base of the app's top
+ *  bar to the bottom of the window — minus the left gutter the scroll bar floats
+ *  in, which the wheel is not allowed to cover.
+ *
+ *  Measured from the container and never from the page inside it. The page slides
+ *  under the reader as they scroll, so anchoring to it opened the wheel in a
+ *  different place, and at a different size, depending on how far down they
+ *  happened to be; the container stands still, so the panel appears in the same
+ *  place every time.
+ */
+export function cycleOverlayBox(hostRect, railRect, viewportWidth, viewportHeight) {
+  const host = hostRect?.height > 0
+    ? hostRect
+    : { top: 0, left: 0, right: viewportWidth, bottom: viewportHeight }
+  const top = Math.max(0, Math.round(host.top))
+  const left = Math.round(railRect?.width > 0 ? Math.max(host.left, railRect.right + 1) : host.left)
+  return { top, left,
+    width: Math.max(0, Math.round(Math.min(viewportWidth, host.right) - left)),
+    height: Math.max(0, Math.round(Math.min(viewportHeight, host.bottom) - top)) }
+}
+
+// How tall a face on the drum is, for the height the overlay has to draw in.
+export const cycleFaceHeight = height => Math.max(80, Math.min(300, height * 0.5))
+
+// The scale on `.genome-wheel-drum`, repeated here because the pointer has to be
+// told where the panel it can see actually is. Keep the two in step.
+export const CYCLE_DRUM_SCALE = 0.85
+
+/** The face standing at the front of the drum, in viewport coordinates.
+ *
+ *  The scene is a fixed box and the drum is centred in it at the face's own
+ *  height and the scene's full width, so the panel the reader is looking at is
+ *  that box shrunk by the drum's scale — no matter which genome has rotated into
+ *  it. The panel is a target like the rail is: pressing the genome on screen is
+ *  the same request as pressing Add or Jump beside its dot. */
+export function cyclePanelBox(sceneRect, faceHeight) {
+  if (!sceneRect || !(sceneRect.width > 0) || !(faceHeight > 0)) return null
+  const width = sceneRect.width * CYCLE_DRUM_SCALE
+  const height = Math.min(sceneRect.height, faceHeight * CYCLE_DRUM_SCALE)
+  const left = sceneRect.left + (sceneRect.width - width) / 2
+  const top = sceneRect.top + (sceneRect.height - height) / 2
+  return { left, top, right: left + width, bottom: top + height }
+}
+
+export const cyclePointerOnPanel = (x, y, box) =>
+  Boolean(box) && x >= box.left && x <= box.right && y >= box.top && y <= box.bottom
+
 export function cycleSelection(active, listed, selectedKey, action) {
   const unique = items => [...new Map(items.map(item => [getGenomeKey(item), item])).values()]
   const pool = unique([...listed, ...active])

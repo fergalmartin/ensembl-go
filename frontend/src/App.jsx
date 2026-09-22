@@ -3078,7 +3078,7 @@ function App() {
       })
       const data = await res.json()
       if (!res.ok) {
-        throw new Error(data?.detail || 'Failed to run multi alignment')
+        throw new Error(data?.detail || 'Failed to run feature alignment')
       }
       const alignedRows = Array.isArray(data?.rows) ? data.rows : []
       const includedCount = Number.isFinite(Number(data?.included_count))
@@ -3093,10 +3093,10 @@ function App() {
       setLoadedAlignmentBaselineByGenome(nextLoadedBaseline)
       setMultiAlignmentResult(data)
       setLastSuccessfulMultiAlignmentSignature(runSignature)
-      // Bridge from alignment view to browser alignment overlay is disabled for now.
+      // Bridge from Feature Alignment to the browser alignment overlay is disabled for now.
       setAlignmentOverlay(null)
     } catch (e) {
-      setAlignmentViewError(e?.message || 'Failed to run multi alignment')
+      setAlignmentViewError(e?.message || 'Failed to run feature alignment')
     } finally {
       setAlignmentViewLoading(false)
     }
@@ -3435,7 +3435,7 @@ function App() {
     genome_selector: 'Genome Selector',
     genome_browser: 'Genome Browser',
     feature_explorer: 'Feature Explorer',
-    alignment: 'Alignment',
+    alignment: 'Feature Alignment',
     sequence: 'Sequence',
     alignment_explorer: 'Alignment Explorer',
     neighbourhood: 'Neighbourhood',
@@ -3455,7 +3455,7 @@ function App() {
     genome_selector: 'Select downloaded genomes for visualisation in the Genome Browser',
     genome_browser: 'Navigate gene annotations across chromosomes',
     feature_explorer: 'Inspect transcript-level features for a selected gene in an active genome',
-    alignment: 'Comparative genomic annotation visualisation',
+    alignment: 'Align annotated gene regions across two or more genomes',
     sequence: 'Read sequence base by base, from a whole region down to a single exon',
     alignment_explorer: 'Explore alignment blocks and connected sequence paths in named layers',
     neighbourhood: 'Explore gene neighbourhood context',
@@ -6748,7 +6748,7 @@ function App() {
               />
             </div>
           ) : currentView === 'alignment' ? (
-            /* ========== ALIGNMENT VIEW ========== */
+            /* ========== FEATURE ALIGNMENT VIEW ========== */
             <ErrorBoundary>
               <div data-screenshot-capture="view" className="min-h-full flex items-start gap-4">
               {/* Left sidebar */}
@@ -6802,7 +6802,7 @@ function App() {
                 {alignmentViewLoading && (
                   <div className={`${themeStyles.panel} rounded-lg p-12 text-center flex-grow flex flex-col items-center justify-center`}>
                     <div className={`animate-spin w-8 h-8 border-4 ${isLight ? 'border-[#0099ff]' : 'border-blue-500'} border-t-transparent rounded-full mb-4`}></div>
-                    <p className={themeStyles.subtext}>Running multi alignment...</p>
+                    <p className={themeStyles.subtext}>Running feature alignment...</p>
                   </div>
                 )}
 
@@ -6820,8 +6820,8 @@ function App() {
                     <h2 className="text-xl font-semibold mb-2">No alignment loaded</h2>
                     <p className={themeStyles.subtext}>
                       {alignmentPreparedCount >= 2
-                        ? 'Click the Run alignment button in the left hand panel to run/load the alignment'
-                        : 'Use the search boxes or selected two or more genes across genomes in the browser to prepare sequences for alignment'}
+                        ? 'Click Run alignment in the left panel to align the selected gene regions.'
+                        : 'Search for genes here, or select genes in Genome Browser. At least two genomes are needed.'}
                     </p>
                   </div>
                 )}

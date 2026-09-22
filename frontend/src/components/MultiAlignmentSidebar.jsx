@@ -193,7 +193,7 @@ export default function MultiAlignmentSidebar({
     return (
         <div className={`${panelClass} h-auto rounded-lg p-4 flex flex-col gap-4 overflow-visible`}>
             <div className="flex items-center justify-between">
-                <h3 className={`text-sm font-semibold ${textClass}`}>Multiple Sequence Alignment</h3>
+                <h3 className={`text-sm font-semibold ${textClass}`}>Feature Alignment</h3>
                 <button
                     type="button"
                     onClick={onToggleCollapsed}

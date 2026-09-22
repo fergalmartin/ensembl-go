@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { getGenomeKey } from '../utils/genomeIdentity'
 import { genomeColorResolver, INACTIVE_GENOME_COLOR } from '../genomeColorSchemes'
-import { clampWheelPosition, detentPosition, defaultCycleAction, cycleRailGeometry, cyclePointerIntent, cycleGenomeDetails, cyclePointerDragged, cycleActionLabel, cycleActionProgress, CYCLE_ACTION_OFFSET } from '../utils/genomeWheel'
+import { clampWheelPosition, detentPosition, defaultCycleAction, cycleRailGeometry, cyclePointerIntent, cycleGenomeDetails, cyclePointerDragged, cycleActionLabel, cycleActionProgress, cycleFaceHeight, cycleOverlayBox, cyclePanelBox, cyclePointerOnPanel, CYCLE_ACTION_OFFSET } from '../utils/genomeWheel'
+import { findScrollHost } from '../utils/browserScrollRail'
 import { registerGenomeCycle } from '../utils/genomeCycleControls'
 import GenomeCyclePreview from './GenomeCyclePreview'
 import { genomePillLabels } from './GenomePill'
@@ -19,9 +20,11 @@ function capturePanel(root, key) {
   return copy
 }
 
-export default function GenomeWheel({ species, activeSpecies, config, panelRootRef, onPromote, isActive, isLight, held = false }) {
+export default function GenomeWheel({ species, activeSpecies, config, panelRootRef, onPromote, onPreview, isActive, isLight, held = false }) {
   const promoteRef = useRef(onPromote)
   useEffect(() => { promoteRef.current = onPromote }, [onPromote])
+  const previewRef = useRef(onPreview)
+  useEffect(() => { previewRef.current = onPreview }, [onPreview])
   const button = useRef(null)
   const sessionRef = useRef(null)
   const [session, setSession] = useState(null)
@@ -31,6 +34,8 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
   // Set once a press has been released without travelling: the wheel stays open
   // and tracks the bare cursor until a second click confirms.
   const [sticky, setSticky] = useState(false)
+  // Whether the pointer is over the panel standing at the front of the drum.
+  const [onPanel, setOnPanel] = useState(false)
   const stage = useRef(null)
   const finishRef = useRef(null)
   const chooseRef = useRef(null)
@@ -58,10 +63,20 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
     if (!entries.length) return false
     const asked = request?.genome ? entries.findIndex(entry => entry.tourId === request.genome || entry.key === request.genome) : -1
     const initial = asked >= 0 ? asked : Math.max(0, entries.findIndex(entry => entry.key === getGenomeKey(activeSpecies[0])))
-    const bounds = panelRootRef.current.getBoundingClientRect()
     const buttonBounds = button.current.getBoundingClientRect()
-    const top = Math.max(0, Math.min(bounds.top, buttonBounds.bottom + 4))
     const rail = cycleRailGeometry(entries.length, buttonBounds, window.innerHeight)
+    // The wheel fills the browser's own scroll container rather than whatever part
+    // of the page is showing, and stops short of the left gutter so the browser's
+    // scroll bar is left standing in it. Both are fixed by the window, not by the
+    // scroll position, so the panel opens in the same place every time.
+    //
+    // This covers the browser's own control bar, and with it the Cycle button that
+    // opened the wheel — that bar is `sticky` with a z-index of its own, so nothing
+    // inside it can be raised over a portalled overlay however it is stacked. The
+    // button stays legible through the overlay, and the rail still hangs from it.
+    const host = panelRootRef.current ? findScrollHost(panelRootRef.current) : null
+    const scrollRail = document.querySelector('[data-tour-id="browser-scroll-rail"]')?.getBoundingClientRect()
+    const box = cycleOverlayBox(host?.getBoundingClientRect(), scrollRail, window.innerWidth, window.innerHeight)
     const defaultAction = defaultCycleAction(activeSpecies.length)
     // While a tutorial is running the wheel is *held*: it follows the pointer as a sticky
     // session does, but only its own rail can confirm it. Confirming on a click anywhere
@@ -74,14 +89,16 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
     const pointerless = !event && !keyboard
     const requested = request?.action && request.action !== 'none' ? request.action : null
     const next = { entries, initial, raw: initial, position: initial, target: initial, keyboard,
-      pointerId: event?.pointerId, top, height: window.innerHeight - top, rail, defaultAction,
+      pointerId: event?.pointerId, box, rail, defaultAction,
       action: request ? requested : (keyboard ? defaultAction : null), signature: species.map(getGenomeKey).join('|'),
       activeSignature: activeSpecies.map(getGenomeKey).join('|'), finishing: false, held: isHeld,
-      origin: event ? { x: event.clientX, y: event.clientY } : null, dragged: false, sticky: isHeld || pointerless }
+      origin: event ? { x: event.clientX, y: event.clientY } : null, dragged: false, sticky: isHeld || pointerless,
+      panelBox: null, onPanel: false }
     sessionRef.current = next
     setCandidate(initial)
     setAction(next.action)
     setSticky(isHeld || pointerless)
+    setOnPanel(false)
     setPhase('open')
     setSession(next)
     button.current.focus({ preventScroll: true })
@@ -157,7 +174,14 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
       if (!session.sticky && event.pointerId !== session.pointerId) return
       if (!session.sticky && !session.dragged && cyclePointerDragged(session.origin, event.clientX, event.clientY)) session.dragged = true
       const intent = cyclePointerIntent(event.clientX, event.clientY, session.rail, session.entries.length, session.defaultAction)
-      choose(intent.action ? intent.position : session.raw, intent.action)
+      // The scene never moves while a session is open — a resize cancels it — so the
+      // panel's box is measured once and then only read.
+      if (!session.panelBox && stage.current) session.panelBox = cyclePanelBox(stage.current.getBoundingClientRect(), cycleFaceHeight(session.box.height))
+      // Pressing the genome you can see is the same request as pressing Add or Jump
+      // beside its dot; it used to fall through to the surround and cancel.
+      const overPanel = !intent.action && cyclePointerOnPanel(event.clientX, event.clientY, session.panelBox)
+      if (session.onPanel !== overPanel) { session.onPanel = overPanel; setOnPanel(overPanel) }
+      choose(intent.action ? intent.position : session.raw, intent.action || (overPanel ? 'add' : null))
     }
     // A drag commits wherever it is released. A click that never travelled is
     // the other half of the same control: the wheel is left open, the cursor
@@ -248,7 +272,19 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
     close: () => { finishRef.current?.(true); return true },
   }))
 
-  const faceHeight = session ? Math.max(80, Math.min(300, session.height * 0.5)) : 0
+  // The browser's own scroll bar is kept on top of the overlay while the wheel is
+  // open, and told which genome is at the front of the drum so the dot it highlights
+  // and the panel on screen are never two different genomes. Published only when the
+  // answer changes: this crosses into the browser view, and re-rendering the page on
+  // every pointer frame is not worth a highlight.
+  const previewKey = session?.entries[candidate]?.key || null
+  const previewHeld = Boolean(session?.held)
+  useEffect(() => {
+    previewRef.current?.(previewKey ? { key: previewKey, action, held: previewHeld } : null)
+  }, [previewKey, action, previewHeld])
+  useEffect(() => () => previewRef.current?.(null), [])
+
+  const faceHeight = session ? cycleFaceHeight(session.box.height) : 0
   const step = session?.entries.length === 2 ? 180 : 360 / (session?.entries.length || 3)
   const radius = session?.entries.length <= 2 ? 0 : faceHeight / (2 * Math.tan(Math.PI / (session?.entries.length || 3)))
   // A genome that is already open cannot be added to the pool, so the right-hand
@@ -258,7 +294,7 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
   const chosenLabel = cycleActionLabel(action, candidateActive)
   return <>
     <button ref={button} type="button" className="genome-wheel-button" data-tour-id="browser-cycle" disabled={!enabled || !isActive}
-      aria-label="Cycle genomes" aria-expanded={Boolean(session)} title="Drag down to choose a genome and release, or click once, move, and click again; left to Focus, right to Add or Jump. Keyboard: Enter, then arrow keys."
+      aria-label="Cycle genomes" aria-expanded={Boolean(session)} title="Drag down to choose a genome and release, or click once, move, and click again; left to Focus, right to Add or Jump, or click the panel itself. Keyboard: Enter, then arrow keys."
       onPointerDown={event => { if (event.button === 0) start(event) }}
       // The gesture opens on pointerdown, which a click carrying no pointer never sends —
       // assistive technology, and a tutorial pressing this on the reader's behalf, both
@@ -271,7 +307,7 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
       onKeyDown={event => { if (!session && (event.key === 'Enter' || event.key === ' ')) start(event, true) }}>
       Cycle
     </button>
-    {session && createPortal(<div className={`genome-wheel-overlay genome-wheel-overlay-genome ${isLight ? 'light' : ''} ${phase} ${sticky ? 'hovering' : ''} ${session.held ? 'held' : ''}`} style={{ top: session.top }} data-browser-controls="true" onContextMenu={event => event.preventDefault()}>
+    {session && createPortal(<div className={`genome-wheel-overlay genome-wheel-overlay-genome ${isLight ? 'light' : ''} ${phase} ${sticky ? 'hovering' : ''} ${session.held ? 'held' : ''} ${onPanel ? 'on-panel' : ''}`} style={{ top: session.box.top, left: session.box.left, width: session.box.width, height: session.box.height }} data-browser-controls="true" onContextMenu={event => event.preventDefault()}>
       <div className="genome-wheel-scene" data-tour-id="browser-cycle-wheel" ref={stage} style={{ '--wheel-position': session.initial, '--face-step': `${step}deg`, '--radius': `${radius}px`, '--face-height': `${faceHeight}px` }}>
         <div className="genome-wheel-drum">{session.entries.map((entry, index) => <div key={entry.key} className={`genome-wheel-face ${index === candidate ? 'selected' : ''}`} style={{ '--face-index': index, '--accent': entry.color }}>
           <div className="genome-wheel-caption"><i style={{ background: entry.color }} />{entry.label}<small>{entry.assembly}</small></div>
@@ -323,6 +359,7 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
           // "release" nor "click" would describe how to leave it.
           : session.held ? 'Choose Focus or Jump, or Cancel'
           : sticky ? 'Click to cancel' : 'Release to cancel'}</span>
+        {!session.held && !session.keyboard && !action && <span>{`Or click the panel to ${candidateActive ? 'jump to' : 'add'} it`}</span>}
         {sticky && <span>{session.held ? 'Move to choose · Click Focus or Jump · Esc Cancel' : 'Move to choose · Click to confirm · Esc Cancel'}</span>}
         {session.keyboard && <span>↑ ↓ Genome · ← Focus · → Add · Enter Confirm · Esc Cancel</span>}
       </div>

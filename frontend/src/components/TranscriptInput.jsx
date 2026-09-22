@@ -255,7 +255,7 @@ export default function TranscriptInput({
     return (
         <div className={`${panelClass} rounded-lg p-4`}>
             <h3 className={`text-sm font-semibold ${textClass} mb-3`}>
-                Pairwise Alignment
+                Feature Alignment
             </h3>
 
             <div className="space-y-4">

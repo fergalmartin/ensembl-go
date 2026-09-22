@@ -62,7 +62,7 @@ export const APP_BUTTON_META = {
   track_manager: { id: 'track_manager', label: 'Track Manager', shortLabel: 'Tracks', kind: 'data_view', viewId: 'track_manager' },
   feature_explorer: { id: 'feature_explorer', label: 'Feature Explorer', shortLabel: 'Features', kind: 'data_view', viewId: 'feature_explorer' },
   sequence: { id: 'sequence', label: 'Sequence', shortLabel: 'Sequence', kind: 'data_view', viewId: 'sequence' },
-  alignment: { id: 'alignment', label: 'Alignment', shortLabel: 'Align', kind: 'data_view', viewId: 'alignment' },
+  alignment: { id: 'alignment', label: 'Feature Alignment', shortLabel: 'Feature Align', kind: 'data_view', viewId: 'alignment' },
   alignment_explorer: { id: 'alignment_explorer', label: 'Alignment Explorer', shortLabel: 'Explorer', kind: 'data_view', viewId: 'alignment_explorer' },
   neighbourhood: { id: 'neighbourhood', label: 'Neighbourhood', shortLabel: 'Neighbour', kind: 'data_view', viewId: 'neighbourhood' },
   structural_variation: { id: 'structural_variation', label: 'Structural Variation', shortLabel: 'SV', kind: 'data_view', viewId: 'structural_variation' },

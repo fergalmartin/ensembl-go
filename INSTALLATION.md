@@ -20,10 +20,9 @@ These are for developers running or packaging the source code:
 
 ## Optional dependency: MAFFT
 
-MAFFT enables multiple alignments of genic regions. Those alignments can be
-displayed with gene annotation overlaid on the aligned sequence. It is not
-needed for genome browsing, pairwise alignment views, downloads, statistics,
-or the Structural Variation view.
+MAFFT enables Feature Alignment of genic regions from two or more genomes, with
+gene annotation overlaid on the aligned sequence. It is not needed for genome
+browsing, downloads, statistics, or the Structural Variation view.
 
 On macOS, install it with Homebrew if you want that functionality:
 

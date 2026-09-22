@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { CYCLE_ACTION_OFFSET, clampWheelPosition, detentPosition, defaultCycleAction, cycleRailGeometry, cyclePointerIntent, cycleSelection, cycleGenomeDetails, cyclePointerDragged, cycleActionLabel, cycleActionProgress, cycleBottomSpacer } from '../src/utils/genomeWheel.js'
+import { CYCLE_ACTION_OFFSET, clampWheelPosition, detentPosition, defaultCycleAction, cycleRailGeometry, cyclePointerIntent, cycleSelection, cycleGenomeDetails, cyclePointerDragged, cycleActionLabel, cycleActionProgress, cycleBottomSpacer, cycleFaceHeight, cycleOverlayBox, cyclePanelBox, cyclePointerOnPanel, CYCLE_DRUM_SCALE } from '../src/utils/genomeWheel.js'
 import { getGenomeKey } from '../src/utils/genomeIdentity.js'
 const genomes = Array.from({ length: 4 }, (_, index) => ({ species_key: `species_${index}`, assembly: `GCA_00000000${index}.1`, files: { gff3: `/test/${index}.gff` } }))
 const keys = items => items.map(getGenomeKey)
@@ -78,6 +78,51 @@ test('cursor and dot positions agree, including side actions and outside cancell
   assert.equal(cyclePointerIntent(rail.center, rail.cancelTop + rail.cancelHeight / 2, rail, 6, 'add').action, null)
   assert.equal(cyclePointerIntent(rail.center - 100, y, rail, 6, 'add').action, null)
   assert.equal(cyclePointerIntent(rail.center, y, rail, 6, 'focus').action, 'focus')
+})
+test('the wheel opens in the same box however far the page has been scrolled', () => {
+  // The browser's scroll container: fixed by the window, from the base of the app's
+  // top bar to the bottom of the screen, whatever the page inside it is doing.
+  const host = { top: 188, left: 0, right: 1382, bottom: 984, height: 796 }
+  const rail = { left: 1, right: 23, width: 22 }
+  const box = cycleOverlayBox(host, rail, 1382, 984)
+  assert.deepEqual(box, { top: 188, left: 24, width: 1358, height: 796 })
+  // Scrolling moves the panels, not the container, so the answer does not change.
+  assert.deepEqual(cycleOverlayBox(host, rail, 1382, 984), box)
+  // No scroll bar to leave room for: the wheel takes the container's own left edge.
+  assert.equal(cycleOverlayBox(host, null, 1382, 984).left, 0)
+  assert.equal(cycleOverlayBox(host, { left: 1, right: 23, width: 0 }, 1382, 984).left, 0)
+})
+test('with no scroll container to measure, the wheel falls back to the window', () => {
+  const box = cycleOverlayBox(null, null, 1000, 700)
+  assert.deepEqual(box, { top: 0, left: 0, width: 1000, height: 700 })
+  // A container hanging below the fold is still clipped to the window.
+  assert.deepEqual(cycleOverlayBox({ top: 100, left: 0, right: 1200, bottom: 1400, height: 1300 }, null, 1000, 700),
+    { top: 100, left: 0, width: 1000, height: 600 })
+})
+test('the panel at the front of the drum is a target, and the surround is not', () => {
+  const faceHeight = cycleFaceHeight(700)
+  const scene = { left: 120, top: 40, width: 900, height: 620 }
+  const box = cyclePanelBox(scene, faceHeight)
+  // Centred in the scene, at the drum's own scale.
+  assert.equal(Math.round(box.right - box.left), Math.round(900 * CYCLE_DRUM_SCALE))
+  assert.equal(Math.round(box.bottom - box.top), Math.round(faceHeight * CYCLE_DRUM_SCALE))
+  assert.equal(Math.round((box.left + box.right) / 2), 570)
+  assert.equal(Math.round((box.top + box.bottom) / 2), 350)
+  assert.equal(cyclePointerOnPanel(570, 350, box), true)
+  // The empty scene above and below the panel cancels, as the rest of the overlay does.
+  assert.equal(cyclePointerOnPanel(570, scene.top + 10, box), false)
+  assert.equal(cyclePointerOnPanel(scene.left + 10, 350, box), false)
+  assert.equal(cyclePointerOnPanel(570, 350, null), false)
+  assert.equal(cyclePanelBox(scene, 0), null)
+  assert.equal(cyclePanelBox(null, faceHeight), null)
+})
+test('a face never outgrows the scene it is drawn in', () => {
+  assert.equal(cycleFaceHeight(100), 80)
+  assert.equal(cycleFaceHeight(1400), 300)
+  assert.equal(cycleFaceHeight(400), 200)
+  // A scene shorter than the face it is given still yields a box inside the scene.
+  const box = cyclePanelBox({ left: 0, top: 0, width: 400, height: 60 }, 300)
+  assert.ok(box.top >= 0 && box.bottom <= 60)
 })
 test('details retain assembly accession and custom label', () => {
   assert.deepEqual(cycleGenomeDetails({ display_name: 'Human', assembly_name: 'GRCh38', assembly: 'GCF_000001405.40', custom_label: 'Reference' }), {

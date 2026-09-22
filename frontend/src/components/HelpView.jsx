@@ -1,19 +1,32 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import AppButtonIcon from './AppButtonIcon'
 
-function IconTile({ buttonId, label, theme }) {
+function ActionButtonRow({ buttonId, label, theme, children }) {
   const isLight = theme === 'light'
   return (
-    <span className="inline-flex items-center gap-2">
-      <span
-        className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${isLight ? 'bg-[#0099ff] text-white' : 'bg-blue-600 text-white'
-          }`}
-        title={label}
-      >
+    <li className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3">
+      <span className={`inline-flex h-8 w-8 items-center justify-center rounded-md ${isLight ? 'bg-[#0099ff] text-white' : 'bg-blue-600 text-white'}`} aria-hidden="true">
         <AppButtonIcon buttonId={buttonId} isLight={isLight} compact />
       </span>
-      <span className={isLight ? 'text-gray-700' : 'text-gray-300'}>{label}</span>
-    </span>
+      <div className="min-w-0 pt-1">
+        <strong>{label}:</strong> {children}
+      </div>
+    </li>
+  )
+}
+
+function GettingStartedStep({ number, buttonId, label, theme, children }) {
+  const isLight = theme === 'light'
+  return (
+    <li className="grid grid-cols-[1.5rem_2rem_minmax(0,1fr)] items-start gap-3">
+      <span className="pt-1 text-right tabular-nums" aria-hidden="true">{number}.</span>
+      <span className={`inline-flex h-8 w-8 items-center justify-center rounded-md ${isLight ? 'bg-[#0099ff] text-white' : 'bg-blue-600 text-white'}`} aria-hidden="true">
+        <AppButtonIcon buttonId={buttonId} isLight={isLight} compact />
+      </span>
+      <div className="min-w-0 pt-1">
+        <strong>{label}:</strong> {children}
+      </div>
+    </li>
   )
 }
 
@@ -21,40 +34,22 @@ function SectionCard({ id, title, icon, openSections, setOpenSections, theme, ch
   const isLight = theme === 'light'
   const open = openSections.includes(id)
   return (
-    <section
-      className={`rounded-xl border overflow-hidden ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800 border-gray-700'
-        }`}
-    >
+    <section className={`rounded-xl border overflow-hidden ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800 border-gray-700'}`}>
       <button
         type="button"
-        onClick={() => {
-          setOpenSections((prev) => (
-            prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-          ))
-        }}
-        className={`w-full flex items-center justify-between px-5 py-4 text-left ${isLight ? 'hover:bg-gray-50' : 'hover:bg-gray-750'
-          }`}
+        aria-expanded={open}
+        onClick={() => setOpenSections((prev) => (
+          prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+        ))}
+        className={`w-full flex items-center justify-between px-5 py-4 text-left ${isLight ? 'hover:bg-gray-50' : 'hover:bg-gray-750'}`}
       >
         <div className="flex items-center gap-3">
-          <span
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-md ${isLight ? 'bg-[#0099ff] text-white' : 'bg-blue-600 text-white'
-              }`}
-          >
+          <span className={`inline-flex h-8 w-8 items-center justify-center rounded-md ${isLight ? 'bg-[#0099ff] text-white' : 'bg-blue-600 text-white'}`}>
             {icon}
           </span>
           <span className={`text-sm font-semibold ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>{title}</span>
         </div>
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`transition-transform ${open ? 'rotate-180' : ''} ${isLight ? 'text-gray-500' : 'text-gray-400'}`}
-        >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${open ? 'rotate-180' : ''} ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
           <path d="M4 6l4 4 4-4" />
         </svg>
       </button>
@@ -80,325 +75,139 @@ function HelpGlyph() {
 export default function HelpView({ theme = 'dark' }) {
   const isLight = theme === 'light'
   const [openSections, setOpenSections] = useState(['summary', 'getting_started'])
-
-  const panelClass = useMemo(
-    () => (isLight ? 'bg-gray-50 border border-gray-200' : 'bg-gray-900/40 border border-gray-700'),
-    [isLight]
-  )
+  const cardProps = { openSections, setOpenSections, theme }
 
   return (
     <div className="h-full overflow-y-auto pr-1">
-      <div className={`${panelClass} rounded-xl p-4 md:p-5 space-y-3`}>
-        <SectionCard
-          id="summary"
-          title="Summary"
-          icon={<HelpGlyph />}
-          openSections={openSections}
-          setOpenSections={setOpenSections}
-          theme={theme}
-        >
+      <div className={`${isLight ? 'bg-gray-50 border border-gray-200' : 'bg-gray-900/40 border border-gray-700'} rounded-xl p-4 md:p-5 space-y-3`}>
+        <SectionCard id="summary" title="What you can do in Ensembl Go" icon={<HelpGlyph />} {...cardProps}>
           <p>
-            Ensembl Go is a desktop application for downloading Ensembl genomes and exploring annotation, homology, gene neighbourhoods,
-            structural variation, and multiple sequence alignments on your own machine.
+            Ensembl Go lets you download genomes and annotations and work with them on your own computer. You can browse a region, read its sequence, inspect transcripts, compare genes across genomes and add your own data tracks.
           </p>
           <p>
-            The workflow is designed to be continuous: you select genomes once, keep them in the top genome list, and then move between
-            views while keeping as much context as possible.
+            Genomes selected in Genome Selector appear as buttons at the top of every view. Click a genome button to activate or deactivate it, or use its cross to remove it from the list. Several views can show more than one active genome at once.
           </p>
           <p>
-            In practice, this means you can identify a gene in the Genome Browser, follow it into alignment or neighbourhood analyses,
-            and then move to homology queries without having to rebuild your setup each time.
+            Most app buttons open a view. Genome Playlist, Theme Toggle and Screenshot act on the current session. You can change which buttons appear, and their order, under <strong>Organise Apps</strong> in Configuration. Structural Variation and Homology are available there and are not on the default button bar.
           </p>
         </SectionCard>
 
-        <SectionCard
-          id="getting_started"
-          title="Getting started"
-          icon={<AppButtonIcon buttonId="home" isLight={isLight} compact />}
-          openSections={openSections}
-          setOpenSections={setOpenSections}
-          theme={theme}
-        >
-          <ol className="space-y-4">
-            <li className="flex gap-3">
-              <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-900/50 text-blue-200'}`}>1</span>
-              <div className="space-y-2">
-                <div><IconTile buttonId="configuration" label="Configuration" theme={theme} /></div>
-                <p>
-                  Open Configuration, expand <span className="font-semibold">Outputs</span>, and choose an
-                  <span className="font-semibold"> Output Directory</span>. Downloaded data, generated indices, and caches are stored there.
-                </p>
-                <p>
-                  If you already have an Ensembl Go data directory, select that directory instead.
-                </p>
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-900/50 text-blue-200'}`}>2</span>
-              <div className="space-y-2">
-                <div><IconTile buttonId="download" label="Download" theme={theme} /></div>
-                <p>
-                  Open Download and choose one species and assembly. Keep <span className="font-semibold">Genome</span> and
-                  <span className="font-semibold"> Genes</span> selected, then use the download button for that assembly.
-                </p>
-                <p>
-                  Wait until both files are shown as downloaded. Homology data is optional and is not needed for this first browser view.
-                </p>
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-900/50 text-blue-200'}`}>3</span>
-              <div className="space-y-2">
-                <div><IconTile buttonId="genome_selector" label="Genome Selector" theme={theme} /></div>
-                <p>
-                  Find the downloaded assembly in Genome Selector and tick its checkbox. The genome is added to the genome bar at the top
-                  of the app and made active.
-                </p>
-                <p>
-                  An index is required for browsing. If the <span className="font-semibold">Index</span> column shows that one is missing,
-                  you can build it here or continue to Genome Browser, which starts the build when the genome is opened.
-                </p>
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-900/50 text-blue-200'}`}>4</span>
-              <div className="space-y-2">
-                <div><IconTile buttonId="genome_browser" label="Genome Browser" theme={theme} /></div>
-                <p>
-                  Switch to Genome Browser. The active genome opens at its initial region; if indexing is still finishing, the browser shows
-                  a preparation message and refreshes automatically when the data is ready.
-                </p>
-                <p>
-                  Once the region ruler and gene annotations are visible, the initial setup is complete. Use the search box to open a gene,
-                  stable ID, or genomic region when you are ready to explore further.
-                </p>
-              </div>
-            </li>
+        <SectionCard id="getting_started" title="Getting started" icon={<AppButtonIcon buttonId="home" isLight={isLight} compact />} {...cardProps}>
+          <p>If you are new to Ensembl Go, this is a good place to start:</p>
+          <ol className="space-y-3">
+            <GettingStartedStep number={1} buttonId="configuration" label="Configuration" theme={theme}>
+              Set an <strong>Output Directory</strong> under <strong>Outputs</strong>. This is where downloads, indices and other local files are written.
+            </GettingStartedStep>
+            <GettingStartedStep number={2} buttonId="download" label="Download" theme={theme}>
+              Find a species and assembly, leave <strong>Genome</strong> and <strong>Genes</strong> selected, and download them. You can search by species, assembly or accession.
+            </GettingStartedStep>
+            <GettingStartedStep number={3} buttonId="genome_selector" label="Genome Selector" theme={theme}>
+              Tick the downloaded genome to add it to the buttons at the top of the app.
+            </GettingStartedStep>
+            <GettingStartedStep number={4} buttonId="genome_browser" label="Genome Browser" theme={theme}>
+              Open the genome. Its annotation is indexed the first time you use it, so a large genome may take a little while to appear. Search for a gene or region once the browser is ready.
+            </GettingStartedStep>
+            <GettingStartedStep number={5} buttonId="tutorials" label="Tutorials" theme={theme}>
+              The Tutorials view has a growing collection of interactive tutorials covering different parts of Ensembl Go. Start with <strong>Getting Started</strong> for this workflow, then try the more detailed tutorials as you explore other views.
+            </GettingStartedStep>
           </ol>
         </SectionCard>
 
-        <SectionCard id="home" title="Home view" icon={<AppButtonIcon buttonId="home" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Home is the central launcher for the application. Each card opens one part of the workflow, so it is useful as a quick reset point
-            when switching tasks.
-          </p>
-          <p>
-            The card layout is especially handy when onboarding new users, as it provides a visual map of the app’s capabilities.
-          </p>
+        <SectionCard id="home" title="Home" icon={<AppButtonIcon buttonId="home" isLight={isLight} compact />} {...cardProps}>
+          <p>Home shows the views as cards. Click one to open it. It is also a useful place to see what is available if you have removed a view from the button bar.</p>
         </SectionCard>
 
-        <SectionCard id="configuration" title="Configuration view" icon={<AppButtonIcon buttonId="configuration" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Configuration controls global setup: output directories, path management, and persistent app-level options.
-            It is also where you can organise which app buttons appear in the top navigation bar.
-          </p>
-          <p>
-            If you are moving between machines or sharing a standard setup within a team, this is also the best place to save
-            and reload a consistent configuration.
-          </p>
+        <SectionCard id="genome_selector" title="Genome Selector" icon={<AppButtonIcon buttonId="genome_selector" isLight={isLight} compact />} {...cardProps}>
+          <p>This is where you manage locally available genomes. Tick a genome to add it to the current session, inspect its files and index status, or add your own genome and annotation. Removing a genome from the top bar deselects it here too.</p>
+          <p>You can also make <strong>Genome Playlists</strong>, which are saved sets of genomes. Add genomes individually from their rows or add several selected genomes at once. Choosing a playlist replaces the selected genomes in the top bar with that set and filters the list in Genome Selector. The first available genome is activated.</p>
         </SectionCard>
 
-        <SectionCard id="download" title="Download view" icon={<AppButtonIcon buttonId="download" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Download lets you browse species groups, select assemblies, and queue required files for local work.
-            Progress is tracked in-app, so you can continue using other views while downloads complete.
-          </p>
-          <p>
-            Once finished, downloaded genomes appear in the local selection flow and can be activated from Genome Selector.
-          </p>
+        <SectionCard id="genome_browser" title="Genome Browser" icon={<AppButtonIcon buttonId="genome_browser" isLight={isLight} compact />} {...cardProps}>
+          <p>The Genome Browser is the main view for moving around a genome and its annotation. Search for a gene symbol, stable ID or region, then pan and zoom to look at the surrounding sequence and genes. Each active genome has its own panel and search controls; the general controls above the panels apply to all of them.</p>
+          <p>Use the track controls to show or hide genes on either strand, sequence and any custom tracks you have added. You can change how transcripts are laid out, flip the display and drag a selection to zoom in. Click a gene or select a region to open a drawer with more detail, sequence and a place to write notes.</p>
+          <p>The <strong>Genome Browser</strong> tutorial goes through these controls step by step. <strong>Multi-genome browsing</strong> covers the controls that become useful when several genomes are active.</p>
         </SectionCard>
 
-        <SectionCard id="genome_selector" title="Genome Selector view" icon={<AppButtonIcon buttonId="genome_selector" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Genome Selector is where downloaded species become active for analysis. Ticking a species adds it to the top list shared by the app.
-          </p>
-          <p>
-            The active pill state controls what downstream views load, and index generation is handled here when required.
-          </p>
+        <SectionCard id="download" title="Download" icon={<AppButtonIcon buttonId="download" isLight={isLight} compact />} {...cardProps}>
+          <p>Search the Ensembl and RefSeq catalogues for a species or assembly and choose which files to fetch. Genome sequence and gene annotation are the usual starting point. Homology files are only needed if you want to use the Homology view or homology statistics.</p>
+          <p>The download icon on each assembly shows its progress and becomes a tick when the selected files are available locally. Downloads continue while you use other views. Once they finish, the genome appears in Genome Selector.</p>
         </SectionCard>
 
-        <SectionCard id="genome_browser" title="Genome Browser view" icon={<AppButtonIcon buttonId="genome_browser" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Genome Browser is the main exploratory interface. You can search by symbol/ID/region, pan and zoom continuously,
-            and inspect genes at both summary and transcript-detail levels.
-          </p>
-          <p>
-            It also includes linked multi-genome controls, focus-gene tools, and custom track loading, making it the main entry point
-            for most comparative workflows.
-          </p>
+        <SectionCard id="sequence" title="Sequence" icon={<AppButtonIcon buttonId="sequence" isLight={isLight} compact />} {...cardProps}>
+          <p>Sequence displays sixty bases per row, with coordinates at both ends. Hover over a base to see its position and annotation. The panel on the right lets you move from a location to a gene, then a transcript, then an exon or intron. Moving back up keeps your choices, so you can return to the same feature.</p>
+          <p>The colours change with the level you are reading. At gene level they show where transcripts agree or differ; at transcript level they show UTRs, coding sequence, codons and splice sites. Use the cog to choose highlights and flanking sequence, copy the current sequence as FASTA, or open the region in Genome Browser. You can also drag across the bases to select a shorter stretch.</p>
         </SectionCard>
 
-        <SectionCard id="track_manager" title="Track Manager view" icon={<AppButtonIcon buttonId="track_manager" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Track Manager registers custom BigWig, BigBed, VCF, and splice-junction files for display in Genome Browser.
-            Tracks can be assigned to a genome, searched, filtered, edited, and removed from the registry.
-          </p>
-          <p>
-            Registered tracks become available from the matching genome panel in Genome Browser, where their visibility can be controlled
-            alongside the built-in annotation tracks.
-          </p>
+        <SectionCard id="feature_explorer" title="Feature Explorer" icon={<AppButtonIcon buttonId="feature_explorer" isLight={isLight} compact />} {...cardProps}>
+          <p>Feature Explorer takes a closer look at one gene in an active genome. Search for a symbol or stable ID, or arrive from another view with a gene already selected. The transcript display and its two rulers let you compare genomic coordinates with positions along a transcript. Use the transcript list to choose which isoforms to show.</p>
+          <p>The sequence and protein panels provide more detail for the selected transcript. Where a matching AlphaFold model is available, <strong>Structure</strong> shows the predicted protein fold. You can colour it by confidence or coding exon, and highlight exons in the model. Registered VCF variants that fall in coding exons can also be projected onto the structure. The panel reports when the protein sequence or VCF reference does not match the genome being viewed.</p>
         </SectionCard>
 
-        <SectionCard id="feature_explorer" title="Feature Explorer view" icon={<AppButtonIcon buttonId="feature_explorer" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Feature Explorer is a single-genome transcript inspection view centered on one gene at a time.
-            It uses the primary genome context and supports symbol/ID search with automatic focus propagation from other views.
-          </p>
-          <p>
-            A dual ruler shows genomic coordinates and transcript-offset positions, while the right-side transcript list lets you
-            switch active/inactive transcript tracks for focused structure comparisons.
-          </p>
-          <p>
-            The <span className="font-semibold">Structure</span> section shows a predicted three-dimensional model of the selected
-            transcript's protein, coloured either by AlphaFold's per-residue confidence or by which coding exon contributes each
-            part of the fold. Exons alternate between two colours; the list beside the viewer names them, hovering an entry
-            highlights that exon in the model, and clicking one locks it. Several exons can be locked at once — the locked ones
-            keep their full colour while the rest mute, so the emphasis is visible without hiding the rest of the fold.
-          </p>
-          <p>
-            The transcript menu only offers transcripts that actually have a model. When there are too many coding transcripts to
-            check, or the lookups cannot be reached, it falls back to the canonical transcript and says so rather than listing
-            options that lead nowhere.
-          </p>
-          <p>
-            If you have VCF files registered in the Track Manager against the assembly you are viewing, the
-            <span className="font-semibold"> Variants</span> section projects any that fall in the transcript's coding exons onto
-            the model, drawn over the exon colouring. Each variant's consequence is worked out from the codon itself rather than
-            read from a CSQ or ANN field, so an unannotated VCF works just as well; variants are grouped as truncating, missense or
-            synonymous, and clicking a class in the legend hides it, which is how you get from a dense population file down to the
-            handful worth looking at. If a VCF's reference alleles disagree with the loaded genome, the panel says so — that
-            usually means the file is on a different assembly.
-          </p>
-          <p>
-            Models are found by matching the transcript's protein ID to a UniProt accession — from an imported mapping file first,
-            then a cross-reference file shipped with the genome, then UniProt itself. You can also type an accession directly.
-            AlphaFold models the canonical UniProt sequence, so when a transcript translates to something else the panel aligns the
-            two and states the identity rather than colouring as though they matched. Structure predictions come from the
-            <span className="font-semibold"> AlphaFold Protein Structure Database</span> (CC BY 4.0, EMBL-EBI and Google DeepMind)
-            and are rendered with Mol* / PDBe Mol*.
-          </p>
+        <SectionCard id="track_manager" title="Track Manager" icon={<AppButtonIcon buttonId="track_manager" isLight={isLight} compact />} {...cardProps}>
+          <p>Track Manager registers your own files against a genome so they can be shown in Genome Browser. Supported types include BigWig signal, BED and BigBed intervals, indexed VCF variants, STAR splice junctions, short-read BAM and long-read BAM. The registration form asks for the file, genome, track type and display settings.</p>
+          <p>You can search, edit and remove registrations here. The <strong>Track Hub Registry</strong> lets you add and browse track hubs. In Genome Browser, use <strong>Add Custom Track</strong> on the matching genome panel to add registered tracks, then switch individual tracks on or off.</p>
         </SectionCard>
 
-        <SectionCard id="sequence" title="Sequence view" icon={<AppButtonIcon buttonId="sequence" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            The Sequence view shows sequence the way a file does: sixty bases to a row, with the coordinate
-            of the first and last base of each row down either margin. Hovering a base names its exact
-            coordinate, and what the annotation says it is.
-          </p>
-          <p>
-            The panel on the right is a stack of four levels of focus &mdash; a <span className="font-semibold">location</span>,
-            a <span className="font-semibold">gene</span> on it, a <span className="font-semibold">transcript</span> of that gene,
-            and one of that transcript&rsquo;s <span className="font-semibold">exons or introns</span>. The level you are reading is
-            the one expanded; the list inside it is what you can drill into, and the levels above it are how you come back out.
-            Stepping up keeps what you chose below, so going back down lands where you left off.
-          </p>
-          <p>
-            Each level paints the bases differently. A location marks which stretches are genic, and ticking a gene in the list
-            marks where it begins and ends. A gene is described by all of its isoforms at once, so a base is coding, UTR,
-            non-coding, intronic, or <span className="font-semibold">mixed</span> where the isoforms that cover it disagree. A transcript
-            shows its own UTRs, splice sites and start and stop codons, and shades its coding sequence one codon at a time so the
-            reading frame is visible without counting. The colours are the Alignment view&rsquo;s.
-          </p>
-          <p>
-            The cog on the level you are reading chooses which of those to highlight, and how much flanking sequence to include
-            &mdash; a hundred bases either side of a transcript by default, ten either side of an exon or intron. Beside it,
-            one button copies what you are looking at as plain FASTA, and another opens the same region in the Genome Browser.
-          </p>
-          <p>
-            Dragging across the sequence selects a stretch of it, which appears at the foot of the panel and can be copied or
-            opened in the browser like anything else. It is not part of the chain, so it goes when you move to another gene.
-          </p>
+        <SectionCard id="alignment" title="Feature Alignment" icon={<AppButtonIcon buttonId="alignment" isLight={isLight} compact />} {...cardProps}>
+          <p>Feature Alignment compares genic sequence from two or more active genomes. Genes selected in Genome Browser can be used as inputs, and you can search for a different gene in each genome. Choose how much flanking sequence to include, run the alignment and inspect it alongside the annotation.</p>
+          <p>Zoom and pan through the result, or collapse introns to make exon structure easier to compare. Alignments can be saved and loaded again later. Use <strong>Open in Alignment Explorer</strong> if you want to work with the aligned sequences in layers.</p>
         </SectionCard>
 
-        <SectionCard id="alignment" title="Alignment view" icon={<AppButtonIcon buttonId="alignment" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Alignment runs a multiple sequence alignment of genic regions from two or more active genomes. Genes selected in Genome Browser
-            are carried into the alignment inputs, and each genome can also be searched independently in the controls.
-          </p>
-          <p>
-            Adjust flanking sequence and alignment settings, collapse introns for a clearer structural comparison, or save and reload an
-            alignment. The viewer supports zooming, panning, overview navigation, and annotation-aware feature colouring.
-          </p>
+        <SectionCard id="alignment_explorer" title="Alignment Explorer" icon={<AppButtonIcon buttonId="alignment_explorer" isLight={isLight} compact />} {...cardProps}>
+          <p>Alignment Explorer starts from an existing alignment file. Open a MAF, aligned FASTA, XMFA, Stockholm, Clustal or PHYLIP file, or try the example. The original alignment remains available while you select regions and move them into named layers to follow connections between sequences and blocks.</p>
+          <p>Use the sidebar to filter sequences and blocks, link sequence rows to local genomes, and save or load a workspace. You can export the selected region or the current layer as sequence data.</p>
         </SectionCard>
 
-        <SectionCard id="neighbourhood" title="Neighbourhood view" icon={<AppButtonIcon buttonId="neighbourhood" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Neighbourhood compares local gene order and orientation around selected genes. It helps answer whether surrounding context
-            is conserved or rearranged.
-          </p>
-          <p>
-            Interactive panning, independent dragging, and orientation flipping make it easier to inspect inversions and local structure.
-          </p>
+        <SectionCard id="neighbourhood" title="Neighbourhood" icon={<AppButtonIcon buttonId="neighbourhood" isLight={isLight} compact />} {...cardProps}>
+          <p>Neighbourhood shows the genes around a chosen gene in each active genome. Search for a gene in each row, then compare the order and direction of its neighbours. You can move rows independently, flip their orientation, swap adjacent genomes and bring the chosen genes back to the centre.</p>
+          <p>Homology links and filters help you follow related genes between rows. The selection control can dim genes outside a region you want to concentrate on.</p>
         </SectionCard>
 
-        <SectionCard id="structural_variation" title="Structural Variation view" icon={<AppButtonIcon buttonId="structural_variation" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Structural Variation displays local variation records and chain-based syntenic mappings from an anchor genome to as many as
-            two other active genomes. Select an anchor region to inspect overlapping events and mapped blocks.
-          </p>
-          <p>
-            The view uses available structural-variation datasets and registered BigChain alignments. Compatible BigWig and BigBed tracks
-            from Track Manager can be overlaid while you move between mapped regions.
-          </p>
+        <SectionCard id="stats" title="Statistics" icon={<AppButtonIcon buttonId="stats" isLight={isLight} compact />} {...cardProps}>
+          <p>Statistics compares the active genomes in three modes: <strong>Annotation</strong>, <strong>Structural</strong> and <strong>Homology</strong>. Use them to look at gene and transcript composition, structural measurements, or the quality of available homology data. The assembly cards also show local sequence statistics and any available assembly metadata.</p>
+          <p>Some structural values are calculated the first time they are requested and then cached, so the first visit can take longer than later ones.</p>
         </SectionCard>
 
-        <SectionCard id="homology" title="Homology view" icon={<AppButtonIcon buttonId="homology" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Homology can query local TSV homology data for one or two active genomes, aligned with the same primary/secondary model
-            used in Genome Browser and other comparative views.
-          </p>
-          <p>
-            Each loaded table includes score-based sorting, filter controls, and visual identity/coverage summaries, and a comparison
-            section reports shared hits plus entries unique to either primary or secondary.
-          </p>
+        <SectionCard id="notes" title="Notes" icon={<AppButtonIcon buttonId="notes" isLight={isLight} compact />} {...cardProps}>
+          <p>Write notes on a gene or focused region in the Genome Browser drawer. Notes brings them together across genomes, with search, tags and a button to return to the place you wrote about. Genes with notes have a speech bubble in the browser when you are close enough to see their transcripts.</p>
+          <p>Notes are saved as you type and belong to the assembly, so updating its annotation does not discard them. You can also use tags on notes and Todo tasks, then filter by one or more tags.</p>
         </SectionCard>
 
-        <SectionCard id="stats" title="Statistics view" icon={<AppButtonIcon buttonId="stats" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Statistics provides cross-genome summaries in three switchable modes: annotation composition, structural feature metrics,
-            and homology quality summaries.
-          </p>
-          <p>
-            Structural metrics are generated on demand and cached with each genome so repeated sessions load quickly.
-            Assembly cards combine local FASTA-derived values with ENA metadata when an assembly accession is available.
-          </p>
+        <SectionCard id="tutorials" title="Tutorials" icon={<AppButtonIcon buttonId="tutorials" isLight={isLight} compact />} {...cardProps}>
+          <p>Tutorials take you through a view or task one step at a time. Start with <strong>Getting Started</strong> if you have not downloaded a genome before. You can perform the highlighted actions yourself or turn on Autoplay and watch the tutorial complete them.</p>
+          <p>Tutorials use their own temporary session, often with demo data. Finishing or exiting returns you to your previous session and configuration. The Tutorials view also lets you create or import tutorials and keep drafts in your output directory.</p>
         </SectionCard>
 
-        <SectionCard id="notes" title="Notes view" icon={<AppButtonIcon buttonId="notes" isLight={isLight} compact />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <p>
-            Notes are free text you attach to a gene. Write them in the Genome Browser — the focus drawer has a Notes section
-            under its transcript list — and read them all back here, grouped by genome and by the gene they belong to.
-          </p>
-          <p>
-            A region can carry notes too. Search a coordinate range or drag a selection zoom in the browser to make it the
-            location of focus, and its drawer has the same Notes section under the sequence and the genes it contains. Location
-            notes are listed here beside the gene notes for that genome, headed by the region they are about, and the browser
-            button on the row takes you straight back to it.
-          </p>
-          <p>
-            A gene that carries notes is marked in the browser with a speech bubble at its left edge, once you are zoomed in far
-            enough to see transcripts. Clicking that bubble focuses the gene and opens its notes.
-          </p>
-          <p>
-            Notes are filed per assembly rather than per download, so updating a genome to a newer annotation release keeps them.
-            The same gene in a different genome has its own notes. Everything is saved as you type, into a
-            <span className="font-mono"> user_notes.json </span> file beside your other local data.
-          </p>
-          <p>
-            Notes and Todo tasks can carry reusable tags. The tag editor suggests popular, recently used, and alphabetical choices;
-            choose <span className="font-semibold">Tags</span> from the right-panel title to see active and archived usage by genome
-            or Todo list. That same title switches between Recent activity, Last viewed, Last edited, and Tags. Select one or more
-            tags to filter both notes and tasks, choosing whether results must match all selected tags or any of them.
-          </p>
+        <SectionCard id="help" title="Help" icon={<AppButtonIcon buttonId="help" isLight={isLight} compact />} {...cardProps}>
+          <p>Help describes each view and the buttons at the top of the app. Open a section for a short explanation of its controls. For a guided example, go to Tutorials.</p>
         </SectionCard>
 
-        <SectionCard id="tips" title="Tips and notes" icon={<HelpGlyph />} openSections={openSections} setOpenSections={setOpenSections} theme={theme}>
-          <ul className="list-disc pl-5 space-y-1.5">
-            <li>Index building can take time for large annotations; browser panels will refresh automatically once indices are ready.</li>
-            <li>A filled blue pill indicates an active genome for the current view; outlined pills remain selected and available to activate.</li>
-            <li>For homology matching, assembly names are used, including automatic alias handling for GRCh38 and GRCh38.p14.</li>
-            <li>If a view appears empty after changing active genomes, check how many active genomes and which local data files that view requires.</li>
-            <li>Use configuration save/load controls to keep reproducible project setups across machines or collaborators.</li>
+        <SectionCard id="configuration" title="Configuration" icon={<AppButtonIcon buttonId="configuration" isLight={isLight} compact />} {...cardProps}>
+          <p>Use <strong>Outputs</strong> to set the directory for downloads, generated indices and exports. Under <strong>Configuration</strong>, you can save your settings to a file, load them again or reset them to their defaults.</p>
+          <p><strong>Organise Apps</strong> controls which view and action buttons appear at the top and lets you change their order. The other sections contain colour schemes and general browsing settings.</p>
+        </SectionCard>
+
+        <SectionCard id="structural_variation" title="Structural Variation" icon={<AppButtonIcon buttonId="structural_variation" isLight={isLight} compact />} {...cardProps}>
+          <p>Structural Variation shows variation records around a region in an anchor genome. Where a compatible chain alignment is available, it also maps that region to one or two other genomes so you can inspect corresponding blocks and features side by side.</p>
+          <p>Choose the anchor, region and target genomes in the controls. The view can also show registered BigWig and BigBed tracks. Chain alignments and local data must be available for the corresponding comparison panels to appear.</p>
+        </SectionCard>
+
+        <SectionCard id="homology" title="Homology" icon={<AppButtonIcon buttonId="homology" isLight={isLight} compact />} {...cardProps}>
+          <p>Homology searches downloaded homology tables for a gene symbol or stable ID. Choose one or two active genomes to see their matches, with identity, coverage and scores in sortable, filterable tables.</p>
+          <p>With two genomes, the comparison table shows matches shared between them and matches found in only one. This view needs local homology files for the genomes you want to query.</p>
+        </SectionCard>
+
+        <SectionCard id="actions" title="Action buttons" icon={<HelpGlyph />} {...cardProps}>
+          <ul className="space-y-3">
+            <ActionButtonRow buttonId="genome_playlist" label="Genome Playlist" theme={theme}>
+              Opens your saved playlists from anywhere in the app. Choose one to load its genomes into the top bar. Create and edit playlists in Genome Selector. <strong>Previous session</strong> is available when there is a previous selection to restore.
+            </ActionButtonRow>
+            <ActionButtonRow buttonId="theme_toggle" label="Theme Toggle" theme={theme}>
+              Switches between light and dark themes.
+            </ActionButtonRow>
+            <ActionButtonRow buttonId="screenshot_toggle" label="Screenshot" theme={theme}>
+              Starts capture mode in views with an exportable panel. Choose the part of the view to export, then set the file name, format and directory. Set an Output Directory in Configuration before exporting.
+            </ActionButtonRow>
           </ul>
         </SectionCard>
       </div>

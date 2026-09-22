@@ -1,5 +1,5 @@
 """
-Ensembl Go Backend - FastAPI server for pairwise alignment visualization.
+Ensembl Go Backend - FastAPI server for local genome and alignment views.
 Uses lightweight targeted GFF3 lookup instead of full parsing.
 """
 

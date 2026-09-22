@@ -888,6 +888,12 @@ export default function GenomeBrowserView({
         cycleScrollRef.current = { frame: requestAnimationFrame(step), abandon }
     }, [stopCycleScroll])
 
+    // What the Cycle wheel is currently offering, so the scroll rail can stay on
+    // top of the wheel's overlay and light the genome standing at the front of the
+    // drum. The wheel only publishes this when the answer changes, so it costs a
+    // render per genome stepped through rather than one per pointer frame.
+    const [cyclePreview, setCyclePreview] = useState(null)
+
     const handleCyclePromote = useCallback(async (panelKey, action, source) => {
         if (onPromoteGenome) await onPromoteGenome(panelKey, action, source)
         // Also for a genome that was already active: 'add' cannot add it twice,
@@ -2952,14 +2958,14 @@ export default function GenomeBrowserView({
                 <div className={`flex-none w-full px-4 py-2 flex items-center justify-between shadow-sm border-b z-10 ${isLight ? 'bg-indigo-50 border-indigo-200 text-indigo-900' : 'bg-indigo-900/40 border-indigo-800/50 text-indigo-100'}`}>
                     <div className="flex items-center gap-2">
                         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
-                        <span className="text-sm font-medium">Alignment View Active</span>
+                        <span className="text-sm font-medium">Linked alignment active</span>
                         <span className="text-xs ml-2 opacity-80">Regions are synchronised based on the pairwise alignment. Gaps are shown in sequence and features.</span>
                     </div>
                     <button
                         onClick={onClearAlignmentOverlay}
                         className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${isLight ? 'bg-indigo-200 hover:bg-indigo-300 text-indigo-900' : 'bg-indigo-800 hover:bg-indigo-700 text-indigo-100'}`}
                     >
-                        Exit Alignment View
+                        Exit linked alignment
                     </button>
                 </div>
             )}
@@ -3238,6 +3244,7 @@ export default function GenomeBrowserView({
                         config={config}
                         panelRootRef={screenshotPanelsRef}
                         onPromote={handleCyclePromote}
+                        onPreview={setCyclePreview}
                         isActive={isActive && !screenshotMode}
                         isLight={isLight}
                         held={tutorialRunning}
@@ -3252,6 +3259,7 @@ export default function GenomeBrowserView({
                 hostRef={screenshotPanelsRef}
                 overlayRef={screenshotOverlayRootRef}
                 onJump={alignPanelToTop}
+                cyclePreview={cyclePreview}
                 isActive={isActive && !screenshotMode && hasPanels}
                 isLight={isLight}
             />

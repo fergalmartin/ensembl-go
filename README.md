@@ -1,8 +1,8 @@
 # Ensembl Go
 
 Ensembl Go is a desktop genome browser for working with local Ensembl and NCBI
-assemblies, pairwise alignments, comparative views, and structural-variation
-(SV) alignments.
+assemblies, feature alignments across two or more genomes, comparative views,
+and structural-variation (SV) alignments.
 
 ## Install and run
 
@@ -21,9 +21,9 @@ npm --prefix electron ci
 ./run_ensembl_go.sh
 ```
 
-MAFFT is optional. Installing it enables multiple alignments of genic regions,
-including annotation overlays on the alignment. Genome browsing, pairwise
-views, and the SV view work without it.
+MAFFT is optional. Installing it enables Feature Alignment, which aligns genic
+regions from two or more genomes and displays their annotation over the aligned
+sequence. Genome browsing and the SV view work without it.
 
 The development launcher uses ports 8000 and 5173. If either is already in
 use, it identifies the listening process and asks before stopping it; choosing

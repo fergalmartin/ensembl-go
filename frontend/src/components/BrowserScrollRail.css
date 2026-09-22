@@ -95,8 +95,38 @@
   box-shadow: 0 0 0 1px #ffffffdd, inset 0 0 0 1px #ffffffcc, 0 0 10px #2b3a5233;
 }
 
+/* While the Cycle wheel is open it covers the page with a near-opaque overlay.
+   The rail is lifted over it instead of vanishing under it: it is the map of where
+   the reader is, and it is what the wheel's Jump is aiming at. Up there it is a
+   picture only — the wheel owns the pointer, and a click anywhere on the overlay
+   confirms or cancels it, so the rail must not swallow that press. */
+.browser-scroll-rail.cycling {
+  z-index: 1001;
+  pointer-events: none;
+  background: #7285a230;
+  border-color: #8da2c7aa;
+}
+/* The held wheel sits under the tutorial overlay (z-index 300) so a step's card
+   stays on top; the rail goes with it rather than over the card. */
+.browser-scroll-rail.cycling.held { z-index: 201; }
+.browser-scroll-rail.light.cycling { background: #ffffffe0; border-color: #8a97a8aa; }
+
+/* The genome standing at the front of the drum, named and lit so the panel on
+   screen and the dot on the rail are never two different genomes. */
+.browser-scroll-rail-band.candidate { opacity: 1; }
+.browser-scroll-rail-stop.candidate::after {
+  transform: scale(1.45);
+  box-shadow: 0 0 0 2px #0d1622aa, 0 0 10px 2px currentColor;
+}
+.browser-scroll-rail.light .browser-scroll-rail-stop.candidate::after { box-shadow: 0 0 0 2px #ffffffcc, 0 0 10px 2px #2b3a5255; }
+.browser-scroll-rail-stop.candidate .browser-scroll-rail-stop-label { opacity: 1; }
+/* The readout follows the scroll position, which has not moved yet — two chips
+   naming two different genomes is exactly the confusion this is fixing. */
+.browser-scroll-rail.cycling .browser-scroll-rail-readout { opacity: 0; }
+
 @media (prefers-reduced-motion: reduce) {
   .browser-scroll-rail, .browser-scroll-rail-band, .browser-scroll-rail-stop::after,
   .browser-scroll-rail-stop-label, .browser-scroll-rail-readout { transition: none; }
   .browser-scroll-rail-stop:hover::after { transform: none; }
+  .browser-scroll-rail-stop.candidate::after { transform: none; }
 }

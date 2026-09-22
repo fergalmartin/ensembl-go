@@ -114,13 +114,12 @@ After the backend is connected, verify:
 - Windows-hosted files can be reached through `/mnt/c/...`.
 - Cache files appear under `%LOCALAPPDATA%\\AlignmentViewer\\cache`.
 
-## 8) Alignment-specific test
+## 8) Feature Alignment test
 
 Verify:
 
-- One pairwise alignment succeeds through the WSL backend.
-- If MAFFT is installed, one multiple genic-region alignment succeeds and its
-  annotation overlay is displayed.
+- If MAFFT is installed, Feature Alignment succeeds with at least three genomes
+  through the WSL backend and displays their annotation overlays.
 - If MAFFT is intentionally missing, the setup screen marks it as optional and
   still allows the backend to launch.
 - If the backend is manually launched, use the setup screen's full command so `ENSEMBL_LOCAL_API_TOKEN` matches the Electron session.

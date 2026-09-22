@@ -5,7 +5,7 @@
 // That makes a row's identity an O(1) string compare, which is what lets the
 // scroller re-render one row instead of the whole slab.
 //
-// Colours come from utils/featureColors.js — the same palette the Alignment view
+// Colours come from utils/featureColors.js — the same palette the Feature Alignment view
 // and the Feature Explorer paint with — so a reader who has learned one view can
 // read this one.
 

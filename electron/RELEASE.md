@@ -202,9 +202,8 @@ Launch the app once from the generated DMG/ZIP and smoke test:
 - Home screen renders.
 - Backend status reaches ready.
 - File selection works.
-- One pairwise alignment succeeds.
-- If MAFFT is bundled, one multiple genic-region alignment succeeds and its
-  annotation overlay is displayed.
+- If MAFFT is bundled, Feature Alignment succeeds with at least three genomes
+  and displays their annotation overlays.
 - Screenshot/export save writes the expected file extension.
 
 ## Unsigned local packaging (not for distribution)
@@ -348,9 +347,8 @@ Then check:
 - Backend status reaches ready. This is the important one: it is what fails if the
   backend was not bundled or does not match the host.
 - File selection works, and a chosen output directory outside `$HOME` is writable.
-- One pairwise alignment succeeds.
-- If MAFFT is bundled, one multiple genic-region alignment succeeds with its annotation
-  overlay.
+- If MAFFT is bundled, Feature Alignment succeeds with at least three genomes
+  and displays their annotation overlays.
 - Screenshot/export save writes the expected file extension.
 
 ### Known Linux specifics
