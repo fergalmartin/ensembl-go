@@ -75,6 +75,9 @@ export default function SelectedSpeciesPillsBar({
         onMouseDown: onPillMouseDown,
         onMouseMove: onPillMouseMove,
         onMouseUp: onPillMouseUp,
+        isOverflowing: pillsOverflow,
+        canScrollLeft: canScrollPillsLeft,
+        canScrollRight: canScrollPillsRight,
     } = useHorizontalPillScroll({ scrollAmount: 200 })
 
     useEffect(() => {
@@ -145,15 +148,20 @@ export default function SelectedSpeciesPillsBar({
     return (
         <div className="flex items-center gap-3 min-w-0">
             <div className="flex items-center flex-1 min-w-0 overflow-visible">
-                <button
-                    onClick={() => handleScrollPills('left')}
-                    className={`flex-shrink-0 p-1 rounded transition-colors ${isLight ? 'text-gray-500 hover:bg-gray-200 hover:text-gray-900' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-100'}`}
-                    title="Scroll Left"
-                >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="15 18 9 12 15 6"></polyline>
-                    </svg>
-                </button>
+                {pillsOverflow && (
+                    <button
+                        onClick={() => handleScrollPills('left')}
+                        disabled={!canScrollPillsLeft}
+                        className={`flex-shrink-0 p-1 rounded transition-colors ${canScrollPillsLeft
+                            ? (isLight ? 'text-gray-500 hover:bg-gray-200 hover:text-gray-900' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-100')
+                            : (isLight ? 'text-gray-300 cursor-default' : 'text-gray-600 cursor-default')}`}
+                        title="Scroll Left"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                )}
 
                 <div
                     ref={pillsScrollRef}
@@ -330,15 +338,20 @@ export default function SelectedSpeciesPillsBar({
                     )}
                 </div>
 
-                <button
-                    onClick={() => handleScrollPills('right')}
-                    className={`flex-shrink-0 p-1 rounded transition-colors ${isLight ? 'text-gray-500 hover:bg-gray-200 hover:text-gray-900' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-100'}`}
-                    title="Scroll Right"
-                >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                </button>
+                {pillsOverflow && (
+                    <button
+                        onClick={() => handleScrollPills('right')}
+                        disabled={!canScrollPillsRight}
+                        className={`flex-shrink-0 p-1 rounded transition-colors ${canScrollPillsRight
+                            ? (isLight ? 'text-gray-500 hover:bg-gray-200 hover:text-gray-900' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-100')
+                            : (isLight ? 'text-gray-300 cursor-default' : 'text-gray-600 cursor-default')}`}
+                        title="Scroll Right"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                    </button>
+                )}
             </div>
 
             {pillToast && (

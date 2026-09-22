@@ -37,6 +37,16 @@ from dataclasses import dataclass
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
+
+# A note on ``def`` versus ``async def`` for route handlers, because it is load-bearing
+# here. This process serves everything from a single event loop, so an ``async def``
+# handler that does blocking work — reading the configuration, walking the output
+# directory, waiting on a remote registry — stops the process answering *any* request
+# for as long as it runs. The symptom is never local to the slow endpoint: the whole UI
+# goes dead, and the user sees whichever button they happened to press do nothing.
+# So a handler that only does blocking work is declared ``def``, which FastAPI runs on
+# its worker threadpool; a handler that genuinely needs the loop (to spawn a background
+# task, say) stays ``async def`` and hands its blocking part to ``run_in_threadpool``.
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -3756,7 +3766,7 @@ def align_multi(request: MultiAlignmentRequest):
 
 
 @app.get("/api/align/check")
-async def check_alignment_status(
+def check_alignment_status(
     transcript_id: str, 
     ref_flank: int, 
     tgt_flank: int,
@@ -3830,7 +3840,7 @@ class LoadAlignmentRequest(BaseModel):
 
 
 @app.post("/api/alignments/save")
-async def save_alignment(payload: SaveAlignmentRequest):
+def save_alignment(payload: SaveAlignmentRequest):
     """Persist a multi-alignment to local_data/alignments/ as a FASTA + JSON pair."""
     if not payload.output_dir or not os.path.exists(payload.output_dir):
         raise HTTPException(status_code=400, detail="output_dir is not set or does not exist")
@@ -3883,7 +3893,7 @@ async def save_alignment(payload: SaveAlignmentRequest):
 
 
 @app.get("/api/alignments/list")
-async def list_alignments(output_dir: str = ""):
+def list_alignments(output_dir: str = ""):
     """List saved alignments in local_data/alignments/, newest first."""
     if not output_dir or not os.path.exists(output_dir):
         return {"alignments": []}
@@ -4041,7 +4051,7 @@ async def clear_recent():
 
 
 @app.get("/api/homologs")
-async def get_homologs(transcript_id: str):
+def get_homologs(transcript_id: str):
     """Look up homologous transcripts for a given ID."""
     config = load_config()
     homology_file = config.get("homologies_file", "")
@@ -5083,7 +5093,7 @@ def queue_index_build(gff_path: str, db_path: str) -> Tuple[str, str]:
 
 
 @app.post("/api/index/generate-for-genome")
-async def generate_index_for_genome(request: SingleIndexRequest):
+def generate_index_for_genome(request: SingleIndexRequest):
     """Start a background GFF3 index build. Returns a task_id immediately.
     Poll GET /api/index/task-status/{task_id} for completion."""
     config = load_config()
@@ -5655,21 +5665,26 @@ DEFAULT_CONFIG = {
     "genome_colors": {},
     # Colours the user mixed themselves, offered beside the built-in palette.
     "genome_color_palette": [],
+    # Keep in step with DEFAULT_ACTIVE_APP_BUTTONS in
+    # frontend/src/appButtonConfig.js, which is the authority — the frontend
+    # normalises whatever it reads against that list. This copy is what a
+    # configuration written before the frontend has ever run will carry.
     "active_app_buttons": [
         "home",
         "genome_selector",
         "genome_browser",
-        "track_manager",
+        "download",
+        "sequence",
         "feature_explorer",
+        "track_manager",
         "alignment",
+        "alignment_explorer",
         "neighbourhood",
-        "structural_variation",
-        "homology",
         "stats",
         "notes",
-        "download",
-        "configuration",
+        "tutorials",
         "help",
+        "configuration",
         "genome_playlist",
         "theme_toggle",
         "screenshot_toggle",
@@ -6529,7 +6544,7 @@ def save_config(
 
 
 @app.get("/api/config")
-async def get_config():
+def get_config():
     return load_config()
 
 
@@ -6544,7 +6559,7 @@ async def get_config_warnings_endpoint():
 
 
 @app.get("/api/config/output-dir")
-async def get_output_dir_config(output_dir: str = "", working_dir: str = ""):
+def get_output_dir_config(output_dir: str = "", working_dir: str = ""):
     """Load the configuration sidecar for a known output/working directory."""
     current_config = load_config()
     base_config = {
@@ -6570,7 +6585,7 @@ async def get_output_dir_config(output_dir: str = "", working_dir: str = ""):
 
 
 @app.get("/api/config/playlists")
-async def get_config_playlists(output_dir: str = "", working_dir: str = ""):
+def get_config_playlists(output_dir: str = "", working_dir: str = ""):
     """Load genome playlists directly from the output/working directory sidecar."""
     current_config = load_config()
     base_config = {
@@ -6629,7 +6644,7 @@ def _is_tutorial_workspace_path(value: Any) -> bool:
 
 
 @app.post("/api/config")
-async def update_config(config: ConfigUpdate):
+def update_config(config: ConfigUpdate):
     """Save configuration to disk. If save_path is provided, save there; otherwise save to default cache."""
     # A tutorial runs on a configuration overlay pointing at a scratch directory, and that
     # overlay must never become the saved configuration — it would survive the tutorial and
@@ -6726,7 +6741,7 @@ class LoadConfigRequest(BaseModel):
 
 
 @app.post("/api/config/load")
-async def load_custom_config(request: LoadConfigRequest):
+def load_custom_config(request: LoadConfigRequest):
     """Load configuration from a specific file."""
     path = validate_config_export_path(request.path)
     if not path.exists():
@@ -6771,7 +6786,7 @@ class ClearDataRequest(BaseModel):
 
 
 @app.post("/api/data/clear")
-async def clear_local_data(request: ClearDataRequest):
+def clear_local_data(request: ClearDataRequest):
     """Delete all downloaded genomes in the local_data directory."""
     if not request.output_dir:
         raise HTTPException(status_code=400, detail="Output directory not configured")
@@ -7657,8 +7672,33 @@ def _warm_assembly_metadata(accessions: List[str]) -> None:
 
 @app.post("/api/remote/download")
 async def start_download(request: DownloadRequest):
-    """Start a background download task."""
+    """Start a background download task.
+
+    The preparation is all blocking work in the output directory — resolving the
+    destination, creating it, and reading and rewriting the genome manifest, twice over
+    when a metadata file comes along — and the Download view fires one of these per file
+    per genome, so a batch put that on the event loop many times over. It runs on a
+    worker thread now. Only the spawning stays here, because ``asyncio.create_task``
+    needs the running loop.
+    """
+    response, spawns = await run_in_threadpool(_prepare_download, request)
+    for url, dest, spawn_task_id, warm_accessions in spawns:
+        asyncio.create_task(
+            _download_then_warm_assembly_metadata(url, dest, spawn_task_id, warm_accessions)
+        )
+    return response
+
+
+def _prepare_download(
+    request: DownloadRequest,
+) -> Tuple[Dict[str, Any], List[Tuple[str, Path, str, List[str]]]]:
+    """Do everything ``start_download`` needs off the event loop.
+
+    Returns the response body and the downloads the caller should spawn, as
+    ``(url, destination, task_id, accessions to warm)``.
+    """
     import uuid
+    spawns: List[Tuple[str, Path, str, List[str]]] = []
     task_id = str(uuid.uuid4())
     _validate_download_url(request.url)
     provider = normalize_provider(request.provider)
@@ -7706,7 +7746,7 @@ async def start_download(request: DownloadRequest):
     if dest.exists() and not request.force:
         try:
             if dest.stat().st_size > 0:
-                return {"task_id": "", "status": "already_exists"}
+                return {"task_id": "", "status": "already_exists"}, spawns
         except Exception:
             pass
 
@@ -7714,7 +7754,7 @@ async def start_download(request: DownloadRequest):
         if request.force:
             continue
         if existing.destination == str(dest) and existing.status in {"pending", "downloading", "completed"}:
-            return {"task_id": existing.id, "status": existing.status}
+            return {"task_id": existing.id, "status": existing.status}, spawns
 
     task = DownloadTask(
         id=task_id,
@@ -7735,9 +7775,7 @@ async def start_download(request: DownloadRequest):
     warm_accessions = [request.assembly] + [
         str(v).strip() for v in (request.equivalent_accessions or []) if str(v).strip()
     ]
-    asyncio.create_task(
-        _download_then_warm_assembly_metadata(request.url, dest, task_id, warm_accessions)
-    )
+    spawns.append((request.url, dest, task_id, warm_accessions))
 
     # Auto-fetch metadata when core genome files are requested.
     if request.file_type in {"fasta", "gff3"}:
@@ -7798,16 +7836,14 @@ async def start_download(request: DownloadRequest):
                         destination=str(metadata_dest),
                     )
                     download_manager.tasks[metadata_task_id] = metadata_task
-                    asyncio.create_task(
-                        _download_then_warm_assembly_metadata(
-                            metadata_file.url, metadata_dest, metadata_task_id, warm_accessions
-                        )
+                    spawns.append(
+                        (metadata_file.url, metadata_dest, metadata_task_id, warm_accessions)
                     )
         except Exception:
             # Metadata is best-effort and must never block requested downloads.
             pass
 
-    return {"task_id": task_id, "status": "started"}
+    return {"task_id": task_id, "status": "started"}, spawns
 
 
 @app.post("/api/remote/custom-annotation")
@@ -8337,7 +8373,7 @@ def _scan_local_assembly(asm_dir: Path, assembly: str, manifest: Optional[Dict[s
 
 
 @app.get("/api/remote/local-files")
-async def check_local_files(
+def check_local_files(
     output_dir: str,
     species_key: str,
     assembly: str,
@@ -9126,7 +9162,7 @@ class DeleteLocalFilesRequest(BaseModel):
 
 
 @app.delete("/api/remote/local-files")
-async def delete_local_files(request: DeleteLocalFilesRequest):
+def delete_local_files(request: DeleteLocalFilesRequest):
     """Delete downloaded local files for a species/assembly."""
     provider = normalize_provider(request.provider)
     asm_dir = _resolve_species_assembly_dir(request.output_dir, request.species_key, request.assembly, provider=provider)
@@ -10231,11 +10267,18 @@ async def stats_summary(request: StatsSummaryRequest):
 
 @app.post("/api/stats/structural/generate")
 async def stats_generate_structural(request: StructuralStatsGenerateRequest):
+    """Queue a structural statistics run.
+
+    Stays ``async`` because it spawns the run on the event loop, but the one piece of
+    blocking work here — reading the configuration, which merges both output-directory
+    sidecars and re-derives every genome's labels — goes to a worker thread. Everything
+    after it is in-memory bookkeeping.
+    """
     structural_profile = str(request.structural_profile or STRUCTURAL_PROFILE)
     if structural_profile != STRUCTURAL_PROFILE:
         raise HTTPException(status_code=400, detail=f"Unsupported structural profile: {structural_profile}")
 
-    config = load_config()
+    config = await run_in_threadpool(load_config)
     genomes = _clean_stats_genomes(request.genomes, config)
     if not genomes:
         raise HTTPException(status_code=400, detail="No genomes provided.")
@@ -10291,7 +10334,7 @@ async def stats_generate_structural(request: StructuralStatsGenerateRequest):
 
 
 @app.post("/api/stats/structural/cancel")
-async def stats_cancel_structural(request: StructuralStatsCancelRequest):
+def stats_cancel_structural(request: StructuralStatsCancelRequest):
     genome_key_value = str(request.genome_key or "").strip()
     if not genome_key_value:
         raise HTTPException(status_code=400, detail="genome_key is required.")
@@ -18504,7 +18547,7 @@ async def attach_sv_config(payload: SvConfigAttachRequest):
 
 
 @app.post("/api/sv/config/detach")
-async def detach_sv_config(payload: SvConfigAttachRequest):
+def detach_sv_config(payload: SvConfigAttachRequest):
     """Stop reading a config file. The file itself is left alone."""
     target = str(Path(str(payload.path or "").strip()).expanduser())
     config = load_config()
@@ -22127,7 +22170,7 @@ async def register_track(entry: TrackRegistryEntry):
 
 
 @app.put("/api/tracks/{track_id}")
-async def update_track(track_id: str, entry: TrackRegistryUpdateEntry):
+def update_track(track_id: str, entry: TrackRegistryUpdateEntry):
     """Update label, display_mode, or genome_key for an existing track."""
     config = _tracks_config()
     with _track_registry_lock:
@@ -22199,7 +22242,7 @@ async def update_track(track_id: str, entry: TrackRegistryUpdateEntry):
 
 
 @app.delete("/api/tracks/{track_id}")
-async def delete_track(track_id: str):
+def delete_track(track_id: str):
     """Remove a track registration (does not delete the file)."""
     config = _tracks_config()
     with _track_registry_lock:

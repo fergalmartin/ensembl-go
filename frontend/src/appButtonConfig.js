@@ -1,36 +1,58 @@
+// Every data view the organiser can offer, in the order inactive ones are listed back
+// to the user. The ones that are not in the default set sit at the end, so the list
+// reads as "the standard bar, then the extras you can add".
 export const DATA_VIEW_BUTTON_IDS = [
   'home',
   'genome_selector',
   'genome_browser',
-  'track_manager',
-  'feature_explorer',
+  'download',
   'sequence',
+  'feature_explorer',
+  'track_manager',
   'alignment',
   'alignment_explorer',
   'neighbourhood',
-  'structural_variation',
-  'homology',
   'stats',
   'notes',
-  'download',
-  'configuration',
   'tutorials',
   'help',
+  'configuration',
+  'structural_variation',
+  'homology',
 ]
 
 export const ACTION_BUTTON_IDS = ['genome_playlist', 'theme_toggle', 'screenshot_toggle']
 
 export const APP_BUTTON_IDS = [...DATA_VIEW_BUTTON_IDS, ...ACTION_BUTTON_IDS]
-// Shipped but off by default: enable it in the app organiser to try it.
-export const IN_PROGRESS_VIEW_BUTTON_IDS = ['sequence']
 
 export const NON_DEACTIVATABLE_APP_BUTTON_IDS = ['configuration']
 const DATA_VIEW_BUTTON_ID_SET = new Set(DATA_VIEW_BUTTON_IDS)
 const ACTION_BUTTON_ID_SET = new Set(ACTION_BUTTON_IDS)
 
+// The bar a fresh installation starts with, and what "Reset App Buttons to Default"
+// restores. Written out rather than derived, because it is a curated arrangement: the
+// order is the order it appears in, and Structural Variation and Homology are
+// deliberately left out. A view added to DATA_VIEW_BUTTON_IDS is therefore *not*
+// switched on for new users until it is named here as well.
 export const DEFAULT_ACTIVE_APP_BUTTONS = [
-  ...DATA_VIEW_BUTTON_IDS.filter((id) => !IN_PROGRESS_VIEW_BUTTON_IDS.includes(id)),
-  ...ACTION_BUTTON_IDS,
+  'home',
+  'genome_selector',
+  'genome_browser',
+  'download',
+  'sequence',
+  'feature_explorer',
+  'track_manager',
+  'alignment',
+  'alignment_explorer',
+  'neighbourhood',
+  'stats',
+  'notes',
+  'tutorials',
+  'help',
+  'configuration',
+  'genome_playlist',
+  'theme_toggle',
+  'screenshot_toggle',
 ]
 
 export const APP_BUTTON_META = {
@@ -82,7 +104,7 @@ export const normalizeActiveAppButtons = (candidate) => {
     let insertIndex = normalized.findIndex((id) => ACTION_BUTTON_ID_SET.has(id))
     if (insertIndex < 0) insertIndex = normalized.length
     for (const id of ids) {
-      if (!allowed.has(id) || seen.has(id) || IN_PROGRESS_VIEW_BUTTON_IDS.includes(id)) continue
+      if (!allowed.has(id) || seen.has(id)) continue
       seen.add(id)
       normalized.splice(insertIndex, 0, id)
       insertIndex += 1
@@ -91,16 +113,15 @@ export const normalizeActiveAppButtons = (candidate) => {
 
   const appendMissing = (ids) => {
     for (const id of ids) {
-      if (!allowed.has(id) || seen.has(id) || IN_PROGRESS_VIEW_BUTTON_IDS.includes(id)) continue
+      if (!allowed.has(id) || seen.has(id)) continue
       seen.add(id)
       normalized.push(id)
     }
   }
 
-  if (!hasStoredSelection) {
-    insertMissingDataViewsBeforeActions(DATA_VIEW_BUTTON_IDS)
-    appendMissing(ACTION_BUTTON_IDS)
-  }
+  // No backfill for a missing selection: DEFAULT_ACTIVE_APP_BUTTONS is the whole answer
+  // and is curated, so topping it up from the catalogue would switch on the very views
+  // it deliberately leaves off.
 
   // Configuration is the only way back to the organiser, so it survives a
   // stored selection that has somehow lost it.
@@ -115,7 +136,11 @@ export const normalizeActiveAppButtons = (candidate) => {
   const hasDataViewAfterActions = firstActionIndex >= 0 && normalized
     .slice(firstActionIndex + 1)
     .some((id) => DATA_VIEW_BUTTON_ID_SET.has(id))
-  if (hasDataViewAfterActions && DEFAULT_ACTIVE_APP_BUTTONS.every((id) => seen.has(id))) {
+  // Tested against the whole catalogue rather than the default set. The default is a
+  // curated subset now, and testing against that would make this regrouping fire for an
+  // ordinary bar — undoing a data view the user had deliberately dragged past the
+  // action buttons.
+  if (hasDataViewAfterActions && APP_BUTTON_IDS.every((id) => seen.has(id))) {
     return [
       ...normalized.filter((id) => DATA_VIEW_BUTTON_ID_SET.has(id)),
       ...normalized.filter((id) => ACTION_BUTTON_ID_SET.has(id)),
@@ -123,4 +148,39 @@ export const normalizeActiveAppButtons = (candidate) => {
   }
 
   return normalized
+}
+
+// ── Top app bar geometry ────────────────────────────────────────────────────────
+//
+// Shared with the app organiser, which draws the active buttons in this same
+// arrangement so that what it shows is what the bar will look like.
+//
+// Nine across and two down are layout, not preference: nine 44px buttons and their 8px
+// gaps are exactly the width the header can give the strip without squeezing the view
+// title beside it, and a third row would push the header down over the view.
+export const TOP_BAR_VISIBLE_COLUMNS = 9
+export const TOP_BAR_MAX_ROWS = 2
+export const TOP_BAR_BUTTON_PX = 44
+export const TOP_BAR_GAP_PX = 8
+export const TOP_BAR_COLUMN_STRIDE_PX = TOP_BAR_BUTTON_PX + TOP_BAR_GAP_PX
+export const TOP_BAR_VIEWPORT_PX =
+  TOP_BAR_VISIBLE_COLUMNS * TOP_BAR_BUTTON_PX + (TOP_BAR_VISIBLE_COLUMNS - 1) * TOP_BAR_GAP_PX
+
+/** Split the active buttons into the rows the top bar draws, and say how wide they are.
+ *
+ * Up to eighteen buttons this is the layout the bar has always had — nine to a row, the
+ * second row as short as it needs to be. Past eighteen the rows grow wider rather than
+ * multiplying, and the strip scrolls sideways within its nine-column window.
+ */
+export const buildAppButtonLayout = (buttonIds) => {
+  const all = (Array.isArray(buttonIds) ? buttonIds : []).filter((id) => Boolean(APP_BUTTON_META[id]))
+  if (all.length <= TOP_BAR_VISIBLE_COLUMNS) {
+    return { rows: all.length ? [all] : [], columns: TOP_BAR_VISIBLE_COLUMNS, overflows: false }
+  }
+  const columns = Math.max(TOP_BAR_VISIBLE_COLUMNS, Math.ceil(all.length / TOP_BAR_MAX_ROWS))
+  const rows = []
+  for (let i = 0; i < all.length; i += columns) {
+    rows.push(all.slice(i, i + columns))
+  }
+  return { rows, columns, overflows: columns > TOP_BAR_VISIBLE_COLUMNS }
 }

@@ -211,7 +211,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
 
-            payload = asyncio.run(main.get_output_dir_config(output_dir=str(output_dir)))
+            payload = main.get_output_dir_config(output_dir=str(output_dir))
 
             self.assertTrue(payload["found"])
             self.assertEqual(payload["config"]["genome_browser_colors"], colors)
@@ -233,7 +233,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch.object(main, "CONFIG_FILE", cache_file):
-                loaded = asyncio.run(main.load_custom_config(main.LoadConfigRequest(path=str(config_path))))
+                loaded = main.load_custom_config(main.LoadConfigRequest(path=str(config_path)))
 
             self.assertEqual(loaded["genome_browser_colors"], colors)
             self.assertTrue(loaded["sv_hide_inactive_tracks"])
@@ -263,11 +263,11 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch.object(main, "CONFIG_FILE", cache_file):
-                response = asyncio.run(main.update_config(main.ConfigUpdate(
+                response = main.update_config(main.ConfigUpdate(
                     output_dir=str(new_output),
                     genome_browser_colors=main.DEFAULT_CONFIG["genome_browser_colors"],
                     show_fps_counter=False,
-                )))
+                ))
 
             self.assertEqual(response["config"]["output_dir"], str(new_output))
             self.assertEqual(response["config"]["genome_browser_colors"], colors)
@@ -296,11 +296,11 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch.object(main, "CONFIG_FILE", cache_file):
-                response = asyncio.run(main.update_config(main.ConfigUpdate(
+                response = main.update_config(main.ConfigUpdate(
                     output_dir=str(new_output),
                     genome_playlists=[],
                     selected_genome_playlist_id="__all__",
-                )))
+                ))
 
             self.assertEqual(response["config"]["genome_playlists"][0]["id"], playlist["id"])
             self.assertEqual(response["config"]["selected_genome_playlist_id"], playlist["id"])
@@ -319,11 +319,11 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                     "genome_playlists": [playlist],
                     "selected_genome_playlist_id": playlist["id"],
                 })
-                response = asyncio.run(main.update_config(main.ConfigUpdate(
+                response = main.update_config(main.ConfigUpdate(
                     output_dir=str(output_dir),
                     genome_playlists=[],
                     selected_genome_playlist_id="__all__",
-                )))
+                ))
 
             self.assertEqual(response["config"]["genome_playlists"][0]["id"], playlist["id"])
             sidecar = output_dir / "local_data" / main.OUTPUT_DIR_PLAYLISTS_FILENAME
@@ -344,12 +344,12 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                     "genome_playlists": [playlist],
                     "selected_genome_playlist_id": playlist["id"],
                 })
-                response = asyncio.run(main.update_config(main.ConfigUpdate(
+                response = main.update_config(main.ConfigUpdate(
                     output_dir=str(output_dir),
                     genome_playlists=[],
                     selected_genome_playlist_id="__all__",
                     clear_genome_playlists=True,
-                )))
+                ))
 
             self.assertEqual(response["config"]["genome_playlists"], [])
             sidecar = output_dir / "local_data" / main.OUTPUT_DIR_PLAYLISTS_FILENAME
@@ -428,11 +428,11 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch.object(main, "CONFIG_FILE", cache_file):
-                response = asyncio.run(main.update_config(main.ConfigUpdate(
+                response = main.update_config(main.ConfigUpdate(
                     working_dir=str(new_working),
                     genome_playlists=[],
                     selected_genome_playlist_id="__all__",
-                )))
+                ))
 
             self.assertEqual(response["config"]["genome_playlists"][0]["id"], playlist["id"])
             self.assertEqual(response["config"]["selected_genome_playlist_id"], playlist["id"])
@@ -480,7 +480,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                 "selected_genome_playlist_id": playlist["id"],
             }), encoding="utf-8")
 
-            state = asyncio.run(main.get_config_playlists(output_dir=str(output_dir)))
+            state = main.get_config_playlists(output_dir=str(output_dir))
 
             self.assertEqual(state["genome_playlists"][0]["id"], playlist["id"])
 
@@ -501,11 +501,11 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             palette = ["#123456", "#abcdef"]
 
             with patch.object(main, "CONFIG_FILE", cache_file):
-                asyncio.run(main.update_config(main.ConfigUpdate(
+                main.update_config(main.ConfigUpdate(
                     genome_default_color="#00b692",
                     genome_colors=assignments,
                     genome_color_palette=palette,
-                )))
+                ))
 
                 loaded = main.load_config()
                 self.assertEqual(loaded["genome_default_color"], "#00b692")

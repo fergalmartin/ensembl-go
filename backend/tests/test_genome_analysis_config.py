@@ -28,9 +28,9 @@ class GenomeAnalysisConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = Path(tmpdir) / "config.json"
             with patch.object(main, "CONFIG_FILE", config_file):
-                response = asyncio.run(main.update_config(main.ConfigUpdate(
+                response = main.update_config(main.ConfigUpdate(
                     genome_analysis_reports=reports,
-                )))
+                ))
 
             self.assertEqual(response["config"]["genome_analysis_reports"], reports)
             saved = json.loads(config_file.read_text(encoding="utf-8"))

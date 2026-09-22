@@ -76,14 +76,12 @@ class BigWigSettingsTests(unittest.TestCase):
                 self.assertEqual(created_default["display_mode"], "zoned_heatmap")
                 self.assertEqual(created_default["bigwig_settings"]["data_type"], "rna_seq")
 
-                updated_default = asyncio.run(
-                    update_track(
+                updated_default = update_track(
                         created_default["id"],
                         TrackRegistryUpdateEntry(
                             bigwig_settings={"data_type": "atac_seq"},
                         ),
                     )
-                )
                 self.assertEqual(updated_default["display_mode"], "signal_plot")
                 self.assertEqual(updated_default["bigwig_settings"]["data_type"], "atac_seq")
                 self.assertEqual(
@@ -111,14 +109,12 @@ class BigWigSettingsTests(unittest.TestCase):
                 self.assertEqual(created_custom["display_mode"], "signal_plot")
                 self.assertEqual(created_custom["bigwig_settings"]["plot_color"], "#112233")
 
-                updated_custom = asyncio.run(
-                    update_track(
+                updated_custom = update_track(
                         created_custom["id"],
                         TrackRegistryUpdateEntry(
                             bigwig_settings={"data_type": "chip_seq"},
                         ),
                     )
-                )
                 self.assertEqual(updated_custom["bigwig_settings"]["data_type"], "chip_seq")
                 self.assertEqual(updated_custom["bigwig_settings"]["plot_color"], "#112233")
                 self.assertEqual(

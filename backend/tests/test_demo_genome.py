@@ -249,9 +249,9 @@ class TutorialWorkspaceTests(unittest.TestCase):
 
             with patch.object(main, "CONFIG_FILE", config_file):
                 tutorial_dir = str(Path(real_output_dir) / demo_genome.TUTORIAL_WORKSPACE_DIR)
-                asyncio.run(main.update_config(
+                main.update_config(
                     main.ConfigUpdate(output_dir=tutorial_dir, active_species=[])
-                ))
+                )
                 saved = json.loads(config_file.read_text(encoding="utf-8"))
                 self.assertEqual(saved.get("output_dir"), real_output_dir,
                                  "the tutorial workspace must never be saved as the output dir")
@@ -263,7 +263,7 @@ class TutorialWorkspaceTests(unittest.TestCase):
             wanted = str(Path(tmpdir) / "new_genomes")
 
             with patch.object(main, "CONFIG_FILE", config_file):
-                asyncio.run(main.update_config(main.ConfigUpdate(output_dir=wanted)))
+                main.update_config(main.ConfigUpdate(output_dir=wanted))
                 saved = json.loads(config_file.read_text(encoding="utf-8"))
                 self.assertEqual(saved.get("output_dir"), wanted)
 

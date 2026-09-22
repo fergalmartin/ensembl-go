@@ -574,7 +574,7 @@ class SaveAndAttachTests(SvConfigEndpointTestCase):
         destination = self.root / "shared.json"
         destination.write_text(self.config_text(), encoding="utf-8")
         self.attach(destination)
-        asyncio.run(detach_sv_config(SvConfigAttachRequest(path=str(destination))))
+        detach_sv_config(SvConfigAttachRequest(path=str(destination)))
 
         self.assertEqual(self.catalog()["alignments"], [])
         self.assertTrue(destination.exists())

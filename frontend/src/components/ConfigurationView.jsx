@@ -1,13 +1,9 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import FileBrowserModal from './FileBrowserModal'
-import AppButtonIcon from './AppButtonIcon'
+import AppOrganiserPanel from './AppOrganiserPanel.jsx'
 import {
     APP_BUTTON_META,
-    DATA_VIEW_BUTTON_IDS,
-    ACTION_BUTTON_IDS,
-    IN_PROGRESS_VIEW_BUTTON_IDS,
     DEFAULT_ACTIVE_APP_BUTTONS,
-    NON_DEACTIVATABLE_APP_BUTTON_IDS,
     normalizeActiveAppButtons,
 } from '../appButtonConfig'
 import { API_BASE } from '../backendRuntime'
@@ -243,12 +239,7 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
     const [modalOpen, setModalOpen] = useState(false)
     const [modalMode, setModalMode] = useState('file')
     const [activeField, setActiveField] = useState(null)
-    const [draggedButtonId, setDraggedButtonId] = useState(null)
-    const [dragOverButtonId, setDragOverButtonId] = useState(null)
-    const [inactiveDataPriority, setInactiveDataPriority] = useState(DATA_VIEW_BUTTON_IDS)
-    const [inactiveActionPriority, setInactiveActionPriority] = useState(ACTION_BUTTON_IDS)
     const [defaultColorPickerOpen, setDefaultColorPickerOpen] = useState(false)
-    const dragMovedRef = useRef(false)
 
     const showStatus = (msg, isError = false) => {
         setStatusMessage({ text: msg, isError })
@@ -329,29 +320,6 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
     )
     const fullGenomeColorPalette = useMemo(() => genomeColorPalette(config), [config])
 
-    const orderByPriority = useCallback((ids, priority) => {
-        const prioritized = priority.filter((id) => ids.includes(id))
-        const remainder = ids.filter((id) => !prioritized.includes(id))
-        return [...prioritized, ...remainder]
-    }, [])
-
-    const inactiveDataButtons = useMemo(() => {
-        const available = DATA_VIEW_BUTTON_IDS.filter(
-            (id) => !IN_PROGRESS_VIEW_BUTTON_IDS.includes(id) && !activeAppButtons.includes(id)
-        )
-        return orderByPriority(available, inactiveDataPriority)
-    }, [activeAppButtons, inactiveDataPriority, orderByPriority])
-
-    const inactiveInProgressButtons = useMemo(() => {
-        const available = IN_PROGRESS_VIEW_BUTTON_IDS.filter((id) => !activeAppButtons.includes(id))
-        return orderByPriority(available, inactiveDataPriority)
-    }, [activeAppButtons, inactiveDataPriority, orderByPriority])
-
-    const inactiveActionButtons = useMemo(() => {
-        const available = ACTION_BUTTON_IDS.filter((id) => !activeAppButtons.includes(id))
-        return orderByPriority(available, inactiveActionPriority)
-    }, [activeAppButtons, inactiveActionPriority, orderByPriority])
-
     const setActiveButtons = (nextButtonsOrUpdater) => {
         onConfigChange((prevConfig) => {
             const base = prevConfig || config
@@ -390,62 +358,6 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
         })
         showStatus('Every genome is back on the default colour')
     }, [config, onConfigChange])
-
-    const activateAppButton = (buttonId) => {
-        setActiveButtons((prevButtons) => {
-            if (prevButtons.includes(buttonId)) return prevButtons
-            // The action buttons live at the end of the top bar, so a returning
-            // data view goes in front of them rather than after them.
-            if (APP_BUTTON_META[buttonId]?.kind === 'action') return [...prevButtons, buttonId]
-            const firstActionIndex = prevButtons.findIndex(
-                (id) => APP_BUTTON_META[id]?.kind === 'action'
-            )
-            if (firstActionIndex < 0) return [...prevButtons, buttonId]
-            const next = [...prevButtons]
-            next.splice(firstActionIndex, 0, buttonId)
-            return next
-        })
-        setInactiveDataPriority((prev) => prev.filter((id) => id !== buttonId))
-        setInactiveActionPriority((prev) => prev.filter((id) => id !== buttonId))
-    }
-
-    const deactivateAppButton = (buttonId) => {
-        if (NON_DEACTIVATABLE_APP_BUTTON_IDS.includes(buttonId)) {
-            showStatus('The Configuration button cannot be deactivated.', true)
-            return
-        }
-        setActiveButtons((prevButtons) => {
-            if (!prevButtons.includes(buttonId)) return prevButtons
-            return prevButtons.filter((id) => id !== buttonId)
-        })
-
-        const kind = APP_BUTTON_META[buttonId]?.kind
-        if (kind === 'data_view') {
-            setInactiveDataPriority((prev) => [buttonId, ...prev.filter((id) => id !== buttonId)])
-        } else {
-            setInactiveActionPriority((prev) => [buttonId, ...prev.filter((id) => id !== buttonId)])
-        }
-    }
-
-    const reorderActiveButtons = (sourceButtonId, targetButtonId) => {
-        if (!sourceButtonId || !targetButtonId || sourceButtonId === targetButtonId) return
-        setActiveButtons((prevButtons) => {
-            const sourceIndex = prevButtons.indexOf(sourceButtonId)
-            const targetIndex = prevButtons.indexOf(targetButtonId)
-            if (sourceIndex < 0 || targetIndex < 0) return prevButtons
-            const next = [...prevButtons]
-            const [moved] = next.splice(sourceIndex, 1)
-            next.splice(targetIndex, 0, moved)
-            return next
-        })
-    }
-
-    const resetAppButtonsToDefault = () => {
-        setActiveButtons(DEFAULT_ACTIVE_APP_BUTTONS)
-        setInactiveDataPriority(DATA_VIEW_BUTTON_IDS)
-        setInactiveActionPriority(ACTION_BUTTON_IDS)
-        showStatus('App button layout reset to default')
-    }
 
     // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -634,23 +546,6 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
     const divider = `border-t my-5 ${isLight ? 'border-gray-100' : 'border-gray-700'}`
 
     const subLabel = `text-xs uppercase tracking-wider font-bold mb-3 ${isLight ? 'text-gray-500' : 'text-gray-400'}`
-    const appIconButtonActive = `relative w-12 h-12 rounded-lg flex items-center justify-center transition-all duration-200 border-2 cursor-pointer text-white ${isLight
-        ? 'bg-[#0099ff] hover:bg-[#0088ee] border-transparent'
-        : 'bg-[#0099ff] hover:bg-[#0088ee] border-transparent'
-        }`
-    const appIconButtonActionActive = `relative w-12 h-12 rounded-lg flex items-center justify-center transition-all duration-200 border-2 cursor-pointer ${isLight
-        ? 'bg-[#bfe6ff] text-[#006fbf] hover:bg-[#cbeeff] border-[#0099ff]'
-        : 'bg-[#bfe6ff] text-[#006fbf] hover:bg-[#cbeeff] border-[#0099ff]'
-        }`
-    const appIconButtonInactive = `relative w-12 h-12 rounded-lg flex items-center justify-center transition-all duration-200 border-2 cursor-pointer ${isLight
-        ? 'bg-gray-300 text-gray-700 hover:bg-gray-400 border-gray-400'
-        : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border-gray-600'
-        }`
-    const appIconButtonActionInactive = `relative w-12 h-12 rounded-lg flex items-center justify-center transition-all duration-200 border-2 cursor-pointer ${isLight
-        ? 'bg-[#e1f4ff] text-[#0077cc] hover:text-[#005f9f] hover:bg-[#cbeeff] border-[#0099ff]'
-        : 'bg-[#e1f4ff] text-[#0077cc] hover:text-[#005f9f] hover:bg-[#cbeeff] border-[#0099ff]'
-        }`
-
     // ── Render ───────────────────────────────────────────────────────────────
 
     return (
@@ -844,162 +739,12 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
 
                 {/* ── 5. Organise Apps ─────────────────────────────────────── */}
                 <CollapsibleSection title="Organise Apps" icon={<OrganiseAppsIcon />} theme={theme} defaultOpen={false}>
-                    <p className={`text-xs mb-4 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                        Drag active buttons to reorder the top app bar. Click an active button to deactivate it, or click an inactive button to add it back.
-                    </p>
-
-                    <p className={subLabel}>Active Buttons (Drag to Rearrange)</p>
-                    <div className="grid grid-cols-4 sm:grid-cols-5 lg:grid-cols-6 gap-2">
-                        {activeAppButtons.map((buttonId) => {
-                            const meta = APP_BUTTON_META[buttonId]
-                            if (!meta) return null
-                            const isLocked = NON_DEACTIVATABLE_APP_BUTTON_IDS.includes(buttonId)
-                            return (
-                                <button
-                                    key={`active-${buttonId}`}
-                                    type="button"
-                                    draggable
-                                    onClick={() => {
-                                        if (dragMovedRef.current) {
-                                            dragMovedRef.current = false
-                                            return
-                                        }
-                                        deactivateAppButton(buttonId)
-                                    }}
-                                    onDragStart={(event) => {
-                                        event.dataTransfer.effectAllowed = 'move'
-                                        event.dataTransfer.setData('text/plain', buttonId)
-                                        setDraggedButtonId(buttonId)
-                                        setDragOverButtonId(buttonId)
-                                        dragMovedRef.current = false
-                                    }}
-                                    onDragEnter={(event) => {
-                                        event.preventDefault()
-                                        if (draggedButtonId && draggedButtonId !== buttonId) {
-                                            setDragOverButtonId(buttonId)
-                                            dragMovedRef.current = true
-                                        }
-                                    }}
-                                    onDragOver={(event) => event.preventDefault()}
-                                    onDrop={(event) => {
-                                        event.preventDefault()
-                                        const source = draggedButtonId || event.dataTransfer.getData('text/plain')
-                                        reorderActiveButtons(source, buttonId)
-                                        setDraggedButtonId(null)
-                                        setDragOverButtonId(null)
-                                        dragMovedRef.current = false
-                                    }}
-                                    onDragEnd={() => {
-                                        setDraggedButtonId(null)
-                                        setDragOverButtonId(null)
-                                        setTimeout(() => { dragMovedRef.current = false }, 0)
-                                    }}
-                                    className={`${meta.kind === 'action' ? appIconButtonActionActive : appIconButtonActive} ${draggedButtonId === buttonId ? 'opacity-50 scale-[0.98]' : ''} ${dragOverButtonId === buttonId && draggedButtonId !== buttonId ? (isLight ? 'ring-2 ring-[#0099ff]/70' : 'ring-2 ring-blue-300/80') : ''}`}
-                                    title={isLocked ? `${meta.label} (cannot be deactivated)` : meta.label}
-                                >
-                                    <AppButtonIcon buttonId={buttonId} isLight={isLight} />
-                                    {isLocked && (
-                                        <span className={`absolute -top-1 -right-1 text-[8px] px-1.5 py-0.5 rounded-full ${isLight ? 'bg-white text-[#0077cc] border border-[#0077cc]/30' : 'bg-gray-900 text-blue-300 border border-blue-400/40'}`}>
-                                            lock
-                                        </span>
-                                    )}
-                                </button>
-                            )
-                        })}
-                    </div>
-
-                    <div className={divider} />
-
-                    <p className={subLabel}>Data Views</p>
-                    <div className="grid grid-cols-4 sm:grid-cols-5 lg:grid-cols-6 gap-2">
-                        {inactiveDataButtons.length === 0 && (
-                            <div className={`col-span-full text-sm ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                No inactive data views.
-                            </div>
-                        )}
-                        {inactiveDataButtons.map((buttonId) => {
-                            const meta = APP_BUTTON_META[buttonId]
-                            if (!meta) return null
-                            return (
-                                <button
-                                    key={`inactive-data-${buttonId}`}
-                                    type="button"
-                                    onClick={() => activateAppButton(buttonId)}
-                                    className={appIconButtonInactive}
-                                    title={meta.label}
-                                >
-                                    <AppButtonIcon buttonId={buttonId} isLight={isLight} />
-                                </button>
-                            )
-                        })}
-                    </div>
-
-                    <div className={`my-4 border-t ${isLight ? 'border-gray-100' : 'border-gray-700'}`} />
-
-                    <p className={subLabel}>Action Buttons</p>
-                    <div className="grid grid-cols-4 sm:grid-cols-5 lg:grid-cols-6 gap-2">
-                        {inactiveActionButtons.length === 0 && (
-                            <div className={`col-span-full text-sm ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                No inactive action buttons.
-                            </div>
-                        )}
-                        {inactiveActionButtons.map((buttonId) => {
-                            const meta = APP_BUTTON_META[buttonId]
-                            if (!meta) return null
-                            return (
-                                <button
-                                    key={`inactive-action-${buttonId}`}
-                                    type="button"
-                                    onClick={() => activateAppButton(buttonId)}
-                                    className={appIconButtonActionInactive}
-                                    title={meta.label}
-                                >
-                                    <AppButtonIcon buttonId={buttonId} isLight={isLight} />
-                                </button>
-                            )
-                        })}
-                    </div>
-
-                    <div className={`my-4 border-t ${isLight ? 'border-gray-100' : 'border-gray-700'}`} />
-
-                    <p className={subLabel}>In progress views</p>
-                    <p className={`text-xs mb-2 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                        Views in this section are disabled by default at startup.
-                    </p>
-                    <div className="grid grid-cols-4 sm:grid-cols-5 lg:grid-cols-6 gap-2">
-                        {inactiveInProgressButtons.length === 0 && (
-                            <div className={`col-span-full text-sm ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                No inactive in progress views.
-                            </div>
-                        )}
-                        {inactiveInProgressButtons.map((buttonId) => {
-                            const meta = APP_BUTTON_META[buttonId]
-                            if (!meta) return null
-                            return (
-                                <button
-                                    key={`inactive-inprogress-${buttonId}`}
-                                    type="button"
-                                    onClick={() => activateAppButton(buttonId)}
-                                    className={appIconButtonInactive}
-                                    title={meta.label}
-                                >
-                                    <AppButtonIcon buttonId={buttonId} isLight={isLight} />
-                                </button>
-                            )
-                        })}
-                    </div>
-
-                    <div className={divider} />
-
-                    <div className="flex gap-3">
-                        <button
-                            type="button"
-                            onClick={resetAppButtonsToDefault}
-                            className={btnSecondary}
-                        >
-                            Reset App Buttons to Default
-                        </button>
-                    </div>
+                    <AppOrganiserPanel
+                        theme={theme}
+                        activeAppButtons={activeAppButtons}
+                        onChange={setActiveButtons}
+                        onNotice={showStatus}
+                    />
                 </CollapsibleSection>
 
                 {/* ── 6. Colour schemes ────────────────────────────────────── */}

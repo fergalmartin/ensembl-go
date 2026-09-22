@@ -38,7 +38,7 @@ def _delete(root: Path, **kwargs):
         assembly=ASSEMBLY,
         **kwargs,
     )
-    return asyncio.run(main.delete_local_files(request))
+    return main.delete_local_files(request)
 
 
 class LegacyLayoutDeleteTests(unittest.TestCase):

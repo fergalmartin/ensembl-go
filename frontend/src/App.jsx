@@ -61,11 +61,12 @@ const SequenceView = React.lazy(() => import('./components/sequence-view/Sequenc
 import SaveAlignmentModal from './components/SaveAlignmentModal'
 import LoadAlignmentModal from './components/LoadAlignmentModal'
 import AppButtonIcon from './components/AppButtonIcon'
+import AppOrganiserPanel from './components/AppOrganiserPanel.jsx'
 import NoGenomesPillsMessage from './components/NoGenomesPillsMessage'
 import { useTutorialHost } from './hooks/useTutorial'
 import { resetTutorialWorkspace } from './tutorials/demoGenomeApi'
 import { isTutorialSandboxActive, withoutTutorialSandboxFields } from './tutorials/sandbox'
-import SelectedSpeciesPillsBar from './components/SelectedSpeciesPillsBar'
+import SelectedSpeciesPillsBar, { PILLS_ROW_HEIGHT } from './components/SelectedSpeciesPillsBar'
 import { cycleSelection } from './utils/genomeWheel'
 import WindowsBackendSetupView from './components/WindowsBackendSetupView'
 import ScreenshotSelectionOverlay from './components/ScreenshotSelectionOverlay'
@@ -73,6 +74,11 @@ import ScreenshotExportModal from './components/ScreenshotExportModal'
 import {
   APP_BUTTON_META,
   DEFAULT_ACTIVE_APP_BUTTONS,
+  TOP_BAR_BUTTON_PX,
+  TOP_BAR_COLUMN_STRIDE_PX,
+  TOP_BAR_GAP_PX,
+  TOP_BAR_VIEWPORT_PX,
+  buildAppButtonLayout,
   normalizeActiveAppButtons,
 } from './appButtonConfig'
 import {
@@ -113,6 +119,27 @@ const SELECTOR_REFRESH_EVENT = 'ensembl:selector-refresh'
 // How long leaving the configuration view waits for its save before going anyway.
 // A local save answers in tens of milliseconds; this only has to be longer than that.
 const CONFIG_SAVE_NAV_WAIT_MS = 1500
+// The width of the scroll affordance that overlays each end of the app button strip when
+// it has somewhere to scroll to. It sits on top of the strip rather than beside it so
+// that arriving and leaving does not shift the buttons under the user's cursor.
+const TOP_BAR_SCROLL_ARROW_PX = 30
+// The genome pills strip's padding, and the height that falls out of it. Kept in one
+// place because two things depend on it: the strip's own style below, and the app
+// organiser's drawer, whose header band is drawn to this height so that it lands exactly
+// on the strip — same width, same top, same bottom.
+const PILLS_STRIP_PADDING_TOP = 8
+const PILLS_STRIP_PADDING_BOTTOM = 2
+const PILLS_STRIP_PADDING_X = 8
+const PILLS_STRIP_BORDER = 1
+const PILLS_STRIP_HEIGHT =
+  PILLS_ROW_HEIGHT + PILLS_STRIP_PADDING_TOP + PILLS_STRIP_PADDING_BOTTOM + PILLS_STRIP_BORDER
+// The drawer's own border already occupies the first pixel of where the strip begins, so
+// its header band is that much shorter for the two to end on the same line.
+const DRAWER_BORDER_PX = 1
+// The drawer's own horizontal padding. Applied as a value rather than a class because
+// the drawer's offset is computed from it: the panel is pulled left by exactly this plus
+// its border so that the preview grid lines up with the real buttons.
+const DRAWER_PADDING_X = 16
 const PREVIOUS_SESSION_PLAYLIST_ID = '__previous_session__'
 const NEXT_PREVIOUS_SESSION_PLAYLIST_ID = '__next_previous_session__'
 
@@ -868,6 +895,11 @@ function App() {
   // that a second view button pressed in the same moment joins it instead of starting
   // another one.
   const configSaveOnLeaveRef = useRef(null)
+  const appOrganiserButtonRef = useRef(null)
+  const appOrganiserPanelRef = useRef(null)
+  const topBarScrollRef = useRef(null)
+  const organiserScrollRef = useRef(null)
+  const scrollLinkGuardRef = useRef(false)
   const selectorRefreshCompletedTaskIdsRef = useRef(new Set())
 
   // Whether initial config has been loaded from backend
@@ -881,6 +913,8 @@ function App() {
   const [theme, setTheme] = useState('dark')
   const [screenshotMode, setScreenshotMode] = useState(false)
   const [genomePlaylistPopoverOpen, setGenomePlaylistPopoverOpen] = useState(false)
+  const [appOrganiserOpen, setAppOrganiserOpen] = useState(false)
+  const [topBarScroll, setTopBarScroll] = useState({ canLeft: false, canRight: false })
   const [applyingGenomePlaylistId, setApplyingGenomePlaylistId] = useState('')
   const [screenshotAvailabilityByView, setScreenshotAvailabilityByView] = useState({})
   const [selectedFallbackScreenshotTarget, setSelectedFallbackScreenshotTarget] = useState(null)
@@ -3377,6 +3411,8 @@ function App() {
   const themeStyles = {
     bg: isLight ? 'bg-gray-100' : 'bg-gray-900',
     header: isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700',
+    headerBgColor: isLight ? '#ffffff' : '#1f2937',
+    headerBgFade: isLight ? 'rgba(255, 255, 255, 0)' : 'rgba(31, 41, 55, 0)',
     panel: isLight ? 'bg-white border border-gray-200 shadow-sm' : 'bg-gray-800',
     text: isLight ? 'text-gray-900' : 'text-gray-100',
     subtext: isLight ? 'text-gray-500' : 'text-gray-400',
@@ -5516,14 +5552,9 @@ function App() {
     () => normalizeActiveAppButtons(config.active_app_buttons),
     [config.active_app_buttons]
   )
-  const topBarButtonRows = useMemo(() => {
-    const all = activeAppButtons.filter((buttonId) => Boolean(APP_BUTTON_META[buttonId]))
-    const rows = []
-    for (let i = 0; i < all.length; i += 9) {
-      rows.push(all.slice(i, i + 9))
-    }
-    return rows
-  }, [activeAppButtons])
+  const topBarButtonLayout = useMemo(() => buildAppButtonLayout(activeAppButtons), [activeAppButtons])
+  const topBarButtonRows = topBarButtonLayout.rows
+  const topBarOverflows = topBarButtonLayout.overflows
   const sortedGenomePlaylists = useMemo(() => {
     return [...(Array.isArray(config?.genome_playlists) ? config.genome_playlists : [])]
       .filter((playlist) => (
@@ -6040,6 +6071,117 @@ function App() {
     }
   }, [activeAppButtons, draggedTopButtonId])
 
+  // Collapsing the top bar takes the chevron away with it, so an open drawer would be
+  // left with nothing to close it and would reappear on expanding again.
+  useEffect(() => {
+    if (headerCollapsed) setAppOrganiserOpen(false)
+  }, [headerCollapsed])
+
+  // Close the organiser drawer the same way the playlist popover closes: a click
+  // anywhere outside it, or Escape.
+  useEffect(() => {
+    if (!appOrganiserOpen) return undefined
+    const handlePointerDown = (event) => {
+      const button = appOrganiserButtonRef.current
+      const panel = appOrganiserPanelRef.current
+      if (button && button.contains(event.target)) return
+      if (panel && panel.contains(event.target)) return
+      setAppOrganiserOpen(false)
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setAppOrganiserOpen(false)
+    }
+    window.addEventListener('pointerdown', handlePointerDown, true)
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown, true)
+      window.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [appOrganiserOpen])
+
+  // Whether either scroll arrow has anywhere to go. Recomputed on scroll, on resize and
+  // whenever the button list changes, because all three move the ends.
+  const syncTopBarScroll = useCallback(() => {
+    const el = topBarScrollRef.current
+    if (!el) {
+      setTopBarScroll({ canLeft: false, canRight: false })
+      return
+    }
+    const maxScroll = el.scrollWidth - el.clientWidth
+    const next = {
+      canLeft: el.scrollLeft > 1,
+      canRight: maxScroll > 1 && el.scrollLeft < maxScroll - 1,
+    }
+    setTopBarScroll((prev) => (
+      prev.canLeft === next.canLeft && prev.canRight === next.canRight ? prev : next
+    ))
+  }, [])
+
+  useEffect(() => {
+    syncTopBarScroll()
+    const el = topBarScrollRef.current
+    if (!el) return undefined
+    el.addEventListener('scroll', syncTopBarScroll, { passive: true })
+    window.addEventListener('resize', syncTopBarScroll)
+    return () => {
+      el.removeEventListener('scroll', syncTopBarScroll)
+      window.removeEventListener('resize', syncTopBarScroll)
+    }
+  }, [syncTopBarScroll, topBarButtonRows, headerCollapsed])
+
+  // The drawer's preview and the real bar are two windows onto the same strip of
+  // buttons, so they scroll as one: whichever the user moves, the other follows. Without
+  // this the preview can be showing a different slice than the bar above it, which is
+  // exactly the confusion the preview exists to prevent.
+  useEffect(() => {
+    if (!appOrganiserOpen) return undefined
+    const bar = topBarScrollRef.current
+    const preview = organiserScrollRef.current
+    if (!bar || !preview) return undefined
+
+    const mirror = (from, to) => () => {
+      if (scrollLinkGuardRef.current) return
+      if (to.scrollLeft === from.scrollLeft) return
+      scrollLinkGuardRef.current = true
+      to.scrollLeft = from.scrollLeft
+      // Released on the next frame, once the write above has produced its own scroll
+      // event, so that the mirror cannot bounce back and forth.
+      requestAnimationFrame(() => { scrollLinkGuardRef.current = false })
+    }
+    const onBarScroll = mirror(bar, preview)
+    const onPreviewScroll = mirror(preview, bar)
+
+    // Open the drawer showing whatever the bar is showing.
+    preview.scrollLeft = bar.scrollLeft
+
+    bar.addEventListener('scroll', onBarScroll, { passive: true })
+    preview.addEventListener('scroll', onPreviewScroll, { passive: true })
+    return () => {
+      bar.removeEventListener('scroll', onBarScroll)
+      preview.removeEventListener('scroll', onPreviewScroll)
+      scrollLinkGuardRef.current = false
+    }
+  }, [appOrganiserOpen, activeAppButtons])
+
+  const scrollTopBarButtons = useCallback((direction) => {
+    const el = topBarScrollRef.current
+    if (!el) return
+    el.scrollBy({ left: direction * TOP_BAR_COLUMN_STRIDE_PX, behavior: 'smooth' })
+  }, [])
+
+  // The drawer edits the same setting the Configuration view's organiser edits, so it
+  // goes through the same normalisation on the way in.
+  const handleAppOrganiserChange = useCallback((nextButtonsOrUpdater) => {
+    setConfig((prev) => {
+      const base = prev || configRef.current || config
+      const prevButtons = normalizeActiveAppButtons(base.active_app_buttons)
+      const rawNext = typeof nextButtonsOrUpdater === 'function'
+        ? nextButtonsOrUpdater(prevButtons)
+        : nextButtonsOrUpdater
+      return { ...base, active_app_buttons: normalizeActiveAppButtons(rawNext) }
+    })
+  }, [config])
+
   const reorderTopBarButtons = useCallback((sourceButtonId, targetButtonId, insertPosition = 'before') => {
     if (!sourceButtonId || !targetButtonId || sourceButtonId === targetButtonId) return
     setConfig((prev) => {
@@ -6241,10 +6383,21 @@ function App() {
               )}
             </div>
             {!headerCollapsed && !shouldShowWindowsBackendSetup && (
-              <div className="shrink-0 flex items-start gap-3">
-                <div className="flex flex-col items-start gap-2">
+              <div className="shrink-0 flex items-start gap-2">
+                <div className="flex items-start gap-1.5">
+                  <div className="relative">
+                  <div
+                    ref={topBarScrollRef}
+                    className="overflow-x-auto overflow-y-hidden hide-scrollbar"
+                    style={{ maxWidth: TOP_BAR_VIEWPORT_PX }}
+                  >
+                    <div className="flex flex-col items-start gap-2 w-max">
                   {topBarButtonRows.map((row, rowIndex) => (
-                    <div key={`topbar-row-${rowIndex}`} className="grid grid-cols-9 gap-2 justify-items-start">
+                    <div
+                      key={`topbar-row-${rowIndex}`}
+                      className="grid gap-2 justify-items-start"
+                      style={{ gridTemplateColumns: `repeat(${topBarButtonLayout.columns}, ${TOP_BAR_BUTTON_PX}px)` }}
+                    >
                       {row.map((buttonId) => {
                         const buttonMeta = APP_BUTTON_META[buttonId]
                         if (!buttonMeta) return null
@@ -6414,15 +6567,122 @@ function App() {
                       })}
                     </div>
                   ))}
+                    </div>
+                  </div>
+
+                  {/* One tall arrow over whichever end the strip can still scroll to.
+                      Drawn full height of the rows and stretched vertically, so it reads
+                      as "the strip continues this way" rather than as another app
+                      button. Overlaid, not placed beside the grid, so that appearing and
+                      disappearing never moves the buttons. */}
+                  {[
+                    { side: 'left', show: topBarScroll.canLeft, dir: -1, points: '15 18 9 12 15 6', label: 'Scroll app buttons left' },
+                    { side: 'right', show: topBarScroll.canRight, dir: 1, points: '9 18 15 12 9 6', label: 'Scroll app buttons right' },
+                  ].filter((arrow) => arrow.show).map((arrow) => (
+                    <button
+                      key={arrow.side}
+                      type="button"
+                      onClick={() => scrollTopBarButtons(arrow.dir)}
+                      className={`absolute inset-y-0 ${arrow.side === 'left' ? 'left-0' : 'right-0'} flex items-center justify-center text-[#0099ff] hover:text-[#0077cc] transition-colors cursor-pointer`}
+                      style={{
+                        width: TOP_BAR_SCROLL_ARROW_PX,
+                        background: `linear-gradient(to ${arrow.side === 'left' ? 'right' : 'left'}, ${themeStyles.headerBgColor} 55%, ${themeStyles.headerBgFade})`,
+                      }}
+                      title={arrow.label}
+                      aria-label={arrow.label}
+                    >
+                      <svg
+                        width="18" height="40" viewBox="0 0 24 24" preserveAspectRatio="none"
+                        fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+                      >
+                        <polyline points={arrow.points} />
+                      </svg>
+                    </button>
+                  ))}
+
+                  {/* The organiser drawer. Anchored to the scroll viewport's own wrapper
+                      and pulled out by its padding and border, so the preview grid inside
+                      starts on exactly the same pixel as the real buttons above it and
+                      each preview column sits under the button it stands for. `mt-3` is
+                      the flex gap between the button rows and the pills strip, so the
+                      drawer's header band starts where the strip starts, and its height
+                      is the strip's height less this border — the two share a top and a
+                      bottom edge. */}
+                  <div
+                    ref={appOrganiserPanelRef}
+                    style={{
+                      left: -(DRAWER_PADDING_X + DRAWER_BORDER_PX),
+                      width: TOP_BAR_VIEWPORT_PX + 2 * (DRAWER_PADDING_X + DRAWER_BORDER_PX),
+                    }}
+                    className={`absolute top-full mt-3 origin-top-right rounded-xl border shadow-2xl z-50 transition-all duration-200 ${appOrganiserOpen
+                      ? 'opacity-100 translate-y-0 pointer-events-auto'
+                      : 'opacity-0 -translate-y-2 pointer-events-none'
+                    } ${isLight ? 'bg-white border-gray-200 text-gray-900' : 'bg-gray-900 border-gray-700 text-gray-100'}`}
+                  >
+                    <div
+                      className={`flex items-center border-b rounded-t-xl ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700 bg-gray-800'}`}
+                      style={{
+                        height: PILLS_STRIP_HEIGHT - DRAWER_BORDER_PX,
+                        paddingLeft: DRAWER_PADDING_X,
+                        paddingRight: DRAWER_PADDING_X,
+                      }}
+                    >
+                      <div className="text-lg font-bold">Organise Apps</div>
+                    </div>
+                    <div
+                      className="max-h-[60vh] overflow-y-auto themed-scrollbar py-4"
+                      style={{ paddingLeft: DRAWER_PADDING_X, paddingRight: DRAWER_PADDING_X }}
+                    >
+                      <AppOrganiserPanel
+                        theme={theme}
+                        activeAppButtons={activeAppButtons}
+                        onChange={handleAppOrganiserChange}
+                        previewScrollRef={organiserScrollRef}
+                      />
+                    </div>
+                  </div>
+                  </div>
+
+                  <div
+                    className="flex flex-col gap-2 justify-end"
+                    style={{
+                      height: topBarButtonRows.length * TOP_BAR_BUTTON_PX
+                        + Math.max(0, topBarButtonRows.length - 1) * TOP_BAR_GAP_PX,
+                    }}
+                  >
+                    <div className="h-11 flex items-end">
+                      <button
+                        ref={appOrganiserButtonRef}
+                        type="button"
+                        onClick={() => setAppOrganiserOpen((prev) => !prev)}
+                        className="w-6 h-6 rounded-md border-0 bg-transparent text-[#0099ff] flex items-center justify-center transition-colors hover:bg-[#0099ff]/10"
+                        title={appOrganiserOpen ? 'Close the app organiser' : 'Organise apps'}
+                        aria-label={appOrganiserOpen ? 'Close the app organiser' : 'Organise apps'}
+                        aria-expanded={appOrganiserOpen}
+                      >
+                        <svg
+                          width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"
+                          className={`transition-transform duration-200 ${appOrganiserOpen ? 'rotate-180' : ''}`}
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
                 </div>
-                {/* Ensembl logo */}
+                {/* Ensembl logo. Sized to the space left beside the app buttons rather
+                    than to a round number: 80px is as tall as it can be without the mark
+                    outgrowing the two button rows and pushing the header down. */}
                 <img
                   src="ensembl-e-blue.svg"
                   alt="Ensembl"
-                  className="h-14 ml-6"
+                  className="h-20 self-center"
                 />
               </div>
             )}
+
           </div>
 
           {showsPillsStrip && (
@@ -6437,10 +6697,10 @@ function App() {
                 visibility: (topBarSpecies.length === 0 && !showNoGenomesMessage) ? 'hidden' : undefined,
                 backgroundColor: isLight ? '#f1f3f5' : '#1E2938',
                 borderRadius: '0.5rem',
-                paddingLeft: '0.5rem',
-                paddingRight: '0.5rem',
-                paddingTop: '0.5rem',
-                paddingBottom: '0.125rem',
+                paddingLeft: PILLS_STRIP_PADDING_X,
+                paddingRight: PILLS_STRIP_PADDING_X,
+                paddingTop: PILLS_STRIP_PADDING_TOP,
+                paddingBottom: PILLS_STRIP_PADDING_BOTTOM,
               }}
             >
               <SelectedSpeciesPillsBar

@@ -106,15 +106,13 @@ class VcfSettingsTests(unittest.TestCase):
                 self.assertEqual(created["vcf_settings"]["genic_color"], "#112233")
                 self.assertEqual(created["vcf_settings"]["intergenic_color"], VCF_SETTINGS_DEFAULTS["intergenic_color"])
 
-                updated = asyncio.run(
-                    update_track(
+                updated = update_track(
                         created["id"],
                         TrackRegistryUpdateEntry(
                             vcf_settings={"intergenic_color": "#445566"},
                             display_mode="block-lollipop",
                         ),
                     )
-                )
                 self.assertEqual(updated["display_mode"], "adaptive")
                 self.assertEqual(updated["vcf_settings"]["genic_color"], "#112233")
                 self.assertEqual(updated["vcf_settings"]["intergenic_color"], "#445566")
