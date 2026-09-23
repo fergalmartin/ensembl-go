@@ -4,7 +4,7 @@ set -u
 
 # Make Homebrew commands visible on Apple Silicon while preserving the active
 # virtual environment and the rest of the caller's PATH.
-export PATH="/opt/homebrew/bin:$PATH"
+export PATH="$PATH:/opt/homebrew/bin"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_PORT=8000

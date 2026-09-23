@@ -888,6 +888,8 @@ export function TutorialProvider({ children }) {
     // Released rather than blanked: the form belongs to the reader again, and a request
     // left standing would keep reconciling their own typing away after the tutorial ended.
     setCustomGenomeRequest(null)
+    setTrackRequest(null)
+    setBrowserTracksRequest(null)
     datasetGenomesRef.current = new Map()
     demoDataFilesRef.current = null
     demoTrackFilesRef.current = null
@@ -1038,6 +1040,8 @@ export function TutorialProvider({ children }) {
     setSelectorListPresentation(null)
     setDialogRequest({ dialog: 'none', requestedAt: Date.now() })
     setCustomGenomeRequest(null)
+    setTrackRequest(null)
+    setBrowserTracksRequest(null)
     demoDataFilesRef.current = null
     demoTrackFilesRef.current = null
     sliceGenomeRef.current = null

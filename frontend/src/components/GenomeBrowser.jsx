@@ -14086,6 +14086,8 @@ export default function GenomeBrowser({
         return nextTrack
     }, [])
 
+    const seededTrackPickerRequestRef = useRef(null)
+
     /* A tutorial's `browserTracks` arrival, reconciled against this panel.
      *
      * Set, never toggled, because an arrival runs on every entry to a step — walking back
@@ -14101,8 +14103,6 @@ export default function GenomeBrowser({
         const matching = (key) => registered.find((track) =>
             String(track?.path || '').endsWith(TRACK_FILENAMES[key] || '\u0000')
         )
-        const wantedTracks = wanted.map(matching).filter(Boolean)
-
         // Which of them are switched on. Absent means all, so a step that is not about
         // visibility need not say — and the section that *is* about it can put two tracks
         // off and leave the third on, on every entry, however the step was reached.
@@ -14127,13 +14127,31 @@ export default function GenomeBrowser({
             return same ? prev : keep
         })
 
-        setSelectedTrackPickerIds(
-            (Array.isArray(tutorialTracksRequest.chosen) ? tutorialTracksRequest.chosen : [])
-                .map(matching).filter(Boolean).map((track) => String(track.id || ''))
-        )
+    }, [tutorialTracksRequest, availableTracks, buildCustomTrackFromRegistered])
+
+    // A registry refresh can change availableTracks while the reader is using the picker.
+    // Apply the tutorial's open/closed state only when the request itself changes.
+    useEffect(() => {
+        if (!tutorialTracksRequest) return
+        seededTrackPickerRequestRef.current = null
+        setSelectedTrackPickerIds([])
         setIsTrackPickerOpen(String(tutorialTracksRequest.picker || 'closed') === 'open')
         onTutorialHideInactive?.(Boolean(tutorialTracksRequest.hideInactive))
-    }, [tutorialTracksRequest, availableTracks, buildCustomTrackFromRegistered, onTutorialHideInactive])
+    }, [tutorialTracksRequest, onTutorialHideInactive])
+
+    // The registry may arrive after the request. Seed its chosen rows once all are
+    // available, without reselecting rows after a later refresh or user click.
+    useEffect(() => {
+        if (!tutorialTracksRequest || seededTrackPickerRequestRef.current === tutorialTracksRequest) return
+        const chosen = Array.isArray(tutorialTracksRequest.chosen) ? tutorialTracksRequest.chosen : []
+        const matching = (key) => (Array.isArray(availableTracks) ? availableTracks : []).find((track) =>
+            String(track?.path || '').endsWith(TRACK_FILENAMES[key] || '\u0000')
+        )
+        const selected = chosen.map(matching)
+        if (selected.some((track) => !track)) return
+        seededTrackPickerRequestRef.current = tutorialTracksRequest
+        setSelectedTrackPickerIds(selected.map((track) => String(track.id || '')))
+    }, [tutorialTracksRequest, availableTracks])
 
     const addSelectedRegisteredTracksToBrowser = useCallback(() => {
         if (!Array.isArray(selectedTrackPickerIds) || selectedTrackPickerIds.length === 0) return
