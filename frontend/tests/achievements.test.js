@@ -103,7 +103,8 @@ function ruleNames(rule, out = []) {
 
 test('every event in the catalogue is recorded by a call site', () => {
   const frontendSource = walk(srcRoot)
-    .filter((file) => !file.includes(`${path.sep}achievements${path.sep}`))
+    // The tracker and catalogue name every event; only call sites elsewhere count.
+    .filter((file) => !file.startsWith(path.join(srcRoot, 'achievements') + path.sep))
     .map((file) => fs.readFileSync(file, 'utf8'))
     .join('\n')
   const backendSource = ['main.py', 'achievements_store.py']
@@ -183,30 +184,54 @@ test('nothing a tutorial does counts, except the tutorial achievements', async (
   tracker.__resetAchievementsForTests()
 })
 
-test('unlocks are silent while the view is off, and announced once it is on', async () => {
+test('unlocks are silent until achievements are switched on, then announced once', async () => {
   tracker.__resetAchievementsForTests()
   fakeBackend()
   const notices = []
   tracker.subscribeAchievementNotices((ids) => notices.push(ids))
   await tracker.loadAchievements()
+  assert.equal(tracker.getAchievementsSnapshot().enabled, false)
 
-  tracker.setAchievementsContext({ viewEnabled: false })
   tracker.trackAchievement('browser.flatten')
   tracker.trackAchievement('theme.toLight')
   await new Promise((resolve) => setTimeout(resolve, 300))
   assert.deepEqual(notices, [])
 
+  // The Enable achievements button.
+  tracker.enableAchievements()
   tracker.trackAchievement('achievements.enabled')
-  tracker.requestAchievementsReveal()
-  tracker.setAchievementsContext({ viewEnabled: true })
   await new Promise((resolve) => setTimeout(resolve, 300))
   assert.equal(notices.length, 1)
   assert.deepEqual(new Set(notices[0]), new Set(['give_me_some_space_2', 'night_to_day', 'achievements_unlocked']))
+  assert.equal(tracker.getAchievementsSnapshot().enabled, true)
+  assert.equal(tracker.getAchievementsSnapshot().notificationsOn, true)
+
+  // Pressing it again, or the view's button coming and going, announces nothing more.
+  tracker.enableAchievements()
+  tracker.setAchievementsContext({ currentView: 'achievements' })
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  assert.equal(notices.length, 1)
 
   tracker.setAchievementNotifications(false)
   tracker.trackAchievement('seq.find')
   await new Promise((resolve) => setTimeout(resolve, 300))
   assert.equal(notices.length, 1)
+  tracker.__resetAchievementsForTests()
+})
+
+test('anyone who already had #1 counts as switched on', async () => {
+  tracker.__resetAchievementsForTests()
+  fakeBackend({ unlocked: { achievements_unlocked: { at: '2026-09-23T00:00:00Z' } } })
+  await tracker.loadAchievements()
+  assert.equal(tracker.getAchievementsSnapshot().enabled, true)
+  tracker.__resetAchievementsForTests()
+})
+
+test('switched on survives a reset and gives #1 back', async () => {
+  tracker.__resetAchievementsForTests()
+  fakeBackend({ settings: { enabled: true } })
+  await tracker.loadAchievements()
+  assert.ok(tracker.getAchievementsSnapshot().facts.unlocked.achievements_unlocked)
   tracker.__resetAchievementsForTests()
 })
 

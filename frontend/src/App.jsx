@@ -5574,16 +5574,15 @@ function App() {
 
   // ── Achievements ────────────────────────────────────────────────────────────
   //
-  // Tracked whether or not the view is switched on; the tracker only shows unlock
-  // notifications while it is. Everything here reads the user's own configuration
-  // (`userConfig`), never a tutorial's sandbox, and the tracker ignores anything done
-  // during a tutorial in any case.
+  // Tracked whether or not achievements are switched on (with the button in the view);
+  // the tracker only shows unlock notifications once they are. Everything here reads the
+  // user's own configuration (`userConfig`), never a tutorial's sandbox, and the tracker
+  // ignores anything done during a tutorial in any case.
   const [achievementFocusId, setAchievementFocusId] = useState('')
-  const achievementsViewEnabled = activeAppButtons.includes('achievements')
   useEffect(() => { startAchievements() }, [])
   useEffect(() => {
-    setAchievementsContext({ viewEnabled: achievementsViewEnabled, currentView, screenshotMode })
-  }, [achievementsViewEnabled, currentView, screenshotMode])
+    setAchievementsContext({ currentView, screenshotMode })
+  }, [currentView, screenshotMode])
 
   // The store lives in the output directory, so a new one means a different file.
   const achievementsOutputDirRef = useRef(userConfig?.output_dir || '')
@@ -5622,7 +5621,6 @@ function App() {
   const reconcileConfigAchievements = useCallback(() => {
     const saved = achievementConfigRef.current || {}
     const buttons = normalizeActiveAppButtons(saved.active_app_buttons)
-    if (buttons.includes('achievements')) trackAchievement('achievements.enabled')
     if (isRearrangedFromDefault(buttons)) trackAchievement('appButtons.rearranged')
     if (Array.isArray(saved.genome_playlists) && saved.genome_playlists.length) trackAchievement('playlist.created')
     if (Array.isArray(saved.manual_species) && saved.manual_species.length) trackAchievement('genome.manualAdded')

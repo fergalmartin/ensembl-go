@@ -198,8 +198,8 @@ export default function HelpView({ theme = 'dark' }) {
         </SectionCard>
 
         <SectionCard id="achievements" title="Achievements" icon={<AppButtonIcon buttonId="achievements" isLight={isLight} compact />} {...cardProps}>
-          <p>Achievements is an optional view, switched off until you add it with <strong>Organise Apps</strong>. It collects small rewards for trying the less obvious corners of Ensembl Go. Each one is numbered so you can see which you are still missing, and the ones that need several steps show a progress bar.</p>
-          <p>Progress is always recorded, even while the view is switched off, so switching it on shows what you have already done. While the view is in the top bar, an unlock shows a short notification; hover over it to keep it open, or click it to open the view. You can turn notifications off in the view. Progress is kept in your output directory beside your notes, so reinstalling or updating Ensembl Go keeps it. Nothing done during a tutorial counts, apart from the tutorial achievements.</p>
+          <p>Achievements collects small rewards for trying the less obvious corners of Ensembl Go. Open it from Home, or add its button with <strong>Organise Apps</strong>, and press <strong>Enable achievements</strong> to switch it on. Each achievement is numbered so you can see which you are still missing, and the ones that need several steps show a progress bar.</p>
+          <p>Progress is recorded even before you switch achievements on, so switching on shows what you have already done. After that, an unlock shows a short notification; hover over it to keep it open, or click it to open the view. You can turn notifications off in the view. Progress is kept in your output directory beside your notes, so reinstalling or updating Ensembl Go keeps it. Nothing done during a tutorial counts, apart from the tutorial achievements.</p>
         </SectionCard>
 
         <SectionCard id="actions" title="Action buttons" icon={<HelpGlyph />} {...cardProps}>

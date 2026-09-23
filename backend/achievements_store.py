@@ -50,7 +50,7 @@ _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:\-]*$")
 
 # Settings the frontend may change through a sync. Anything else under "settings"
 # that is already on disk is kept, but cannot be written from here.
-_SETTING_TYPES = {"notifications": bool}
+_SETTING_TYPES = {"notifications": bool, "enabled": bool}
 
 _GRCH37_ACCESSION_RE = re.compile(r"^GC([AF])_000001405\.(\d+)$", re.IGNORECASE)
 

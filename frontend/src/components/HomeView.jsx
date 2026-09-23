@@ -210,6 +210,16 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
         </div>
       ),
     },
+    {
+      id: 'achievements',
+      title: 'Achievements',
+      description: 'Switch on achievements and unlock them by exploring the less obvious corners of Ensembl Go',
+      icon: (
+        <div className="text-white scale-[1.45]">
+          <AppButtonIcon buttonId="achievements" isLight={isLight} />
+        </div>
+      ),
+    },
   ]
 
   return (

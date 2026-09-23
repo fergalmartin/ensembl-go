@@ -75,6 +75,12 @@ class StoreModelTests(unittest.TestCase):
         self.assertEqual(doc["distinct"]["view.visit"], ["home"])
         self.assertEqual(doc["settings"], {"notifications": False})
 
+    def test_switching_achievements_on_is_kept_through_a_reset(self):
+        doc = store.empty_store()
+        store.apply_delta(doc, {"settings": {"enabled": True, "notifications": True}})
+        self.assertEqual(doc["settings"], {"enabled": True, "notifications": True})
+        self.assertEqual(store.reset_store(doc)["settings"], {"enabled": True, "notifications": True})
+
     def test_a_single_delta_cannot_claim_more_than_a_day_of_use(self):
         doc = store.empty_store()
         store.apply_delta(doc, {"durations_ms": {"app.active": 10 ** 12}})

@@ -16,9 +16,12 @@
 // behalf, and even a reader doing it by hand is following instructions. Nothing done in
 // one counts, except the tutorial achievements themselves (TUTORIAL_ALLOWED_EVENTS).
 //
-// Tracking always runs, whether or not the Achievements view is switched on, so that
-// switching it on reveals what the user has already done. Notifications only appear
-// while the view is in the button bar and the user has not turned them off.
+// Tracking always runs, whether or not achievements have been switched on, so that
+// switching them on reveals what the user has already done. They are switched on once,
+// with the Enable achievements button in the view (`enableAchievements`), and that is
+// stored with the rest of the progress. Notifications only appear once they are on, and
+// while the user has not turned notifications off. Whether the view has a button in the
+// top bar makes no difference to any of this.
 
 import { API_BASE } from '../backendRuntime.js'
 import { isTutorialSandboxActive } from '../tutorials/sandbox.js'
@@ -63,8 +66,7 @@ let readonly = false
 let loadError = ''
 let flushTimer = null
 let flushing = false
-let context = { viewEnabled: false, currentView: '', screenshotMode: false }
-let revealPending = false
+let context = { currentView: '', screenshotMode: false }
 let started = false
 let lastInputAt = Date.now()
 let lastTickAt = Date.now()
@@ -78,7 +80,14 @@ let noticeTimer = null
 let snapshot = buildSnapshot()
 
 function buildSnapshot() {
-  return { loaded, readonly, loadError, facts, notificationsOn: facts.settings.notifications !== false }
+  return {
+    loaded,
+    readonly,
+    loadError,
+    facts,
+    enabled: achievementsEnabled(),
+    notificationsOn: facts.settings.notifications !== false,
+  }
 }
 
 function emit() {
@@ -98,10 +107,18 @@ function trackingAllowed(event) {
   return !isTutorialSandboxActive() || TUTORIAL_ALLOWED_EVENTS.has(event)
 }
 
+/**
+ * Whether the user has switched achievements on. Anyone who had already unlocked #1 did
+ * so under the earlier rule (adding the view to the top bar) and counts as having done it.
+ */
+function achievementsEnabled() {
+  return facts.settings.enabled === true || Boolean(facts.unlocked.achievements_unlocked)
+}
+
 function notificationsAllowed() {
   return (
     loaded &&
-    context.viewEnabled &&
+    achievementsEnabled() &&
     facts.settings.notifications !== false &&
     !context.screenshotMode &&
     !isTutorialSandboxActive()
@@ -212,6 +229,9 @@ export function registerAchievementReconciler(fn) {
 }
 
 function runReconcilers() {
+  // Switched on is stored as a setting, so it survives a reset that clears #1: give it
+  // back, as every other still-true achievement is.
+  if (facts.settings.enabled === true) trackAchievement('achievements.enabled')
   for (const fn of reconcilers) {
     try { fn() } catch { /* as above */ }
   }
@@ -219,21 +239,24 @@ function runReconcilers() {
 
 // ── Public: context from App ──────────────────────────────────────────────────
 
-/** What App knows that the tracker needs: whether the view is on, which view is showing. */
+/** What App knows that the tracker needs: which view is showing, and screenshot mode. */
 export function setAchievementsContext(next) {
-  const wasEnabled = context.viewEnabled
   context = { ...context, ...next }
-  if (!wasEnabled && context.viewEnabled && revealPending) {
-    revealPending = false
-    // Everything unlocked so far, announced once. The toast shows a single unlock by
-    // name and several as a count.
-    queueNotice(Object.keys(facts.unlocked).filter((id) => ACHIEVEMENTS_BY_ID.has(id)))
-  }
 }
 
-/** The user has just switched the view on: announce what they have already unlocked. */
-export function requestAchievementsReveal() {
-  revealPending = true
+/**
+ * The Enable achievements button. Switches achievements and their notifications on, and
+ * announces everything already unlocked — once, since the switch is stored. The caller
+ * records `achievements.enabled` straight after, which unlocks #1 into the same notice.
+ */
+export function enableAchievements() {
+  if (achievementsEnabled() && facts.settings.enabled === true) return
+  facts.settings = { ...facts.settings, enabled: true, notifications: true }
+  pending.settings.enabled = true
+  pending.settings.notifications = true
+  scheduleFlush(500)
+  emit()
+  queueNotice(Object.keys(facts.unlocked).filter((id) => ACHIEVEMENTS_BY_ID.has(id)))
 }
 
 export function setAchievementNotifications(enabled) {
@@ -491,8 +514,7 @@ export function __resetAchievementsForTests() {
   loading = null
   readonly = false
   loadError = ''
-  context = { viewEnabled: false, currentView: '', screenshotMode: false }
-  revealPending = false
+  context = { currentView: '', screenshotMode: false }
   if (flushTimer) clearTimeout(flushTimer)
   flushTimer = null
   if (noticeTimer) clearTimeout(noticeTimer)

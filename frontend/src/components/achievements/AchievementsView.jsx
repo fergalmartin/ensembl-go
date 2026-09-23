@@ -3,10 +3,19 @@ import AchievementMedal from './AchievementMedal'
 import useAchievements from '../../achievements/useAchievements.js'
 import { ACTIVE_ACHIEVEMENTS, ACHIEVEMENTS } from '../../achievements/catalogue.js'
 import { hasProgressBar, ruleProgress, unlockedCount } from '../../achievements/rules.js'
-import { resetAchievements, setAchievementNotifications } from '../../achievements/tracker.js'
+import AppButtonIcon from '../AppButtonIcon'
+import { enableAchievements, resetAchievements, setAchievementNotifications, trackAchievement } from '../../achievements/tracker.js'
 
 // The trophy cabinet. Everything shown is derived from the tracker's snapshot on each
 // render; there is no state here beyond the filter and the reset confirmation.
+//
+// Until the user presses Enable achievements the cabinet is shown switched off: greyed,
+// not interactive, and empty, so that switching on is what reveals what they have
+// already done (progress is recorded all along; see tracker.js).
+
+const EMPTY_FACTS = Object.freeze({
+  unlocked: {}, counters: {}, distinct: {}, durations: {}, lineage: new Set(), settings: {},
+})
 
 // Ranks follow the meta achievements, so the title in the header is always one the user
 // has actually earned.
@@ -141,7 +150,8 @@ function AchievementCard({ achievement, facts, isLight, highlighted, cardRef }) 
 export default function AchievementsView({ theme = 'dark', focusId = '', onFocusHandled = null }) {
   const isLight = theme === 'light'
   const snapshot = useAchievements()
-  const { facts, loaded, readonly, loadError, notificationsOn } = snapshot
+  const { loaded, readonly, loadError, notificationsOn, enabled } = snapshot
+  const facts = enabled ? snapshot.facts : EMPTY_FACTS
   const [filter, setFilter] = useState('all')
   const [confirmingReset, setConfirmingReset] = useState(false)
   const [resetState, setResetState] = useState({ busy: false, message: '', error: '' })
@@ -158,9 +168,15 @@ export default function AchievementsView({ theme = 'dark', focusId = '', onFocus
       .sort((a, b) => String(facts.unlocked[b.id].at).localeCompare(String(facts.unlocked[a.id].at)))
       .slice(0, 3)
     return { total, unlocked, hiddenRemaining, rank: RANKS[rankIndex], nextRank: RANKS[rankIndex + 1] || null, recent }
-    // `snapshot` changes whenever anything inside `facts` does.
+    // `snapshot` changes whenever anything inside `facts` does, and says whether they are on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot])
+
+  const switchOn = () => {
+    enableAchievements()
+    trackAchievement('achievements.enabled')
+  }
+  const offClass = enabled ? '' : 'pointer-events-none select-none opacity-45'
 
   const visible = useMemo(() => ACHIEVEMENTS.filter((achievement) => {
     if (achievement.retired && !facts.unlocked[achievement.id]) return false
@@ -235,13 +251,34 @@ export default function AchievementsView({ theme = 'dark', focusId = '', onFocus
           100% { box-shadow: 0 0 0 14px rgba(0, 153, 255, 0); }
         }
         .achievement-card-highlight { animation: achievement-card-pulse 1.1s ease-out 2; }
+        .achievement-enable { animation: achievement-card-pulse 1.8s ease-out infinite; }
         @media (prefers-reduced-motion: reduce) {
           .achievement-card-highlight { animation: none; outline: 2px solid #0099ff; }
+          .achievement-enable { animation: none; }
         }
       `}</style>
       <div className="max-w-6xl px-6 py-8">
+        {/* ── Switching on ───────────────────────────────────────────────── */}
+        {!enabled && loaded && (
+          <div className="mb-5 flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              onClick={switchOn}
+              disabled={readonly}
+              className="achievement-enable inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0099ff] px-4 py-2 text-sm font-semibold text-white shadow-md shadow-[#0099ff]/30 transition-colors hover:bg-[#0088ee] disabled:opacity-50"
+            >
+              <AppButtonIcon buttonId="achievements" isLight={isLight} compact />
+              Enable achievements
+            </button>
+            {/* The same words as the Achievements card on Home. */}
+            <p className={`text-sm ${muted}`}>
+              Switch on achievements and unlock them by exploring the less obvious corners of Ensembl Go
+            </p>
+          </div>
+        )}
+
         {/* ── Header ─────────────────────────────────────────────────────── */}
-        <section className={`rounded-2xl border p-6 ${panel}`}>
+        <section className={`rounded-2xl border p-6 ${panel} ${offClass}`} aria-disabled={!enabled}>
           <div className="flex flex-wrap items-center gap-6">
             <div className="relative shrink-0">
               <ProgressRing fraction={fraction} isLight={isLight} />
@@ -302,35 +339,38 @@ export default function AchievementsView({ theme = 'dark', focusId = '', onFocus
 
         {/* ── Controls ───────────────────────────────────────────────────── */}
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-1.5">
+          <div className={`flex flex-wrap gap-1.5 ${offClass}`}>
             {FILTERS.map((entry) => (
-              <button key={entry.id} type="button" onClick={() => setFilter(entry.id)} className={`${chipBase} ${chip(filter === entry.id)}`}>
+              <button key={entry.id} type="button" disabled={!enabled} onClick={() => setFilter(entry.id)} className={`${chipBase} ${chip(filter === entry.id)}`}>
                 {entry.label}
               </button>
             ))}
           </div>
-          <label className={`flex cursor-pointer select-none items-center gap-2 text-xs ${muted}`}>
-            <span>Enable notifications</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={notificationsOn}
-              onClick={() => setAchievementNotifications(!notificationsOn)}
-              className={`relative h-5 w-9 rounded-full transition-colors ${notificationsOn ? 'bg-[#0099ff]' : (isLight ? 'bg-gray-300' : 'bg-gray-600')}`}
-            >
-              <span
-                className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform"
-                style={{ left: 2, transform: notificationsOn ? 'translateX(16px)' : 'translateX(0)' }}
-              />
-            </button>
-          </label>
+          <div className="flex items-center">
+            <label className={`flex select-none items-center gap-2 text-xs ${muted} ${enabled ? 'cursor-pointer' : 'opacity-45'}`}>
+              <span>Enable notifications</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={enabled && notificationsOn}
+                disabled={!enabled}
+                onClick={() => setAchievementNotifications(!notificationsOn)}
+                className={`relative h-5 w-9 rounded-full transition-colors ${enabled && notificationsOn ? 'bg-[#0099ff]' : (isLight ? 'bg-gray-300' : 'bg-gray-600')}`}
+              >
+                <span
+                  className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform"
+                  style={{ left: 2, transform: enabled && notificationsOn ? 'translateX(16px)' : 'translateX(0)' }}
+                />
+              </button>
+            </label>
+          </div>
         </div>
 
         {/* ── The cabinet ────────────────────────────────────────────────── */}
         {!loaded && !loadError ? (
           <p className={`mt-8 text-sm ${muted}`}>Loading achievements…</p>
         ) : (
-          <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className={`mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 ${offClass}`} aria-disabled={!enabled}>
             {visible.map((achievement) => (
               <AchievementCard
                 key={achievement.id}
@@ -351,7 +391,7 @@ export default function AchievementsView({ theme = 'dark', focusId = '', onFocus
         )}
 
         {/* ── Reset ──────────────────────────────────────────────────────── */}
-        <div className={`mt-10 border-t pt-5 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+        {enabled && <div className={`mt-10 border-t pt-5 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
           {!confirmingReset ? (
             <button
               type="button"
@@ -393,7 +433,7 @@ export default function AchievementsView({ theme = 'dark', focusId = '', onFocus
           )}
           {resetState.message && <p className={`mt-2 text-xs ${muted}`}>{resetState.message}</p>}
           {resetState.error && <p className={`mt-2 text-xs ${isLight ? 'text-red-700' : 'text-red-300'}`}>{resetState.error}</p>}
-        </div>
+        </div>}
       </div>
     </div>
   )

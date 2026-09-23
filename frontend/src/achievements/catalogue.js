@@ -100,7 +100,7 @@ const taxonRule = (key) => ({ type: 'taxon', taxa: TAXON[key] })
 
 export const ACHIEVEMENTS = [
   // ── App & views ───────────────────────────────────────────────────────────
-  { id: 'achievements_unlocked', number: 1, name: 'Achievements unlocked', description: 'You found and activated the Achievements view', category: 'achievements', rule: { type: 'event', event: 'achievements.enabled' } },
+  { id: 'achievements_unlocked', number: 1, name: 'Achievements unlocked', description: 'You found the Achievements view and switched achievements on', category: 'achievements', rule: { type: 'event', event: 'achievements.enabled' } },
   { id: 'time_to_move_on', number: 2, name: "It's time to move on...", description: 'Downloaded GRCh37, despite the existence of GRCh38, CHM13 T2T and the human pangenome haplotypes. No judgement here though', category: 'download', rule: { type: 'distinct', set: 'genome.grch37', target: 1, source: 'backend' } },
   { id: 'one_hit_wonder', number: 3, name: 'One hit wonder', description: 'Created your first playlist', icon: 'genome_playlist', category: 'genome_selector', rule: { type: 'event', event: 'playlist.created' } },
   { id: 'welcome_to_the_multiverse', number: 4, name: 'Welcome to the multiverse', description: 'Activated two or more genomes simultaneously in the Genome Browser', category: 'genome_browser', rule: { type: 'event', event: 'browser.multiverse' } },

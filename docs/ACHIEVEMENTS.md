@@ -1,8 +1,9 @@
 # Achievements
 
 Achievements is an optional view that gives small rewards for finding the less obvious
-parts of Ensembl Go. It is off by default. Switching it on in **Organise Apps** is
-itself achievement #1.
+parts of Ensembl Go. It can be opened from Home or added to the top bar, and it shows
+switched off until the user presses **Enable achievements** in it. That press is
+achievement #1. Whether the view has a top-bar button makes no difference to anything.
 
 ## Where things live
 
@@ -78,17 +79,22 @@ always resolves store paths from the saved configuration, never from a request.
 
 Time spent in the app counts even during a tutorial.
 
-## Notifications
+## Switching on, and notifications
 
-- **Tracking always runs.** Unlocks are silent while the view is not in the button bar.
-- **The reveal.** Switching the view on (`requestAchievementsReveal` in
-  `AppOrganiserPanel`) announces everything unlocked so far as a single notice.
+- **Tracking always runs.** Before achievements are switched on, unlocks are recorded
+  silently and the view shows the cabinet greyed out and empty.
+- **Switching on.** The Enable achievements button calls `enableAchievements()` and
+  records `achievements.enabled` (#1). It stores `settings.enabled` in the achievements
+  file, turns notifications on, and announces everything unlocked so far as a single
+  notice. Because the switch is stored, the notice never repeats. Anyone who unlocked #1
+  under the earlier rule (adding the view to the top bar) counts as switched on, and a
+  reset keeps the switch and gives #1 straight back.
 - **The toast.**
   - It stays for about five seconds, then fades.
   - Hovering holds it.
   - It has a close button, and clicking it opens the view at that achievement.
   - Unlocks that arrive together merge into "You've unlocked N achievements".
-- **The toggle.** "Unlock notifications" in the view is stored in the achievements file,
+- **The toggle.** "Enable notifications" in the view is stored in the achievements file,
   so it follows the output directory.
 - **When there are none.** Nothing is shown during a tutorial or in screenshot mode.
 
