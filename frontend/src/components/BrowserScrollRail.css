@@ -12,7 +12,7 @@
   cursor: grab;
   touch-action: none;
   user-select: none;
-  /* The hover labels and the readout hang off the right-hand side. */
+  /* The Cycle selection label hangs off the right-hand side. */
   overflow: visible;
   transition: background .15s, border-color .15s;
 }
@@ -42,8 +42,7 @@
 .browser-scroll-rail.light .browser-scroll-rail-stop::after { box-shadow: 0 0 0 2px #ffffffcc; }
 .browser-scroll-rail-stop:hover::after { transform: scale(1.25); }
 
-.browser-scroll-rail-stop-label,
-.browser-scroll-rail-readout {
+.browser-scroll-rail-stop-label {
   position: absolute;
   left: 28px;
   transform: translateY(-50%);
@@ -60,16 +59,7 @@
   transition: opacity .12s;
 }
 .browser-scroll-rail-stop-label { top: 50%; }
-.browser-scroll-rail.light .browser-scroll-rail-stop-label,
-.browser-scroll-rail.light .browser-scroll-rail-readout { background: #ffffffF2; color: #243248; box-shadow: 0 6px 18px #00000022; }
-.browser-scroll-rail-stop:hover .browser-scroll-rail-stop-label { opacity: 1; }
-
-/* The readout names the genome the ring is currently over. Only while the rail
-   is in use: a chip permanently parked over the first panel would be clutter. */
-.browser-scroll-rail:hover .browser-scroll-rail-readout,
-.browser-scroll-rail.engaged .browser-scroll-rail-readout { opacity: 1; }
-/* Two chips at the same height would sit on top of each other. */
-.browser-scroll-rail-stop:hover ~ .browser-scroll-rail-readout { opacity: 0; }
+.browser-scroll-rail.light .browser-scroll-rail-stop-label { background: #ffffffF2; color: #243248; box-shadow: 0 6px 18px #00000022; }
 
 /* Drawn over the dot it has arrived at, so it must not intercept the press. */
 /* The ring is the one mark on the rail the reader is always looking for, so it
@@ -111,22 +101,19 @@
 .browser-scroll-rail.cycling.held { z-index: 201; }
 .browser-scroll-rail.light.cycling { background: #ffffffe0; border-color: #8a97a8aa; }
 
-/* The genome standing at the front of the drum, named and lit so the panel on
-   screen and the dot on the rail are never two different genomes. */
+/* The genome standing at the front of the drum keeps its label while the Cycle
+   wheel is selecting it. Ordinary hover does not show a label. */
 .browser-scroll-rail-band.candidate { opacity: 1; }
 .browser-scroll-rail-stop.candidate::after {
   transform: scale(1.45);
   box-shadow: 0 0 0 2px #0d1622aa, 0 0 10px 2px currentColor;
 }
 .browser-scroll-rail.light .browser-scroll-rail-stop.candidate::after { box-shadow: 0 0 0 2px #ffffffcc, 0 0 10px 2px #2b3a5255; }
-.browser-scroll-rail-stop.candidate .browser-scroll-rail-stop-label { opacity: 1; }
-/* The readout follows the scroll position, which has not moved yet — two chips
-   naming two different genomes is exactly the confusion this is fixing. */
-.browser-scroll-rail.cycling .browser-scroll-rail-readout { opacity: 0; }
+.browser-scroll-rail.cycling .browser-scroll-rail-stop.candidate .browser-scroll-rail-stop-label { opacity: 1; }
 
 @media (prefers-reduced-motion: reduce) {
   .browser-scroll-rail, .browser-scroll-rail-band, .browser-scroll-rail-stop::after,
-  .browser-scroll-rail-stop-label, .browser-scroll-rail-readout { transition: none; }
+  .browser-scroll-rail-stop-label { transition: none; }
   .browser-scroll-rail-stop:hover::after { transform: none; }
   .browser-scroll-rail-stop.candidate::after { transform: none; }
 }

@@ -54,7 +54,6 @@ function layoutSignature(layout) {
 export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump, cyclePreview = null, isActive, isLight }) {
     const railRef = useRef(null)
     const indicatorRef = useRef(null)
-    const readoutRef = useRef(null)
     const scrollerRef = useRef(null)
     const layoutRef = useRef(null)
     const scrollTopRef = useRef(0)
@@ -139,7 +138,7 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
     }, [measure, hostRef])
 
     // The ring is written straight to the DOM rather than rendered: it moves on
-    // every scroll frame, and re-rendering five dots and a readout with it would
+    // every scroll frame, and re-rendering five dots with it would
     // make dragging the rail cost more than the page it is scrolling.
     const syncRing = useCallback(() => {
         const current = layoutRef.current
@@ -149,7 +148,6 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
         scrollTopRef.current = top
         const offset = railOffsetForScroll(top, current.geometry)
         if (indicatorRef.current) indicatorRef.current.style.top = `${offset}px`
-        if (readoutRef.current) readoutRef.current.style.top = `${offset}px`
         const index = activeScrollRailStop(top, current.stops)
         const percent = current.geometry.maxScroll > 0
             ? Math.round((top / current.geometry.maxScroll) * 100)
@@ -328,7 +326,6 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
             aria-valuenow={percent}
             aria-valuetext={active ? `${percent}% — ${active.label}` : `${percent}%`}
             tabIndex={0}
-            title={'Drag to scroll the browser, or click a genome to jump to it.\nKeyboard: ↑ ↓ scroll · ← → genome · Page Up/Down · Home/End'}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={(event) => endDrag(event, true)}
@@ -367,7 +364,6 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
                     data-tour-id={`browser-scroll-rail-genome-${stop.tourId || stop.key}`}
                     className={`browser-scroll-rail-stop ${index === activeIndex ? 'current' : ''} ${index === candidateIndex ? 'candidate' : ''}`}
                     style={{ top: stop.offset, '--dot': stop.color }}
-                    title={`Jump to ${stop.label}`}
                 >
                     <span className="browser-scroll-rail-stop-label">{stop.label}</span>
                 </button>
@@ -376,12 +372,6 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
                 ref={indicatorRef}
                 className="browser-scroll-rail-indicator"
             />
-            <div
-                ref={readoutRef}
-                className="browser-scroll-rail-readout"
-            >
-                {active?.label}
-            </div>
         </div>,
         document.body,
     )
