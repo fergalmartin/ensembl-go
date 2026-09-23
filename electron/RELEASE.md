@@ -249,9 +249,11 @@ Notes:
 
 ## Linux packaging
 
-The supported Linux target mirrors macOS rather than Windows: a native Electron shell
-plus a native PyInstaller backend bundled into app resources. There is no WSL step and
-no host Python requirement for end users.
+The initial Linux implementation mirrors macOS: a native Electron shell plus a
+native PyInstaller backend bundled into app resources. There is no WSL step and
+no host Python requirement for end users. This build path has not yet been
+validated by Linux desktop testers; treat the artifacts as early test builds
+until both install and launch checks below succeed on clean machines.
 
 Targets produced are `AppImage` and `deb`.
 
@@ -260,9 +262,10 @@ Targets produced are `AppImage` and `deb`.
 Because the backend is a native executable, **the Linux package must be built on
 Linux**, and the build host's glibc sets the floor for what the package will run on.
 Build on the oldest distribution you intend to support; a package built on current
-Fedora will fail to start on Ubuntu LTS with a confusing loader error. Ubuntu 22.04 or
-20.04 is a reasonable baseline. `verify-linux-backend.js` prints the glibc version it
-built against so you can record it in the release notes.
+Fedora can fail to start on an older Ubuntu release with a loader error. Choose
+a baseline that also has the required Python and Node.js versions available.
+`verify-linux-backend.js` prints the glibc version it built against so you can
+record it with the test results.
 
 Electron itself is not the binding constraint here. The bundled Electron 43 binaries
 require at most `GLIBC_2.25` on both x86-64 and arm64, which every currently supported
@@ -276,8 +279,15 @@ shell and the PyInstaller backend will not match.
 
 ### Prerequisites
 
+Install Node.js and npm before running these commands. Python must be at least
+3.9 and Node.js at least 20.19; the distribution's default `nodejs` package may
+not meet that requirement. Check the versions you will use:
+
 ```bash
-sudo apt install python3 python3-venv python3-pip nodejs npm
+sudo apt install python3 python3-venv python3-pip
+python3 --version
+node --version
+npm --version
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r backend/requirements-build.txt
@@ -285,6 +295,9 @@ python -m pip install -r backend/requirements-build.txt
 npm --prefix frontend ci
 npm --prefix electron ci
 ```
+
+For source development with `run_ensembl_go.sh`, also install `lsof` and
+`netcat-openbsd` as described in `INSTALLATION.md`.
 
 Optional, for multiple genic-region alignments:
 
@@ -323,8 +336,9 @@ binaries in `/usr/lib/mafft`, which the bundler already recognises.
 
 ### Validate artifacts before sharing
 
-There is no code signing step on Linux. Smoke test both artifacts on a clean machine
-that is not the build host:
+There is no code signing step on Linux. For this initial implementation, smoke
+test both artifacts on a clean machine that is not the build host before asking
+others to try them:
 
 ```bash
 cd electron
@@ -350,6 +364,10 @@ Then check:
 - If MAFFT is bundled, Feature Alignment succeeds with at least three genomes
   and displays their annotation overlays.
 - Screenshot/export save writes the expected file extension.
+
+Record the distribution version, architecture, and any startup errors alongside
+the results. These first tests will establish which Linux systems the packages
+actually work on.
 
 ### Known Linux specifics
 

@@ -1,22 +1,38 @@
 # Installation and first run
 
-This guide covers running Ensembl Go from a source checkout. Packaged macOS and
-Linux applications already contain the frontend and backend, so their users do
-not need Node.js or Python. The packaged Windows application uses a native
-Electron shell and a Python backend inside WSL; see
+This guide covers running Ensembl Go from a source checkout. macOS is the
+currently tested desktop platform. Linux installation and packaging are an
+initial implementation awaiting tests on Linux desktops. A Linux AppImage or
+`.deb`, once built, contains the frontend and backend; its users do not need
+Node.js or Python. The same is true of the packaged macOS application. The
+packaged Windows application uses a native Electron shell and a Python backend
+inside WSL; see
 [the Windows checklist](./electron/WINDOWS_TEST_CHECKLIST.md).
 
-If you are using a packaged release, skip the source-development sections
-below. On macOS, installation is just the application package. On Linux, run the
-AppImage or install the `.deb`. On Windows, the first-run setup screen checks WSL
-and provides the commands needed to prepare its backend.
+If you are using a packaged build, skip the source-development sections below.
+On macOS, install the application package. On Linux, run the AppImage or install
+the `.deb` supplied by the builder, then follow the [Linux first-test
+checks](./electron/RELEASE.md#validate-artifacts-before-sharing). On Windows,
+the first-run setup screen checks WSL and provides the commands needed to
+prepare its backend.
 
 ## Source-development prerequisites
 
 These are for developers running or packaging the source code:
 
-- Node.js `20.19` or newer (`22` LTS is recommended) and npm;
+- Node.js `20.19` or newer and npm;
 - Python `3.9` or newer.
+
+For source development on Debian or Ubuntu, install `lsof` and `netcat-openbsd`
+as well. The development launcher uses their `lsof` and `nc` commands:
+
+```bash
+sudo apt install lsof netcat-openbsd
+```
+
+Check `node --version` and `python3 --version` before bootstrapping. The versions
+provided by a distribution's default packages may be older than the minimums
+above; use a newer installation of either tool if needed.
 
 ## Optional dependency: MAFFT
 
@@ -105,9 +121,9 @@ the two ports separately and never stops a process without confirmation.
 processes it started when Electron exits. It expects the standard macOS/Linux
 utilities `lsof` and `nc`.
 
-This fixed-port behaviour applies only to source development. The packaged
-macOS application does not stop an existing process or ask the user to manage
-ports: its managed backend prefers port 8000 and automatically selects another
+This fixed-port behaviour applies only to source development. Packaged macOS
+and Linux applications do not stop an existing process or ask the user to manage
+ports. Their managed backend prefers port 8000 and automatically selects another
 free loopback port if 8000 is unavailable. Electron passes that selected
 address to the frontend internally.
 
@@ -172,18 +188,26 @@ For the extra files and registration steps used by the SV view, see
 
 ## Verify the installation
 
-Run:
+For the backend test suite, install the test-only `pytest` and `httpx` packages
+in the active virtual environment. They are not needed to run the application:
+
+```bash
+python -m pip install pytest httpx
+```
+
+Then run:
 
 ```bash
 python -m pytest backend/tests -q
-npm --prefix frontend test
+TZ=UTC npm --prefix frontend test
 npm --prefix frontend run lint
 npm --prefix frontend run build
 ```
 
 The frontend build can report a large-bundle warning. That warning is not a
 build failure. Lint errors are failures; lint warnings currently track existing
-cleanup work.
+cleanup work. `TZ=UTC` avoids two screenshot filename tests that currently
+assume UTC even though the application formats timestamps in local time.
 
 ## Packaging
 
@@ -193,7 +217,7 @@ For an unsigned local macOS package:
 npm --prefix electron run dist:mac:unsigned
 ```
 
-For a Linux package (AppImage and deb):
+For an initial Linux package (AppImage and deb), run on a Linux build host:
 
 ```bash
 npm --prefix electron run dist:linux
@@ -204,6 +228,8 @@ PyInstaller executables, so they cannot be cross-built, and the packaging script
 stop with an explanation rather than producing an artifact containing a backend for
 the wrong platform. On Linux the build host's glibc also sets the minimum version
 the package will run on, so build on the oldest distribution you want to support.
+The Linux package still needs a clean-machine installation and launch test before
+it is shared more broadly.
 
 To include multiple-alignment support, MAFFT must be available on `PATH`, or
 `MAFFT_BUNDLE_ROOT` must point to an installation containing `bin/mafft` and
@@ -212,6 +238,8 @@ that optional functionality:
 
 ```bash
 SKIP_MAFFT_BUNDLE=1 npm --prefix electron run dist:mac:unsigned
+# On Linux:
+SKIP_MAFFT_BUNDLE=1 npm --prefix electron run dist:linux
 ```
 
 Signed and notarized macOS releases, and the full Linux and Windows packaging

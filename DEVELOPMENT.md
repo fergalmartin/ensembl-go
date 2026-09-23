@@ -34,10 +34,10 @@ to stop it or abort. It first requests a graceful stop; if that does not work,
 it asks again before forcing the process to stop. A non-interactive launch
 aborts safely when either port is occupied.
 
-The packaged macOS application does not use these fixed development ports in
-the same way. It prefers port 8000 for its managed backend, but automatically
-uses a free loopback port when 8000 is unavailable and does not terminate the
-existing process.
+The packaged macOS application and initial Linux package handle ports
+differently. Their managed backend prefers port 8000, but automatically uses a
+free loopback port when 8000 is unavailable and does not terminate the existing
+process.
 
 In this fast mode the backend is started without `ENSEMBL_LOCAL_API_TOKEN`, so
 browser development remains frictionless. When Electron launches the backend
@@ -72,12 +72,14 @@ cd electron
 npm run dist:mac:unsigned
 ```
 
-The other targets are `npm run dist:linux` (AppImage and deb) and `npm run dist:win`
-(NSIS and zip), each of which must be run on the platform it builds for. The macOS and
-Linux backends are native PyInstaller executables and cannot be cross-built; the
-packaging scripts stop with an explanation instead of shipping a backend for the wrong
-platform. `dist:linux:dir` and `dist:win:dir` produce a faster unpacked build for
-checking a change before generating installers.
+The other targets are `npm run dist:linux` (initial AppImage and deb builds) and
+`npm run dist:win` (NSIS and zip). Each must run on its target platform. The macOS
+and Linux backends are native PyInstaller executables and cannot be cross-built;
+the packaging scripts stop with an explanation instead of shipping a backend
+for the wrong platform. `dist:linux:dir` and `dist:win:dir` produce a faster
+unpacked build for checking a change before generating installers. A Linux
+package needs a launch and install test on a clean Linux machine before it can
+be treated as supported.
 
 See `electron/RELEASE.md` for full release setup and validation commands for all three
 platforms.
