@@ -1,0 +1,465 @@
+{
+  "note": "Every achievement id ever shipped, with its number. Append only: see catalogue.js.",
+  "achievements": [
+    {
+      "id": "achievements_unlocked",
+      "number": 1
+    },
+    {
+      "id": "time_to_move_on",
+      "number": 2
+    },
+    {
+      "id": "one_hit_wonder",
+      "number": 3
+    },
+    {
+      "id": "welcome_to_the_multiverse",
+      "number": 4
+    },
+    {
+      "id": "control_freak",
+      "number": 5
+    },
+    {
+      "id": "nothing_left",
+      "number": 6
+    },
+    {
+      "id": "off_on_a_cycle",
+      "number": 7
+    },
+    {
+      "id": "tandem_browsing",
+      "number": 8
+    },
+    {
+      "id": "locus_focus",
+      "number": 9
+    },
+    {
+      "id": "one_gene_to_rule_them_all",
+      "number": 10
+    },
+    {
+      "id": "transcriptional_noise",
+      "number": 11
+    },
+    {
+      "id": "take_me_home",
+      "number": 12
+    },
+    {
+      "id": "context_switcher",
+      "number": 13
+    },
+    {
+      "id": "scribe",
+      "number": 14
+    },
+    {
+      "id": "taskmaster",
+      "number": 15
+    },
+    {
+      "id": "noteworthy",
+      "number": 16
+    },
+    {
+      "id": "tag",
+      "number": 17
+    },
+    {
+      "id": "wiggle_it",
+      "number": 18
+    },
+    {
+      "id": "a_long_way_down",
+      "number": 19
+    },
+    {
+      "id": "more_transcripts",
+      "number": 20
+    },
+    {
+      "id": "flip_it",
+      "number": 21
+    },
+    {
+      "id": "twisted",
+      "number": 22
+    },
+    {
+      "id": "oh_snap",
+      "number": 23
+    },
+    {
+      "id": "night_to_day",
+      "number": 24
+    },
+    {
+      "id": "a_place_for_everything",
+      "number": 25
+    },
+    {
+      "id": "hey_dj",
+      "number": 26
+    },
+    {
+      "id": "give_me_some_space_1",
+      "number": 27
+    },
+    {
+      "id": "so_many_arrows",
+      "number": 28
+    },
+    {
+      "id": "give_me_some_space_2",
+      "number": 29
+    },
+    {
+      "id": "give_me_some_space_3",
+      "number": 30
+    },
+    {
+      "id": "informed",
+      "number": 31
+    },
+    {
+      "id": "customised",
+      "number": 32
+    },
+    {
+      "id": "painter",
+      "number": 33
+    },
+    {
+      "id": "artist",
+      "number": 34
+    },
+    {
+      "id": "statistician",
+      "number": 35
+    },
+    {
+      "id": "analyse_this",
+      "number": 36
+    },
+    {
+      "id": "genome_initiate",
+      "number": 37
+    },
+    {
+      "id": "genome_padawan",
+      "number": 38
+    },
+    {
+      "id": "genome_jedi_knight",
+      "number": 39
+    },
+    {
+      "id": "genome_jedi_master",
+      "number": 40
+    },
+    {
+      "id": "genome_yoda",
+      "number": 41
+    },
+    {
+      "id": "genome_sith_lord",
+      "number": 42
+    },
+    {
+      "id": "hey_there_neighbour",
+      "number": 43
+    },
+    {
+      "id": "path_of_the_scholar",
+      "number": 44
+    },
+    {
+      "id": "well_versed",
+      "number": 45
+    },
+    {
+      "id": "sit_back_and_relax",
+      "number": 46
+    },
+    {
+      "id": "jumping_back_in",
+      "number": 47
+    },
+    {
+      "id": "achievement_novice",
+      "number": 48
+    },
+    {
+      "id": "achievement_intermediate",
+      "number": 49
+    },
+    {
+      "id": "achievement_elite",
+      "number": 50
+    },
+    {
+      "id": "achievement_master",
+      "number": 51
+    },
+    {
+      "id": "achievement_grandmaster",
+      "number": 52
+    },
+    {
+      "id": "bask_in_your_achievements",
+      "number": 53
+    },
+    {
+      "id": "visit_home",
+      "number": 54
+    },
+    {
+      "id": "visit_genome_selector",
+      "number": 55
+    },
+    {
+      "id": "visit_genome_browser",
+      "number": 56
+    },
+    {
+      "id": "visit_download",
+      "number": 57
+    },
+    {
+      "id": "visit_sequence",
+      "number": 58
+    },
+    {
+      "id": "visit_feature_explorer",
+      "number": 59
+    },
+    {
+      "id": "visit_track_manager",
+      "number": 60
+    },
+    {
+      "id": "visit_alignment",
+      "number": 61
+    },
+    {
+      "id": "visit_alignment_explorer",
+      "number": 62
+    },
+    {
+      "id": "visit_neighbourhood",
+      "number": 63
+    },
+    {
+      "id": "visit_stats",
+      "number": 64
+    },
+    {
+      "id": "visit_notes",
+      "number": 65
+    },
+    {
+      "id": "visit_tutorials",
+      "number": 66
+    },
+    {
+      "id": "visit_help",
+      "number": 67
+    },
+    {
+      "id": "visit_configuration",
+      "number": 68
+    },
+    {
+      "id": "visit_structural_variation",
+      "number": 69
+    },
+    {
+      "id": "visit_homology",
+      "number": 70
+    },
+    {
+      "id": "view_enthusiast",
+      "number": 71
+    },
+    {
+      "id": "view_explorer",
+      "number": 72
+    },
+    {
+      "id": "going",
+      "number": 73
+    },
+    {
+      "id": "going_strong",
+      "number": 74
+    },
+    {
+      "id": "going_wild",
+      "number": 75
+    },
+    {
+      "id": "transcript_inspector",
+      "number": 76
+    },
+    {
+      "id": "needle_in_a_haystack",
+      "number": 77
+    },
+    {
+      "id": "sequence_for_ants",
+      "number": 78
+    },
+    {
+      "id": "save_it_for_later",
+      "number": 79
+    },
+    {
+      "id": "old_school",
+      "number": 80
+    },
+    {
+      "id": "in_the_spotlight_1",
+      "number": 81
+    },
+    {
+      "id": "in_the_spotlight_2",
+      "number": 82
+    },
+    {
+      "id": "mind_the_gap",
+      "number": 83
+    },
+    {
+      "id": "layer_hopper",
+      "number": 84
+    },
+    {
+      "id": "more_sequence",
+      "number": 85
+    },
+    {
+      "id": "big_data",
+      "number": 86
+    },
+    {
+      "id": "record_maker",
+      "number": 87
+    },
+    {
+      "id": "can_i_see_your_id",
+      "number": 88
+    },
+    {
+      "id": "click_click",
+      "number": 89
+    },
+    {
+      "id": "teenie_tiny_genome",
+      "number": 90
+    },
+    {
+      "id": "huge",
+      "number": 91
+    },
+    {
+      "id": "rodent_catcher",
+      "number": 92
+    },
+    {
+      "id": "catty",
+      "number": 93
+    },
+    {
+      "id": "good_boy",
+      "number": 94
+    },
+    {
+      "id": "the_bat_signal",
+      "number": 95
+    },
+    {
+      "id": "marsupial_mapper",
+      "number": 96
+    },
+    {
+      "id": "fish_lover",
+      "number": 97
+    },
+    {
+      "id": "birder",
+      "number": 98
+    },
+    {
+      "id": "reptilian",
+      "number": 99
+    },
+    {
+      "id": "amphibious",
+      "number": 100
+    },
+    {
+      "id": "lepidopterist",
+      "number": 101
+    },
+    {
+      "id": "fly_spotter",
+      "number": 102
+    },
+    {
+      "id": "beetle_collector",
+      "number": 103
+    },
+    {
+      "id": "hymenopterist",
+      "number": 104
+    },
+    {
+      "id": "green_thumb",
+      "number": 105
+    },
+    {
+      "id": "grass_roots",
+      "number": 106
+    },
+    {
+      "id": "mollusc_maven",
+      "number": 107
+    },
+    {
+      "id": "arachnid_archivist",
+      "number": 108
+    },
+    {
+      "id": "cnidarian_collector",
+      "number": 109
+    },
+    {
+      "id": "forager",
+      "number": 110
+    },
+    {
+      "id": "bacterial_buff",
+      "number": 111
+    },
+    {
+      "id": "archaeal_explorer",
+      "number": 112
+    },
+    {
+      "id": "protist_pioneer",
+      "number": 113
+    },
+    {
+      "id": "tree_of_life",
+      "number": 114
+    },
+    {
+      "id": "wheatabix",
+      "number": 115
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import ChevronGlyph from './DrawerChevron'
+import { trackAchievement } from '../achievements/tracker.js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { markWheelHandled } from '../utils/browsingControls'
@@ -277,6 +278,7 @@ export default function FocusGeneDrawer({
 
     const setHiddenSet = useCallback((nextHidden, { hoverId = null } = {}) => {
         const hidden = Array.from(nextHidden)
+        if (hidden.length) trackAchievement('browser.hideTranscript')
         patchView({
             hidden,
             // A ghost only makes sense while its transcript is still hidden.

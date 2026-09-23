@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, Component } from 'react'
+import { trackAchievement } from '../achievements/tracker.js'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import { getGenomeKey } from '../utils/genomeIdentity'
 import {
@@ -1082,6 +1083,7 @@ function NeighbourhoodView({
     const key = String(genomeKey || '').trim()
     if (!key) return
     setFlippedByGenome((prev) => ({ ...prev, [key]: !prev?.[key] }))
+    trackAchievement('neighbourhood.invert')
     onFlipGenome(key)
   }, [onFlipGenome])
 
@@ -1335,6 +1337,7 @@ function NeighbourhoodView({
                       event.stopPropagation()
                       const nextRow = rows[row.index + 1]
                       if (!nextRow?.genomeKey) return
+                      trackAchievement('neighbourhood.swap')
                       onSwapAdjacent(row.genomeKey, nextRow.genomeKey)
                     }}
                     title="Swap adjacent genomes"

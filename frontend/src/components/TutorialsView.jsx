@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { trackAchievement } from '../achievements/tracker.js'
 import AppButtonIcon from './AppButtonIcon'
 import FileBrowserModal from './FileBrowserModal'
 import useTutorial from '../hooks/useTutorial'
@@ -316,7 +317,10 @@ export default function TutorialsView({ theme = 'dark', config = null, onOpenCon
                                   : ready
                                   ? `Start at step ${stepIndex + 1}: ${tutorialStep.title}`
                                   : 'Set an output directory in Configuration first'}
-                                onClick={() => start(tutorial.id, { outputDir, stepIndex })}
+                                onClick={() => {
+                                  trackAchievement('tutorial.jump')
+                                  start(tutorial.id, { outputDir, stepIndex })
+                                }}
                                 className={`flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors ${
                                   isRunning || !ready || unavailable
                                     ? (isLight ? 'text-gray-400' : 'text-gray-600')

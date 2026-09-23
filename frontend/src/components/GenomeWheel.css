@@ -1,4 +1,4 @@
-.genome-wheel-button { display:flex; align-items:center; gap:6px; flex-shrink:0; padding:7px 10px; border:1px solid #77859966; border-radius:6px; font-size:12px; color:inherit; cursor:ns-resize; touch-action:none; user-select:none; }
+.genome-wheel-button { display:flex; align-items:center; gap:6px; flex-shrink:0; padding:7px 10px; border:1px solid #77859966; border-radius:6px; font-size:12px; color:inherit; cursor:default; touch-action:none; user-select:none; }
 .genome-wheel-button:hover:not(:disabled) { background:#698fba25; }
 .genome-wheel-button:disabled { opacity:.35; cursor:default; }
 .genome-wheel-button:focus-visible { outline:2px solid #60a5fa; outline-offset:3px; }

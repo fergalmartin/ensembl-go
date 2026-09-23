@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { trackAchievement } from '../achievements/tracker.js'
 
 import useTutorial from '../hooks/useTutorial'
 import {
@@ -1340,7 +1341,10 @@ export default function TutorialOverlay() {
             <button
               type="button"
               className={quietButton}
-              onClick={() => setAutoplay(!autoplay)}
+              onClick={() => {
+                if (!autoplay) trackAchievement('tutorial.autoplay')
+                setAutoplay(!autoplay)
+              }}
               title={autoplay ? 'Stop playing the tutorial automatically' : 'Play the tutorial automatically'}
             >
               {autoplay ? 'Pause' : 'Autoplay'}

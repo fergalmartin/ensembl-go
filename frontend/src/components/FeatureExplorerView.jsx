@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react'
+import { trackAchievement } from '../achievements/tracker.js'
 import { LOCKED_ICON_PATH } from '../utils/lockIcons'
 import { FONT_MONO } from '../utils/typography'
 import TranscriptSplicingHeatmap from './TranscriptSplicingHeatmap'
@@ -621,6 +622,22 @@ export default function FeatureExplorerView({
   // The structure panel supplies its own raster snapshot; see below.
   const structureSnapshotRef = useRef(null)
   const exportSectionRef = useRef(null)
+  // "A long way down": the first time the Export section scrolls into view. One
+  // observer, attached with the section and dropped as soon as it has fired.
+  const exportSectionObserverRef = useRef(null)
+  const attachExportSection = useCallback((node) => {
+    exportSectionRef.current = node
+    exportSectionObserverRef.current?.disconnect()
+    exportSectionObserverRef.current = null
+    if (!node || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      trackAchievement('fe.exportReached')
+      observer.disconnect()
+    }, { threshold: 0.2 })
+    observer.observe(node)
+    exportSectionObserverRef.current = observer
+  }, [])
   const exonInfoPopupRef = useRef(null)
   const {
     targets: screenshotTargets,
@@ -1708,6 +1725,7 @@ export default function FeatureExplorerView({
       suppressClickAfterDragRef.current = false
       return
     }
+    if (!activeTranscriptIds.has(transcriptId)) trackAchievement('fe.activateInactive')
     setActiveTranscriptIds((prev) => {
       const next = new Set(prev)
       if (next.has(transcriptId)) next.delete(transcriptId)
@@ -1802,6 +1820,7 @@ export default function FeatureExplorerView({
       setActiveTranscriptIds(new Set())
       return
     }
+    if (inactiveCount > 0) trackAchievement('fe.activateInactive')
     setActiveTranscriptIds(new Set(orderedTranscripts.map((tx) => tx.id)))
     setCollapseInactiveRows(false)
   }
@@ -3382,7 +3401,7 @@ export default function FeatureExplorerView({
                 />
               </div>
 
-              <div ref={exportSectionRef}>
+              <div ref={attachExportSection}>
                 <ExportSequencesPanel
                   theme={theme}
                   sequenceGenome={activeGenomeKey || 'reference'}

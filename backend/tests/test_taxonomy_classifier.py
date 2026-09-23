@@ -58,6 +58,14 @@ class TaxonomyLineageClassifierTests(unittest.TestCase):
             1027: metazoa + [40674, 311790, 1027],
             1028: metazoa + [40674, 9348, 1028],
             1029: metazoa + [40674, 9971, 1029],
+            # Real lineage shapes from the current NCBI taxonomy, for the cases that
+            # used to be misfiled.
+            1030: metazoa + [7711, 7742, 8287, 32523, 8457, 32561, 1329799, 8459, 1030],  # turtle
+            1031: metazoa + [6656, 197563, 197562, 3701028, 3701029, 6681, 1031],       # shrimp
+            1032: metazoa + [6656, 197563, 197562, 3701028, 3701030, 6658, 1032],       # Daphnia
+            1033: metazoa + [6656, 197563, 197562, 3701028, 3701030, 6960, 30001, 1033],# springtail
+            1034: base + [3027, 589342, 1034],                                          # Guillardia
+            1035: metazoa + [7711, 7742, 7745, 1035],                                    # lamprey
         }))
 
     def _classify(self, taxid, scientific_name="Species example", common_name=""):
@@ -105,6 +113,19 @@ class TaxonomyLineageClassifierTests(unittest.TestCase):
             result = self._classify(taxid)
             self.assertEqual((result.group, result.sub_group), expected)
             self.assertEqual(result.source, "lineage")
+
+    def test_previously_misfiled_clades(self):
+        expectations = {
+            1030: ("Reptiles", None),
+            1031: ("Other Invertebrates", "Crustaceans"),
+            1032: ("Other Invertebrates", "Crustaceans"),
+            1033: ("Other Invertebrates", "Other"),
+            1034: ("Microbes", "Protists"),
+            1035: ("Fish", None),
+        }
+        for taxid, expected in expectations.items():
+            result = self._classify(taxid)
+            self.assertEqual((result.group, result.sub_group), expected, taxid)
 
     def test_missing_lineage_uses_legacy_heuristic(self):
         result = self._classify(9999, scientific_name="Missing species", common_name="fruit fly")

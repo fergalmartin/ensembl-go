@@ -1,4 +1,6 @@
 import { NUCLEOTIDE_COLORS, getBaseColor } from '../utils/nucleotideStyle'
+import { browserControlKey } from '../achievements/browserControls.js'
+import { trackAchievement } from '../achievements/tracker.js'
 import { Fragment, useRef, useEffect, useId, useLayoutEffect, useState, useCallback, useMemo } from 'react'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import iconAnchorRaw from '../assets/icons/icon_anchor.svg?raw'
@@ -4092,6 +4094,15 @@ export default function GenomeBrowser({
                     const data = await res.json()
                     if (controller.signal.aborted) return
                     setRegions(data)
+                    // The whole assembly's size, for the two size achievements. Only
+                    // when every region came from the FASTA (and so starts at 1):
+                    // without one the extents are the genes', which would make any
+                    // genome look small.
+                    if (Array.isArray(data) && data.length && data.every((region) => Number(region?.start) === 1)) {
+                        const totalBp = data.reduce((sum, region) => sum + Math.max(0, Number(region?.end) || 0), 0)
+                        if (totalBp > 0 && totalBp < 5e6) trackAchievement('browser.tinyGenome')
+                        else if (totalBp > 5e9) trackAchievement('browser.hugeGenome')
+                    }
                     // Auto-select informative default locus for initial view —
                     // unless the panel was opened on a region someone asked for,
                     // which is about to frame itself and must not be overruled.
@@ -9910,6 +9921,7 @@ export default function GenomeBrowser({
                     dismissClickedGeneTranscript()
                     pendingVerticalCenterGeneIdRef.current = gene.id
                     setSelectedGene(gene)
+                    trackAchievement('browser.geneFocus')
 
                     const selectedCoords = getSelectedGeneCoordsForView(gene, isAligned, alignData, genomicToOverlay)
                     if (selectedCoords) {
@@ -12990,6 +13002,8 @@ export default function GenomeBrowser({
                     const span = Math.max(1, focusEnd - focusStart)
                     const padding = Math.max(100, span * 0.5)
                     await jumpToRange(gene.chrom, focusStart - padding, focusEnd + padding, gene)
+                    trackAchievement('browser.idSearch')
+                    trackAchievement('browser.geneFocus')
                     return
                 }
             }
@@ -13005,6 +13019,8 @@ export default function GenomeBrowser({
         if (match) {
             const padding = Math.max(100, (match.end - match.start) * 0.5)
             await jumpToRange(match.chrom, match.start - padding, match.end + padding, match)
+            trackAchievement('browser.idSearch')
+            trackAchievement('browser.geneFocus')
         }
     }, [searchInput, regions, selectedChrom, genome, genes, onManualNavigate, onPositionChange, focusDrawerInsetOnFocus, isFlipped, emitTutorialSignal, focusLocation, frameFocusRange])
 
@@ -13632,6 +13648,17 @@ export default function GenomeBrowser({
             // drawer reads as sliding out of the genome pill that opened it.
             data-browser-toolbar="true"
             data-focus-panel-key={screenshotTargetId || genome}
+            // Control freak counts this genome's toolbar as well as the general control
+            // bar; see achievements/browserControls.js.
+            onClickCapture={(event) => {
+                const key = browserControlKey(event.target)
+                if (key) trackAchievement('browser.control', key)
+            }}
+            onKeyDownCapture={(event) => {
+                if (event.key === 'Enter' && event.target?.dataset?.tourId === 'browser-location-search') {
+                    trackAchievement('browser.control', 'browser-location-search-go')
+                }
+            }}
             className="flex items-center gap-0 px-3 py-2 border-b flex-none"
             style={{
                 backgroundColor: colors.infoBg,
@@ -13641,7 +13668,12 @@ export default function GenomeBrowser({
             {genomePillLabel && (
                 <button
                     type="button"
-                    onClick={() => onGenomePillClick && onGenomePillClick()}
+                    data-browser-control="browser-genome-pill"
+                    onClick={() => {
+                        if (!onGenomePillClick) return
+                        if (!genomePillExpanded) trackAchievement('browser.pillInfo')
+                        onGenomePillClick()
+                    }}
                     disabled={!onGenomePillClick}
                     className="inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium mr-2 shrink-0"
                     style={{
@@ -13751,7 +13783,10 @@ export default function GenomeBrowser({
                 <button
                     data-tour-id="browser-focus-window"
                     data-tutorial-engaged={isLocationFocusVisible ? 'true' : 'false'}
-                    onClick={focusCurrentWindow}
+                    onClick={() => {
+                        trackAchievement('browser.locationFocus')
+                        focusCurrentWindow()
+                    }}
                     disabled={!selectedChrom}
                     className="p-1.5 rounded transition-opacity hover:opacity-80 disabled:opacity-50 flex items-center justify-center"
                     style={{
@@ -13842,6 +13877,7 @@ export default function GenomeBrowser({
 
                 {/* Flip Track Orientation */}
                 <button
+                    data-browser-control="browser-flip"
                     onClick={() => setIsFlipped(!isFlipped)}
                     className={`p-1.5 rounded transition-opacity flex items-center justify-center hover:opacity-80`}
                     style={{
@@ -13865,6 +13901,7 @@ export default function GenomeBrowser({
 
                 {/* Flip Vertical Track Layout (Primary/Secondary preset style) */}
                 <button
+                    data-browser-control="browser-strand-layout"
                     onClick={() => setIsVerticalLayoutFlipped((prev) => !prev)}
                     className="p-1.5 rounded transition-opacity flex items-center justify-center hover:opacity-80"
                     style={{
@@ -13888,6 +13925,7 @@ export default function GenomeBrowser({
 
                 {/* Box-Select Zoom */}
                 <button
+                    data-browser-control="browser-box-zoom"
                     onClick={() => {
                         setIsBoxSelectMode(prev => !prev)
                         setIsSelectingRect(false)
@@ -13986,7 +14024,10 @@ export default function GenomeBrowser({
     const renderFocusTargetButton = (kind, onClick, title, disabled = false) => (
         <button
             data-tour-id={kind === 'location' ? 'browser-recenter-location' : 'browser-recenter'}
-            onClick={onClick}
+            onClick={() => {
+                trackAchievement('browser.recenter')
+                onClick()
+            }}
             disabled={disabled}
             className="shrink-0 p-1.5 rounded-md transition-colors hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center"
             title={title}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { trackAchievement } from '../../achievements/tracker.js'
 
 import { API_BASE, apiFetch } from '../../backendRuntime'
 import { FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from '../FocusGeneDrawer'
@@ -99,6 +100,7 @@ import {
     LEVEL_GENE,
     LEVEL_LOCATION,
     LEVEL_TRANSCRIPT,
+    DEFAULT_FLANKS,
     emptyFocus,
     flankPair,
     focusReducer,
@@ -385,6 +387,10 @@ export default function SequenceView({
     // ---- the window on screen ------------------------------------------
 
     const estimate = useMemo(() => focusWindow(focus, prefs.flanks), [focus, prefs.flanks])
+    const estimateSpan = estimate ? Number(estimate.end) - Number(estimate.start) + 1 : 0
+    useEffect(() => {
+        if (estimateSpan >= 1_000_000) trackAchievement('seq.bigRegion')
+    }, [estimateSpan])
 
     const classesFocus = useMemo(() => {
         if (!focus.chrom || !genomeKey) return null
@@ -484,6 +490,9 @@ export default function SequenceView({
     // next rather than quietly shown against it.
     const scope = useMemo(() => pickScope({ ...focus, genomeKey }), [focus, genomeKey])
     const records = useMemo(() => picksFor(picks, scope), [picks, scope])
+    useEffect(() => {
+        if (records.length > 0) trackAchievement('seq.records')
+    }, [records.length])
     const pickedKeys = useMemo(() => new Set(records.map((item) => item.key)), [records])
 
     const handleTogglePick = useCallback((record) => {
@@ -1057,6 +1066,7 @@ export default function SequenceView({
     }, [rangeFor, focus.chrom, genomeKey, onFocusLocationSelect, onNavigateToBrowser])
 
     const handleSelection = useCallback((range) => {
+        if (range) trackAchievement('seq.highlight')
         dispatch({ type: 'setCustom', custom: range })
     }, [])
 
@@ -1185,6 +1195,12 @@ export default function SequenceView({
     // would paint -- and fetch for -- three states nobody asked for on the way
     // to the one that was.
     const applyFeature = useCallback(({ collapse, flanks, reverse: flip, protein }) => {
+        const flankRaised = Object.entries(flanks || {}).some(([level, value]) => {
+            const base = DEFAULT_FLANKS[level] || { five: 0, three: 0 }
+            const pair = flankPair(value, base)
+            return pair.five > base.five || pair.three > base.three
+        })
+        if (flankRaised) trackAchievement('seq.flankUp')
         setPrefs((previous) => ({
             ...previous,
             collapse,
@@ -1221,6 +1237,12 @@ export default function SequenceView({
     const [mode, setMode] = useState(KIND_GENOMIC)
     const atTranscript = focus.level === LEVEL_TRANSCRIPT && Boolean(focus.transcript?.id)
     if (mode !== KIND_GENOMIC && !atTranscript) setMode(KIND_GENOMIC)
+    // Transcript inspector: each reading looked at while a transcript is in focus.
+    // CDS and Protein are only offered for a coding transcript, so all four can only
+    // be seen on one.
+    useEffect(() => {
+        if (atTranscript) trackAchievement('seq.context', mode)
+    }, [atTranscript, mode])
 
     /**
      * Whether the transcript in focus has a coding sequence.
@@ -1333,6 +1355,7 @@ export default function SequenceView({
     const markSpliced = useCallback((span) => {
         if (!span) { dispatch({ type: 'clearCustom' }); return }
         const range = genomicRangeFor(mode, readings.answer, focus.transcript?.strand || '+', span)
+        if (range) trackAchievement('seq.highlight')
         if (range) dispatch({ type: 'setCustom', custom: range })
     }, [mode, readings.answer, focus.transcript])
 
@@ -1475,6 +1498,7 @@ export default function SequenceView({
 
     const setDisplay = useCallback((next) => {
         if (!isDisplayMode(next)) return
+        if (isPlainDisplay(next)) trackAchievement('seq.plain')
         setPrefs((previous) => ({ ...previous, display: next }))
     }, [])
 
@@ -1752,7 +1776,11 @@ export default function SequenceView({
                 // -- so there is no plain display of them to switch to.
                 displayLocked={splicedMode}
                 zoom={zoom}
-                onZoomChange={(next) => setZoom(clampZoom(next))}
+                onZoomChange={(next) => {
+                    const clamped = clampZoom(next)
+                    if (clamped < ZOOM_FULL) trackAchievement('seq.zoomOut')
+                    setZoom(clamped)
+                }}
                 collapse={prefs.collapse}
                 flanks={prefs.flanks}
                 reverse={prefs.reverse}
@@ -2055,7 +2083,10 @@ export default function SequenceView({
                 fraction={exporting.fraction}
                 error={exporting.error}
                 onSave={async (fileName) => {
-                    if (await exporting.run({ ...downloadRequest, fileName })) setDownloadRequest(null)
+                    if (await exporting.run({ ...downloadRequest, fileName })) {
+                        trackAchievement('seq.download')
+                        setDownloadRequest(null)
+                    }
                 }}
                 onCancel={() => {
                     // Stops a run in flight as well as shutting the box; a file

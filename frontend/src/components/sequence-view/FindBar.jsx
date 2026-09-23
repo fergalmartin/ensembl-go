@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { trackAchievement } from '../../achievements/tracker.js'
 
 import GenomeColorPicker from '../GenomeColorPicker'
 import { VerticalChevronGlyph } from '../focusDrawerChrome'
@@ -133,6 +134,7 @@ export default function FindBar({
 
     const submit = (event) => {
         event?.preventDefault?.()
+        if (String(query || '').trim()) trackAchievement('seq.find')
         onSubmit?.()
     }
 

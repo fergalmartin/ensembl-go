@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { trackAchievement } from '../../achievements/tracker.js'
 
 import { markWheelHandled } from '../../utils/browsingControls'
 import { FONT_MONO } from '../../utils/typography'
@@ -1064,6 +1065,7 @@ export default function SequenceCanvas({
             setPendingEnd(null)
             onSelectionChange?.({ start: pendingEnd.coord, end: coord })
             revealSelection(pendingEnd.coord, coord, place.section.key)
+            trackAchievement('seq.twoClick')
             return
         }
         // Captured on the scroller rather than the cell, so the drag survives

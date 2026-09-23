@@ -19,6 +19,7 @@ export const DATA_VIEW_BUTTON_IDS = [
   'configuration',
   'structural_variation',
   'homology',
+  'achievements',
 ]
 
 export const ACTION_BUTTON_IDS = ['genome_playlist', 'theme_toggle', 'screenshot_toggle']
@@ -31,8 +32,9 @@ const ACTION_BUTTON_ID_SET = new Set(ACTION_BUTTON_IDS)
 
 // The bar a fresh installation starts with, and what "Reset App Buttons to Default"
 // restores. Written out rather than derived, because it is a curated arrangement: the
-// order is the order it appears in, and Structural Variation and Homology are
-// deliberately left out. A view added to DATA_VIEW_BUTTON_IDS is therefore *not*
+// order is the order it appears in, and Structural Variation, Homology and Achievements
+// are deliberately left out. (Finding and switching on Achievements is itself the first
+// achievement.) A view added to DATA_VIEW_BUTTON_IDS is therefore *not*
 // switched on for new users until it is named here as well.
 export const DEFAULT_ACTIVE_APP_BUTTONS = [
   'home',
@@ -73,6 +75,7 @@ export const APP_BUTTON_META = {
   configuration: { id: 'configuration', label: 'Configuration', shortLabel: 'Config', kind: 'data_view', viewId: 'configuration' },
   tutorials: { id: 'tutorials', label: 'Tutorials', shortLabel: 'Tutorials', kind: 'data_view', viewId: 'tutorials' },
   help: { id: 'help', label: 'Help', shortLabel: 'Help', kind: 'data_view', viewId: 'help' },
+  achievements: { id: 'achievements', label: 'Achievements', shortLabel: 'Trophies', kind: 'data_view', viewId: 'achievements' },
   genome_playlist: { id: 'genome_playlist', label: 'Genome Playlist', shortLabel: 'Playlist', kind: 'action' },
   theme_toggle: { id: 'theme_toggle', label: 'Theme Toggle', shortLabel: 'Theme', kind: 'action' },
   screenshot_toggle: { id: 'screenshot_toggle', label: 'Screenshot', shortLabel: 'Screenshot', kind: 'action' },
@@ -183,4 +186,18 @@ export const buildAppButtonLayout = (buttonIds) => {
     rows.push(all.slice(i, i + columns))
   }
   return { rows, columns, overflows: columns > TOP_BAR_VISIBLE_COLUMNS }
+}
+
+/** Whether the default buttons still in the bar have been put in a different order.
+ *
+ * Only the relative order of the default buttons counts. Adding or removing a view is
+ * not rearranging, and an added view lands wherever the organiser puts it.
+ */
+export const isRearrangedFromDefault = (buttonIds) => {
+  const buttons = Array.isArray(buttonIds) ? buttonIds : []
+  const defaults = new Set(DEFAULT_ACTIVE_APP_BUTTONS)
+  const present = new Set(buttons)
+  const expected = DEFAULT_ACTIVE_APP_BUTTONS.filter((id) => present.has(id))
+  const actual = buttons.filter((id) => defaults.has(id))
+  return actual.some((id, index) => id !== expected[index])
 }

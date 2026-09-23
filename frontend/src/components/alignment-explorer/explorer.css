@@ -479,7 +479,7 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-control-hide { --al-w:98px; }
 .al-control-gaps { --al-w:88px; }
 .al-control-layer { --al-w:71px; }
-.al-toolbar .al-control-layer { gap:7px; justify-content:center; font-weight:600; cursor:ns-resize; }
+.al-toolbar .al-control-layer { gap:7px; justify-content:center; font-weight:600; cursor:default; }
 .al-toolbar-stack { --al-w:120px; }
 
 /* Block navigation and Auto arrange are each half a control tall, so the pair

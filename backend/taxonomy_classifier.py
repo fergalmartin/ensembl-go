@@ -62,8 +62,9 @@ TAXONOMY_ANCHOR_RULES: Tuple[Tuple[Tuple[int, ...], Tuple[str, Optional[str]]], 
             207245,  # Fornicata
             5752,    # Heterolobosea
             543769,  # Rhizaria
-            33083,   # Choanoflagellata
-            28009,   # Apicomplexa
+            33083,   # Dictyostelia (also inside Amoebozoa; kept for older artifacts)
+            28009,   # Choanoflagellata
+            3027,    # Cryptophyceae
             2763,    # Rhodophyta
             2830,    # Haptophyta
             192874,  # Capsasporidae
@@ -84,7 +85,10 @@ TAXONOMY_ANCHOR_RULES: Tuple[Tuple[Tuple[int, ...], Tuple[str, Optional[str]]], 
         ("Fish", None),
     ),
     ((8782,), ("Birds", None)),                 # Aves
-    ((1294634, 8504), ("Reptiles", None)),      # Reptilia/Squamata
+    # Reptiles are not one NCBI taxon: they are the non-bird Sauropsida. Turtles
+    # (Testudines) used to be missing here, so they fell through to the Vertebrata
+    # fallback below and were filed under Fish.
+    ((1294634, 8504, 8459), ("Reptiles", None)), # Crocodylia/Lepidosauria/Testudines
     ((8292,), ("Amphibians", None)),            # Amphibia
     ((7742,), ("Fish", None)),                  # Vertebrata fallback, after tetrapods
     ((33090,), ("Plants", "Other Plants")),    # Viridiplantae
@@ -93,11 +97,16 @@ TAXONOMY_ANCHOR_RULES: Tuple[Tuple[Tuple[int, ...], Tuple[str, Optional[str]]], 
     ((6231, 6157, 6340), ("Other Invertebrates", "Worms")),  # Nematoda/flatworms/annelids
     ((6447,), ("Other Invertebrates", "Molluscs")),          # Mollusca
     ((6073,), ("Other Invertebrates", "Corals & Jellyfish")),# Cnidaria
-    ((6657,), ("Other Invertebrates", "Crustaceans")),       # Crustacea
+    # NCBI no longer has a Crustacea node (6657 matches nothing in current
+    # lineages); crustaceans are the Pancrustacea that are not hexapods. Insects
+    # are claimed above, and the remaining hexapods (springtails and kin) must be
+    # claimed before Pancrustacea or they would be filed as crustaceans.
+    ((6960,), ("Other Invertebrates", "Other")),             # Hexapoda (non-insect)
+    ((6657, 197562), ("Other Invertebrates", "Crustaceans")),# Crustacea/Pancrustacea
     ((6854,), ("Other Invertebrates", "Arachnids")),         # Arachnida
     ((7586,), ("Other Invertebrates", "Echinoderms")),       # Echinodermata
     ((6040,), ("Other Invertebrates", "Sponges")),           # Porifera
-    ((10190, 42241, 10226), ("Other Invertebrates", "Other")),# Rotifera/Tardigrada/Bryozoa
+    ((10190, 42241, 10226), ("Other Invertebrates", "Other")),# Rotifera/Tardigrada/Placozoa
     ((7712, 7735), ("Other Invertebrates", "Other")),        # Tunicata/Cephalochordata
     ((50557,), ("Insects", "Other Insects")),                # Insecta
     ((33208,), ("Other Invertebrates", "Other")),            # Metazoa, after vertebrates/insects

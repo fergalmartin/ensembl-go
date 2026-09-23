@@ -86,3 +86,15 @@ test("the backend's copy of the default matches this one", async () => {
   const backendIds = [...block[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1])
   assert.deepEqual(backendIds, DEFAULT_ACTIVE_APP_BUTTONS)
 })
+
+test('rearranging means reordering the default buttons, not adding or removing views', async () => {
+  const { isRearrangedFromDefault } = await import('../src/appButtonConfig.js')
+  assert.equal(isRearrangedFromDefault(DEFAULT_ACTIVE_APP_BUTTONS), false)
+  assert.equal(isRearrangedFromDefault(DEFAULT_ACTIVE_APP_BUTTONS.filter((id) => id !== 'stats')), false)
+  const withAchievements = [...DEFAULT_ACTIVE_APP_BUTTONS]
+  withAchievements.splice(15, 0, 'achievements')
+  assert.equal(isRearrangedFromDefault(withAchievements), false)
+  const swapped = [...DEFAULT_ACTIVE_APP_BUTTONS]
+  ;[swapped[1], swapped[2]] = [swapped[2], swapped[1]]
+  assert.equal(isRearrangedFromDefault(swapped), true)
+})

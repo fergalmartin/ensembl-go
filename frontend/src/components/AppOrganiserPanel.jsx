@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { requestAchievementsReveal, trackAchievement } from '../achievements/tracker.js'
 
 import AppButtonIcon from './AppButtonIcon.jsx'
 import {
@@ -85,6 +86,12 @@ export default function AppOrganiserPanel({
         })
         setInactiveDataPriority((prev) => prev.filter((id) => id !== buttonId))
         setInactiveActionPriority((prev) => prev.filter((id) => id !== buttonId))
+        if (buttonId === 'achievements') {
+            // Finding this is the first achievement, and switching it on reveals
+            // whatever the user had already unlocked without knowing.
+            trackAchievement('achievements.enabled')
+            requestAchievementsReveal()
+        }
     }
 
     const deactivateAppButton = (buttonId) => {
@@ -107,6 +114,7 @@ export default function AppOrganiserPanel({
 
     const reorderActiveButtons = (sourceButtonId, targetButtonId) => {
         if (!sourceButtonId || !targetButtonId || sourceButtonId === targetButtonId) return
+        trackAchievement('appButtons.rearranged')
         onChange((prevButtons) => {
             const sourceIndex = prevButtons.indexOf(sourceButtonId)
             const targetIndex = prevButtons.indexOf(targetButtonId)

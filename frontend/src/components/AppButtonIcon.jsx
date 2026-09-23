@@ -348,5 +348,28 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
     )
   }
 
+  if (buttonId === 'achievements') {
+    const iconSize = compact ? size + 1 : size + 4
+    return (
+      <svg
+        width={iconSize}
+        height={iconSize}
+        viewBox="0 0 32 32"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {/* A trophy cup: handles, stem and plinth, drawn as one outline so it holds
+            together at 18px. */}
+        <path d="M10 5h12v7a6 6 0 0 1-12 0V5z" />
+        <path d="M10 8H6.5a3.5 3.5 0 0 0 3.8 5.4M22 8h3.5a3.5 3.5 0 0 1-3.8 5.4" />
+        <path d="M16 18v5M11.5 27h9M13 23h6l.8 4h-7.6z" />
+      </svg>
+    )
+  }
+
   return null
 }

@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { API_BASE } from '../backendRuntime'
 import {
     NOTE_SAVE_STATES,
+    NOTE_TARGET_KIND_TODO,
     geneNoteCountsForGenome,
     geneNoteTargetKey,
     makeTempNoteId,
@@ -17,6 +18,7 @@ import {
     pendingUnloadWrites,
 } from '../utils/geneNotes'
 import { normalizeNoteTags, sameTagList } from '../utils/noteTags'
+import { raiseAchievementCount, registerAchievementReconciler } from '../achievements/tracker.js'
 
 /**
  * Every note the user has written, and the machinery for writing them.
@@ -710,6 +712,40 @@ export function NoteStoreProvider({ children }) {
 
     const allNotes = useMemo(() => Object.values(notesById), [notesById])
     const notes = useMemo(() => allNotes.filter((note) => !note.archived), [allNotes])
+
+    // Achievements: how many notes, tasks and tagged notes there are. Read off the
+    // store rather than counted as they are made, so notes written before achievements
+    // existed count too. The effect runs only when one of the three numbers changes,
+    // not on every keystroke; archived notes still count, since they were written.
+    const noteAchievementCounts = useMemo(() => {
+        let written = 0
+        let tasks = 0
+        let tagged = 0
+        for (const note of allNotes) {
+            if (!note || note.pending) continue
+            if (note.target?.kind === NOTE_TARGET_KIND_TODO) tasks += 1
+            else if (!noteIsBlank(note)) written += 1
+            if (Array.isArray(note.tags) && note.tags.length) tagged += 1
+        }
+        return { written, tasks, tagged }
+    }, [allNotes])
+    const noteAchievementCountsRef = useRef(noteAchievementCounts)
+    noteAchievementCountsRef.current = noteAchievementCounts
+    const reconcileNoteAchievements = useCallback(() => {
+        const { written, tasks, tagged } = noteAchievementCountsRef.current
+        raiseAchievementCount('notes.written', written)
+        raiseAchievementCount('notes.tasks', tasks)
+        raiseAchievementCount('notes.tagged', tagged)
+    }, [])
+    useEffect(() => registerAchievementReconciler(reconcileNoteAchievements), [reconcileNoteAchievements])
+    useEffect(() => {
+        reconcileNoteAchievements()
+    }, [
+        reconcileNoteAchievements,
+        noteAchievementCounts.written,
+        noteAchievementCounts.tasks,
+        noteAchievementCounts.tagged,
+    ])
     const archivedNotes = useMemo(() => allNotes.filter((note) => note.archived), [allNotes])
     const byTargetKey = useMemo(() => groupByTargetKey(notes), [notes])
 

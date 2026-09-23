@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { trackAchievement } from '../achievements/tracker.js'
 import { makeExonStateKey } from './featureExplorerExonUtils'
 
 function clamp(value, min, max) {
@@ -1392,6 +1393,7 @@ export default function TranscriptSplicingHeatmap({
       if (!current.active && distance < DRAG_THRESHOLD_PX) return
       if (!current.active) {
         setDragState((prev) => ({ ...prev, active: true }))
+        trackAchievement('fe.dragGraph')
       }
       if (current.kind === 'node' && current.nodeKey) {
         const nextCy = Number(current.startCy) + dy

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { trackAchievement } from '../achievements/tracker.js'
 import { API_BASE } from '../backendRuntime'
 import GenomeAnalysisOverview from './GenomeAnalysisOverview'
 import {
@@ -2524,6 +2525,7 @@ export default function StatsView({
         throw new Error(data?.detail || 'Failed to load stats summary.')
       }
       if (requestSeqRef.current !== requestSeq) return
+      if (Array.isArray(data?.records) && data.records.length) trackAchievement('stats.summary')
 
       const recordsByKey = new Map(
         (Array.isArray(data?.records) ? data.records : [])
@@ -2595,6 +2597,7 @@ export default function StatsView({
           : null
         const runStatus = String(runResult?.status || '')
         const runDone = ['ready', 'failed', 'missing', 'canceled'].includes(runStatus)
+        if (runStatus === 'ready') trackAchievement('stats.analysed')
         if (runDone || data?.status === 'completed' || data?.status === 'failed') {
           await fetchSummary(true)
           setStructuralTaskId('')
@@ -2749,6 +2752,7 @@ export default function StatsView({
   // Analyses are stored in the same place the genome selector stores them, so a
   // report produced in either view is already there for the other.
   const handleAnalysisStored = useCallback((updater) => {
+    trackAchievement('stats.analysed')
     if (!onConfigChange) return
     onConfigChange((prev) => ({
       ...prev,

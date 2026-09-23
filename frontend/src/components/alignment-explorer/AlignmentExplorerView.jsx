@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { trackAchievement } from '../../achievements/tracker.js'
 import { getAssemblyAccession, getGenomeKey, normalizeGenomeRecord } from '../../utils/genomeIdentity'
 import { API_BASE } from '../../backendRuntime'
 import DrawerChevron from '../DrawerChevron'
@@ -539,7 +540,10 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   // Closing gaps is its own switch, its own settings and its own Apply. Undo
   // reaches both, so a reader who closes gaps and dislikes the result has the
   // same way back as from any other edit.
-  const toggleGaps=useCallback(value=>commit(s=>({...s,collapseGaps:value})),[commit])
+  const toggleGaps=useCallback(value=>{
+    if(value)trackAchievement('ae.gapsHidden')
+    commit(s=>({...s,collapseGaps:value}))
+  },[commit])
   // Apply publishes the whole answer the menu asked for - shown or hidden, and
   // how - in one commit, so Undo returns the sheet to how it was read rather
   // than to a half state nobody chose.
@@ -1034,7 +1038,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   percent={gapPercent(state.collapsePercent)} rows={gapCohort}
   status={collapse} root={explorerRoot.current} disabled={busy}
   onToggle={toggleGaps} onApply={applyGapSettings} onStop={cancelCollapse} onRetry={()=>collapse.retry()}/>
-<LayerCycle layers={allLayers} active={layer.id} onChoose={switchLayer} dataset={dataset} inventory={displayInventory} light={theme==='light'} revision={revision}/></div></div></div>
+<LayerCycle layers={allLayers} active={layer.id} onChoose={id=>{trackAchievement('ae.cycleLayer');switchLayer(id)}} dataset={dataset} inventory={displayInventory} light={theme==='light'} revision={revision}/></div></div></div>
         {!!blockContext&&<div className="al-context-bar" role="region" aria-label="Block context">
           <div className="al-context-id">
             <strong>Block {blockContext.sourceBlock}</strong>
@@ -1134,7 +1138,7 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
         {!!state.legendOverlay&&(!!scheme.legend||scheme.id==='motif')&&<ColourLegend legend={scheme.id==='motif'?motifLegend(snapshot?.settings.motifs||[]):scheme.legend(theme==='light',conservation?.scale,state.palette?.[scheme.id],state.shading)}
           cohort={scheme.cohort?cohort:null} onDismiss={()=>patch({legendOverlay:false})}/>}
         {scheme.id==='motif'&&(motifSearch.pending||motifSearch.failure||motifBlocks.blocks)&&<div className="al-motif-tile-status" role="status">{motifSearch.failure|| (motifSearch.pending?'Loading prepared matches…':`${motifBlocks.blocks.length.toLocaleString()} matching blocks`)}{motifBlocks.blocks&&<button onClick={()=>patch({hideUnmatchedMotifBlocks:false})}>Show unmatched blocks</button>}</div>}
-        <LayerCanvas ref={canvas} layer={layer} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} rowsById={rowsById} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} conservation={conservation} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onBrowseSelection={openSelectionInGenomeBrowser} onRemoveBlock={removeBlock} onRemoveRow={removeRow} onDeselect={deselect} onAggregate={(f,inner)=>inner?sourceBlock(inner.block):camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={(value,lit)=>patch({selection:value,mode:'pan',...(lit?.length?{highlighted:toggleHighlights(state.highlighted,lit)}:{})})} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>patch({highlighted:addHighlight(state.highlighted,id)})} onUnlight={id=>patch(unlightRow(state,id))} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock} onReorderRow={reorderRow} onZoomLimit={noteZoomLimit} onBlockContext={f=>f?openBlockContext(f):closeBlockContext()} onPickTranscript={(rowId,transcriptId)=>setBlockContext(d=>pickTranscript(d,rowId,d.picks?.[rowId]===transcriptId?null:transcriptId))}
+        <LayerCanvas ref={canvas} layer={layer} state={canvasState} navigationCamera={renderState.camera} inventory={displayInventory} rowsById={rowsById} tiles={tiles} annotations={annotations} connections={connections} offWindow={offWindow} counts={counts} gaps={gaps} conservation={conservation} light={theme==='light'} config={config} onCamera={camera} onCopyChunk={copyChunk} onBlockToLayer={blockToLayer} onBrowseSelection={openSelectionInGenomeBrowser} onRemoveBlock={removeBlock} onRemoveRow={removeRow} onDeselect={deselect} onAggregate={(f,inner)=>inner?sourceBlock(inner.block):camera(fitCamera({fragments:[{...f,rowIds:[],layoutRows:1}]},size.width,size.height))} onToggleRows={f=>patch({blockRows:{...state.blockRows,[f.sourceBlock]:f.compact?'aligned':'compact'}})} onSelection={(value,lit)=>{if(lit?.length)trackAchievement('ae.highlight');patch({selection:value,mode:'pan',...(lit?.length?{highlighted:toggleHighlights(state.highlighted,lit)}:{})})}} onSelectionDrag={dragSelection} onSelectionDrop={dropSelection} onMove={(id,x,y)=>commit(s=>({...s,layers:s.layers.map(l=>l.id===s.active?{...l,fragments:l.fragments.map(f=>f.id===id?{...f,x,y}:f)}:l)}))} onHighlight={id=>{trackAchievement('ae.highlight');patch({highlighted:addHighlight(state.highlighted,id)})}} onUnlight={id=>patch(unlightRow(state,id))} onInspect={setInspect} onSize={setSize} onFallback={setFallback} onSourceBlock={sourceBlock} onReorderRow={reorderRow} onZoomLimit={noteZoomLimit} onBlockContext={f=>f?openBlockContext(f):closeBlockContext()} onPickTranscript={(rowId,transcriptId)=>setBlockContext(d=>pickTranscript(d,rowId,d.picks?.[rowId]===transcriptId?null:transcriptId))}
           onPickFeature={feature=>setBlockContext(d=>({...pickTranscript(d,feature.rowId,feature.transcriptId),feature,pair:comparatorFor(d,feature.rowId)?[comparatorFor(d,feature.rowId),feature.rowId]:d.pair,genomic:{...d.genomic,open:true,selection:null,columns:{start:feature.start,end:feature.end}}}))} focusOf={focusOf} blockContext={contextData}/></div>
         {!!blockContext?.genomic?.open&&<BlockContextGenomic dataset={dataset} detail={blockContext} rowsById={contextData.rowsById}
           rowLabel={rowLabel} theme={theme} onChange={setBlockContext}

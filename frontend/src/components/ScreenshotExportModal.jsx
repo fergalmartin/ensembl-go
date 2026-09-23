@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import FileBrowserModal from './FileBrowserModal'
+import { trackAchievement } from '../achievements/tracker.js'
 import {
   SCREENSHOT_SCALE_OPTIONS,
   buildDefaultScreenshotName,
@@ -115,6 +116,7 @@ export default function ScreenshotExportModal({
     })
     setSaving(false)
     if (result?.ok) {
+      trackAchievement('screenshot.taken')
       setMessage({ ok: true, text: `Saved to ${result.path || resolvedFilename}` })
       clearAutoCloseTimer()
       autoCloseTimerRef.current = setTimeout(() => {

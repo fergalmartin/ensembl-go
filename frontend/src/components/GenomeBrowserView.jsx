@@ -1,4 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { browserControlKey } from '../achievements/browserControls.js'
+import { trackAchievement } from '../achievements/tracker.js'
 import { flushSync } from 'react-dom'
 import useTutorial from '../hooks/useTutorial'
 import { registerBrowserNotes, describeBrowserViewport, browserViewportControls } from '../utils/browserTutorialControls'
@@ -2978,6 +2980,12 @@ export default function GenomeBrowserView({
                 data-browser-controls="true"
                 data-browser-global-controls="true"
                 data-tour-id="browser-global-controls"
+                // Control freak: which controls have ever been used. One listener for the
+                // whole bar rather than one per button; see achievements/browserControls.js.
+                onClickCapture={(event) => {
+                    const key = browserControlKey(event.target)
+                    if (key) trackAchievement('browser.control', key)
+                }}
                 data-tutorial-occluder={controlsFollowScroll ? 'true' : undefined}
                 className="flex items-center justify-between px-4 py-2 border-b flex-none"
                 style={{
@@ -2995,7 +3003,10 @@ export default function GenomeBrowserView({
                         <>
                             <button
                                 data-tour-id="browser-tracks-toggle"
-                                onClick={handleGlobalTracksToggle}
+                                onClick={() => {
+                                    if (globalTracksState !== 'off') trackAchievement('browser.tracksAway')
+                                    handleGlobalTracksToggle()
+                                }}
                                 className="flex-shrink-0 flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors hover:bg-gray-100 dark:hover:bg-[#373a40]"
                                 style={{
                                     backgroundColor: isLight ? '#ffffff' : '#1E2938',
@@ -3023,6 +3034,7 @@ export default function GenomeBrowserView({
 
                             <button
                                 type="button"
+                                data-browser-control="browser-adaptive"
                                 onClick={() => setAdaptivePanelHeightOverride(!adaptivePanelHeight)}
                                 className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
                                 style={browserActionButtonStyle(true, useAdaptivePanelHeight)}
@@ -3032,7 +3044,10 @@ export default function GenomeBrowserView({
                             </button>
 
                             <button
-                                onClick={() => setHideInactiveMode((prev) => !prev)}
+                                onClick={() => {
+                                    if (!hideInactiveMode) trackAchievement('browser.tracksAway')
+                                    setHideInactiveMode((prev) => !prev)
+                                }}
                                 data-tour-id="browser-hide-inactive"
                                 data-tutorial-engaged={hideInactiveMode ? 'true' : 'false'}
                                 className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
@@ -3060,7 +3075,10 @@ export default function GenomeBrowserView({
                             <button
                                 data-tour-id="browser-flatten"
                                 data-tutorial-engaged={flattenMode ? 'true' : 'false'}
-                                onClick={() => setFlattenMode((prev) => !prev)}
+                                onClick={() => {
+                                    if (!flattenMode) trackAchievement('browser.flatten')
+                                    setFlattenMode((prev) => !prev)
+                                }}
                                 className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
                                 style={browserActionButtonStyle(true, flattenMode, { emphasizeWhenEnabled: true })}
                                 title={flattenMode
@@ -3096,6 +3114,7 @@ export default function GenomeBrowserView({
                                             }
                                             setPanelPositions({})
                                             setLockPan(newPan)
+                                            if (newPan && lockZoom) trackAchievement('browser.tandem')
                                         }}
                                         disabled={panelCount < 2}
                                         className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
@@ -3122,6 +3141,7 @@ export default function GenomeBrowserView({
                                             }
                                             setPanelPositions({})
                                             setLockZoom(newZoom)
+                                            if (newZoom && lockPan) trackAchievement('browser.tandem')
                                         }}
                                         disabled={panelCount < 2}
                                         className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
@@ -3187,7 +3207,11 @@ export default function GenomeBrowserView({
                                     cursor: 'pointer',
                                     whiteSpace: 'nowrap',
                                 }
-                                const toggle = (key) => setBiotypeFilter((prev) => ({ ...prev, [key]: !prev[key] }))
+                                const toggle = (key) => {
+                                    const next = { ...biotypeFilter, [key]: !biotypeFilter[key] }
+                                    if (!Object.values(next).some(Boolean)) trackAchievement('browser.allClassesOff')
+                                    setBiotypeFilter((prev) => ({ ...prev, [key]: !prev[key] }))
+                                }
                                 return (
                                     <>
                                         <div className="h-4 w-px flex-shrink-0 mx-1" style={{ backgroundColor: isLight ? '#dee2e6' : '#495057' }} />

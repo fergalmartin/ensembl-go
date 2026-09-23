@@ -851,6 +851,7 @@ const itemFromSpeciesAssembly = (species, asm) => {
         gca: asm?.gca || assembly,
         assembly_name: asm?.name || assembly,
         equivalent_accessions: asm?.equivalent_accessions || [],
+        taxid: Number(species.taxid || species.species_taxonomy_id) || 0,
     }
 }
 
@@ -2901,6 +2902,7 @@ export default function DownloadView({
                 assembly_name: item.assembly_name,
                 source_database: item.source_database,
                 equivalent_accessions: item.equivalent_accessions || [],
+                taxid: Number(item.taxid) || 0,
                 ...datasetReleaseDownloadMetadata(file),
                 force,
             }),
@@ -3348,6 +3350,7 @@ export default function DownloadView({
             gca: asm.gca || getAssemblyAccession(asm),
             assembly_name: asm.name,
             equivalent_accessions: asm?.equivalent_accessions || [],
+            taxid: Number(species.taxid || species.species_taxonomy_id) || 0,
             requestedTypes: [],
         }])
     }, [myListIds, makeItemId])
@@ -3457,6 +3460,7 @@ export default function DownloadView({
                     assembly_name: item.assembly_name,
                     source_database: item.source_database,
                     equivalent_accessions: item.equivalent_accessions || [],
+                    taxid: Number(item.taxid) || 0,
                     ...datasetReleaseDownloadMetadata(file, item),
                 }),
             })
@@ -3545,6 +3549,7 @@ export default function DownloadView({
                             assembly_name: item.assembly_name,
                             source_database: item.source_database,
 	                            equivalent_accessions: item.equivalent_accessions || [],
+	                            taxid: Number(item.taxid) || 0,
                                 ...datasetReleaseDownloadMetadata(file, item),
 	                        }),
                     })

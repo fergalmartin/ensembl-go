@@ -79,8 +79,19 @@ import {
   TOP_BAR_GAP_PX,
   TOP_BAR_VIEWPORT_PX,
   buildAppButtonLayout,
+  isRearrangedFromDefault,
   normalizeActiveAppButtons,
 } from './appButtonConfig'
+import AchievementsView from './components/achievements/AchievementsView'
+import AchievementToastHost from './components/achievements/AchievementToast'
+import {
+  loadAchievements,
+  refreshAchievements,
+  registerAchievementReconciler,
+  setAchievementsContext,
+  startAchievements,
+  trackAchievement,
+} from './achievements/tracker.js'
 import {
   API_BASE,
   fetchBackendRuntimeStatus,
@@ -1340,6 +1351,9 @@ function App() {
           if (task?.status === 'completed' && task?.id && !selectorRefreshCompletedTaskIdsRef.current.has(task.id)) {
             selectorRefreshCompletedTaskIdsRef.current.add(task.id)
             newlyCompleted.push(task)
+            // The backend records downloads for achievements itself; this is when
+            // there is something new to pick up.
+            if (task.file_type === 'fasta' || task.file_type === 'gff3') void refreshAchievements()
           }
           if (task?.file_type === 'homology' && (task?.status === 'completed' || task?.status === 'failed')) {
             const homologyTaskMap = neighbourhoodHomologyDownloadTaskByGenomeRef.current || {}
@@ -1856,6 +1870,7 @@ function App() {
       const resolvedTargetGeneId = String(json?.request_target_gene_id || dstGeneId).trim()
       setNeighbourhoodLinksByPair((prev) => ({ ...prev, [pairKey]: homologies }))
       setNeighbourhoodHomologyLinksByPair((prev) => ({ ...prev, [pairKey]: homologyLinks }))
+      if (refGenes.length || targetGenes.length) trackAchievement('neighbourhood.loaded')
       if (refGenes.length || targetGenes.length) {
         setNeighbourhoodTracksByGenome((prev) => {
           const next = { ...(prev || {}) }
@@ -3397,6 +3412,7 @@ function App() {
     'configuration',
     'help',
     'track_manager',
+    'achievements',
   ]), [])
   const explicitScreenshotAvailable = explicitScreenshotViews.has(currentView) && Boolean(screenshotAvailabilityByView[currentView])
   const fallbackScreenshotAvailable = (
@@ -3448,13 +3464,14 @@ function App() {
     tutorials: 'Tutorials',
     help: 'Help',
     track_manager: 'Track Manager',
+    achievements: 'Achievements',
   }
 
   const viewDescriptions = {
     home: 'Download, browse and analyse Ensembl data locally',
     genome_selector: 'Select downloaded genomes for visualisation in the Genome Browser',
     genome_browser: 'Navigate gene annotations across chromosomes',
-    feature_explorer: 'Inspect transcript-level features for a selected gene in an active genome',
+    feature_explorer: 'Explore genes and related features in detail',
     alignment: 'Align annotated gene regions across two or more genomes',
     sequence: 'Read sequence base by base, from a whole region down to a single exon',
     alignment_explorer: 'Explore alignment blocks and connected sequence paths in named layers',
@@ -3468,6 +3485,7 @@ function App() {
     tutorials: 'Follow guided walkthroughs of the main Ensembl Go workflows',
     help: 'Read guidance and workflow notes for each view',
     track_manager: 'Register and manage custom data tracks for the Genome Browser',
+    achievements: 'Everything you have unlocked, and what is still left to find',
   }
 
   const currentViewTitle = shouldShowWindowsBackendSetup
@@ -4720,6 +4738,7 @@ function App() {
         selectedSpecies: availableSpecies,
       })
       if (result?.ok !== false) {
+        trackAchievement('playlist.switched')
         setGenomePlaylistPopoverOpen(false)
       }
     } catch (error) {
@@ -5552,6 +5571,69 @@ function App() {
     () => normalizeActiveAppButtons(config.active_app_buttons),
     [config.active_app_buttons]
   )
+
+  // ── Achievements ────────────────────────────────────────────────────────────
+  //
+  // Tracked whether or not the view is switched on; the tracker only shows unlock
+  // notifications while it is. Everything here reads the user's own configuration
+  // (`userConfig`), never a tutorial's sandbox, and the tracker ignores anything done
+  // during a tutorial in any case.
+  const [achievementFocusId, setAchievementFocusId] = useState('')
+  const achievementsViewEnabled = activeAppButtons.includes('achievements')
+  useEffect(() => { startAchievements() }, [])
+  useEffect(() => {
+    setAchievementsContext({ viewEnabled: achievementsViewEnabled, currentView, screenshotMode })
+  }, [achievementsViewEnabled, currentView, screenshotMode])
+
+  // The store lives in the output directory, so a new one means a different file.
+  const achievementsOutputDirRef = useRef(userConfig?.output_dir || '')
+  useEffect(() => {
+    const outputDir = userConfig?.output_dir || ''
+    if (outputDir === achievementsOutputDirRef.current) return
+    achievementsOutputDirRef.current = outputDir
+    void loadAchievements()
+  }, [userConfig?.output_dir])
+
+  useEffect(() => {
+    if (currentView) trackAchievement('view.visit', currentView)
+  }, [currentView])
+
+  const activeGenomeCount = Array.isArray(config?.active_species) ? config.active_species.length : 0
+  useEffect(() => {
+    if (currentView === 'genome_browser' && activeGenomeCount >= 2) trackAchievement('browser.multiverse')
+  }, [currentView, activeGenomeCount])
+
+  // Genome Browser → Feature Explorer with a gene in focus.
+  const previousViewForAchievementsRef = useRef(currentView)
+  const focusedGeneForAchievementsRef = useRef(false)
+  focusedGeneForAchievementsRef.current = Object.values(focusGeneByGenome || {}).some(Boolean)
+  useEffect(() => {
+    const previous = previousViewForAchievementsRef.current
+    previousViewForAchievementsRef.current = currentView
+    if (previous === 'genome_browser' && currentView === 'feature_explorer' && focusedGeneForAchievementsRef.current) {
+      trackAchievement('browser.toFeatureExplorer')
+    }
+  }, [currentView])
+
+  // What is already true of the saved configuration. Re-run after the store loads and
+  // after a reset, as well as whenever these settings change.
+  const achievementConfigRef = useRef(userConfig)
+  achievementConfigRef.current = userConfig
+  const reconcileConfigAchievements = useCallback(() => {
+    const saved = achievementConfigRef.current || {}
+    const buttons = normalizeActiveAppButtons(saved.active_app_buttons)
+    if (buttons.includes('achievements')) trackAchievement('achievements.enabled')
+    if (isRearrangedFromDefault(buttons)) trackAchievement('appButtons.rearranged')
+    if (Array.isArray(saved.genome_playlists) && saved.genome_playlists.length) trackAchievement('playlist.created')
+    if (Array.isArray(saved.manual_species) && saved.manual_species.length) trackAchievement('genome.manualAdded')
+    // Only colours the user picked are stored per genome (the default is not), so each
+    // key is a genome someone chose a colour for.
+    for (const genomeKey of Object.keys(saved.genome_colors || {})) trackAchievement('genome.colour', genomeKey)
+  }, [])
+  useEffect(() => registerAchievementReconciler(reconcileConfigAchievements), [reconcileConfigAchievements])
+  useEffect(() => {
+    reconcileConfigAchievements()
+  }, [reconcileConfigAchievements, userConfig?.active_app_buttons, userConfig?.genome_playlists, userConfig?.manual_species, userConfig?.genome_colors])
   const topBarButtonLayout = useMemo(() => buildAppButtonLayout(activeAppButtons), [activeAppButtons])
   const topBarButtonRows = topBarButtonLayout.rows
   const topBarOverflows = topBarButtonLayout.overflows
@@ -5990,16 +6072,31 @@ function App() {
     })
   }, [config?.active_species])
 
+  // A view does not need a button in the top bar to be shown: Home's cards, links between
+  // views and tutorials all open views the user may have left out of the bar. What this
+  // handles is the button of the view on screen being taken away — removed in the
+  // organiser while looking at it, or missing from the saved bar that loads at startup —
+  // which moves the user to the first view the bar does have.
+  //
+  // It used to run whenever the view changed and send any view without a button straight
+  // back, so a Home card for such a view appeared to do nothing.
+  const currentViewForButtonsRef = useRef(currentView)
+  currentViewForButtonsRef.current = currentView
+  const previousActiveAppButtonsRef = useRef(activeAppButtons)
   useEffect(() => {
-    const currentViewIsAvailable = activeAppButtons.some((buttonId) => APP_BUTTON_META[buttonId]?.viewId === currentView)
-    if (currentViewIsAvailable) return
+    const previous = previousActiveAppButtonsRef.current
+    previousActiveAppButtonsRef.current = activeAppButtons
+    if (previous === activeAppButtons) return
+    const view = currentViewForButtonsRef.current
+    const hasButton = (buttonIds) => buttonIds.some((buttonId) => APP_BUTTON_META[buttonId]?.viewId === view)
+    if (!hasButton(previous) || hasButton(activeAppButtons)) return
     const fallbackView = activeAppButtons
       .map((buttonId) => APP_BUTTON_META[buttonId])
       .find((meta) => meta?.kind === 'data_view')?.viewId || 'configuration'
-    if (fallbackView !== currentView) {
+    if (fallbackView !== view) {
       setCurrentView(fallbackView)
     }
-  }, [activeAppButtons, currentView])
+  }, [activeAppButtons])
 
   useEffect(() => {
     if (!screenshotSupported || !screenshotAvailable) {
@@ -6184,6 +6281,7 @@ function App() {
 
   const reorderTopBarButtons = useCallback((sourceButtonId, targetButtonId, insertPosition = 'before') => {
     if (!sourceButtonId || !targetButtonId || sourceButtonId === targetButtonId) return
+    trackAchievement('appButtons.rearranged')
     setConfig((prev) => {
       const base = prev || configRef.current || config
       const ordered = normalizeActiveAppButtons(base.active_app_buttons)
@@ -6201,6 +6299,7 @@ function App() {
       if (buttonId === 'genome_playlist') {
         setGenomePlaylistPopoverOpen((prev) => !prev)
       } else if (buttonId === 'theme_toggle') {
+        if (theme === 'dark') trackAchievement('theme.toLight')
         setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
       } else if (buttonId === 'screenshot_toggle') {
         if (!(screenshotSupported && screenshotAvailable)) return
@@ -6346,6 +6445,7 @@ function App() {
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation()
+                    if (!headerCollapsed) trackAchievement('topbar.collapse')
                     setHeaderCollapsed((prev) => !prev)
                   }}
                   className="w-8 h-8 shrink-0 rounded-md border-0 bg-transparent text-[#0099ff] flex items-center justify-center transition-colors hover:bg-[#0099ff]/10"
@@ -6654,7 +6754,10 @@ function App() {
                       <button
                         ref={appOrganiserButtonRef}
                         type="button"
-                        onClick={() => setAppOrganiserOpen((prev) => !prev)}
+                        onClick={() => {
+                          if (!appOrganiserOpen) trackAchievement('organiser.opened')
+                          setAppOrganiserOpen((prev) => !prev)
+                        }}
                         className="w-6 h-6 rounded-md border-0 bg-transparent text-[#0099ff] flex items-center justify-center transition-colors hover:bg-[#0099ff]/10"
                         title={appOrganiserOpen ? 'Close the app organiser' : 'Organise apps'}
                         aria-label={appOrganiserOpen ? 'Close the app organiser' : 'Organise apps'}
@@ -7013,6 +7116,15 @@ function App() {
                 onOpenConfiguration={() => setCurrentView('configuration')}
               />
             </div>
+          ) : currentView === 'achievements' ? (
+            /* ========== ACHIEVEMENTS VIEW ========== */
+            <div className="h-full">
+              <AchievementsView
+                theme={theme}
+                focusId={achievementFocusId}
+                onFocusHandled={() => setAchievementFocusId('')}
+              />
+            </div>
           ) : currentView === 'help' ? (
             /* ========== HELP VIEW ========== */
             <div className="h-full">
@@ -7135,6 +7247,13 @@ function App() {
           onClose={() => setLoadAlignmentModalOpen(false)}
         />
       )}
+      <AchievementToastHost
+        isLight={isLight}
+        onOpen={(achievementId) => {
+          setAchievementFocusId(achievementId || '')
+          handleTopBarButtonClick('achievements')
+        }}
+      />
       <ScreenshotExportModal
         open={Boolean(selectedFallbackScreenshotTarget)}
         theme={theme}

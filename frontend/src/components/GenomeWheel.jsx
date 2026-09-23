@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { trackAchievement } from '../achievements/tracker.js'
 import { createPortal } from 'react-dom'
 import { getGenomeKey } from '../utils/genomeIdentity'
 import { genomeColorResolver, INACTIVE_GENOME_COLOR } from '../genomeColorSchemes'
@@ -141,6 +142,7 @@ export default function GenomeWheel({ species, activeSpecies, config, panelRootR
           if (!cancel) {
             session.committing = true
             await promoteRef.current(session.entries[selected].key, session.action, session.entries[selected].species)
+            trackAchievement('browser.cycle')
           }
           if (disposed) return
           setPhase('leaving')

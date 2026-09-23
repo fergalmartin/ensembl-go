@@ -9,6 +9,7 @@ import {
 } from 'react'
 
 import { getRuntimeTutorialDocument, getTutorial, registerRuntimeTutorial } from '../tutorials/index.js'
+import { registerAchievementReconciler, trackAchievement } from '../achievements/tracker.js'
 import { DEMO_SPECIES_KEY } from '../tutorials/demoGenome.js'
 import { REG4, SLICE_GENOME_ID, SLICE_SPECIES_KEY } from '../tutorials/sliceGenome.js'
 import { setTutorialSandboxActive } from '../tutorials/sandbox.js'
@@ -802,11 +803,17 @@ export function TutorialProvider({ children }) {
 
   useEffect(() => {
     if (!tutorial || !state || state.status !== TUTORIAL_STATUS.completed) return
+    trackAchievement('tutorial.completed', tutorial.id)
     if (stored.completedIds.includes(tutorial.id)) return
     const next = { completedIds: [...stored.completedIds, tutorial.id] }
     setStored(next)
     writeStoredProgress(next)
   }, [state, stored, tutorial])
+
+  // Tutorials finished before achievements existed still count.
+  useEffect(() => registerAchievementReconciler(() => {
+    for (const id of readStoredProgress().completedIds) trackAchievement('tutorial.completed', id)
+  }), [])
 
   // ── The sandbox ─────────────────────────────────────────────────────────────
 

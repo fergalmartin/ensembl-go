@@ -14,7 +14,7 @@ function HomeView({ theme, onNavigate }) {
     {
       id: 'tutorials',
       title: 'Tutorials',
-      description: 'Follow guided, hands-on walkthroughs of the main Ensembl Go workflows.',
+      description: 'Follow guided, hands-on walkthroughs of the main Ensembl Go workflows',
       icon: (
         <div className="text-white scale-[1.25]">
           <AppButtonIcon buttonId="tutorials" isLight={isLight} />
@@ -24,7 +24,7 @@ function HomeView({ theme, onNavigate }) {
     {
       id: 'genome_selector',
       title: 'Genome Selector',
-      description: 'Select downloaded genomes for visualisation.',
+      description: 'Select downloaded genomes for visualisation',
       icon: (
         <svg width="40" height="40" viewBox="0 0 36 36" fill="currentColor" stroke="none" className="text-white">
           <path d="M20.0999756,10.2999878c1,0,1.5,1,1.5,1.7999878c0,1.3000488-1.0999756,3.1000366-2.6999512,3.1000366
@@ -74,7 +74,7 @@ function HomeView({ theme, onNavigate }) {
     {
       id: 'feature_explorer',
       title: 'Feature Explorer',
-      description: 'Inspect transcript structures around a selected gene with offset and genomic ruler coordinates.',
+      description: 'Explore genes, transcripts, exons and their sequences in detail',
       icon: (
         <div className="text-white scale-[1.28]">
           <AppButtonIcon buttonId="feature_explorer" isLight={isLight} />
@@ -84,7 +84,7 @@ function HomeView({ theme, onNavigate }) {
     {
       id: 'download',
       title: 'Download',
-      description: 'Download genomes, annotations and homologies locally.',
+      description: 'Download genomes, annotations and homologies locally',
       icon: (
         <div className="text-white scale-[1.25]">
           <AppButtonIcon buttonId="download" isLight={isLight} />
@@ -146,7 +146,7 @@ function HomeView({ theme, onNavigate }) {
     {
       id: 'structural_variation',
       title: 'Structural Variation',
-      description: 'Inspect structural variation and chain-based syntenic mappings between genomes.',
+      description: 'Inspect structural variation and chain-based syntenic mappings between genomes',
       icon: (
         <div className="text-white scale-[1.2]">
           <AppButtonIcon buttonId="structural_variation" isLight={isLight} />
@@ -173,7 +173,7 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
     {
       id: 'stats',
       title: 'Statistics',
-      description: 'Compare annotation composition, structural metrics, homology summaries, and assembly metadata.',
+      description: 'Compare annotation composition, structural metrics, homology summaries, and assembly metadata',
       icon: (
         <div className="text-white scale-[1.15]">
           <AppButtonIcon buttonId="stats" isLight={isLight} />
@@ -183,7 +183,7 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
     {
       id: 'notes',
       title: 'Notes',
-      description: 'Browse, search and manage every note you have written, grouped by genome and by gene.',
+      description: 'Browse, search and manage every note you have written, grouped by genome and by gene',
       icon: (
         <div className="text-white scale-[1.15]">
           <AppButtonIcon buttonId="notes" isLight={isLight} />
@@ -193,7 +193,7 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
     {
       id: 'track_manager',
       title: 'Track Manager',
-      description: 'Register and manage custom data tracks (BigWig, BigBed, VCF, and splice junction files) for display in the genome browser.',
+      description: 'Register and manage custom data tracks (BigWig, BigBed, VCF, and splice junction files) for display in the genome browser',
       icon: (
         <div className="text-white scale-[1.1]">
           <AppButtonIcon buttonId="track_manager" isLight={isLight} />
@@ -203,7 +203,7 @@ c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.
     {
       id: 'help',
       title: 'Help',
-      description: 'Open guidance, walkthroughs, and practical notes for each view.',
+      description: 'Open guidance, walkthroughs, and practical notes for each view',
       icon: (
         <div className="text-white scale-[1.45]">
           <AppButtonIcon buttonId="help" isLight={isLight} />
