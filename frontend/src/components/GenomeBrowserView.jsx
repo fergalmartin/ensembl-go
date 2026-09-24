@@ -1369,6 +1369,12 @@ export default function GenomeBrowserView({
                     barHeight: bar.getBoundingClientRect().height,
                     hostTop: wrapper.getBoundingClientRect().top,
                 })
+                // A drawer hangs down from its band, so one lined up with a toolbar
+                // moved to the bottom of a flipped panel had nowhere to go but out of
+                // the panel. It opens from the top instead, still the toolbar's height.
+                if (snapped && bar.getAttribute('data-browser-toolbar-position') === 'bottom') {
+                    snapped.top = 0
+                }
                 if (snapped) next[panelKey] = snapped
             }
             return next

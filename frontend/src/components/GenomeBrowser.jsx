@@ -1555,6 +1555,71 @@ function scrollScrollerTo(scroller, metrics, top, behavior = 'smooth') {
     else scroller.scrollTo({ top, behavior })
 }
 
+// ============ Mirrored drawing for a flipped (3'→5') panel ============
+// Custom tracks are laid out left to right in genomic order by a dozen renderers.
+// A flipped panel draws them through a mirror about the track area instead of
+// teaching each renderer to run backwards — exact, because the flipped
+// genomicToScreen is the unflipped one reflected about that same axis
+// (LHS_WIDTH + viewWidth). Text is un-mirrored where it is drawn, keeping its
+// anchor, so a label beside a feature stays beside it and still reads.
+
+const MIRRORED_TEXT_ALIGN = { left: 'right', right: 'left', start: 'end', end: 'start' }
+// The built-in tracks a flipped panel shows reverse complemented, and so marks "RC"
+// on the line under their label, in the label's own size. Custom tracks are only
+// mirrored — their values are the same — so they are not marked.
+const REVERSE_COMPLEMENTED_TRACK_IDS = new Set(['forward', 'reverse', 'sequence'])
+const SIDEBAR_RC_LINE_GAP = 13
+// The label moves up by this, and RC sits the rest of the gap below the centre, so
+// the pair is centred on the toggle — a short track (SL) then has room above and below.
+// Rounded down: the labels' ink sits half a pixel above their centre line already.
+const SIDEBAR_RC_HALF_GAP = Math.floor(SIDEBAR_RC_LINE_GAP / 2)
+const nativeFillText = typeof CanvasRenderingContext2D === 'undefined'
+    ? null
+    : CanvasRenderingContext2D.prototype.fillText
+
+function callNativeFillText(ctx, text, x, y, maxWidth) {
+    // An explicit undefined maxWidth reads as NaN, which draws nothing.
+    if (maxWidth === undefined) nativeFillText.call(ctx, text, x, y)
+    else nativeFillText.call(ctx, text, x, y, maxWidth)
+}
+
+function beginCanvasMirror(ctx, axis) {
+    ctx.save()
+    ctx.translate(axis, 0)
+    ctx.scale(-1, 1)
+    ctx.fillText = function mirroredFillText(text, x, y, maxWidth) {
+        this.save()
+        this.textAlign = MIRRORED_TEXT_ALIGN[this.textAlign] || this.textAlign
+        this.translate(x, 0)
+        this.scale(-1, 1)
+        this.translate(-x, 0)
+        callNativeFillText(this, text, x, y, maxWidth)
+        this.restore()
+    }
+}
+
+// Safe to call when no mirror is open, so a draw can clear one left behind by a
+// frame that threw part way through.
+function endCanvasMirror(ctx) {
+    if (!Object.prototype.hasOwnProperty.call(ctx, 'fillText')) return
+    delete ctx.fillText
+    ctx.restore()
+}
+
+// Text that belongs to the panel rather than the data — a track's name, its value
+// axis — drawn where it is given on screen whether or not a mirror is open.
+function fillScreenText(ctx, mirrorAxis, text, x, y) {
+    if (!Object.prototype.hasOwnProperty.call(ctx, 'fillText')) {
+        ctx.fillText(text, x, y)
+        return
+    }
+    ctx.save()
+    ctx.translate(mirrorAxis, 0)
+    ctx.scale(-1, 1)
+    callNativeFillText(ctx, text, x, y)
+    ctx.restore()
+}
+
 // ============ GenomeBrowser Component ============
 
 export default function GenomeBrowser({
@@ -2029,7 +2094,9 @@ export default function GenomeBrowser({
 
     const effectiveToolbarPosition = isVerticalLayoutFlipped ? swapVerticalPlacement(toolbarPosition) : toolbarPosition
     const effectiveRulerPosition = isVerticalLayoutFlipped ? swapVerticalPlacement(rulerPosition) : rulerPosition
-    const effectiveFocusBarPosition = isVerticalLayoutFlipped ? swapVerticalPlacement(focusBarPosition) : focusBarPosition
+    // Not swapped with the rest. The focus drawer hangs down from this bar, so at the
+    // bottom of a flipped panel it ran out past the panel and was cut off by the next.
+    const effectiveFocusBarPosition = focusBarPosition
     const effectiveTrackAlign = isVerticalLayoutFlipped ? swapVerticalPlacement(trackAlign) : trackAlign
     const effectiveRulerHeight = isRulerCollapsed ? 0 : RULER_HEIGHT
     const effectiveSequenceTrackPosition = isVerticalLayoutFlipped ? swapVerticalPlacement(sequenceTrackPosition) : sequenceTrackPosition
@@ -2042,15 +2109,37 @@ export default function GenomeBrowser({
     const compactPanelHeight = flattenTracks || adaptiveHeight
 
     // Drag-and-drop reordering
-    const composeTrackOrder = useCallback((seqPosition, customIds) => {
+    const composeTrackOrder = useCallback((seqPosition, customIds, strandOrder = ['forward', 'reverse']) => {
         const orderedCustom = Array.isArray(customIds) ? customIds : []
         if (seqPosition === 'top') {
-            return ['sequence', ...orderedCustom, 'forward', 'reverse']
+            return ['sequence', ...orderedCustom, ...strandOrder]
         }
-        return ['forward', 'reverse', ...orderedCustom, 'sequence']
+        return [...strandOrder, ...orderedCustom, 'sequence']
     }, [])
 
     const [trackOrder, setTrackOrder] = useState(() => composeTrackOrder(sequenceTrackPosition, []))
+
+    // Flipping to 3'→5' puts GR on top, where the strand that now reads left to
+    // right belongs, and flipping back restores it. Swapped in place, so any
+    // order the user dragged the tracks into survives the round trip.
+    const toggleFlipped = useCallback(() => {
+        setIsFlipped((prev) => !prev)
+        // Their popups were placed on screen at the feature, which the flip moves.
+        setClickedVcfVariant(null)
+        setClickedBigBedFeature(null)
+        setClickedSpliceJunction(null)
+        setClickedSeqBase(null)
+        setClickedGeneTranscript(null)
+        setTrackOrder((prev) => {
+            const forwardIdx = prev.indexOf('forward')
+            const reverseIdx = prev.indexOf('reverse')
+            if (forwardIdx === -1 || reverseIdx === -1) return prev
+            const next = [...prev]
+            next[forwardIdx] = 'reverse'
+            next[reverseIdx] = 'forward'
+            return next
+        })
+    }, [])
     const [draggingTrack, setDraggingTrack] = useState(null)
     const [hoveredTrack, setHoveredTrack] = useState(null)
     const isCustomTrackId = useCallback((trackId) => trackId.startsWith('ct_'), [])
@@ -2065,7 +2154,11 @@ export default function GenomeBrowser({
                 .map((track) => track.id)
                 .filter((trackId) => !existingCustomSet.has(trackId))
             const nextCustomOrder = [...existingCustomOrder, ...newCustomIds]
-            const nextOrder = composeTrackOrder(effectiveSequenceTrackPosition, nextCustomOrder)
+            // Keep whichever strand is on top: a flipped panel puts GR first.
+            const strandOrder = prev.indexOf('reverse') < prev.indexOf('forward')
+                ? ['reverse', 'forward']
+                : ['forward', 'reverse']
+            const nextOrder = composeTrackOrder(effectiveSequenceTrackPosition, nextCustomOrder, strandOrder)
             if (nextOrder.length === prev.length && nextOrder.every((trackId, idx) => trackId === prev[idx])) {
                 return prev
             }
@@ -7207,12 +7300,13 @@ export default function GenomeBrowser({
     }, [layout, genomicToScreen, getDisplayTranscriptsForGene, transcriptLayoutMetrics])
 
     const getTrackTooltip = useCallback((trackId) => {
+        if (isFlipped && trackId) return 'Reverse complement mode is active, track is reversed'
         if (trackId === 'forward') return 'Genes on the forward strand'
         if (trackId === 'reverse') return 'Genes on the reverse strand'
         if (trackId === 'sequence') return sequenceTrackTooltip
         if (isCustomTrackId(trackId)) return 'Custom BigWig track'
         return ''
-    }, [sequenceTrackTooltip, isCustomTrackId])
+    }, [sequenceTrackTooltip, isCustomTrackId, isFlipped])
 
     const isPrimaryPanel = useMemo(() => {
         const lowerLabel = String(label || '').toLowerCase()
@@ -7339,6 +7433,22 @@ export default function GenomeBrowser({
         const pushOverlayMarkup = (markup) => {
             if (markup) overlayMarkupSections.push(markup)
         }
+        // The export's copy of the canvas mirror (beginCanvasMirror): custom-track
+        // markup is written in genomic order, so a flipped panel reflects it about
+        // the track area, turning each label back round about its own anchor.
+        const mirrorCustomTrackMarkup = (markup) => {
+            if (!markup || !isFlipped) return markup
+            const axis = LHS_WIDTH + viewWidth
+            const swapAnchor = { start: 'end', end: 'start', middle: 'middle' }
+            const readable = markup.replace(
+                /<text x="([^"]+)"([^>]*?)text-anchor="(start|end|middle)"/g,
+                (_match, x, between, anchor) => {
+                    const anchorX = Number(x)
+                    return `<text x="${x}"${between}text-anchor="${swapAnchor[anchor]}" transform="translate(${anchorX} 0) scale(-1 1) translate(${-anchorX} 0)"`
+                },
+            )
+            return `<g transform="matrix(-1 0 0 1 ${axis} 0)">${readable}</g>`
+        }
         const buildCustomTrackLabelY = (trackLayout, track, data) => {
             const trackType = track?.type || 'bigwig'
             const rawRenderMode = track?.renderMode || DEFAULT_CUSTOM_TRACK_RENDER_MODE
@@ -7381,27 +7491,51 @@ export default function GenomeBrowser({
             sidebarToggleDescriptors.push({
                 trackId,
                 x: LHS_WIDTH - 13,
-                y: centerY,
+                y: Math.round(centerY), // as drawToggle rounds it
                 iconColor: sidebarToggleIconColor(active),
                 // The rasterised glyph is painted over with the sidebar's own
                 // background so the export can re-emit it as a crisp path.
                 maskFill: getSidebarBgColor(trackId),
             })
         }
-        const pushSidebarLabelDescriptor = (trackId, centerY, text) => {
-            if (!(Number.isFinite(centerY)) || !text) return
+        const pushSidebarLabelDescriptor = (trackId, rawCenterY, text) => {
+            if (!(Number.isFinite(rawCenterY)) || !text) return
+            const centerY = Math.round(rawCenterY)
+            // Placed exactly as drawToggle places them, since each masks the canvas copy.
+            const showRc = isFlipped && REVERSE_COMPLEMENTED_TRACK_IDS.has(trackId)
+            const labelBaseline = centerY + 4 - (showRc ? SIDEBAR_RC_HALF_GAP : 0)
+            const labelRightX = (LHS_WIDTH - 13) - (SIDEBAR_TOGGLE_ICON_SIZE / 2) - SIDEBAR_TOGGLE_LABEL_GAP
+            let columnX = labelRightX
+            if (showRc && textMeasureCtx) {
+                textMeasureCtx.font = sansFont(11)
+                columnX = labelRightX - textMeasureCtx.measureText('RC').width / 2
+            }
             pushExportText({
                 text,
-                x: (LHS_WIDTH - 13) - (SIDEBAR_TOGGLE_ICON_SIZE / 2) - SIDEBAR_TOGGLE_LABEL_GAP,
-                y: centerY + 4,
+                x: columnX,
+                y: labelBaseline,
                 font: sansFont(11),
                 fill: isLight ? '#64748b' : '#cbd5e1',
                 bgFill: getSidebarBgColor(trackId),
-                textAnchor: 'end',
+                textAnchor: showRc ? 'middle' : 'end',
                 dominantBaseline: 'alphabetic',
                 paddingX: 3,
                 paddingY: 2,
             })
+            if (showRc) {
+                pushExportText({
+                    text: 'RC',
+                    x: columnX,
+                    y: labelBaseline + SIDEBAR_RC_LINE_GAP,
+                    font: sansFont(11),
+                    fill: panelPillColor,
+                    bgFill: getSidebarBgColor(trackId),
+                    textAnchor: 'middle',
+                    dominantBaseline: 'alphabetic',
+                    paddingX: 3,
+                    paddingY: 1,
+                })
+            }
         }
 
         if (effectiveRulerHeight > 0) {
@@ -7596,6 +7730,8 @@ export default function GenomeBrowser({
                     const range = safeMax - minVal
                     const binWidth = plotWidth / values.length
                     const bigWigMarkup = []
+                    // The value axis stays on the right however the data is drawn.
+                    const bigWigAxisMarkup = []
                     textMaskRects.push({
                         x: left,
                         y: trackLayout.y,
@@ -7658,7 +7794,7 @@ export default function GenomeBrowser({
                         }
                         for (const boundary of boundaryValues) {
                             const y = zoneYForValue(boundary)
-                            bigWigMarkup.push(
+                            bigWigAxisMarkup.push(
                                 `<text x="${viewWidth - 4}" y="${y}" fill="${escapeXml(isLight ? '#64748b' : '#94a3b8')}" text-anchor="end" dominant-baseline="middle" style="font:${escapeXml(sansFont(9))};">${escapeXml(`>${boundary.toLocaleString()}`)}</text>`
                             )
                         }
@@ -7734,7 +7870,7 @@ export default function GenomeBrowser({
                             )
                         }
                         const axisX = viewWidth - 14
-                        bigWigMarkup.push(
+                        bigWigAxisMarkup.push(
                             `<line x1="${axisX}" y1="${top}" x2="${axisX}" y2="${bottom}" stroke="${escapeXml(isLight ? 'rgba(15, 23, 42, 0.25)' : 'rgba(148, 163, 184, 0.35)')}" stroke-width="1" />`
                         )
                         const ticks = [
@@ -7743,17 +7879,17 @@ export default function GenomeBrowser({
                             { y: bottom, value: yMin },
                         ]
                         for (const tick of ticks) {
-                            bigWigMarkup.push(
+                            bigWigAxisMarkup.push(
                                 `<line x1="${axisX - 4}" y1="${tick.y}" x2="${axisX}" y2="${tick.y}" stroke="${escapeXml(isLight ? 'rgba(15, 23, 42, 0.25)' : 'rgba(148, 163, 184, 0.35)')}" stroke-width="1" />`
                             )
-                            bigWigMarkup.push(
+                            bigWigAxisMarkup.push(
                                 `<text x="${viewWidth - 4}" y="${tick.y}" fill="${escapeXml(isLight ? '#64748b' : '#94a3b8')}" text-anchor="end" dominant-baseline="middle" style="font:${escapeXml(sansFont(9))};">${escapeXml(formatSignalValueForTrack(tick.value))}</text>`
                             )
                         }
                     }
 
                     if (bigWigMarkup.length > 0) {
-                        pushOverlayMarkup(bigWigMarkup.join(''))
+                        pushOverlayMarkup(mirrorCustomTrackMarkup(bigWigMarkup.join('')) + bigWigAxisMarkup.join(''))
                     }
                 }
             }
@@ -7797,7 +7933,7 @@ export default function GenomeBrowser({
                     }
                 }
                 if (bigBedMarkup.length > 0) {
-                    pushOverlayMarkup(bigBedMarkup.join(''))
+                    pushOverlayMarkup(mirrorCustomTrackMarkup(bigBedMarkup.join('')))
                 }
             }
 
@@ -7837,6 +7973,7 @@ export default function GenomeBrowser({
                 )
                 const trackBgColor = getExportTrackBgColor(trackId)
                 const bigBedMarkup = []
+                let bigBedOverflowMarkup = ''
                 textMaskRects.push({
                     x: left,
                     y: trackLayout.y,
@@ -7984,13 +8121,13 @@ export default function GenomeBrowser({
                 }
 
                 if (overflowCount > 0) {
-                    bigBedMarkup.push(
+                    bigBedOverflowMarkup = (
                         `<text x="${right - 3}" y="${bottom - 1}" fill="${escapeXml(isLight ? 'rgba(71,85,105,0.72)' : 'rgba(148,163,184,0.72)')}" text-anchor="end" dominant-baseline="text-after-edge" style="font:${escapeXml(sansFont(9))};">+${escapeXml(String(overflowCount))} overflow</text>`
                     )
                 }
 
                 if (bigBedMarkup.length > 0) {
-                    pushOverlayMarkup(bigBedMarkup.join(''))
+                    pushOverlayMarkup(mirrorCustomTrackMarkup(bigBedMarkup.join('')) + bigBedOverflowMarkup)
                 }
             }
         }
@@ -8380,7 +8517,7 @@ export default function GenomeBrowser({
                 }
             }
 
-            pushOverlayMarkup(vcfMarkup.join(''))
+            pushOverlayMarkup(mirrorCustomTrackMarkup(vcfMarkup.join('')))
         }
 
         // The note bubbles are DOM over the canvas, so the raster below has no
@@ -8591,7 +8728,7 @@ export default function GenomeBrowser({
         }
     }, [isPrimaryPanel, getVcfBlockLevel, bpPerPx])
 
-    const getCustomTrackHover = useCallback((mouseX, mouseY, clientX, clientY) => {
+    const getCustomTrackHoverInTrackFrame = useCallback((mouseX, mouseY, clientX, clientY) => {
         const left = LHS_WIDTH + 2
         const right = viewWidth - 2
         for (const [trackId, trackLayout] of Object.entries(layout.customTrackLayouts)) {
@@ -8907,6 +9044,26 @@ export default function GenomeBrowser({
         }
         return null
     }, [layout, customTracksById, customTrackData, viewWidth, viewStart, viewEnd, bpPerPx, formatSignalValueExact, getCustomTrackGeometry, getSpliceLodMode, spliceArcLiftOffsets])
+
+    // Custom tracks are drawn in genomic order and mirrored when the panel is flipped
+    // (see beginCanvasMirror), so hit-testing runs in that same unmirrored frame: the
+    // pointer goes in reflected, and the anchors popups hang from come out reflected back.
+    const getCustomTrackHover = useCallback((mouseX, mouseY, clientX, clientY) => {
+        if (!isFlipped) return getCustomTrackHoverInTrackFrame(mouseX, mouseY, clientX, clientY)
+        const mirrorAxis = LHS_WIDTH + viewWidth
+        const hit = getCustomTrackHoverInTrackFrame(mirrorAxis - mouseX, mouseY, clientX, clientY)
+        if (!hit) return hit
+        const toScreen = (entry) => (
+            entry && Number.isFinite(entry.anchorCanvasX)
+                ? { ...entry, anchorCanvasX: mirrorAxis - entry.anchorCanvasX }
+                : entry
+        )
+        return {
+            ...hit,
+            ...(hit.hoverSplice ? { hoverSplice: toScreen(hit.hoverSplice) } : null),
+            ...(hit.hoverBigBed ? { hoverBigBed: toScreen(hit.hoverBigBed) } : null),
+        }
+    }, [isFlipped, viewWidth, getCustomTrackHoverInTrackFrame])
 
     // Sync with external position (for locked dual browsers).
     // useLayoutEffect (not useEffect) so the position update is applied synchronously
@@ -9441,11 +9598,7 @@ export default function GenomeBrowser({
             if (mouseX <= 40) {
                 const trackId = getTrackAtY(mouseY)
                 const tooltip = trackId ? getTrackTooltip(trackId) : ''
-                if (tooltip) {
-                    setSidebarTooltip({ text: tooltip, x: e.clientX, y: e.clientY })
-                } else {
-                    setSidebarTooltip(null)
-                }
+                setSidebarTooltip(tooltip || null)
             } else {
                 setSidebarTooltip(null)
             }
@@ -10138,6 +10291,7 @@ export default function GenomeBrowser({
         if (!canvas) return
 
         const ctx = canvas.getContext('2d')
+        endCanvasMirror(ctx)
         const dpr = window.devicePixelRatio || 1
 
         const { FORWARD_Y, REVERSE_Y, SEQUENCE_Y, RULER_Y, forwardBgHeight, reverseBgHeight, seqBgHeight, customTrackLayouts } = layout
@@ -10282,10 +10436,13 @@ export default function GenomeBrowser({
         const chevronStartY = FORWARD_Y + forwardBgHeight / 2
         const reverseChevronStartY = REVERSE_Y + reverseBgHeight / 2
 
-        // Static chevrons (no panning offset) to prevent dizzying visual effect
+        // Static chevrons (no panning offset) to prevent dizzying visual effect.
+        // They point the way each strand reads, which a flipped panel reverses.
+        const forwardChevron = isFlipped ? '<' : '>'
+        const reverseChevron = isFlipped ? '>' : '<'
         for (let bgX = LHS_WIDTH + chevronSpacing / 2; bgX <= viewWidth + chevronSpacing; bgX += chevronSpacing) {
-            ctx.fillText('>', bgX, chevronStartY + 2)
-            ctx.fillText('<', bgX, reverseChevronStartY + 2)
+            ctx.fillText(forwardChevron, bgX, chevronStartY + 2)
+            ctx.fillText(reverseChevron, bgX, reverseChevronStartY + 2)
         }
         ctx.textBaseline = 'alphabetic' // Restore baseline
 
@@ -10779,7 +10936,10 @@ export default function GenomeBrowser({
         ctx.textAlign = 'center'
 
         // Render circular power toggle with panel-specific active color.
-        const drawToggle = (x, y, isHidden, label, trackId) => {
+        const drawToggle = (x, rawY, isHidden, label, trackId) => {
+            // A track of odd height centres on a half pixel, which the label and the
+            // glyph then round differently. One whole-pixel centre keeps them level.
+            const y = Math.round(rawY)
             const active = !isHidden
             const iconColor = sidebarToggleIconColor(active)
             const labelColor = isLight ? '#64748b' : '#cbd5e1'
@@ -10787,7 +10947,24 @@ export default function GenomeBrowser({
             // Draw label to the left of toggle.
             ctx.fillStyle = (draggingTrack === trackId) ? '#ffffff' : labelColor
             ctx.textAlign = 'right'
-            ctx.fillText(label, x - (SIDEBAR_TOGGLE_ICON_SIZE / 2) - SIDEBAR_TOGGLE_LABEL_GAP, y + 4)
+            const labelX = x - (SIDEBAR_TOGGLE_ICON_SIZE / 2) - SIDEBAR_TOGGLE_LABEL_GAP
+            // Marked on the track itself, so a reverse-complemented strand is never
+            // read as the usual one. The two lines are centred on the toggle as a pair.
+            const showRc = isFlipped && REVERSE_COMPLEMENTED_TRACK_IDS.has(trackId)
+            const labelBaseline = y + 4 - (showRc ? SIDEBAR_RC_HALF_GAP : 0)
+            if (showRc) {
+                // Both lines centred on one column — RC's centre where it would sit
+                // right-aligned — so a label narrower than "RC" (SL) sits over its middle.
+                const columnX = labelX - ctx.measureText('RC').width / 2
+                ctx.save()
+                ctx.textAlign = 'center'
+                ctx.fillText(label, columnX, labelBaseline)
+                ctx.fillStyle = panelPillColor
+                ctx.fillText('RC', columnX, labelBaseline + SIDEBAR_RC_LINE_GAP)
+                ctx.restore()
+            } else {
+                ctx.fillText(label, labelX, labelBaseline)
+            }
             ctx.textAlign = 'center'
 
             // Stroked, not filled, and with no disc behind it: the glyph's own
@@ -10942,6 +11119,12 @@ export default function GenomeBrowser({
         }
 
         // ---- Custom BigWig Tracks ----
+        // Drawn in genomic order and mirrored when the panel is flipped; see
+        // beginCanvasMirror. screenX places panel furniture (the value axis) at a
+        // fixed spot on screen from inside the mirror.
+        const customMirrorAxis = LHS_WIDTH + viewWidth
+        const screenX = (x) => (isFlipped ? customMirrorAxis - x : x)
+        if (isFlipped) beginCanvasMirror(ctx, customMirrorAxis)
         for (const [trackId, trackLayout] of Object.entries(customTrackLayouts)) {
             const track = customTracksById.get(trackId)
             if (!track || !track.visible) continue
@@ -10977,7 +11160,7 @@ export default function GenomeBrowser({
             ctx.fillStyle = isLight ? '#1e3a8a' : '#93c5fd'
             ctx.textAlign = 'left'
             ctx.textBaseline = 'middle'
-            ctx.fillText(labelText, labelX, labelY)
+            fillScreenText(ctx, customMirrorAxis, labelText, labelX, labelY)
             ctx.restore()
 
             const isDiscreteTrack = ['vcf', 'bed', 'bigbed', 'splice_junctions', 'long_reads'].includes(trackType)
@@ -11846,7 +12029,7 @@ export default function GenomeBrowser({
                         ctx.font = sansFont(9)
                         ctx.textAlign = 'right'
                         ctx.textBaseline = 'bottom'
-                        ctx.fillText(`+${overflowCount} overflow`, right - 3, bottom - 1)
+                        fillScreenText(ctx, customMirrorAxis, `+${overflowCount} overflow`, right - 3, bottom - 1)
                     }
                     ctx.restore()
 
@@ -12158,7 +12341,7 @@ export default function GenomeBrowser({
                         ctx.font = sansFont(9)
                         ctx.textAlign = 'right'
                         ctx.textBaseline = 'bottom'
-                        ctx.fillText(`+${hiddenN} overflow`, right - 3, bottom - 1)
+                        fillScreenText(ctx, customMirrorAxis, `+${hiddenN} overflow`, right - 3, bottom - 1)
                     }
                     ctx.restore()
                     continue
@@ -12270,7 +12453,7 @@ export default function GenomeBrowser({
                 ctx.textBaseline = 'middle'
                 for (const boundary of boundaryValues) {
                     const y = zoneYForValue(boundary)
-                    ctx.fillText(`>${boundary.toLocaleString()}`, viewWidth - 4, y)
+                    fillScreenText(ctx, customMirrorAxis, `>${boundary.toLocaleString()}`, viewWidth - 4, y)
                 }
                 ctx.restore()
             } else if (trackType === 'bigwig' && renderMode === 'signal_plot') {
@@ -12370,7 +12553,7 @@ export default function GenomeBrowser({
                     ctx.restore()
                 }
 
-                const axisX = viewWidth - 14
+                const axisX = screenX(viewWidth - 14)
                 ctx.save()
                 ctx.strokeStyle = isLight ? 'rgba(15, 23, 42, 0.25)' : 'rgba(148, 163, 184, 0.35)'
                 ctx.lineWidth = 1
@@ -12389,10 +12572,10 @@ export default function GenomeBrowser({
                 ctx.textBaseline = 'middle'
                 for (const tick of ticks) {
                     ctx.beginPath()
-                    ctx.moveTo(axisX - 4, tick.y)
+                    ctx.moveTo(screenX(viewWidth - 18), tick.y)
                     ctx.lineTo(axisX, tick.y)
                     ctx.stroke()
-                    ctx.fillText(formatSignalValue(tick.value), viewWidth - 4, tick.y)
+                    fillScreenText(ctx, customMirrorAxis, formatSignalValue(tick.value), viewWidth - 4, tick.y)
                 }
                 ctx.restore()
             } else {
@@ -12418,7 +12601,7 @@ export default function GenomeBrowser({
                 }
 
                 // Right-side y-axis reference markers.
-                const axisX = viewWidth - 14
+                const axisX = screenX(viewWidth - 14)
                 ctx.save()
                 ctx.strokeStyle = isLight ? 'rgba(15, 23, 42, 0.25)' : 'rgba(148, 163, 184, 0.35)'
                 ctx.lineWidth = 1
@@ -12438,14 +12621,15 @@ export default function GenomeBrowser({
                 ctx.textBaseline = 'middle'
                 for (const tick of ticks) {
                     ctx.beginPath()
-                    ctx.moveTo(axisX - 4, tick.y)
+                    ctx.moveTo(screenX(viewWidth - 18), tick.y)
                     ctx.lineTo(axisX, tick.y)
                     ctx.stroke()
-                    ctx.fillText(formatSignalValue(tick.value), viewWidth - 4, tick.y)
+                    fillScreenText(ctx, customMirrorAxis, formatSignalValue(tick.value), viewWidth - 4, tick.y)
                 }
                 ctx.restore()
             }
         }
+        endCanvasMirror(ctx)
 
         // ---- Box Selection Overlay ----
         if (selectionRect) {
@@ -13673,6 +13857,7 @@ export default function GenomeBrowser({
             // The assembly drawer lines its header band up with this row, so the
             // drawer reads as sliding out of the genome pill that opened it.
             data-browser-toolbar="true"
+            data-browser-toolbar-position={effectiveToolbarPosition}
             data-focus-panel-key={screenshotTargetId || genome}
             // Control freak counts this genome's toolbar as well as the general control
             // bar; see achievements/browserControls.js.
@@ -13904,14 +14089,20 @@ export default function GenomeBrowser({
                 {/* Flip Track Orientation */}
                 <button
                     data-browser-control="browser-flip"
-                    onClick={() => setIsFlipped(!isFlipped)}
+                    data-tutorial-engaged={isFlipped ? 'true' : 'false'}
+                    onClick={toggleFlipped}
                     className={`p-1.5 rounded transition-opacity flex items-center justify-center hover:opacity-80`}
                     style={{
                         backgroundColor: controlAccentColor,
                         color: '#ffffff',
-                        width: '32px', height: '28px'
+                        width: '32px', height: '28px',
+                        // The same pressed ring the focus-window button wears.
+                        boxShadow: isFlipped ? `0 0 0 2px ${isLight ? '#ffffff' : '#111827'} inset` : 'none',
                     }}
-                    title={isFlipped ? "Restore 5' to 3' view" : "Flip to 3' to 5' view"}
+                    aria-pressed={isFlipped}
+                    title={isFlipped
+                        ? "Reverse complement mode is active. Click to restore 5' to 3'"
+                        : "Flip to 3' to 5' view (reverse complement)"}
                 >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M21 9a9 9 0 0 0-14.8-4.2L3 8" />
@@ -14580,6 +14771,10 @@ export default function GenomeBrowser({
                 <canvas
                     ref={canvasRef}
                     onClick={handleCanvasClick}
+                    // The gutter's labels are painted, so the track under the pointer
+                    // names itself through the canvas: a native tooltip, with the same
+                    // look and hover delay as every other control in the app.
+                    title={sidebarTooltip || undefined}
                     style={{ display: 'block' }}
                 />
 
@@ -14715,20 +14910,6 @@ export default function GenomeBrowser({
                             style={{ left: LHS_WIDTH - 25, top: y - 12, width: 24, height: 24, background: 'transparent' }} />
                     )
                 })}
-                {sidebarTooltip && (
-                    <div
-                        className="pointer-events-none fixed z-30 px-2 py-1 text-[11px] rounded shadow-md"
-                        style={{
-                            left: sidebarTooltip.x + 12,
-                            top: sidebarTooltip.y + 12,
-                            backgroundColor: isLight ? 'rgba(15, 23, 42, 0.92)' : 'rgba(248, 250, 252, 0.92)',
-                            color: isLight ? '#ffffff' : '#0f172a',
-                            border: `1px solid ${isLight ? 'rgba(148, 163, 184, 0.35)' : 'rgba(15, 23, 42, 0.2)'}`,
-                        }}
-                    >
-                        {sidebarTooltip.text}
-                    </div>
-                )}
 
                 {customTrackHoverTooltip && (
                     <div

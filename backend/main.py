@@ -16236,6 +16236,52 @@ def _resolve_bigwig_chrom_name(
     return None
 
 
+def _bigwig_binned_means(
+    bw: Any,
+    chrom: str,
+    start: int,
+    end: int,
+    bins: int,
+    chrom_len: int,
+    exact: bool = False,
+) -> List[Optional[float]]:
+    """Mean signal in `bins` equal bins spanning [start, end), None past the chromosome.
+
+    Callers place bin i at start + i * (end - start) / bins, so the bins must keep that
+    width even where the range runs off the end of the chromosome. Asking pyBigWig for
+    `bins` bins over the clipped range instead squeezed them into the part that exists,
+    and the browser then drew the last tile of every chromosome stretched to the right.
+    """
+    out: List[Optional[float]] = [None] * bins
+    q_start = max(0, start)
+    q_end = min(end, chrom_len) if chrom_len > 0 else end
+    if bins <= 0 or end <= start or q_end <= q_start:
+        return out
+
+    bin_size = (end - start) / bins
+    edge = lambda index: start + int(round(index * bin_size))  # noqa: E731
+    # Bins wholly inside the chromosome, then the part-bins at either edge of it.
+    lo = math.ceil((q_start - start) / bin_size)
+    hi = math.floor((q_end - start) / bin_size)
+    spans: List[Tuple[int, int, int, int]] = []  # (first bin, bin count, query start, query end)
+    if hi > lo:
+        spans.append((lo, hi - lo, edge(lo), edge(hi)))
+    if lo > 0 and q_start < edge(lo):
+        spans.append((lo - 1, 1, q_start, min(edge(lo), q_end)))
+    if hi < bins and edge(hi) < q_end and hi >= lo:
+        spans.append((hi, 1, edge(hi), q_end))
+
+    for first, count, q0, q1 in spans:
+        if q1 <= q0:
+            continue
+        raw = bw.stats(chrom, q0, q1, type="mean", nBins=count, exact=exact) or []
+        for offset, value in enumerate(raw[:count]):
+            if value is None or (isinstance(value, float) and math.isnan(value)):
+                continue
+            out[first + offset] = float(value)
+    return out
+
+
 @app.get("/api/browse/bigwig")
 async def browse_bigwig(
     genome: str = "reference",
@@ -16318,30 +16364,19 @@ async def browse_bigwig(
                     "max": None,
                 }
 
-            raw_stats = bw.stats(resolved_chrom, q_start, q_end, nBins=bins, type="mean") or []
-            if len(raw_stats) < bins:
-                raw_stats = raw_stats + [None] * (bins - len(raw_stats))
-            elif len(raw_stats) > bins:
-                raw_stats = raw_stats[:bins]
-
-            values: List[Optional[float]] = []
-            for value in raw_stats:
-                if value is None:
-                    values.append(None)
-                elif isinstance(value, float) and math.isnan(value):
-                    values.append(None)
-                else:
-                    values.append(float(value))
+            values = _bigwig_binned_means(bw, resolved_chrom, int(start), int(end), bins, chrom_len)
 
             observed = [v for v in values if v is not None]
             has_data = len(observed) > 0
 
+            # The requested range, not the clipped one: every bin is (end - start) / bins
+            # wide, and the browser places bin i at start + i * that width.
             return {
                 "path": str(bw_path),
                 "chrom": chrom,
                 "resolved_chrom": resolved_chrom,
-                "start": q_start,
-                "end": q_end,
+                "start": int(start),
+                "end": int(end),
                 "bins": values,
                 "has_data": has_data,
                 "detail": "" if has_data else "No data in this region.",
@@ -25532,7 +25567,7 @@ async def browse_bigwig_batch(payload: BigWigBatchRequest):
                 chrom_len = int(chrom_sizes.get(resolved_chrom, 0))
                 s = max(0, int(tile.start))
                 e = min(chrom_len, int(tile.end)) if chrom_len > 0 else int(tile.end)
-                if e <= s:
+                if e <= s or int(tile.end) <= int(tile.start):
                     results.append({
                         "start": tile.start,
                         "end": tile.end,
@@ -25543,15 +25578,9 @@ async def browse_bigwig_batch(payload: BigWigBatchRequest):
                     })
                     continue
                 try:
-                    raw = bw.stats(resolved_chrom, s, e, type="mean", nBins=tile_bins, exact=False) or []
-                    if len(raw) < tile_bins:
-                        raw = raw + [None] * (tile_bins - len(raw))
-                    elif len(raw) > tile_bins:
-                        raw = raw[:tile_bins]
-                    bins = [
-                        None if value is None or (isinstance(value, float) and math.isnan(value)) else float(value)
-                        for value in raw
-                    ]
+                    bins = _bigwig_binned_means(
+                        bw, resolved_chrom, int(tile.start), int(tile.end), tile_bins, chrom_len,
+                    )
                     valid = [value for value in bins if value is not None]
                     results.append({
                         "start": tile.start,
