@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { isHedgehogShh } from '../achievements/geneFocus.js'
 import { browserControlKey } from '../achievements/browserControls.js'
 import { trackAchievement } from '../achievements/tracker.js'
 import { flushSync } from 'react-dom'
@@ -2184,6 +2185,7 @@ export default function GenomeBrowserView({
             const gene = selectedGenes[key]
             if (gene && gene.id) {
                 next[key] = gene
+                if (isHedgehogShh(panel.species, gene)) trackAchievement('browser.sonic')
             }
         }
         onGeneFocusByGenomeChange(next)

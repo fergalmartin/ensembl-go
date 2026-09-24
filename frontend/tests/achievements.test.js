@@ -268,3 +268,14 @@ test('Control freak keys a control by its stable name, never its label', () => {
   assert.equal(browserControlKey(target(control('button', { tourId: 'browser-pan' }, { disabled: true }))), '')
   assert.equal(browserControlKey(target(null)), '')
 })
+
+test('Gotta go fast! is SHH in any European hedgehog genome, and nothing else', async () => {
+  const { isHedgehogShh } = await import('../src/achievements/geneFocus.js')
+  const hedgehog = { scientific_name: 'Erinaceus europaeus', species_key: 'Erinaceus_europaeus' }
+  assert.equal(isHedgehogShh(hedgehog, { id: 'ENSEACG00000001', name: 'SHH' }), true)
+  assert.equal(isHedgehogShh(hedgehog, { id: 'x', name: 'Shh' }), true)
+  assert.equal(isHedgehogShh({ species_key: 'Erinaceus_europaeus' }, { id: 'x', name: 'SHH' }), true)
+  assert.equal(isHedgehogShh(hedgehog, { id: 'x', name: 'IHH' }), false)
+  assert.equal(isHedgehogShh({ scientific_name: 'Homo sapiens' }, { id: 'x', name: 'SHH' }), false)
+  assert.equal(isHedgehogShh({ scientific_name: 'Erinaceus amurensis' }, { id: 'x', name: 'SHH' }), false)
+})
