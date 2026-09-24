@@ -92,6 +92,7 @@ import NoteGlyph from './NoteGlyph'
 
 // ============ Constants ============
 import { API_BASE } from '../backendRuntime'
+import { overlayOccluders } from '../utils/overlayGeometry'
 import GeneIndexProgressOverlay from './GeneIndexProgressOverlay'
 import {
     GENE_INDEX_TRACK_HEIGHT,
@@ -1523,6 +1524,30 @@ function getScrollerMetrics(scroller) {
         scrollTop: scroller.scrollTop,
         maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight),
     }
+}
+
+// Where the scroller's content can actually be seen from, in client space: its top
+// edge, pushed down by chrome floating over it — the browser's control bar when it
+// is set to follow the scroll. A sticky bar is taken at the place it comes to rest,
+// not where it is now: one still in the flow above the panels sticks as soon as the
+// scroll carries it to the edge, and then covers whatever was parked there.
+function getScrollerVisibleTop(scroller, metrics) {
+    let visibleTop = metrics.top
+    const scope = metrics.isWindowScroller ? document : scroller
+    for (const node of overlayOccluders(scope)) {
+        const rect = node.getBoundingClientRect()
+        if (!(rect.height > 0)) continue
+        const style = window.getComputedStyle(node)
+        let bottom = rect.bottom
+        if (style.position === 'sticky') {
+            const padTop = metrics.isWindowScroller
+                ? 0
+                : (parseFloat(window.getComputedStyle(scroller).paddingTop) || 0)
+            bottom = metrics.top + padTop + (parseFloat(style.top) || 0) + rect.height
+        }
+        visibleTop = Math.max(visibleTop, bottom)
+    }
+    return visibleTop
 }
 
 function scrollScrollerTo(scroller, metrics, top, behavior = 'smooth') {
@@ -7033,8 +7058,9 @@ export default function GenomeBrowser({
         const geneBottomClientY = geneTopClientY + totalGeneHeight
 
         // Park the gene just under whichever edge is lower: the panel's own top or
-        // the visible top of the scroll viewport.
-        const topAlignDelta = geneTopClientY - (Math.max(containerRect.top, scrollerMetrics.top) + topMarginPx)
+        // the visible top of the scroll viewport, below a control bar floating there.
+        const visibleTop = getScrollerVisibleTop(scroller, scrollerMetrics)
+        const topAlignDelta = geneTopClientY - (Math.max(containerRect.top, visibleTop) + topMarginPx)
         const bottomFitDelta = Math.max(
             0,
             geneBottomClientY + bottomMarginPx - Math.min(containerRect.bottom, scrollerMetrics.bottom)
@@ -13066,7 +13092,7 @@ export default function GenomeBrowser({
         const scroller = findNearestScrollable(rootRef.current)
         const scrollerMetrics = getScrollerMetrics(scroller)
         const geneCenterClientY = container.getBoundingClientRect().top + geneCenterY
-        const viewportCenterClientY = (scrollerMetrics.top + scrollerMetrics.bottom) / 2
+        const viewportCenterClientY = (getScrollerVisibleTop(scroller, scrollerMetrics) + scrollerMetrics.bottom) / 2
         const targetScrollTop = clamp(
             scrollerMetrics.scrollTop + (geneCenterClientY - viewportCenterClientY),
             0,

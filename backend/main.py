@@ -12366,7 +12366,10 @@ async def resolve_id(genome: str = "reference", query: str = ""):
                 tx_tags = [t.strip() for t in tx_tags.split(',') if t.strip()]
             elif not isinstance(tx_tags, list):
                 tx_tags = []
-            if not tx_tags:
+            # The indexer writes `tags` for every transcript, empty when it has none,
+            # so only an index that predates it needs the GFF. Treating an empty list
+            # as missing re-scanned the whole annotation on every gene search.
+            if 'tags' not in tx_data:
                 missing_tag_ids.add(str(r['id']))
             prepared.append((r, tx_data, tx_tags))
 
@@ -12439,7 +12442,10 @@ async def browse_transcripts(
                 tx_tags = [t.strip() for t in tx_tags.split(',') if t.strip()]
             elif not isinstance(tx_tags, list):
                 tx_tags = []
-            if not tx_tags:
+            # The indexer writes `tags` for every transcript, empty when it has none,
+            # so only an index that predates it needs the GFF. Treating an empty list
+            # as missing re-scanned the whole annotation on every gene search.
+            if 'tags' not in tx_data:
                 missing_tag_ids.add(str(r['id']))
             prepared.append((r, tx_data, tx_tags))
 
