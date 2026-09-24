@@ -924,6 +924,7 @@ function App() {
   const [theme, setTheme] = useState('dark')
   const [screenshotMode, setScreenshotMode] = useState(false)
   const [genomePlaylistPopoverOpen, setGenomePlaylistPopoverOpen] = useState(false)
+  const [genomePlaylistPopoverPosition, setGenomePlaylistPopoverPosition] = useState({ top: 0, right: 0 })
   const [appOrganiserOpen, setAppOrganiserOpen] = useState(false)
   const [topBarScroll, setTopBarScroll] = useState({ canLeft: false, canRight: false })
   const [applyingGenomePlaylistId, setApplyingGenomePlaylistId] = useState('')
@@ -6157,6 +6158,36 @@ function App() {
     }
   }, [genomePlaylistPopoverOpen])
 
+  // The popover lives outside the scrolling button strip (which would clip it), so it
+  // is pinned under its button by measurement: 8px below the button, right edges
+  // aligned. Re-measured whenever the strip scrolls or the window resizes, because
+  // either moves the button relative to the wrapper.
+  useLayoutEffect(() => {
+    if (!genomePlaylistPopoverOpen) return undefined
+    const strip = topBarScrollRef.current
+    const place = () => {
+      const button = genomePlaylistActionButtonRef.current
+      const anchor = strip?.parentElement
+      if (!button || !anchor) return
+      const buttonRect = button.getBoundingClientRect()
+      const anchorRect = anchor.getBoundingClientRect()
+      const next = {
+        top: Math.round(buttonRect.bottom - anchorRect.top + 8),
+        right: Math.round(anchorRect.right - buttonRect.right),
+      }
+      setGenomePlaylistPopoverPosition((prev) => (
+        prev.top === next.top && prev.right === next.right ? prev : next
+      ))
+    }
+    place()
+    strip?.addEventListener('scroll', place, { passive: true })
+    window.addEventListener('resize', place)
+    return () => {
+      strip?.removeEventListener('scroll', place)
+      window.removeEventListener('resize', place)
+    }
+  }, [genomePlaylistPopoverOpen, topBarButtonRows])
+
   useEffect(() => {
     if (draggedTopButtonId && !activeAppButtons.includes(draggedTopButtonId)) {
       setDraggedTopButtonId('')
@@ -6605,68 +6636,72 @@ function App() {
                             )}
                           </button>
                         )
-                        if (buttonId !== 'genome_playlist') return buttonNode
-                        return (
-                          <div key={buttonId} className="relative">
-                            {buttonNode}
-                            <div
-                              ref={genomePlaylistPopoverRef}
-                              data-tour-id={genomePlaylistPopoverOpen ? 'app-playlist-popover' : undefined}
-                              className={`absolute right-0 top-full mt-2 w-72 origin-top-right rounded-xl border shadow-2xl z-50 overflow-hidden transition-all duration-200 ${genomePlaylistPopoverOpen
-                                ? 'opacity-100 translate-y-0 pointer-events-auto'
-                                : 'opacity-0 -translate-y-2 pointer-events-none'
-                              } ${isLight ? 'bg-white border-gray-200 text-gray-900' : 'bg-gray-900 border-gray-700 text-gray-100'}`}
-                            >
-                              <div className={`px-4 py-3 border-b ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700 bg-gray-800'}`}>
-                                <div className="text-sm font-bold">Genome Playlists</div>
-                              </div>
-                              <div className="max-h-80 overflow-y-auto themed-scrollbar">
-                                {sortedGenomePlaylists.length === 0 ? (
-                                  <div className={`px-4 py-4 text-sm ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                    No playlists yet.
-                                  </div>
-                                ) : sortedGenomePlaylists.map((playlist) => {
-                                  const isSelectedPlaylist = String(config?.selected_genome_playlist_id || '') === playlist.id
-                                  const isApplying = applyingGenomePlaylistId === playlist.id
-                                  return (
-                                    <button
-                                      key={playlist.id}
-                                      data-tour-id={`app-playlist-option-${playlistTourSlug(playlist.name)}`}
-                                      type="button"
-                                      disabled={Boolean(applyingGenomePlaylistId)}
-                                      onClick={() => handleTopBarPlaylistSelect(playlist)}
-                                      className={`w-full px-4 py-3 text-left transition-colors border-b last:border-b-0 ${isLight
-                                        ? 'border-gray-100 hover:bg-blue-50 disabled:hover:bg-white'
-                                        : 'border-gray-800 hover:bg-blue-900/20 disabled:hover:bg-gray-900'
-                                      } ${isSelectedPlaylist ? (isLight ? 'bg-blue-50' : 'bg-blue-900/20') : ''}`}
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <div className="min-w-0 flex-1">
-                                          <div className={`text-sm font-semibold truncate ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>{playlist.name}</div>
-                                          <div className={`text-xs mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                            {(playlist.genomes || []).length} genome{(playlist.genomes || []).length === 1 ? '' : 's'}
-                                          </div>
-                                        </div>
-                                        {isApplying ? (
-                                          <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                                        ) : isSelectedPlaylist ? (
-                                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className={isLight ? 'text-blue-600' : 'text-blue-300'}>
-                                            <path d="M20 6 9 17l-5-5" />
-                                          </svg>
-                                        ) : null}
-                                      </div>
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            </div>
-                          </div>
-                        )
+                        return buttonNode
                       })}
                     </div>
                   ))}
                     </div>
                   </div>
+
+                  {/* The playlist popover. It hangs off this wrapper rather than off its
+                      button because the button sits inside the horizontally scrolling
+                      strip, which clips anything that drops below its rows. Placed from
+                      the button's measured edges instead; see the effect that sets
+                      `genomePlaylistPopoverPosition`. */}
+                  {activeAppButtons.includes('genome_playlist') && (
+                  <div
+                    ref={genomePlaylistPopoverRef}
+                    data-tour-id={genomePlaylistPopoverOpen ? 'app-playlist-popover' : undefined}
+                    style={genomePlaylistPopoverPosition}
+                    className={`absolute w-72 origin-top-right rounded-xl border shadow-2xl z-50 overflow-hidden transition-all duration-200 ${genomePlaylistPopoverOpen
+                      ? 'opacity-100 translate-y-0 pointer-events-auto'
+                      : 'opacity-0 -translate-y-2 pointer-events-none'
+                    } ${isLight ? 'bg-white border-gray-200 text-gray-900' : 'bg-gray-900 border-gray-700 text-gray-100'}`}
+                  >
+                    <div className={`px-4 py-3 border-b ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700 bg-gray-800'}`}>
+                      <div className="text-sm font-bold">Genome Playlists</div>
+                    </div>
+                    <div className="max-h-80 overflow-y-auto themed-scrollbar">
+                      {sortedGenomePlaylists.length === 0 ? (
+                        <div className={`px-4 py-4 text-sm ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                          No playlists yet.
+                        </div>
+                      ) : sortedGenomePlaylists.map((playlist) => {
+                        const isSelectedPlaylist = String(config?.selected_genome_playlist_id || '') === playlist.id
+                        const isApplying = applyingGenomePlaylistId === playlist.id
+                        return (
+                          <button
+                            key={playlist.id}
+                            data-tour-id={`app-playlist-option-${playlistTourSlug(playlist.name)}`}
+                            type="button"
+                            disabled={Boolean(applyingGenomePlaylistId)}
+                            onClick={() => handleTopBarPlaylistSelect(playlist)}
+                            className={`w-full px-4 py-3 text-left transition-colors border-b last:border-b-0 ${isLight
+                              ? 'border-gray-100 hover:bg-blue-50 disabled:hover:bg-white'
+                              : 'border-gray-800 hover:bg-blue-900/20 disabled:hover:bg-gray-900'
+                            } ${isSelectedPlaylist ? (isLight ? 'bg-blue-50' : 'bg-blue-900/20') : ''}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className={`text-sm font-semibold truncate ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>{playlist.name}</div>
+                                <div className={`text-xs mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                  {(playlist.genomes || []).length} genome{(playlist.genomes || []).length === 1 ? '' : 's'}
+                                </div>
+                              </div>
+                              {isApplying ? (
+                                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                              ) : isSelectedPlaylist ? (
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className={isLight ? 'text-blue-600' : 'text-blue-300'}>
+                                  <path d="M20 6 9 17l-5-5" />
+                                </svg>
+                              ) : null}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  )}
 
                   {/* One tall arrow over whichever end the strip can still scroll to.
                       Drawn full height of the rows and stretched vertically, so it reads
