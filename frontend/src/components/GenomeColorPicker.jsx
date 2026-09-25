@@ -117,6 +117,21 @@ export function MixedColorSwatch({ size = 18, className = '', title = '' }) {
     )
 }
 
+/** One colour as the app shows it: a small rounded square, like the Genome Selector's
+ *  row swatch. Anything that displays a chosen colour uses this, so they all match. */
+export function ColorSwatch({ color, size = 18, className = '', title = '' }) {
+    // The Selector's 18px swatch has a 6px radius. A fixed rounded-md would turn a small
+    // swatch into a circle, so the radius keeps that proportion instead.
+    const radius = Math.max(2, Math.round(size * (size >= 16 ? 1 / 3 : 1 / 4)))
+    return (
+        <span
+            className={`inline-block shrink-0 border border-white/60 shadow-sm ${className}`}
+            style={{ width: size, height: size, borderRadius: radius, backgroundColor: color }}
+            title={title}
+        />
+    )
+}
+
 export default function GenomeColorPicker({
     isOpen,
     theme = 'dark',
@@ -130,6 +145,9 @@ export default function GenomeColorPicker({
     // its own, rather than previewing genes it does not have.
     renderPreview,
     paletteHint = 'A colour mixed here joins the palette when it is applied, ready for the next genome.',
+    // What returning to the default means for the subject: "Automatic" for a track
+    // whose default is whatever its file says.
+    defaultLabel = 'Use default',
     onApply,
     onClose,
 }) {
@@ -249,7 +267,7 @@ export default function GenomeColorPicker({
                         </button>
                         <span className={`text-xs font-mono ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
                             {selected}
-                            {selected === normalizedDefault ? ' · default' : ''}
+                            {selected === normalizedDefault ? ` · ${defaultLabel === 'Use default' ? 'default' : defaultLabel.toLowerCase()}` : ''}
                         </span>
                     </div>
                     <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
@@ -271,7 +289,7 @@ export default function GenomeColorPicker({
                             : (isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-300 hover:bg-gray-700')
                             }`}
                     >
-                        Use default
+                        {defaultLabel}
                     </button>
                     <div className="flex items-center gap-3">
                         <button

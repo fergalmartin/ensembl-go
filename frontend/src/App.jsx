@@ -3721,6 +3721,11 @@ function App() {
       // pre-adoption state straight back over the user's colours, playlists and
       // selections. Take the server's answer as the saved state, so the settings the
       // directory carried survive into the session that just adopted them.
+      //
+      // Only what the server itself changed is taken, and only where nothing here has
+      // changed it since this write went out. The answer describes the moment of this
+      // request, and several are often in flight: taking all of it let a slow reply
+      // restore a genome that had been deselected in the meantime.
       let saved = nextConfig
       if (res.ok) {
         try {
@@ -3733,8 +3738,18 @@ function App() {
       }
       savedConfigRef.current = { ...saved }
       if (saved !== nextConfig) {
-        configRef.current = { ...configRef.current, ...saved }
-        setConfig((prev) => ({ ...prev, ...saved }))
+        const current = configRef.current || {}
+        const patch = {}
+        for (const [key, value] of Object.entries(saved)) {
+          const sent = JSON.stringify(nextConfig[key])
+          if (JSON.stringify(value) === sent) continue
+          if (JSON.stringify(current[key]) !== sent) continue
+          patch[key] = value
+        }
+        if (Object.keys(patch).length) {
+          configRef.current = { ...current, ...patch }
+          setConfig((prev) => ({ ...prev, ...patch }))
+        }
       }
       return true
     } catch (e) {
@@ -4482,7 +4497,12 @@ function App() {
 	    const viewCapacity = getViewActiveCapacity(currentView)
 	    const activeIndex = active.findIndex((item) => speciesItemKey(item) === key)
 	    const inactiveIndex = inactive.findIndex((item) => speciesItemKey(item) === key)
-	    if (source === 'selector_remove' && (activeIndex >= 0 || inactiveIndex >= 0)) {
+	    // The selector's tick means "chosen at all", active or not, so unticking there takes
+	    // the genome out outright. Going through the pill logic below only demoted an active
+	    // genome to inactive — still ticked — and once nothing was left active, the next
+	    // click fell through to activation and put it straight back.
+	    const fromSelector = source === 'selector' || source === 'selector_remove'
+	    if (fromSelector && (activeIndex >= 0 || inactiveIndex >= 0)) {
 	      const nextActive = active.filter((item) => speciesItemKey(item) !== key)
 	      const nextInactive = inactive.filter((item) => speciesItemKey(item) !== key)
 	      let nextFocus = buildFocusFromActive(nextActive, {
@@ -4493,7 +4513,7 @@ function App() {
 	      suppressViewSyncRef.current = true
 	      try {
 	        setInactiveSelectedSpecies(nextInactive)
-	        persistNextPreviousSessionGenomes([...nextActive, ...nextInactive], currentConfig)
+	        persistNextPreviousSessionGenomes([...nextActive, ...nextInactive], { ...currentConfig, active_species: nextActive })
 	        if (
 	          nextFocus.primaryKey !== dualViewFocusRef.current.primaryKey ||
 	          nextFocus.secondaryKey !== dualViewFocusRef.current.secondaryKey
@@ -4567,12 +4587,6 @@ function App() {
       nextFocus = buildFocusFromActive(nextActive, nextFocus)
     } else {
       if (source === 'selector' && currentView !== 'genome_browser' && currentView !== 'structural_variation' && active.length > 0) {
-	        if (inactiveIndex >= 0) {
-	          const trimmedInactive = inactive.filter((item) => speciesItemKey(item) !== key)
-	          setInactiveSelectedSpecies(trimmedInactive)
-	          persistNextPreviousSessionGenomes([...active, ...trimmedInactive], currentConfig)
-	          return { ok: true, activated: false, deselected: true }
-	        }
 	        const appendedInactive = appendUniqueSpecies(inactive, species)
 	        setInactiveSelectedSpecies(appendedInactive)
 	        persistNextPreviousSessionGenomes([...active, ...appendedInactive], currentConfig)
@@ -5062,7 +5076,7 @@ function App() {
         setDualViewFocus(nextFocus)
       }
 
-	      persistNextPreviousSessionGenomes([...nextActive, ...nextInactive], currentConfig)
+	      persistNextPreviousSessionGenomes([...nextActive, ...nextInactive], { ...currentConfig, active_species: nextActive })
 	      if (!activeChanged) return { ok: true }
 
 	      const nextConfig = getAlignedGenomeConfigForView(

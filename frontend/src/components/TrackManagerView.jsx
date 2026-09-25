@@ -2,7 +2,10 @@
  * TrackManagerView — register, browse, and manage custom data tracks.
  * Tracks are persisted to disk via the backend's /api/tracks endpoints.
  */
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import GenomeColorPicker, { ColorSwatch } from './GenomeColorPicker'
+import { genomeColorPalette } from '../genomeColorSchemes'
 import FileBrowserModal from './FileBrowserModal'
 import { TUTORIAL_TRACK_PRESETS } from '../utils/tutorialTrackRegistry'
 
@@ -28,7 +31,7 @@ const DISPLAY_MODES = {
         { id: 'adaptive', label: 'Block Lollipop' },
     ],
     bed: [{ id: 'intervals', label: 'Intervals' }, { id: 'density', label: 'Density' }],
-    bigbed: [{ id: 'intervals', label: 'Intervals' }],
+    bigbed: [{ id: 'intervals', label: 'Intervals' }, { id: 'density', label: 'Density' }],
     splice_junctions: [{ id: 'arcs', label: 'Arcs (Sashimi)' }],
     bam: [{ id: 'coverage', label: 'Coverage' }, { id: 'reads_coverage', label: 'Reads + Coverage' }],
     long_reads: [{ id: 'collapsed_transcripts', label: 'Collapsed Transcripts' }],
@@ -350,6 +353,12 @@ function normalizeVcfSettings(raw = null, previous = null) {
     }
 }
 
+// '' means automatic: the file's own itemRgb colours, else the type's default.
+function normalizeBedSettings(raw = null) {
+    const source = raw && typeof raw === 'object' ? raw : {}
+    return { color: normalizeHexColor(source.color, '') }
+}
+
 function normalizeZonedColors(rawColors, fallbackColors) {
     const fallback = Array.isArray(fallbackColors) && fallbackColors.length >= 4
         ? fallbackColors.slice(0, 4)
@@ -604,53 +613,154 @@ function SpliceSettingsEditor({ value, onChange, isLight }) {
     )
 }
 
-function VcfSettingsEditor({ settings, onChange, isLight }) {
+function VcfSettingsEditor({ settings, onChange, isLight, trackLabel = '' }) {
     const normalized = normalizeVcfSettings(settings)
-    const inputCls = `w-full px-2.5 py-1.5 rounded-lg text-sm border focus:outline-none focus:ring-2 ${isLight
-        ? 'bg-white border-gray-300 text-gray-900 focus:ring-blue-500/40'
-        : 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500/40'}`
-    const labelCls = `block text-xs font-medium mb-1 ${isLight ? 'text-gray-600' : 'text-gray-400'}`
-
     return (
-        <div className={`rounded-lg border p-3 space-y-3 ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800/40'}`}>
+        <div className={`rounded-lg border p-3 ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800/40'}`}>
             <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <label className={labelCls}>Genic color</label>
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="color"
-                            value={normalized.genic_color}
-                            onChange={(e) => onChange({ ...normalized, genic_color: e.target.value })}
-                            className="h-8 w-12 rounded border border-gray-400/40 bg-transparent cursor-pointer"
-                        />
-                        <input
-                            type="text"
-                            value={normalized.genic_color}
-                            onChange={(e) => onChange({ ...normalized, genic_color: e.target.value })}
-                            className={inputCls}
-                            placeholder="#00b692"
-                        />
-                    </div>
-                </div>
-                <div>
-                    <label className={labelCls}>Intergenic color</label>
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="color"
-                            value={normalized.intergenic_color}
-                            onChange={(e) => onChange({ ...normalized, intergenic_color: e.target.value })}
-                            className="h-8 w-12 rounded border border-gray-400/40 bg-transparent cursor-pointer"
-                        />
-                        <input
-                            type="text"
-                            value={normalized.intergenic_color}
-                            onChange={(e) => onChange({ ...normalized, intergenic_color: e.target.value })}
-                            className={inputCls}
-                            placeholder="#96d0c9"
-                        />
-                    </div>
-                </div>
+                <TrackColorField
+                    label="Genic colour"
+                    color={normalized.genic_color}
+                    defaultColor={VCF_SETTINGS_DEFAULTS.genic_color}
+                    onChange={(genic_color) => onChange({ ...normalized, genic_color })}
+                    isLight={isLight}
+                    previewKind="variants"
+                    pickerTitle="Genic variant colour"
+                    pickerSubtitle={trackLabel}
+                />
+                <TrackColorField
+                    label="Intergenic colour"
+                    color={normalized.intergenic_color}
+                    defaultColor={VCF_SETTINGS_DEFAULTS.intergenic_color}
+                    onChange={(intergenic_color) => onChange({ ...normalized, intergenic_color })}
+                    isLight={isLight}
+                    previewKind="variants"
+                    pickerTitle="Intergenic variant colour"
+                    pickerSubtitle={trackLabel}
+                />
             </div>
+        </div>
+    )
+}
+
+// The app's palette (built-in plus the user's own colours), provided once by the view so
+// every track colour field offers the same choices as the Genome Selector.
+const TrackColorPaletteContext = createContext(null)
+
+/** A small picture of a track drawn in one colour, for the picker's preview. */
+function TrackColorPreview({ color, kind = 'intervals', isLight }) {
+    const bg = isLight ? '#ffffff' : '#1E2938'
+    const axis = isLight ? '#d8dee7' : '#3a4557'
+    let body
+    if (kind === 'signal') {
+        const ys = [30, 26, 12, 20, 34, 8, 16, 28, 22, 6, 18, 30, 24, 14, 32, 26, 10, 22, 30, 20]
+        const step = 320 / (ys.length - 1)
+        const line = ys.map((y, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${y + 10}`).join(' ')
+        body = <path d={`${line} L320,50 L0,50 Z`} fill={color} opacity="0.85" />
+    } else if (kind === 'variants') {
+        body = [18, 46, 60, 104, 150, 158, 212, 250, 284].map((x, i) => (
+            <g key={x}>
+                <line x1={x} x2={x} y1={46} y2={18 + (i % 3) * 7} stroke={color} strokeWidth="1.5" />
+                <circle cx={x} cy={16 + (i % 3) * 7} r="3" fill={color} />
+            </g>
+        ))
+    } else {
+        body = [[10, 26], [52, 12], [80, 40], [150, 18], [180, 8], [214, 52], [290, 20]].map(([x, w]) => (
+            <rect key={x} x={x} y={22} width={w} height={12} rx="1.5" fill={color} opacity="0.9" />
+        ))
+    }
+    return (
+        <div className={`rounded-xl border overflow-hidden ${isLight ? 'border-gray-200' : 'border-gray-700'}`} style={{ background: bg }}>
+            <svg viewBox="0 0 320 56" className="block w-full" role="img" aria-label={`Track preview in ${color}`}>
+                <line x1="0" x2="320" y1="50.5" y2="50.5" stroke={axis} strokeWidth="1" />
+                {body}
+            </svg>
+        </div>
+    )
+}
+
+/** A track colour: the app's rounded swatch, which opens the shared colour picker.
+ *
+ *  `automatic` is for a colour whose default is "whatever the file says" (BED itemRgb):
+ *  then an empty value means automatic, and choosing the default colour returns to it. */
+function TrackColorField({
+    label,
+    color,
+    defaultColor,
+    onChange,
+    isLight,
+    previewKind = 'intervals',
+    pickerTitle = 'Track colour',
+    pickerSubtitle = '',
+    automatic = false,
+    compact = false,
+}) {
+    const palette = useContext(TrackColorPaletteContext)
+    const [open, setOpen] = useState(false)
+    const isAutomatic = automatic && !color
+    const shown = color || defaultColor
+    // Too narrow for the marker in the compact grid; the zones have "Reset to defaults".
+    const isDefault = !automatic && !compact && shown === defaultColor
+    return (
+        <div className={compact ? 'flex items-center gap-2' : ''}>
+            {label ? (
+                <span className={compact
+                    ? `text-xs w-12 shrink-0 ${isLight ? 'text-gray-700' : 'text-gray-300'}`
+                    : `block text-xs font-medium mb-1 ${isLight ? 'text-gray-600' : 'text-gray-400'}`}
+                >
+                    {label}
+                </span>
+            ) : null}
+            <button
+                type="button"
+                onClick={() => setOpen(true)}
+                className={`inline-flex items-center gap-2 rounded-lg px-1.5 py-1 transition-colors ${isLight ? 'hover:bg-blue-50' : 'hover:bg-blue-900/20'}`}
+                title={`${pickerTitle}: ${isAutomatic ? 'automatic' : shown}`}
+                aria-label={`Choose ${pickerTitle.toLowerCase()}`}
+            >
+                <ColorSwatch color={shown} />
+                <span className={`text-xs font-mono ${isLight ? 'text-gray-600' : 'text-gray-300'}`}>
+                    {isAutomatic ? 'Automatic' : shown}
+                    {isDefault ? <span className={isLight ? 'text-gray-400' : 'text-gray-500'}> · default</span> : null}
+                </span>
+            </button>
+            {open && typeof document !== 'undefined' ? createPortal(
+                <GenomeColorPicker
+                    isOpen
+                    theme={isLight ? 'light' : 'dark'}
+                    title={pickerTitle}
+                    subtitle={pickerSubtitle}
+                    palette={palette || genomeColorPalette(null)}
+                    currentColor={shown}
+                    defaultColor={defaultColor}
+                    defaultLabel={automatic ? 'Automatic' : 'Use default'}
+                    paletteHint={automatic
+                        ? 'Automatic uses the colours written in the file where it has them, and this default where it does not.'
+                        : 'Choose from the palette, or mix a custom colour.'}
+                    renderPreview={(c) => <TrackColorPreview color={c} kind={previewKind} isLight={isLight} />}
+                    onApply={(next) => onChange(automatic && next === defaultColor ? '' : next)}
+                    onClose={() => setOpen(false)}
+                />,
+                document.body,
+            ) : null}
+        </div>
+    )
+}
+
+function BedSettingsEditor({ settings, trackType, onChange, isLight, trackLabel = '' }) {
+    const normalized = normalizeBedSettings(settings)
+    return (
+        <div className={`rounded-lg border p-3 ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800/40'}`}>
+        <TrackColorField
+            color={normalized.color}
+            defaultColor={TYPE_COLORS[trackType] || TYPE_COLORS.bed}
+            onChange={(color) => onChange({ color })}
+            isLight={isLight}
+            previewKind="intervals"
+            pickerTitle="Track colour"
+            pickerSubtitle={trackLabel}
+            automatic
+        />
         </div>
     )
 }
@@ -747,49 +857,46 @@ function BigWigSettingsEditor({
                     </div>
                     {displayMode === 'signal_plot' ? (
                         <div>
-                            <label className={labelCls}>Plot color</label>
-                            <div className="flex items-center gap-2">
-                                <input
-                                    type="color"
-                                    value={effectiveSettings.plot_color}
-                                    onChange={(e) => onSettingsChange({
-                                        ...effectiveSettings,
-                                        plot_color: e.target.value,
-                                        use_default_plot_color: false,
-                                    })}
-                                    className="h-8 w-12 rounded border border-gray-400/40 bg-transparent cursor-pointer"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={resetPlotColor}
-                                    className={`px-2.5 py-1.5 rounded-md text-xs font-medium ${isLight ? 'text-blue-700 bg-blue-50 hover:bg-blue-100' : 'text-blue-300 bg-blue-900/30 hover:bg-blue-900/50'}`}
-                                >
-                                    Reset to default
-                                </button>
-                            </div>
+                            <TrackColorField
+                                label="Plot colour"
+                                color={effectiveSettings.plot_color}
+                                defaultColor={BIGWIG_DEFAULTS[effectiveSettings.data_type].plot_color}
+                                onChange={(plot_color) => {
+                                    if (plot_color === BIGWIG_DEFAULTS[effectiveSettings.data_type].plot_color) {
+                                        resetPlotColor()
+                                        return
+                                    }
+                                    onSettingsChange({ ...effectiveSettings, plot_color, use_default_plot_color: false })
+                                }}
+                                isLight={isLight}
+                                previewKind="signal"
+                                pickerTitle="Plot colour"
+                            />
                         </div>
                     ) : (
                         <div>
-                            <label className={labelCls}>Zone colors</label>
+                            <label className={labelCls}>Zone colours</label>
                             <div className="grid grid-cols-2 gap-2">
                                 {effectiveSettings.zoned_colors.map((color, idx) => (
-                                    <label key={idx} className={`flex items-center gap-2 text-xs ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
-                                        <span className="w-12 shrink-0">Zone {idx + 1}</span>
-                                        <input
-                                            type="color"
-                                            value={color}
-                                            onChange={(e) => {
-                                                const next = effectiveSettings.zoned_colors.slice(0, 4)
-                                                next[idx] = e.target.value
-                                                onSettingsChange({
-                                                    ...effectiveSettings,
-                                                    zoned_colors: next,
-                                                    use_default_zoned_colors: false,
-                                                })
-                                            }}
-                                            className="h-7 w-10 rounded border border-gray-400/40 bg-transparent cursor-pointer"
-                                        />
-                                    </label>
+                                    <TrackColorField
+                                        key={idx}
+                                        compact
+                                        label={`Zone ${idx + 1}`}
+                                        color={color}
+                                        defaultColor={BIGWIG_DEFAULTS[effectiveSettings.data_type].zoned_colors[idx]}
+                                        onChange={(nextColor) => {
+                                            const next = effectiveSettings.zoned_colors.slice(0, 4)
+                                            next[idx] = nextColor
+                                            onSettingsChange({
+                                                ...effectiveSettings,
+                                                zoned_colors: next,
+                                                use_default_zoned_colors: false,
+                                            })
+                                        }}
+                                        isLight={isLight}
+                                        previewKind="signal"
+                                        pickerTitle={`Zone ${idx + 1} colour`}
+                                    />
                                 ))}
                             </div>
                             <button
@@ -960,6 +1067,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
     const [bigWigSettings, setBigWigSettings] = useState(normalizeBigWigSettings(null))
     const [bigWigDataType, setBigWigDataType] = useState('')
     const [vcfSettings, setVcfSettings] = useState(normalizeVcfSettings(null))
+    const [bedSettings, setBedSettings] = useState(normalizeBedSettings(null))
     const [fileBrowserOpen, setFileBrowserOpen] = useState(false)
     const [registering, setRegistering] = useState(false)
     const [error, setError] = useState('')
@@ -986,6 +1094,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
         setBigWigSettings(normalizeBigWigSettings(seed.dataType ? { data_type: seed.dataType } : null))
         setDisplayMode(seed.displayMode || '')
         setVcfSettings(normalizeVcfSettings(null))
+        setBedSettings(normalizeBedSettings(null))
         setSpliceSettings(DEFAULT_SPLICE_SETTINGS)
         setGenomeKey(seed.genomeKey || '')
         setFileBrowserOpen(Boolean(seed.browserOpen))
@@ -1014,6 +1123,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
             setDisplayMode(detected === 'vcf' ? normalizeVcfDisplayMode(modes.length ? modes[0].id : '') : (modes.length ? modes[0].id : ''))
             setVcfSettings(normalizeVcfSettings(null))
         }
+        setBedSettings(normalizeBedSettings(null))
         setSpliceSettings(DEFAULT_SPLICE_SETTINGS)
         setStep(2)
     }
@@ -1032,6 +1142,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
             setVcfSettings(normalizeVcfSettings(null))
         }
         if (newType === 'splice_junctions') setSpliceSettings(DEFAULT_SPLICE_SETTINGS)
+        setBedSettings(normalizeBedSettings(null))
     }
 
     const handleBigWigSettingsChange = (nextSettings) => {
@@ -1085,6 +1196,9 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                         : undefined,
                     vcf_settings: effectiveType === 'vcf'
                         ? normalizeVcfSettings(vcfSettings)
+                        : undefined,
+                    bed_settings: effectiveType === 'bed' || effectiveType === 'bigbed'
+                        ? normalizeBedSettings(bedSettings)
                         : undefined,
                 }),
             })
@@ -1255,10 +1369,24 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                 )}
                                 {effectiveType === 'vcf' && (
                                     <div data-tour-id="track-wizard-vcf">
-                                        <label className={labelCls}>VCF colors</label>
+                                        <label className={labelCls}>VCF colours</label>
                                         <VcfSettingsEditor
+                                            trackLabel={label}
                                             settings={vcfSettings}
                                             onChange={(next) => setVcfSettings(normalizeVcfSettings(next, vcfSettings))}
+                                            isLight={isLight}
+                                        />
+                                    </div>
+                                )}
+
+                                {(effectiveType === 'bed' || effectiveType === 'bigbed') && (
+                                    <div>
+                                        <label className={labelCls}>Colour</label>
+                                        <BedSettingsEditor
+                                            trackLabel={label}
+                                            settings={bedSettings}
+                                            trackType={effectiveType}
+                                            onChange={(next) => setBedSettings(normalizeBedSettings(next))}
                                             isLight={isLight}
                                         />
                                     </div>
@@ -1344,6 +1472,8 @@ function TrackCard({ track, isLight, genomeOptions, onUpdate, onDelete }) {
     const [editSpliceSettings, setEditSpliceSettings] = useState(normalizeSpliceSettings(track.splice_settings))
     const [editBigWigSettings, setEditBigWigSettings] = useState(normalizeBigWigSettings(track.bigwig_settings))
     const [editVcfSettings, setEditVcfSettings] = useState(normalizeVcfSettings(track.vcf_settings))
+    const [editBedSettings, setEditBedSettings] = useState(normalizeBedSettings(track.bed_settings))
+    const isBedLike = track.type === 'bed' || track.type === 'bigbed'
     const [saving, setSaving] = useState(false)
     const [saveWarning, setSaveWarning] = useState('')
     const spliceSummary = useMemo(
@@ -1358,6 +1488,10 @@ function TrackCard({ track, isLight, genomeOptions, onUpdate, onDelete }) {
         if (track.type !== 'vcf') return null
         return normalizeVcfSettings(track.vcf_settings)
     }, [track.type, track.vcf_settings])
+    const bedSummary = useMemo(() => {
+        if (track.type !== 'bed' && track.type !== 'bigbed') return null
+        return normalizeBedSettings(track.bed_settings)
+    }, [track.type, track.bed_settings])
 
     const genomeName = useMemo(() => {
         const opt = findGenomeOption(genomeOptions, track.genome_key)
@@ -1400,6 +1534,7 @@ function TrackCard({ track, isLight, genomeOptions, onUpdate, onDelete }) {
                     splice_settings: track.type === 'splice_junctions' ? spliceSettingsPayload : undefined,
                     bigwig_settings: track.type === 'bigwig' ? bigWigSettingsPayload : undefined,
                     vcf_settings: track.type === 'vcf' ? vcfSettingsPayload : undefined,
+                    bed_settings: isBedLike ? normalizeBedSettings(editBedSettings) : undefined,
                 }),
             })
             if (!res.ok) throw new Error()
@@ -1470,8 +1605,23 @@ function TrackCard({ track, isLight, genomeOptions, onUpdate, onDelete }) {
                                 </span>
                             )}
                             {vcfSummary && (
-                                <span className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                    Colors: genic {vcfSummary.genic_color}, intergenic {vcfSummary.intergenic_color}
+                                <span className={`text-xs inline-flex items-center gap-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                    <span>Colours: genic</span>
+                                    <ColorSwatch color={vcfSummary.genic_color} size={12} />
+                                    <span>{vcfSummary.genic_color}, intergenic</span>
+                                    <ColorSwatch color={vcfSummary.intergenic_color} size={12} />
+                                    <span>{vcfSummary.intergenic_color}</span>
+                                </span>
+                            )}
+                            {bedSummary && (
+                                <span className={`text-xs inline-flex items-center gap-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                    <span>Colour:</span>
+                                    {bedSummary.color ? (
+                                        <>
+                                            <ColorSwatch color={bedSummary.color} size={12} />
+                                            <span>{bedSummary.color}</span>
+                                        </>
+                                    ) : <span>automatic</span>}
                                 </span>
                             )}
                             {spliceSummary && (
@@ -1502,6 +1652,7 @@ function TrackCard({ track, isLight, genomeOptions, onUpdate, onDelete }) {
                                 setEditSpliceSettings(normalizeSpliceSettings(track.splice_settings))
                                 setEditBigWigSettings(normalizeBigWigSettings(track.bigwig_settings))
                                 setEditVcfSettings(normalizeVcfSettings(track.vcf_settings))
+                                setEditBedSettings(normalizeBedSettings(track.bed_settings))
                                 setSaveWarning('')
                             }}
                             className={`p-1.5 rounded-lg text-xs ${isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-700'}`}
@@ -1543,10 +1694,23 @@ function TrackCard({ track, isLight, genomeOptions, onUpdate, onDelete }) {
                     )}
                     {track.type === 'vcf' && (
                         <div>
-                            <label className={`block text-xs font-medium mb-1 ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>VCF colors</label>
+                            <label className={`block text-xs font-medium mb-1 ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>VCF colours</label>
                             <VcfSettingsEditor
+                                trackLabel={editLabel}
                                 settings={editVcfSettings}
                                 onChange={(next) => setEditVcfSettings(normalizeVcfSettings(next, editVcfSettings))}
+                                isLight={isLight}
+                            />
+                        </div>
+                    )}
+                    {isBedLike && (
+                        <div>
+                            <label className={`block text-xs font-medium mb-1 ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>Colour</label>
+                            <BedSettingsEditor
+                                trackLabel={editLabel}
+                                settings={editBedSettings}
+                                trackType={track.type}
+                                onChange={(next) => setEditBedSettings(normalizeBedSettings(next))}
                                 isLight={isLight}
                             />
                         </div>
@@ -2185,7 +2349,10 @@ export default function TrackManagerView({
         return map
     }, [selectedGenomesForHub, genomeOptions])
 
+    const colorPalette = useMemo(() => genomeColorPalette(config), [config])
+
     return (
+        <TrackColorPaletteContext.Provider value={colorPalette}>
         <div data-screenshot-capture="view" data-tour-id="track-manager-view" className={`h-full overflow-y-auto ${bg}`} style={{ minHeight: 0 }}>
             {/* ── Header ── */}
             <div data-tour-id="track-manager-header" className={`px-6 py-4 border-b ${borderColor} ${contentBg}`}>
@@ -2508,5 +2675,6 @@ export default function TrackManagerView({
                 />
             )}
         </div>
+        </TrackColorPaletteContext.Provider>
     )
 }

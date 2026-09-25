@@ -272,12 +272,30 @@ const BIGBED_DETAIL_TRACK_BASE_HEIGHT = 34
 const BIGBED_DETAIL_TRACK_MAX_HEIGHT = 240
 const BIGBED_DETAIL_MAX_FEATURES_PER_TILE = 3000
 const BIGBED_DETAIL_DENSE_FEATURE_THRESHOLD = 2500
+// Blocks are ~2px at each level's finest zoom, so separate features stay separate on
+// screen; at 25-130px they used to merge a run of peaks into one slab. The ids changed
+// with the sizes so tiles cached at the old sizes are not reused.
 const BIGBED_BLOCK_LEVELS = [
-    { id: 'L0', minBpPerPx: 1500, tileSpanBp: 4_000_000, blockBp: 40_000 },
-    { id: 'L1', minBpPerPx: 320, tileSpanBp: 800_000, blockBp: 8_000 },
-    { id: 'L2', minBpPerPx: 60, tileSpanBp: 200_000, blockBp: 2_000 },
-    { id: 'L3', minBpPerPx: BIGBED_DETAIL_ENTER_BP_PER_PX, tileSpanBp: 80_000, blockBp: 500 },
+    // A whole chromosome at B0 alone is ~70 tiles; this keeps it to a handful.
+    { id: 'B00', minBpPerPx: 12_000, tileSpanBp: 32_000_000, blockBp: 24_000 },
+    { id: 'B0', minBpPerPx: 1500, tileSpanBp: 4_000_000, blockBp: 3_000 },
+    { id: 'B1', minBpPerPx: 320, tileSpanBp: 800_000, blockBp: 640 },
+    { id: 'B2', minBpPerPx: 60, tileSpanBp: 200_000, blockBp: 120 },
+    // The backend's smallest block is 50bp.
+    { id: 'B3', minBpPerPx: BIGBED_DETAIL_ENTER_BP_PER_PX, tileSpanBp: 80_000, blockBp: 50 },
 ]
+// Density view for BED/BigBed: feature counts per bin, drawn as a histogram at every
+// zoom. Each level's bins are ~3px at its finest zoom and a tile holds ~320 of them, so
+// a screenful is one to five tiles whatever the zoom.
+const BED_DENSITY_LEVELS = [
+    { id: 'D0', minBpPerPx: 60_000, tileSpanBp: 64_000_000, blockBp: 200_000 },
+    { id: 'D1', minBpPerPx: 12_000, tileSpanBp: 16_000_000, blockBp: 40_000 },
+    { id: 'D2', minBpPerPx: 2_500, tileSpanBp: 3_200_000, blockBp: 8_000 },
+    { id: 'D3', minBpPerPx: 500, tileSpanBp: 640_000, blockBp: 1_600 },
+    { id: 'D4', minBpPerPx: 100, tileSpanBp: 128_000, blockBp: 320 },
+    { id: 'D5', minBpPerPx: 0, tileSpanBp: 32_000, blockBp: 64 },
+]
+const BED_DEFAULT_COLOR = '#10b981'
 const SPLICE_HEIGHT_BASE = 52
 const SPLICE_HEIGHT_STEP = 12
 const SPLICE_HEIGHT_MIN = 56
@@ -1030,7 +1048,30 @@ function bigBedFeatureKey(feature) {
     return `${start}|${end}|${name}|${strand}|${score}|${color}|${blockCount}|${blockSizes}|${blockStarts}|${renderKind}`
 }
 
-function bigBedFeatureColor(feature, isLight) {
+// A BED/BigBed track's chosen colour, or '' for automatic.
+function normalizeBedSettings(raw) {
+    const color = String(raw?.color || '').trim().toLowerCase()
+    return { color: /^#[0-9a-f]{6}$/.test(color) ? color : '' }
+}
+
+// Automatic colouring: the file's own itemRgb where it has one, then the type's default.
+// A colour chosen for the track overrides both.
+function bedTrackColors(track) {
+    const chosen = normalizeBedSettings(track?.bedSettings || track?.bed_settings).color
+    return {
+        chosen,
+        fallback: track?.type === 'bed' ? BED_DEFAULT_COLOR : '',
+    }
+}
+
+function bigBedFeatureColor(feature, isLight, colors = null) {
+    const chosen = colors?.chosen || ''
+    if (chosen) {
+        return {
+            fill: hexToRgba(chosen, isLight ? 0.58 : 0.72),
+            stroke: hexToRgba(chosen, isLight ? 0.92 : 0.98),
+        }
+    }
     const rgb = parseItemRgb(feature?.itemRgb || feature?.color)
     if (rgb) {
         const [r, g, b] = rgb
@@ -1039,17 +1080,26 @@ function bigBedFeatureColor(feature, isLight) {
             stroke: `rgba(${r},${g},${b},${isLight ? 0.92 : 0.98})`,
         }
     }
+    const fallbackColor = colors?.fallback || VCF_SETTINGS_DEFAULTS.genic_color
     const fallback = {
-        fill: hexToRgba(VCF_SETTINGS_DEFAULTS.genic_color, isLight ? 0.34 : 0.46),
-        stroke: hexToRgba(VCF_SETTINGS_DEFAULTS.genic_color, isLight ? 0.94 : 0.98),
+        fill: hexToRgba(fallbackColor, isLight ? 0.34 : 0.46),
+        stroke: hexToRgba(fallbackColor, isLight ? 0.94 : 0.98),
     }
     return fallback
 }
 
-function bigBedBlockColor(span, isLight) {
+function bigBedBlockColor(span, isLight, colors = null) {
     // Summary blocks intentionally use a stable generic color so large low-LOD spans
     // do not flicker as different underlying features stream in/out during pan/zoom.
+    const base = colors?.chosen || colors?.fallback || ''
+    if (base) return hexToRgba(base, isLight ? 0.5 : 0.58)
     return isLight ? 'rgba(5,150,105,0.44)' : 'rgba(52,211,153,0.50)'
+}
+
+function bigBedBlockStroke(isLight, colors = null) {
+    const base = colors?.chosen || colors?.fallback || ''
+    if (base) return hexToRgba(base, isLight ? 0.6 : 0.72)
+    return isLight ? 'rgba(5,150,105,0.5)' : 'rgba(110,231,183,0.62)'
 }
 
 function getBigBedLaneCapacity(plotHeight) {
@@ -1122,6 +1172,41 @@ function deriveBigBedExonBlocksFromBedColumns(rowStart, rowEnd, blockCountRaw, b
     }
     out.sort((a, b) => (a.start - b.start) || (a.end - b.end))
     return out
+}
+
+// BED and BigBed positions are 0-based and half-open: [start, end) is bases start+1..end.
+// This browser numbers bases from 1 and draws base N over [N, N+1) — genes and the
+// sequence track both do — so those bases belong at [start+1, end+1). Drawing the raw
+// numbers put every BED feature one base to the left: its first base under the label
+// of the base before, its last base one short. Tiles are moved into the browser's frame
+// once, as they are cached; anything showing a position as a number shows start..end-1.
+const BED_TO_BROWSER_OFFSET = 1
+
+function shiftBedInterval(interval) {
+    if (!interval || typeof interval !== 'object') return interval
+    const s = Number(interval.start)
+    const e = Number(interval.end)
+    return {
+        ...interval,
+        start: Number.isFinite(s) ? s + BED_TO_BROWSER_OFFSET : interval.start,
+        end: Number.isFinite(e) ? e + BED_TO_BROWSER_OFFSET : interval.end,
+    }
+}
+
+function shiftBedFeatureToBrowserFrame(feature) {
+    if (!feature || typeof feature !== 'object') return feature
+    const shifted = shiftBedInterval(feature)
+    for (const key of ['thick_start', 'thick_end']) {
+        const v = feature[key]
+        if (v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v))) {
+            shifted[key] = Number(v) + BED_TO_BROWSER_OFFSET
+        }
+    }
+    // Block starts are relative to the feature start, so they move with it; the
+    // absolute blocks the backend derived do not, and are shifted here.
+    if (Array.isArray(feature.exon_blocks)) shifted.exon_blocks = feature.exon_blocks.map(shiftBedInterval)
+    if (Array.isArray(feature.cds_blocks)) shifted.cds_blocks = feature.cds_blocks.map(shiftBedInterval)
+    return shifted
 }
 
 function normalizeBigBedFeatureForRender(feature) {
@@ -2431,12 +2516,16 @@ export default function GenomeBrowser({
             } else if (registered.display_mode) {
                 synced.renderMode = registered.display_mode
             }
+            if (registeredType === 'bed' || registeredType === 'bigbed') {
+                synced.bedSettings = normalizeBedSettings(registered.bed_settings)
+            }
 
             const prevBigwig = track?.bigwigSettings || track?.bigwig_settings
             const nextBigwig = synced?.bigwigSettings || synced?.bigwig_settings
             const settingsChanged = JSON.stringify(prevBigwig || null) !== JSON.stringify(nextBigwig || null)
             const vcfSettingsChanged = JSON.stringify(track?.vcfSettings || track?.vcf_settings || null) !== JSON.stringify(synced?.vcfSettings || synced?.vcf_settings || null)
             const spliceChanged = JSON.stringify(track?.spliceSettings || track?.splice_settings || null) !== JSON.stringify(synced?.spliceSettings || synced?.splice_settings || null)
+            const bedSettingsChanged = JSON.stringify(track?.bedSettings || null) !== JSON.stringify(synced?.bedSettings || null)
             const requiresFullRefresh = (
                 String(synced.path || '') !== String(track.path || '')
                 || String(synced.renderMode || '') !== String(track.renderMode || '')
@@ -2454,6 +2543,7 @@ export default function GenomeBrowser({
                 || settingsChanged
                 || vcfSettingsChanged
                 || spliceChanged
+                || bedSettingsChanged
             ) {
                 localChanged = true
             }
@@ -2466,7 +2556,7 @@ export default function GenomeBrowser({
         if (!localChanged || fullRefreshIds.size === 0) return
 
         const shouldDropTrack = (rawKey) => {
-            const normalized = String(rawKey || '').replace(/^(sjblk:|sj:|vcfblk:|adpdet:|bbblk:|bbft:)/, '')
+            const normalized = String(rawKey || '').replace(/^(sjblk:|sj:|vcfblk:|adpdet:|bbblk:|bbft:|bddn:)/, '')
             const trackId = normalized.split('|', 1)[0]
             return fullRefreshIds.has(trackId)
         }
@@ -2498,6 +2588,10 @@ export default function GenomeBrowser({
         for (const key of Object.keys(trackChromScaleRef.current)) {
             const trackId = String(key).split('|', 1)[0]
             if (fullRefreshIds.has(trackId)) delete trackChromScaleRef.current[key]
+        }
+        for (const key of Object.keys(bedDensityScaleRef.current)) {
+            const trackId = String(key).split('|', 1)[0]
+            if (fullRefreshIds.has(trackId)) delete bedDensityScaleRef.current[key]
         }
 
         setCustomTrackData((prev) => {
@@ -2635,6 +2729,7 @@ export default function GenomeBrowser({
     const spliceLodStateRef = useRef({}) // trackId -> detail | mid | blocks
     const bigBedLodStateRef = useRef({}) // trackId -> detail | blocks
     const bigBedLayoutStateRef = useRef({}) // trackId -> stable buffered lane layout key/range
+    const bedDensityScaleRef = useRef({}) // trackId|chrom|level -> { values, n, scale }: every non-zero bin fetched
     const vcfBlockTileCacheRef = useRef(new Map()) // key -> VCF block tile (adaptive mode)
     const vcfBlockTileFetchSetRef = useRef(new Set())
     const vcfOverviewWarmupDoneRef = useRef(new Set())
@@ -2722,6 +2817,10 @@ export default function GenomeBrowser({
         return `bbft:${trackId}|${chrom}|${tileStart}|${tileEnd}`
     }, [])
 
+    const makeBedDensityTileKey = useCallback((trackId, chrom, levelId, tileStart, tileEnd) => {
+        return `bddn:${trackId}|${chrom}|${levelId}|${tileStart}|${tileEnd}`
+    }, [])
+
     const getSpliceTileSpan = useCallback((bpPerPx) => {
         if (bpPerPx > SPLICE_FINE_BP_PER_PX) return SPLICE_TILE_SPAN_COARSE
         if (bpPerPx > 30) return 250_000
@@ -2740,6 +2839,13 @@ export default function GenomeBrowser({
             if (bpPerPx >= BIGBED_BLOCK_LEVELS[i].minBpPerPx) return BIGBED_BLOCK_LEVELS[i]
         }
         return BIGBED_BLOCK_LEVELS[BIGBED_BLOCK_LEVELS.length - 1]
+    }, [])
+
+    const getBedDensityLevel = useCallback((bpPerPx) => {
+        for (let i = 0; i < BED_DENSITY_LEVELS.length; i++) {
+            if (bpPerPx >= BED_DENSITY_LEVELS[i].minBpPerPx) return BED_DENSITY_LEVELS[i]
+        }
+        return BED_DENSITY_LEVELS[BED_DENSITY_LEVELS.length - 1]
     }, [])
 
     const bigBedDetailEntryBpPerPx = useMemo(
@@ -3599,7 +3705,7 @@ export default function GenomeBrowser({
 
     const projectBigBedBlockTilesToView = useCallback((trackId, chrom, level, visStart, visEnd, innerWidthPx) => {
         const tileSpan = level.tileSpanBp
-        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
+        const firstTile = Math.floor(Math.max(0, visStart - BED_TO_BROWSER_OFFSET) / tileSpan) * tileSpan
         const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
         const spans = []
         let expectedTiles = 0
@@ -3838,6 +3944,115 @@ export default function GenomeBrowser({
             error: bestError,
         }
     }, [makeBigBedFeatureTileKey])
+
+    // Feature counts per bin for the density view. A tile not yet fetched at this level is
+    // filled from a coarser level already in the cache, its counts rescaled to this level's
+    // bin size, so zooming in sharpens the histogram rather than blanking it.
+    const projectBedDensityTilesToView = useCallback((trackId, chrom, level, visStart, visEnd) => {
+        const levelIdx = Math.max(0, BED_DENSITY_LEVELS.findIndex((l) => l.id === level.id))
+        const tileSpan = level.tileSpanBp
+        const firstTile = Math.floor(Math.max(0, visStart - BED_TO_BROWSER_OFFSET) / tileSpan) * tileSpan
+        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
+        const bins = []
+        let expectedTiles = 0
+        let fetchedTiles = 0
+        let bestError = ''
+
+        const pushTileBins = (tile, from, to, scale) => {
+            const counts = Array.isArray(tile?.counts) ? tile.counts : []
+            const blockBp = Math.max(1, Number(tile?.block_bp) || 1)
+            const tStart = Number(tile?.start) || 0
+            const i0 = Math.max(0, Math.floor((from - BED_TO_BROWSER_OFFSET - tStart) / blockBp))
+            const i1 = Math.min(counts.length - 1, Math.floor((to - 1 - BED_TO_BROWSER_OFFSET - tStart) / blockBp))
+            for (let i = i0; i <= i1; i += 1) {
+                const count = Number(counts[i]) || 0
+                if (count <= 0) continue
+                const s = tStart + i * blockBp + BED_TO_BROWSER_OFFSET
+                bins.push({ start: s, end: s + blockBp, count: count * scale })
+            }
+        }
+
+        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
+            const tileEnd = tileStart + tileSpan
+            expectedTiles += 1
+            const from = Math.max(visStart, tileStart + BED_TO_BROWSER_OFFSET)
+            const to = Math.min(visEnd, tileEnd + BED_TO_BROWSER_OFFSET)
+            const tile = trackFeatureCacheRef.current.get(makeBedDensityTileKey(trackId, chrom, level.id, tileStart, tileEnd))
+            if (tile) {
+                fetchedTiles += 1
+                if (tile?.error && !bestError) bestError = String(tile.error)
+                pushTileBins(tile, from, to, 1)
+                continue
+            }
+            for (let i = levelIdx - 1; i >= 0; i -= 1) {
+                const coarse = BED_DENSITY_LEVELS[i]
+                const cStart = Math.floor(tileStart / coarse.tileSpanBp) * coarse.tileSpanBp
+                const coarseTile = trackFeatureCacheRef.current.get(
+                    makeBedDensityTileKey(trackId, chrom, coarse.id, cStart, cStart + coarse.tileSpanBp),
+                )
+                if (!coarseTile) continue
+                pushTileBins(coarseTile, from, to, level.blockBp / Math.max(1, coarse.blockBp))
+                break
+            }
+        }
+
+        // The scale is the 98th percentile of every non-zero bin fetched at this level on
+        // this chromosome, not the single busiest bin: one hotspot used to flatten the rest
+        // of the histogram to a few pixels. Taken over everything fetched rather than just
+        // this view, so panning does not rescale the bars under the reader.
+        let viewMax = 0
+        for (const bin of bins) if (bin.count > viewMax) viewMax = bin.count
+        const scaleEntry = bedDensityScaleRef.current[`${trackId}|${chrom}|${level.id}`]
+        let stableScale = 0
+        if (scaleEntry && scaleEntry.values.length > 0) {
+            if (scaleEntry.n !== scaleEntry.values.length) {
+                const sorted = Float64Array.from(scaleEntry.values).sort()
+                scaleEntry.scale = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.98))]
+                scaleEntry.n = scaleEntry.values.length
+            }
+            stableScale = scaleEntry.scale
+        }
+        return {
+            mode: 'bed_density',
+            level: level.id,
+            start: visStart,
+            end: visEnd,
+            // Not `bins`: the generic discrete-track branch draws any numeric `bins` array.
+            density_bins: bins,
+            max_count: stableScale > 0 ? stableScale : Math.max(1, viewMax),
+            has_data: bins.length > 0,
+            tile_coverage: expectedTiles > 0 ? fetchedTiles / expectedTiles : 0,
+            error: bestError,
+        }
+    }, [makeBedDensityTileKey])
+
+    // Re-project a BED/BigBed track against the viewport as it is now, for a tile response
+    // that lands after the view has moved on. Returning early instead left the answer in
+    // the cache but off screen: the newer pass had skipped those tiles as in flight, so
+    // nothing drew them until the reader panned again.
+    const projectBedTrackToCurrentViewport = useCallback((track, chrom) => {
+        const currentChrom = String(selectedChromRef.current || '').trim()
+        if (!track?.id || !currentChrom || currentChrom !== chrom) return null
+        const range = genomicViewRangeRef.current || {}
+        const curStart = Math.max(0, Math.floor(Number(range.start) || 0))
+        const curEnd = Math.max(curStart + 1, Math.ceil(Number(range.end) || (curStart + 1)))
+        const innerWidth = Math.max(1, (Number(viewWidthRef.current) || 1) - LHS_WIDTH)
+        const curBpPerPx = (curEnd - curStart) / innerWidth
+        if (track.renderMode === 'density') {
+            return projectBedDensityTilesToView(track.id, currentChrom, getBedDensityLevel(curBpPerPx), curStart, curEnd)
+        }
+        if (getBigBedLodMode(track.id, curBpPerPx) === 'blocks') {
+            return projectBigBedBlockTilesToView(track.id, currentChrom, getBigBedBlockLevel(curBpPerPx), curStart, curEnd, innerWidth)
+        }
+        return projectBigBedFeatureTilesToView(track.id, currentChrom, curStart, curEnd, innerWidth)
+    }, [
+        getBedDensityLevel,
+        getBigBedBlockLevel,
+        getBigBedLodMode,
+        projectBedDensityTilesToView,
+        projectBigBedBlockTilesToView,
+        projectBigBedFeatureTilesToView,
+    ])
 
     // ── LRU eviction — keep ≤2000 tiles per track in memory ──────────────────────────────────
     const evictOldTilesIfNeeded = useCallback(() => {
@@ -4679,7 +4894,19 @@ export default function GenomeBrowser({
                     // Keep loading visible until cached coverage is reasonably complete.
                     setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.coverage || 0) < 0.75 }))
                 }
-            } else if (trackType === 'bigbed') {
+            } else if ((trackType === 'bigbed' || trackType === 'bed') && track.renderMode === 'density') {
+                const densityLevel = getBedDensityLevel(bpPerPx)
+                const projected = projectBedDensityTilesToView(track.id, selectedChrom, densityLevel, visStart, visEnd)
+                setCustomTrackData((prev) => {
+                    const prevData = prev[track.id]
+                    const prevBins = prevData?.mode === 'bed_density' && Array.isArray(prevData?.density_bins) ? prevData.density_bins : []
+                    if (prevBins.length > 0 && projected.density_bins.length === 0 && projected.tile_coverage < 0.4) {
+                        return prev
+                    }
+                    return { ...prev, [track.id]: projected }
+                })
+                setCustomTrackLoading((prev) => ({ ...prev, [track.id]: projected.tile_coverage < 0.85 }))
+            } else if (trackType === 'bigbed' || trackType === 'bed') {
                 const bigBedMode = getBigBedLodMode(track.id, bpPerPx)
                 if (bigBedMode === 'blocks') {
                     const blockLevel = getBigBedBlockLevel(bpPerPx)
@@ -4906,7 +5133,38 @@ export default function GenomeBrowser({
                 continue
             }
 
-            if (trackType === 'bigbed') {
+            if (trackType === 'bigbed' || trackType === 'bed') {
+                // Tiles past the chromosome end hold nothing and would only use up the cap.
+                const bedBufferEnd = chromLength > 0 ? Math.min(bufferEnd, chromLength) : bufferEnd
+                if (track.renderMode === 'density') {
+                    const targetLevel = getBedDensityLevel(bpPerPx)
+                    const targetIdx = BED_DENSITY_LEVELS.findIndex((l) => l.id === targetLevel.id)
+                    const levelsToFetch = [targetLevel]
+                    if (targetIdx > 0) levelsToFetch.push(BED_DENSITY_LEVELS[targetIdx - 1])
+                    for (const level of levelsToFetch) {
+                        const tileSpan = level.tileSpanBp
+                        const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
+                        const lastTile = Math.floor((bedBufferEnd - 1) / tileSpan) * tileSpan
+                        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
+                            const tileEnd = tileStart + tileSpan
+                            const key = makeBedDensityTileKey(track.id, selectedChrom, level.id, tileStart, tileEnd)
+                            if (trackFeatureCacheRef.current.has(key)) continue
+                            if (trackFeatureFetchSetRef.current.has(key)) continue
+                            const distFromCenter = Math.abs((tileStart + tileSpan / 2) - center)
+                            const levelBonus = level.id === targetLevel.id ? 0 : 9000
+                            fetchPlans.push({
+                                track,
+                                isBedDensity: true,
+                                bedDensityLevel: level,
+                                tileStart,
+                                tileEnd,
+                                key,
+                                priority: distFromCenter + levelBonus,
+                            })
+                        }
+                    }
+                    continue
+                }
                 const bigBedMode = getBigBedLodMode(track.id, bpPerPx)
                 if (bigBedMode === 'blocks') {
                     const targetLevel = getBigBedBlockLevel(bpPerPx)
@@ -4916,7 +5174,7 @@ export default function GenomeBrowser({
                     for (const level of levelsToFetch) {
                         const tileSpan = level.tileSpanBp
                         const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
-                        const lastTile = Math.floor((bufferEnd - 1) / tileSpan) * tileSpan
+                        const lastTile = Math.floor((bedBufferEnd - 1) / tileSpan) * tileSpan
                         for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
                             const tileEnd = tileStart + tileSpan
                             const key = makeBigBedBlockTileKey(track.id, selectedChrom, level.id, tileStart, tileEnd)
@@ -4938,7 +5196,7 @@ export default function GenomeBrowser({
                 } else {
                     const tileSpan = BIGBED_FEATURE_TILE_SPAN
                     const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
-                    const lastTile = Math.floor((bufferEnd - 1) / tileSpan) * tileSpan
+                    const lastTile = Math.floor((bedBufferEnd - 1) / tileSpan) * tileSpan
                     for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
                         const tileEnd = tileStart + tileSpan
                         const key = makeBigBedFeatureTileKey(track.id, selectedChrom, tileStart, tileEnd)
@@ -5013,12 +5271,24 @@ export default function GenomeBrowser({
         // Sort by priority (lower = higher priority)
         fetchPlans.sort((a, b) => a.priority - b.priority)
         // Cap to prevent request storms
-        const signalPlans = fetchPlans.filter((p) => !p.isDiscrete && !p.isVcf && !p.isVcfBlock && !p.isVcfAdpDetail && !p.isSplice && !p.isSpliceBlock && !p.isBigBedBlock && !p.isBigBedFeature).slice(0, 12)
+        const signalPlans = fetchPlans.filter((p) => !p.isDiscrete && !p.isVcf && !p.isVcfBlock && !p.isVcfAdpDetail && !p.isSplice && !p.isSpliceBlock && !p.isBigBedBlock && !p.isBigBedFeature && !p.isBedDensity).slice(0, 12)
         const discretePlans = fetchPlans.filter(p => p.isDiscrete)
         const splicePlans = fetchPlans.filter((p) => p.isSplice).slice(0, 14)
         const spliceBlockPlans = fetchPlans.filter((p) => p.isSpliceBlock).slice(0, 14)
-        const bigBedBlockPlans = fetchPlans.filter((p) => p.isBigBedBlock).slice(0, 12)
-        const bigBedFeaturePlans = fetchPlans.filter((p) => p.isBigBedFeature).slice(0, 14)
+        const allBigBedBlockPlans = fetchPlans.filter((p) => p.isBigBedBlock)
+        const allBigBedFeaturePlans = fetchPlans.filter((p) => p.isBigBedFeature)
+        const allBedDensityPlans = fetchPlans.filter((p) => p.isBedDensity)
+        const bigBedBlockPlans = allBigBedBlockPlans.slice(0, 12)
+        const bigBedFeaturePlans = allBigBedFeaturePlans.slice(0, 14)
+        const bedDensityPlans = allBedDensityPlans.slice(0, 12)
+        // The caps keep one round small, and the plans left over are the edges of the
+        // buffer. Without asking again once a round lands they were only fetched on the
+        // next pan, so a zoomed-out view stayed patchy until the reader moved it.
+        const hasMoreBedPlans = (
+            allBigBedBlockPlans.length > bigBedBlockPlans.length
+            || allBigBedFeaturePlans.length > bigBedFeaturePlans.length
+            || allBedDensityPlans.length > bedDensityPlans.length
+        )
         const vcfPlans = fetchPlans.filter((p) => p.isVcf).slice(0, 10)
         const vcfBlockLevelForCap = getVcfBlockLevel(bpPerPx)
         const vcfBlockTileSpanForCap = Number(vcfBlockLevelForCap?.mode === 'detail'
@@ -5262,7 +5532,7 @@ export default function GenomeBrowser({
                     .then((response) => {
                         const returnedChrom = response?.chrom || selectedChrom
                         const returned = Array.isArray(response?.tiles) ? response.tiles : []
-                        for (const tile of returned) {
+                        for (const [tileIndex, tile] of returned.entries()) {
                             const tStart = Math.max(0, Math.floor(Number(tile.start) || 0))
                             const tEnd = Math.max(tStart + 1, Math.ceil(Number(tile.end) || 1))
                             const levelId = String(tile.level_id || 'L0')
@@ -5271,27 +5541,26 @@ export default function GenomeBrowser({
                                 mode: 'bigbed_blocks',
                                 start: tStart,
                                 end: tEnd,
-                                block_spans: Array.isArray(tile?.block_spans) ? tile.block_spans : [],
+                                block_spans: Array.isArray(tile?.block_spans) ? tile.block_spans.map(shiftBedInterval) : [],
                                 has_data: tile?.has_data !== false,
                                 error: '',
                             }
-                            const selectedKey = makeBigBedBlockTileKey(track.id, selectedChrom, levelId, tStart, tEnd)
+                            // Tiles come back in the order they were asked for. The requested key
+                            // is the one the projection looks up; a tile the backend clipped at
+                            // the chromosome end would otherwise never be found, and be fetched
+                            // again on every pass.
+                            const selectedKey = keys[tileIndex] || makeBigBedBlockTileKey(track.id, selectedChrom, levelId, tStart, tEnd)
                             trackFeatureCacheRef.current.set(selectedKey, cachedTile)
                             if (returnedChrom !== selectedChrom) {
                                 const resolvedKey = makeBigBedBlockTileKey(track.id, returnedChrom, levelId, tStart, tEnd)
                                 trackFeatureCacheRef.current.set(resolvedKey, cachedTile)
                             }
                         }
-                        if (fetchEpochRef.current !== epoch) return
-                        const freshLevel = getBigBedBlockLevel(bpPerPx)
-                        const projected = projectBigBedBlockTilesToView(
-                            track.id,
-                            selectedChrom,
-                            freshLevel,
-                            visStart,
-                            visEnd,
-                            Math.max(1, viewWidth - LHS_WIDTH),
-                        )
+                        // A newer pass may have skipped these tiles as in flight; ask again
+                        // so whatever it still lacks is planned.
+                        if (hasMoreBedPlans || fetchEpochRef.current !== epoch) setCustomTrackFetchRevision((v) => v + 1)
+                        const projected = projectBedTrackToCurrentViewport(track, selectedChrom)
+                        if (!projected) return
                         setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
                         setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
                     })
@@ -5347,7 +5616,7 @@ export default function GenomeBrowser({
                     .then((response) => {
                         const returnedChrom = response?.chrom || selectedChrom
                         const returned = Array.isArray(response?.tiles) ? response.tiles : []
-                        for (const tile of returned) {
+                        for (const [tileIndex, tile] of returned.entries()) {
                             const tStart = Math.max(0, Math.floor(Number(tile.start) || 0))
                             const tEnd = Math.max(tStart + 1, Math.ceil(Number(tile.end) || 1))
                             const cachedTile = {
@@ -5356,26 +5625,21 @@ export default function GenomeBrowser({
                                 start: tStart,
                                 end: tEnd,
                                 features: Array.isArray(tile?.features)
-                                    ? tile.features.map((row) => normalizeBigBedFeatureForRender(row)).filter(Boolean)
+                                    ? tile.features.map((row) => normalizeBigBedFeatureForRender(shiftBedFeatureToBrowserFrame(row))).filter(Boolean)
                                     : [],
                                 has_data: tile?.has_data !== false,
                                 error: '',
                             }
-                            const selectedKey = makeBigBedFeatureTileKey(track.id, selectedChrom, tStart, tEnd)
+                            const selectedKey = keys[tileIndex] || makeBigBedFeatureTileKey(track.id, selectedChrom, tStart, tEnd)
                             trackFeatureCacheRef.current.set(selectedKey, cachedTile)
                             if (returnedChrom !== selectedChrom) {
                                 const resolvedKey = makeBigBedFeatureTileKey(track.id, returnedChrom, tStart, tEnd)
                                 trackFeatureCacheRef.current.set(resolvedKey, cachedTile)
                             }
                         }
-                        if (fetchEpochRef.current !== epoch) return
-                        const projected = projectBigBedFeatureTilesToView(
-                            track.id,
-                            selectedChrom,
-                            visStart,
-                            visEnd,
-                            Math.max(1, viewWidth - LHS_WIDTH),
-                        )
+                        if (hasMoreBedPlans || fetchEpochRef.current !== epoch) setCustomTrackFetchRevision((v) => v + 1)
+                        const projected = projectBedTrackToCurrentViewport(track, selectedChrom)
+                        if (!projected) return
                         setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
                         setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
                     })
@@ -5388,6 +5652,86 @@ export default function GenomeBrowser({
                         setCustomTrackData((prev) => ({
                             ...prev,
                             [track.id]: { ...(prev[track.id] || {}), mode: 'bigbed_detail', has_data: false, error: errorMessage },
+                        }))
+                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
+                    })
+                    .finally(() => {
+                        for (const k of keys) trackFeatureFetchSetRef.current.delete(k)
+                    })
+            }
+
+            // ── BED/BigBed density tiles → /api/browse/bigbed/block_tiles with counts ───────────
+            const bedDensityGroups = new Map()
+            for (const plan of bedDensityPlans) {
+                const { track, bedDensityLevel, tileStart, tileEnd, key } = plan
+                if (trackFeatureCacheRef.current.has(key) || trackFeatureFetchSetRef.current.has(key)) continue
+                trackFeatureFetchSetRef.current.add(key)
+                if (!bedDensityGroups.has(track.id)) {
+                    bedDensityGroups.set(track.id, { track, keys: [], tiles: [] })
+                }
+                const group = bedDensityGroups.get(track.id)
+                group.keys.push(key)
+                group.tiles.push({
+                    start: Math.max(0, Math.floor(tileStart)),
+                    end: Math.ceil(tileEnd),
+                    level_id: bedDensityLevel.id,
+                    block_bp: bedDensityLevel.blockBp,
+                })
+            }
+
+            for (const { track, keys, tiles } of bedDensityGroups.values()) {
+                fetch(`${API_BASE}/api/browse/bigbed/block_tiles`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        path: track.path,
+                        chrom: selectedChrom,
+                        genome,
+                        tiles,
+                        include_counts: true,
+                    }),
+                })
+                    .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
+                    .then((response) => {
+                        const returned = Array.isArray(response?.tiles) ? response.tiles : []
+                        for (const [tileIndex, tile] of returned.entries()) {
+                            const key = keys[tileIndex]
+                            if (!key) continue
+                            const levelId = String(tiles[tileIndex]?.level_id || tile?.level_id || '')
+                            const counts = Array.isArray(tile?.counts) ? tile.counts : []
+                            trackFeatureCacheRef.current.set(key, {
+                                mode: 'bed_density',
+                                start: Math.max(0, Math.floor(Number(tile?.start) || 0)),
+                                end: Math.ceil(Number(tile?.end) || 0),
+                                block_bp: Number(tile?.block_bp) || tiles[tileIndex]?.block_bp || 1,
+                                counts,
+                                has_data: tile?.has_data !== false,
+                                error: '',
+                            })
+                            const scaleKey = `${track.id}|${selectedChrom}|${levelId}`
+                            const scaleEntry = bedDensityScaleRef.current[scaleKey]
+                                || (bedDensityScaleRef.current[scaleKey] = { values: [], n: 0, scale: 0, tiles: new Set() })
+                            // A tile fetched again after eviction must not count twice.
+                            if (!scaleEntry.tiles.has(key)) {
+                                scaleEntry.tiles.add(key)
+                                for (const c of counts) if (c > 0) scaleEntry.values.push(c)
+                            }
+                        }
+                        if (hasMoreBedPlans || fetchEpochRef.current !== epoch) setCustomTrackFetchRevision((v) => v + 1)
+                        const projected = projectBedTrackToCurrentViewport(track, selectedChrom)
+                        if (!projected) return
+                        setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
+                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
+                    })
+                    .catch((e) => {
+                        const errorMessage = getFetchErrorMessage(e)
+                        if (isTransientFetchErrorMessage(errorMessage)) {
+                            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: true }))
+                            return
+                        }
+                        setCustomTrackData((prev) => ({
+                            ...prev,
+                            [track.id]: { ...(prev[track.id] || {}), mode: 'bed_density', has_data: false, error: errorMessage },
                         }))
                         setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
                     })
@@ -5754,6 +6098,7 @@ export default function GenomeBrowser({
         getSpliceTileSpan,
         getBigBedBlockLevel,
         getBigBedLodMode,
+        getBedDensityLevel,
         makeBigWigTileKey,
         makeVcfTileKey,
         makeVcfBlockTileKey,
@@ -5762,12 +6107,15 @@ export default function GenomeBrowser({
         makeSpliceBlockTileKey,
         makeBigBedBlockTileKey,
         makeBigBedFeatureTileKey,
+        makeBedDensityTileKey,
         projectBigWigTilesToView,
         projectBigWigTrackToCurrentViewport,
         projectSpliceTilesToView,
         projectSpliceBlockTilesToView,
         projectBigBedBlockTilesToView,
         projectBigBedFeatureTilesToView,
+        projectBedDensityTilesToView,
+        projectBedTrackToCurrentViewport,
         projectVcfTilesToView,
         projectVcfBlockTilesCascadeToView,
         projectVcfAdaptiveDetailLevel,
@@ -6888,7 +7236,10 @@ export default function GenomeBrowser({
                     }
                     return Math.round(clamp(suggested, SPLICE_HEIGHT_MIN, SPLICE_HEIGHT_MAX))
                 }
-                if (t?.type === 'bigbed') {
+                if ((t?.type === 'bigbed' || t?.type === 'bed') && t?.renderMode === 'density') {
+                    return CUSTOM_TRACK_HEIGHT_ZONED
+                }
+                if (t?.type === 'bigbed' || t?.type === 'bed') {
                     const data = customTrackData?.[trackId]
                     if (data?.mode === 'bigbed_detail') {
                         const laneCount = Math.max(1, Number(data?.lane_count || 1))
@@ -7894,7 +8245,48 @@ export default function GenomeBrowser({
                 }
             }
 
-            if (trackType === 'bigbed' && data?.mode === 'bigbed_blocks' && Array.isArray(data.block_spans) && data.block_spans.length > 0) {
+            if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bed_density' && Array.isArray(data.density_bins) && data.density_bins.length > 0) {
+                const left = LHS_WIDTH + 2
+                const right = viewWidth - 2
+                const plotWidth = Math.max(1, right - left)
+                const top = trackLayout.y + 18
+                const barBottom = trackLayout.y + trackLayout.height - 9
+                const barArea = Math.max(4, barBottom - top - 2)
+                const maxCount = Math.max(1, Number(data.max_count) || 1)
+                const trackColors = bedTrackColors(track)
+                const fill = hexToRgba(trackColors.chosen || trackColors.fallback || '#059669', isLight ? 0.78 : 0.84)
+                const viewSpan = Math.max(1, viewEnd - viewStart)
+                const columnCount = Math.max(1, Math.ceil(plotWidth))
+                const columns = new Float32Array(columnCount)
+                for (const bin of data.density_bins) {
+                    const s = Number(bin?.start)
+                    const e = Number(bin?.end)
+                    const v = Number(bin?.count) || 0
+                    if (!(v > 0) || !(e > viewStart) || !(s < viewEnd)) continue
+                    const c0 = Math.max(0, Math.floor(((Math.max(s, viewStart) - viewStart) / viewSpan) * plotWidth))
+                    const c1 = Math.min(columnCount - 1, Math.ceil(((Math.min(e, viewEnd) - viewStart) / viewSpan) * plotWidth) - 1)
+                    for (let c = c0; c <= Math.max(c0, c1); c += 1) if (v > columns[c]) columns[c] = v
+                }
+                textMaskRects.push({
+                    x: left,
+                    y: trackLayout.y,
+                    width: viewWidth - left,
+                    height: trackLayout.height,
+                    fill: getExportTrackBgColor(trackId),
+                })
+                const densityMarkup = []
+                for (let c = 0; c < columnCount; c += 1) {
+                    const v = columns[c]
+                    if (!(v > 0)) continue
+                    const h = Math.max(1, Math.round((Math.min(v, maxCount) / maxCount) * barArea))
+                    densityMarkup.push(`<rect x="${left + c}" y="${barBottom - h}" width="1" height="${h}" fill="${escapeXml(fill)}" />`)
+                }
+                if (densityMarkup.length > 0) {
+                    pushOverlayMarkup(mirrorCustomTrackMarkup(densityMarkup.join('')))
+                }
+            }
+
+            if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bigbed_blocks' && Array.isArray(data.block_spans) && data.block_spans.length > 0) {
                 const left = LHS_WIDTH + 2
                 const right = viewWidth - 2
                 const plotWidth = Math.max(1, right - left)
@@ -7904,7 +8296,8 @@ export default function GenomeBrowser({
                 const blockH = Math.min(12, Math.max(8, Math.round(plotHeight * 0.34)))
                 const blockY = top + Math.round((plotHeight - blockH) / 2)
                 const bigBedMarkup = []
-                const gToX = (g) => left + (((g - (data.start ?? viewStart)) / Math.max(1, (data.end ?? viewEnd) - (data.start ?? viewStart))) * plotWidth)
+                const gToX = (g) => left + (((g - viewStart) / Math.max(1, viewEnd - viewStart)) * plotWidth)
+                const trackColors = bedTrackColors(track)
                 textMaskRects.push({
                     x: left,
                     y: trackLayout.y,
@@ -7921,14 +8314,14 @@ export default function GenomeBrowser({
                     const x2 = Math.min(right, gToX(Math.min(viewEnd, e)))
                     const drawW = x2 - x1
                     if (drawW <= 0) continue
-                    const fill = bigBedBlockColor(span, isLight)
+                    const fill = bigBedBlockColor(span, isLight, trackColors)
                     const drawWidth = Math.max(1, drawW)
                     bigBedMarkup.push(
                         `<rect x="${x1}" y="${blockY}" width="${drawWidth}" height="${blockH}" fill="${escapeXml(fill)}" />`
                     )
                     if (drawWidth > 2) {
                         bigBedMarkup.push(
-                            `<rect x="${x1 + 0.5}" y="${blockY + 0.5}" width="${Math.max(0.5, drawWidth - 1)}" height="${Math.max(0.5, blockH - 1)}" fill="none" stroke="${escapeXml(isLight ? 'rgba(5,150,105,0.5)' : 'rgba(110,231,183,0.62)')}" stroke-width="0.7" />`
+                            `<rect x="${x1 + 0.5}" y="${blockY + 0.5}" width="${Math.max(0.5, drawWidth - 1)}" height="${Math.max(0.5, blockH - 1)}" fill="none" stroke="${escapeXml(bigBedBlockStroke(isLight, trackColors))}" stroke-width="0.7" />`
                         )
                     }
                 }
@@ -7937,7 +8330,7 @@ export default function GenomeBrowser({
                 }
             }
 
-            if (trackType === 'bigbed' && data?.mode === 'bigbed_detail' && Array.isArray(data.features) && data.features.length > 0) {
+            if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bigbed_detail' && Array.isArray(data.features) && data.features.length > 0) {
                 const left = LHS_WIDTH + 2
                 const right = viewWidth - 2
                 const plotWidth = Math.max(1, right - left)
@@ -7954,7 +8347,8 @@ export default function GenomeBrowser({
                 const hoveredKey = clickedKey
                     ? ''
                     : (hoveredBigBedFeature?.trackId === trackId ? hoveredBigBedFeature.key : '')
-                const gToX = (g) => left + (((g - (data.start ?? viewStart)) / Math.max(1, (data.end ?? viewEnd) - (data.start ?? viewStart))) * plotWidth)
+                const gToX = (g) => left + (((g - viewStart) / Math.max(1, viewEnd - viewStart)) * plotWidth)
+                const trackColors = bedTrackColors(track)
                 const visibleFeatures = []
                 let overflowCount = 0
                 for (const feature of data.features) {
@@ -8001,7 +8395,7 @@ export default function GenomeBrowser({
                     const isFocused = !!clickedKey && key === clickedKey
                     const isHovered = !clickedKey && key === hoveredKey
                     const dimmed = !!clickedKey && !isFocused
-                    const color = bigBedFeatureColor(feature, isLight)
+                    const color = bigBedFeatureColor(feature, isLight, trackColors)
                     const strokeColor = isFocused
                         ? (isLight ? 'rgba(0,0,0,0.92)' : 'rgba(255,255,255,0.96)')
                         : isHovered
@@ -8929,7 +9323,7 @@ export default function GenomeBrowser({
                 return null
             }
 
-            if (track.type === 'bigbed' && data?.mode === 'bigbed_detail' && Array.isArray(data?.features)) {
+            if ((track.type === 'bigbed' || track.type === 'bed') && data?.mode === 'bigbed_detail' && Array.isArray(data?.features)) {
                 const curSpan = Math.max(1, viewEnd - viewStart)
                 const lanePitch = BIGBED_DETAIL_LANE_PITCH
                 const exonH = BIGBED_DETAIL_EXON_HEIGHT
@@ -11797,8 +12191,13 @@ export default function GenomeBrowser({
                     continue
                 }
 
-                if (trackType === 'bigbed' && data?.mode === 'bigbed_blocks' && Array.isArray(data.block_spans)) {
+                if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bigbed_blocks' && Array.isArray(data.block_spans)) {
                     const spans = data.block_spans
+                    // Spans are genomic and were clipped to the view they were projected
+                    // for; placing them against the current view keeps them still while
+                    // the next tiles load, rather than stretched to the old one.
+                    const viewGToX = (g) => left + ((g - viewStart) / Math.max(1, viewEnd - viewStart)) * width
+                    const trackColors = bedTrackColors(track)
                     const blockH = Math.min(12, Math.max(8, Math.round(plotHeight * 0.34)))
                     const blockY = top + Math.round((plotHeight - blockH) / 2)
 
@@ -11812,14 +12211,13 @@ export default function GenomeBrowser({
                         const e = Number(span?.end)
                         if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
                         if (e <= viewStart || s >= viewEnd) continue
-                        const x1 = Math.max(left, gToX(Math.max(viewStart, s)))
-                        const x2 = Math.min(right, gToX(Math.min(viewEnd, e)))
+                        const x1 = Math.max(left, viewGToX(Math.max(viewStart, s)))
+                        const x2 = Math.min(right, viewGToX(Math.min(viewEnd, e)))
                         const drawW = x2 - x1
                         if (drawW <= 0) continue
 
-                        const fill = bigBedBlockColor(span, isLight)
-                        ctx.fillStyle = fill
-                        ctx.strokeStyle = isLight ? 'rgba(5,150,105,0.5)' : 'rgba(110,231,183,0.62)'
+                        ctx.fillStyle = bigBedBlockColor(span, isLight, trackColors)
+                        ctx.strokeStyle = bigBedBlockStroke(isLight, trackColors)
                         const drawWidth = Math.max(1, drawW)
                         ctx.fillRect(x1, blockY, drawWidth, blockH)
                         if (drawWidth > 2) {
@@ -11838,7 +12236,9 @@ export default function GenomeBrowser({
                     continue
                 }
 
-                if (trackType === 'bigbed' && data?.mode === 'bigbed_detail' && Array.isArray(data.features)) {
+                if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bigbed_detail' && Array.isArray(data.features)) {
+                    const viewGToX = (g) => left + ((g - viewStart) / Math.max(1, viewEnd - viewStart)) * width
+                    const trackColors = bedTrackColors(track)
                     const lanePitch = BIGBED_DETAIL_LANE_PITCH
                     const exonH = BIGBED_DETAIL_EXON_HEIGHT
                     const laneBaseY = top + BIGBED_DETAIL_LANE_TOP_PAD
@@ -11881,8 +12281,8 @@ export default function GenomeBrowser({
                         const y = yMid - exonH / 2
                         if (y + exonH < top || y > bottom) continue
 
-                        const x1 = Math.max(left, gToX(Math.max(viewStart, s)))
-                        const x2 = Math.min(right, gToX(Math.min(viewEnd, e)))
+                        const x1 = Math.max(left, viewGToX(Math.max(viewStart, s)))
+                        const x2 = Math.min(right, viewGToX(Math.min(viewEnd, e)))
                         const drawW = x2 - x1
                         if (drawW <= 0) continue
 
@@ -11890,7 +12290,7 @@ export default function GenomeBrowser({
                         const isFocused = !!clickedKey && key === clickedKey
                         const isHovered = !clickedKey && key === hoveredKey
                         const dimmed = !!clickedKey && !isFocused
-                        const color = bigBedFeatureColor(feature, isLight)
+                        const color = bigBedFeatureColor(feature, isLight, trackColors)
                         const strokeColor = isFocused
                             ? (isLight ? 'rgba(0,0,0,0.92)' : 'rgba(255,255,255,0.96)')
                             : isHovered
@@ -11907,8 +12307,8 @@ export default function GenomeBrowser({
 
                         if (isTranscript) {
                             const txBounds = getGenomicIntervalPixelBounds(s, e, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
-                            const txX1 = txBounds ? Math.max(left, txBounds.x1) : Math.max(left, gToX(Math.max(viewStart, s)))
-                            const txX2 = txBounds ? Math.min(right, txBounds.x2) : Math.min(right, gToX(Math.min(viewEnd, e)))
+                            const txX1 = txBounds ? Math.max(left, txBounds.x1) : Math.max(left, viewGToX(Math.max(viewStart, s)))
+                            const txX2 = txBounds ? Math.min(right, txBounds.x2) : Math.min(right, viewGToX(Math.min(viewEnd, e)))
                             const txDrawW = txX2 - txX1
                             if (txDrawW > 0) {
                                 ctx.strokeStyle = strokeColor
@@ -11982,8 +12382,8 @@ export default function GenomeBrowser({
 
                                 for (const seg of segments) {
                                     const segBounds = getGenomicIntervalPixelBounds(seg.start, seg.end, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
-                                    const sx1 = segBounds ? Math.max(left, segBounds.x1) : Math.max(left, gToX(Math.max(viewStart, seg.start)))
-                                    const sx2 = segBounds ? Math.min(right, segBounds.x2) : Math.min(right, gToX(Math.min(viewEnd, seg.end)))
+                                    const sx1 = segBounds ? Math.max(left, segBounds.x1) : Math.max(left, viewGToX(Math.max(viewStart, seg.start)))
+                                    const sx2 = segBounds ? Math.min(right, segBounds.x2) : Math.min(right, viewGToX(Math.min(viewEnd, seg.end)))
                                     const segW = sx2 - sx1
                                     if (segW <= 0) continue
 
@@ -12042,20 +12442,79 @@ export default function GenomeBrowser({
                     continue
                 }
 
-                // ── BED intervals ─────────────────────────────────────────────────
-                if (trackType === 'bed' && Array.isArray(data.features)) {
-                    const barH = Math.min(10, plotHeight * 0.35)
-                    const barY = top + (plotHeight - barH) / 2
-                    const bedColor = isLight ? 'rgba(16,185,129,0.7)' : 'rgba(52,211,153,0.55)'
+                // ── BED/BigBed density: features per bin as a histogram ───────────
+                if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bed_density' && Array.isArray(data.density_bins)) {
+                    const bins = data.density_bins
+                    const maxCount = Math.max(1, Number(data.max_count) || 1)
+                    const trackColors = bedTrackColors(track)
+                    const baseColor = trackColors.chosen || trackColors.fallback || '#059669'
+                    const barBottom = bottom - 1
+                    const barArea = Math.max(4, barBottom - top - 2)
+                    const viewSpan = Math.max(1, viewEnd - viewStart)
+                    // One column per pixel holding the highest bin under it, so bins
+                    // narrower than a pixel do not pile translucent fills on each other.
+                    const columnCount = Math.max(1, Math.ceil(width))
+                    const columns = new Float32Array(columnCount)
+                    for (const bin of bins) {
+                        const s = Number(bin?.start)
+                        const e = Number(bin?.end)
+                        const v = Number(bin?.count) || 0
+                        if (!(v > 0) || !(e > viewStart) || !(s < viewEnd)) continue
+                        const c0 = Math.max(0, Math.floor(((Math.max(s, viewStart) - viewStart) / viewSpan) * width))
+                        const c1 = Math.min(columnCount - 1, Math.ceil(((Math.min(e, viewEnd) - viewStart) / viewSpan) * width) - 1)
+                        for (let c = c0; c <= Math.max(c0, c1); c += 1) {
+                            if (v > columns[c]) columns[c] = v
+                        }
+                    }
+
                     ctx.save()
-                    ctx.fillStyle = bedColor
-                    for (const f of data.features) {
-                        const x1 = Math.max(left, gToX(f.start))
-                        const x2 = Math.min(right, gToX(f.end))
-                        if (x2 <= x1) continue
-                        ctx.fillRect(x1, barY, x2 - x1, barH)
+                    ctx.beginPath()
+                    ctx.rect(left, top, width, plotHeight)
+                    ctx.clip()
+                    ctx.strokeStyle = isLight ? 'rgba(100,116,139,0.28)' : 'rgba(148,163,184,0.28)'
+                    ctx.lineWidth = 1
+                    ctx.beginPath()
+                    ctx.moveTo(left, barBottom + 0.5)
+                    ctx.lineTo(right, barBottom + 0.5)
+                    ctx.stroke()
+                    const barFill = hexToRgba(baseColor, isLight ? 0.78 : 0.84)
+                    ctx.fillStyle = barFill
+                    let c = 0
+                    while (c < columnCount) {
+                        const v = columns[c]
+                        if (!(v > 0)) { c += 1; continue }
+                        const h = Math.max(1, Math.round((Math.min(v, maxCount) / maxCount) * barArea))
+                        let runEnd = c + 1
+                        while (runEnd < columnCount && Math.max(1, Math.round((Math.min(columns[runEnd], maxCount) / maxCount) * barArea)) === h && columns[runEnd] > 0) {
+                            runEnd += 1
+                        }
+                        ctx.fillRect(left + c, barBottom - h, runEnd - c, h)
+                        c = runEnd
+                    }
+                    // Bins above the scale are drawn full height with a darker cap, so the
+                    // busiest regions still read as the busiest.
+                    ctx.fillStyle = hexToRgba(baseColor, 1)
+                    for (let col = 0; col < columnCount; col += 1) {
+                        if (columns[col] > maxCount) ctx.fillRect(left + col, barBottom - barArea, 1, 2)
                     }
                     ctx.restore()
+
+                    ctx.save()
+                    ctx.font = sansFont(9)
+                    ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
+                    ctx.textAlign = 'right'
+                    ctx.textBaseline = 'top'
+                    const binBp = BED_DENSITY_LEVELS.find((l) => l.id === data.level)?.blockBp || 0
+                    const binLabel = binBp >= 1000 ? `${Math.round(binBp / 100) / 10} kb` : `${binBp} bp`
+                    fillScreenText(ctx, customMirrorAxis, `0–${Math.round(maxCount)} features per ${binLabel}`, right - 3, top - 12)
+                    ctx.restore()
+
+                    if (isLoading && bins.length === 0) {
+                        ctx.fillStyle = isLight ? '#64748b' : '#94a3b8'
+                        ctx.font = sansFont(10)
+                        ctx.textAlign = 'center'
+                        ctx.fillText('Loading…', left + width / 2, top + plotHeight / 2 + 3)
+                    }
                     continue
                 }
 
@@ -14331,6 +14790,7 @@ export default function GenomeBrowser({
             registryTrackId: registeredTrack.id,
             spliceSettings: normalizeSpliceTrackSettings(registeredTrack.splice_settings),
             vcfSettings: normalizeVcfSettings(registeredTrack.vcf_settings),
+            bedSettings: normalizeBedSettings(registeredTrack.bed_settings),
         }
         if (trackType === 'bigwig') {
             const bigWigSettings = normalizeBigWigSettings(registeredTrack.bigwig_settings)
@@ -15073,8 +15533,9 @@ export default function GenomeBrowser({
                         ? f.extra_fields.map((v) => String(v || '').trim()).filter(Boolean)
                         : []
                     const featureName = String(f?.name || '').trim()
+                    // Features are held in the browser's frame, [first base, last base + 1).
                     const spanLabel = Number.isFinite(start) && Number.isFinite(end) && end > start
-                        ? `${formatCoord(start)}-${formatCoord(end)}`
+                        ? `${formatCoord(start)}-${formatCoord(end - 1)}`
                         : '—'
                     const exonBlocks = Array.isArray(f?._exon_blocks)
                         ? f._exon_blocks
@@ -15130,7 +15591,7 @@ export default function GenomeBrowser({
                                     <div>Exons <span style={{ fontWeight: 700 }}>{exonBlocks.length}</span></div>
                                     <div>CDS <span style={{ fontWeight: 700 }}>
                                         {(Number.isFinite(cdsSpanStart) && Number.isFinite(cdsSpanEnd))
-                                            ? `${formatCoord(cdsSpanStart)}-${formatCoord(cdsSpanEnd)} (${cdsBlocks.length} block${cdsBlocks.length === 1 ? '' : 's'})`
+                                            ? `${formatCoord(cdsSpanStart)}-${formatCoord(cdsSpanEnd - 1)} (${cdsBlocks.length} block${cdsBlocks.length === 1 ? '' : 's'})`
                                             : 'None'}
                                     </span></div>
                                 </>

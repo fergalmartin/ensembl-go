@@ -65,6 +65,7 @@ try:
 except Exception:
     pyBigWig = None
 
+from bed_index import get_plain_bed_index, is_plain_bed_path, open_plain_bed
 from download_manager import DownloadManager, SpeciesSummary, FileInfo, DownloadTask, GroupCount
 from assembly_report import (
     KnownRegions,
@@ -20116,7 +20117,7 @@ TRACK_EXTENSION_MAP: Dict[str, str] = {
 
 TRACK_DISPLAY_MODES: Dict[str, List[str]] = {
     "bigwig":           ["zoned_heatmap", "signal_plot"],
-    "bigbed":           ["intervals"],
+    "bigbed":           ["intervals", "density"],
     "vcf":              ["density_lollipop", "adaptive", "ensembl", "lollipop", "density"],
     "bed":              ["intervals", "density"],
     "bam":              ["coverage", "reads_coverage"],
@@ -21915,6 +21916,17 @@ def _normalize_vcf_settings(raw: Optional[Dict[str, Any]], previous: Optional[Di
     }
 
 
+def _normalize_bed_settings(raw: Optional[Dict[str, Any]], previous: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    """A BED/BigBed track's colour. Empty means automatic: the file's own itemRgb
+    colours where it has them, and the default track colour where it does not."""
+    prev = previous if isinstance(previous, dict) else {}
+    base = _normalize_hex_color(prev.get("color"), "")
+    source = raw if isinstance(raw, dict) else {}
+    if "color" in source and not str(source.get("color") or "").strip():
+        return {"color": ""}
+    return {"color": _normalize_hex_color(source.get("color"), base)}
+
+
 def _normalize_splice_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     settings = dict(DEFAULT_SPLICE_SETTINGS)
     if isinstance(raw, dict):
@@ -21985,6 +21997,8 @@ def _hydrate_track_defaults(track: Dict[str, Any]) -> Dict[str, Any]:
     if track_type == "splice_junctions":
         hydrated["splice_settings"] = _normalize_splice_settings(hydrated.get("splice_settings"))
         hydrated["display_mode"] = "arcs"
+    if track_type in ("bed", "bigbed"):
+        hydrated["bed_settings"] = _normalize_bed_settings(hydrated.get("bed_settings"))
     return hydrated
 
 
@@ -22251,6 +22265,7 @@ class TrackRegistryEntry(BaseModel):
     splice_settings: Optional[Dict[str, Any]] = None
     bigwig_settings: Optional[Dict[str, Any]] = None
     vcf_settings: Optional[Dict[str, Any]] = None
+    bed_settings: Optional[Dict[str, Any]] = None
     source: Optional[str] = None
     source_meta: Optional[Dict[str, Any]] = None
 
@@ -22262,6 +22277,7 @@ class TrackRegistryUpdateEntry(BaseModel):
     splice_settings: Optional[Dict[str, Any]] = None
     bigwig_settings: Optional[Dict[str, Any]] = None
     vcf_settings: Optional[Dict[str, Any]] = None
+    bed_settings: Optional[Dict[str, Any]] = None
 
 
 @app.get("/api/tracks")
@@ -22575,6 +22591,7 @@ async def register_track(entry: TrackRegistryEntry):
     splice_settings = None
     bigwig_settings = None
     vcf_settings = None
+    bed_settings = None
     display_mode = entry.display_mode
 
     if detected_type == "bigwig":
@@ -22594,6 +22611,11 @@ async def register_track(entry: TrackRegistryEntry):
     if detected_type == "splice_junctions":
         display_mode = "arcs"
         splice_settings = _normalize_splice_settings(entry.splice_settings)
+    if detected_type in ("bed", "bigbed"):
+        bed_settings = _normalize_bed_settings(entry.bed_settings)
+        allowed_modes = TRACK_DISPLAY_MODES.get(detected_type, [])
+        if allowed_modes and display_mode not in allowed_modes:
+            display_mode = allowed_modes[0]
 
     track_id = f"trk_{uuid.uuid4().hex[:12]}"
     # Suggest label from filename if blank
@@ -22615,6 +22637,7 @@ async def register_track(entry: TrackRegistryEntry):
         "splice_settings": splice_settings,
         "bigwig_settings": bigwig_settings,
         "vcf_settings": vcf_settings,
+        "bed_settings": bed_settings,
         "source": source or "",
         "source_meta": source_meta,
         "created_at": datetime.utcnow().isoformat() + "Z",
@@ -22688,6 +22711,17 @@ def update_track(track_id: str, entry: TrackRegistryUpdateEntry):
                     tracks[idx]["display_mode"] = "arcs"
                 else:
                     tracks[idx]["display_mode"] = entry.display_mode
+
+        if track_type in ("bed", "bigbed"):
+            prev_bed_settings = _normalize_bed_settings(tracks[idx].get("bed_settings"))
+            tracks[idx]["bed_settings"] = (
+                _normalize_bed_settings(entry.bed_settings, previous=prev_bed_settings)
+                if entry.bed_settings is not None
+                else prev_bed_settings
+            )
+            allowed_modes = TRACK_DISPLAY_MODES.get(track_type, [])
+            if allowed_modes and tracks[idx].get("display_mode") not in allowed_modes:
+                tracks[idx]["display_mode"] = allowed_modes[0]
 
         if entry.splice_settings is not None:
             if track_type == "splice_junctions":
@@ -22851,6 +22885,8 @@ class BigBedBlockTilesRequest(BaseModel):
     chrom: str
     tiles: List[BigBedBlockTileRequest]
     genome: str = "reference"
+    # Per-block feature counts, for drawing a density histogram rather than spans.
+    include_counts: bool = False
 
 
 class BigBedFeatureTileRequest(BaseModel):
@@ -24799,26 +24835,18 @@ async def browse_bed(
                 except Exception as e:
                     raise HTTPException(status_code=500, detail=f"BED tabix query error: {e}")
             else:
-                # Linear scan
-                opener = gzip.open if str(path).endswith(".gz") else open
-                known_chroms: Set[str] = set()
-                overlapping_by_chrom: Dict[str, List[Dict]] = {}
+                # The file is read once into a cached in-memory index, not scanned per request.
                 try:
-                    with opener(str(p), "rt") as fh:
-                        for line in fh:
-                            rec = _parse_bed_line(line)
-                            if not rec:
-                                continue
-                            rec_chrom = str(rec["chrom"])
-                            known_chroms.add(rec_chrom)
-                            if rec["end"] < start or rec["start"] > end:
-                                continue
-                            bucket = overlapping_by_chrom.setdefault(rec_chrom, [])
-                            if len(bucket) < max_intervals:
-                                bucket.append(rec)
+                    index = get_plain_bed_index(p)
+                    known_chroms = sorted(index.chroms().keys())
                     if known_chroms:
-                        resolved_chrom = _resolve_track_chrom_with_aliases(chrom, sorted(known_chroms), genome=genome)
-                        intervals = overlapping_by_chrom.get(resolved_chrom, [])
+                        resolved_chrom = _resolve_track_chrom_with_aliases(chrom, known_chroms, genome=genome)
+                        for f_start, f_end, rest in index.entries(resolved_chrom, max(0, start), end):
+                            rec = _parse_bed_line(f"{resolved_chrom}\t{f_start}\t{f_end}\t{rest}")
+                            if rec:
+                                intervals.append(rec)
+                            if len(intervals) >= max_intervals:
+                                break
                     else:
                         intervals = []
                 except Exception as e:
@@ -24847,6 +24875,55 @@ async def browse_bed(
             }
 
     return await run_in_threadpool(_run)
+
+
+def _open_bed_tile_source(p: Path) -> Any:
+    """A BigBed handle, or a plain BED file answering the same calls.
+
+    Plain BED goes through an in-memory index (or its tabix index) built once per file,
+    so the tile endpoints serve both formats with the same tiling and summaries.
+    """
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"Track file not found: {p}")
+    if is_plain_bed_path(p):
+        try:
+            return open_plain_bed(p)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read BED: {e}")
+    if not _is_bigbed_path(p):
+        raise HTTPException(status_code=400, detail="path is not a BED or BigBed file")
+    if pyBigWig is None:
+        raise HTTPException(status_code=503, detail="BigBed support is unavailable. Install pyBigWig.")
+    try:
+        bb = pyBigWig.open(str(p))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to open BigBed: {e}")
+    if bb is None:
+        raise HTTPException(status_code=400, detail="Failed to open BigBed file.")
+    return bb
+
+
+def _bed_block_counts(
+    features: List[Dict[str, Any]],
+    tile_start: int,
+    tile_end: int,
+    block_bp: int,
+) -> List[int]:
+    """How many features overlap each block of a tile."""
+    span = max(1, tile_end - tile_start)
+    block_size = max(1, int(block_bp))
+    slot_count = max(1, (span + block_size - 1) // block_size)
+    counts = [0] * slot_count
+    for feature in features:
+        ov_start = max(tile_start, int(feature.get("start", 0) or 0))
+        ov_end = min(tile_end, int(feature.get("end", 0) or 0))
+        if ov_end <= ov_start:
+            continue
+        b0 = (ov_start - tile_start) // block_size
+        b1 = min(slot_count - 1, (ov_end - 1 - tile_start) // block_size)
+        for idx in range(b0, b1 + 1):
+            counts[idx] += 1
+    return counts
 
 
 def _build_bigbed_block_spans_from_features(
@@ -24985,9 +25062,6 @@ async def browse_bigbed_block_tiles(payload: BigBedBlockTilesRequest):
     def _run():
         if not payload.tiles:
             raise HTTPException(status_code=400, detail="tiles must not be empty")
-        if pyBigWig is None:
-            raise HTTPException(status_code=503, detail="BigBed support is unavailable. Install pyBigWig.")
-
         path = str(payload.path or "").strip()
         chrom_req = str(payload.chrom or "").strip()
         genome = str(payload.genome or "reference").strip() or "reference"
@@ -24997,17 +25071,7 @@ async def browse_bigbed_block_tiles(payload: BigBedBlockTilesRequest):
             raise HTTPException(status_code=400, detail="chrom is required")
 
         p = Path(path)
-        if not p.exists():
-            raise HTTPException(status_code=404, detail=f"BigBed not found: {path}")
-        if not _is_bigbed_path(p):
-            raise HTTPException(status_code=400, detail="path is not a BigBed file")
-
-        try:
-            bb = pyBigWig.open(str(p))
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to open BigBed: {e}")
-        if bb is None:
-            raise HTTPException(status_code=400, detail="Failed to open BigBed file.")
+        bb = _open_bed_tile_source(p)
 
         try:
             chrom_sizes = bb.chroms() or {}
@@ -25067,7 +25131,7 @@ async def browse_bigbed_block_tiles(payload: BigBedBlockTilesRequest):
                     block_bp=block_bp,
                 )
                 tile_span = max(1, tile_end - tile_start)
-                out_tiles.append({
+                out_tile = {
                     "start": tile_start,
                     "end": tile_end,
                     "level_id": str(tile.level_id or "L0"),
@@ -25075,7 +25139,10 @@ async def browse_bigbed_block_tiles(payload: BigBedBlockTilesRequest):
                     "block_spans": block_spans,
                     "has_data": bool(block_spans),
                     "coverage": float(max(0.0, min(1.0, painted_bp / tile_span))),
-                })
+                }
+                if payload.include_counts:
+                    out_tile["counts"] = _bed_block_counts(features, tile_start, tile_end, block_bp)
+                out_tiles.append(out_tile)
 
             return {"chrom": resolved_chrom, "resolved_chrom": resolved_chrom, "tiles": out_tiles}
         finally:
@@ -25092,9 +25159,6 @@ async def browse_bigbed_feature_tiles(payload: BigBedFeatureTilesRequest):
     def _run():
         if not payload.tiles:
             raise HTTPException(status_code=400, detail="tiles must not be empty")
-        if pyBigWig is None:
-            raise HTTPException(status_code=503, detail="BigBed support is unavailable. Install pyBigWig.")
-
         path = str(payload.path or "").strip()
         chrom_req = str(payload.chrom or "").strip()
         genome = str(payload.genome or "reference").strip() or "reference"
@@ -25104,17 +25168,7 @@ async def browse_bigbed_feature_tiles(payload: BigBedFeatureTilesRequest):
             raise HTTPException(status_code=400, detail="chrom is required")
 
         p = Path(path)
-        if not p.exists():
-            raise HTTPException(status_code=404, detail=f"BigBed not found: {path}")
-        if not _is_bigbed_path(p):
-            raise HTTPException(status_code=400, detail="path is not a BigBed file")
-
-        try:
-            bb = pyBigWig.open(str(p))
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to open BigBed: {e}")
-        if bb is None:
-            raise HTTPException(status_code=400, detail="Failed to open BigBed file.")
+        bb = _open_bed_tile_source(p)
 
         try:
             chrom_sizes = bb.chroms() or {}
