@@ -18,6 +18,7 @@ const TRACK_TYPES = [
     { id: 'bigwig', label: 'BigWig', ext: '.bw / .bigwig', desc: 'Continuous signal (coverage, ChIP-seq, ATAC-seq)' },
     { id: 'vcf', label: 'VCF', ext: '.vcf.gz (+ .tbi)', desc: 'Tabix-indexed variants (SNPs, indels, SVs)' },
     { id: 'bed', label: 'BED', ext: '.bed / .bed.gz', desc: 'Genomic intervals (peaks, repeats, regions)' },
+    { id: 'gff', label: 'GFF / GTF', ext: '.gff / .gff3 / .gtf (.gz)', desc: 'Features as generic intervals (regulatory build, repeats); not gene models' },
     { id: 'bigbed', label: 'BigBED', ext: '.bb / .bigBed', desc: 'Indexed intervals for large BED files' },
     { id: 'splice_junctions', label: 'Splice Junctions', ext: '.SJ.out.tab', desc: 'STAR splice-junction file (arc / sashimi plot)' },
     { id: 'bam', label: 'BAM (short reads)', ext: '.bam (+ .bai)', desc: 'Short-read alignments (coverage + reads)' },
@@ -31,6 +32,7 @@ const DISPLAY_MODES = {
         { id: 'adaptive', label: 'Block Lollipop' },
     ],
     bed: [{ id: 'intervals', label: 'Intervals' }, { id: 'density', label: 'Density' }],
+    gff: [{ id: 'intervals', label: 'Intervals' }, { id: 'density', label: 'Density' }],
     bigbed: [{ id: 'intervals', label: 'Intervals' }, { id: 'density', label: 'Density' }],
     splice_junctions: [{ id: 'arcs', label: 'Arcs (Sashimi)' }],
     bam: [{ id: 'coverage', label: 'Coverage' }, { id: 'reads_coverage', label: 'Reads + Coverage' }],
@@ -76,6 +78,7 @@ const TYPE_COLORS = {
     bigwig: '#3b82f6',
     vcf: '#f59e0b',
     bed: '#10b981',
+    gff: '#0891b2',
     bigbed: '#059669',
     splice_junctions: '#8b5cf6',
     bam: '#ef4444',
@@ -926,7 +929,7 @@ function stemFromPath(p = '') {
     const base = basenameFromPath(p)
     // Strip common extensions
     return base
-        .replace(/\.(vcf\.gz|bed\.gz|bigwig|bigbed|sj\.out\.tab|bam|bw|bb|vcf|bed)$/i, '')
+        .replace(/\.(vcf\.gz|bed\.gz|gff3\.gz|gff\.gz|gtf\.gz|bigwig|bigbed|sj\.out\.tab|bam|bw|bb|vcf|bed|gff3|gff|gtf)$/i, '')
         .replace(/[_\-.]/g, ' ')
         .trim()
 }
@@ -937,6 +940,7 @@ function detectTypeFromPath(path = '') {
     if (lower.endsWith('.bb') || lower.endsWith('.bigbed')) return 'bigbed'
     if (lower.endsWith('.vcf.gz') || lower.endsWith('.vcf')) return 'vcf'
     if (lower.endsWith('.bed.gz') || lower.endsWith('.bed')) return 'bed'
+    if (/\.(gff3?|gtf)(\.gz)?$/.test(lower)) return 'gff'
     if (lower.endsWith('.sj.out.tab')) return 'splice_junctions'
     if (lower.endsWith('.bam')) {
         // Heuristic: long-read if name contains these keywords
@@ -1197,7 +1201,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                     vcf_settings: effectiveType === 'vcf'
                         ? normalizeVcfSettings(vcfSettings)
                         : undefined,
-                    bed_settings: effectiveType === 'bed' || effectiveType === 'bigbed'
+                    bed_settings: ['bed', 'bigbed', 'gff'].includes(effectiveType)
                         ? normalizeBedSettings(bedSettings)
                         : undefined,
                 }),
@@ -1229,7 +1233,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                 initialPath={seed?.browserDirectory || initialBrowsePath || '.'}
                 mode="file"
                 theme={isLight ? 'light' : 'dark'}
-                extensions={['.bw', '.bigwig', '.bb', '.bigbed', '.vcf', '.vcf.gz', '.bed', '.bed.gz', '.bam', '.SJ.out.tab']}
+                extensions={['.bw', '.bigwig', '.bb', '.bigbed', '.vcf', '.vcf.gz', '.bed', '.bed.gz', '.gff', '.gff3', '.gtf', '.gff.gz', '.gff3.gz', '.gtf.gz', '.bam', '.SJ.out.tab']}
             />
 
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
@@ -1269,7 +1273,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                     Browse for file…
                                 </button>
                                 <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
-                                    Supported: .bw, .bigwig, .bb, .vcf.gz, .bed, .bed.gz, .bam, .SJ.out.tab
+                                    Supported: .bw, .bigwig, .bb, .vcf.gz, .bed, .bed.gz, .gff, .gff3, .gtf (.gz), .bam, .SJ.out.tab
                                 </p>
                             </div>
                         )}
@@ -1379,7 +1383,7 @@ function RegistrationWizard({ isLight, genomeOptions, onClose, onRegistered, ini
                                     </div>
                                 )}
 
-                                {(effectiveType === 'bed' || effectiveType === 'bigbed') && (
+                                {['bed', 'bigbed', 'gff'].includes(effectiveType) && (
                                     <div>
                                         <label className={labelCls}>Colour</label>
                                         <BedSettingsEditor
@@ -1473,7 +1477,7 @@ function TrackCard({ track, isLight, genomeOptions, onUpdate, onDelete }) {
     const [editBigWigSettings, setEditBigWigSettings] = useState(normalizeBigWigSettings(track.bigwig_settings))
     const [editVcfSettings, setEditVcfSettings] = useState(normalizeVcfSettings(track.vcf_settings))
     const [editBedSettings, setEditBedSettings] = useState(normalizeBedSettings(track.bed_settings))
-    const isBedLike = track.type === 'bed' || track.type === 'bigbed'
+    const isBedLike = ['bed', 'bigbed', 'gff'].includes(track.type)
     const [saving, setSaving] = useState(false)
     const [saveWarning, setSaveWarning] = useState('')
     const spliceSummary = useMemo(
@@ -1489,7 +1493,7 @@ function TrackCard({ track, isLight, genomeOptions, onUpdate, onDelete }) {
         return normalizeVcfSettings(track.vcf_settings)
     }, [track.type, track.vcf_settings])
     const bedSummary = useMemo(() => {
-        if (track.type !== 'bed' && track.type !== 'bigbed') return null
+        if (!['bed', 'bigbed', 'gff'].includes(track.type)) return null
         return normalizeBedSettings(track.bed_settings)
     }, [track.type, track.bed_settings])
 

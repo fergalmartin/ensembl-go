@@ -296,6 +296,11 @@ const BED_DENSITY_LEVELS = [
     { id: 'D5', minBpPerPx: 0, tileSpanBp: 32_000, blockBp: 64 },
 ]
 const BED_DEFAULT_COLOR = '#10b981'
+const GFF_DEFAULT_COLOR = '#0891b2'
+// Interval tracks share one pipeline: BigBed through pyBigWig, plain BED and GFF/GTF
+// through the backend's in-memory index, all served as BigBed-shaped tiles.
+const INTERVAL_TRACK_TYPES = new Set(['bigbed', 'bed', 'gff'])
+const isIntervalTrackType = (type) => INTERVAL_TRACK_TYPES.has(type)
 const SPLICE_HEIGHT_BASE = 52
 const SPLICE_HEIGHT_STEP = 12
 const SPLICE_HEIGHT_MIN = 56
@@ -1060,7 +1065,7 @@ function bedTrackColors(track) {
     const chosen = normalizeBedSettings(track?.bedSettings || track?.bed_settings).color
     return {
         chosen,
-        fallback: track?.type === 'bed' ? BED_DEFAULT_COLOR : '',
+        fallback: track?.type === 'bed' ? BED_DEFAULT_COLOR : track?.type === 'gff' ? GFF_DEFAULT_COLOR : '',
     }
 }
 
@@ -1650,8 +1655,9 @@ function scrollScrollerTo(scroller, metrics, top, behavior = 'smooth') {
 
 const MIRRORED_TEXT_ALIGN = { left: 'right', right: 'left', start: 'end', end: 'start' }
 // The built-in tracks a flipped panel shows reverse complemented, and so marks "RC"
-// on the line under their label, in the label's own size. Custom tracks are only
-// mirrored — their values are the same — so they are not marked.
+// on the line under their label, in the label's own size. Custom tracks are marked
+// too: their values are unchanged, but they are drawn mirrored like everything else,
+// and an unmarked track in a flipped panel reads as though it were the right way round.
 const REVERSE_COMPLEMENTED_TRACK_IDS = new Set(['forward', 'reverse', 'sequence'])
 const SIDEBAR_RC_LINE_GAP = 13
 // The label moves up by this, and RC sits the rest of the gap below the centre, so
@@ -2516,7 +2522,7 @@ export default function GenomeBrowser({
             } else if (registered.display_mode) {
                 synced.renderMode = registered.display_mode
             }
-            if (registeredType === 'bed' || registeredType === 'bigbed') {
+            if (isIntervalTrackType(registeredType)) {
                 synced.bedSettings = normalizeBedSettings(registered.bed_settings)
             }
 
@@ -4894,7 +4900,7 @@ export default function GenomeBrowser({
                     // Keep loading visible until cached coverage is reasonably complete.
                     setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.coverage || 0) < 0.75 }))
                 }
-            } else if ((trackType === 'bigbed' || trackType === 'bed') && track.renderMode === 'density') {
+            } else if (isIntervalTrackType(trackType) && track.renderMode === 'density') {
                 const densityLevel = getBedDensityLevel(bpPerPx)
                 const projected = projectBedDensityTilesToView(track.id, selectedChrom, densityLevel, visStart, visEnd)
                 setCustomTrackData((prev) => {
@@ -4906,7 +4912,7 @@ export default function GenomeBrowser({
                     return { ...prev, [track.id]: projected }
                 })
                 setCustomTrackLoading((prev) => ({ ...prev, [track.id]: projected.tile_coverage < 0.85 }))
-            } else if (trackType === 'bigbed' || trackType === 'bed') {
+            } else if (isIntervalTrackType(trackType)) {
                 const bigBedMode = getBigBedLodMode(track.id, bpPerPx)
                 if (bigBedMode === 'blocks') {
                     const blockLevel = getBigBedBlockLevel(bpPerPx)
@@ -5133,7 +5139,7 @@ export default function GenomeBrowser({
                 continue
             }
 
-            if (trackType === 'bigbed' || trackType === 'bed') {
+            if (isIntervalTrackType(trackType)) {
                 // Tiles past the chromosome end hold nothing and would only use up the cap.
                 const bedBufferEnd = chromLength > 0 ? Math.min(bufferEnd, chromLength) : bufferEnd
                 if (track.renderMode === 'density') {
@@ -7236,10 +7242,10 @@ export default function GenomeBrowser({
                     }
                     return Math.round(clamp(suggested, SPLICE_HEIGHT_MIN, SPLICE_HEIGHT_MAX))
                 }
-                if ((t?.type === 'bigbed' || t?.type === 'bed') && t?.renderMode === 'density') {
+                if (isIntervalTrackType(t?.type) && t?.renderMode === 'density') {
                     return CUSTOM_TRACK_HEIGHT_ZONED
                 }
-                if (t?.type === 'bigbed' || t?.type === 'bed') {
+                if (isIntervalTrackType(t?.type)) {
                     const data = customTrackData?.[trackId]
                     if (data?.mode === 'bigbed_detail') {
                         const laneCount = Math.max(1, Number(data?.lane_count || 1))
@@ -7849,11 +7855,11 @@ export default function GenomeBrowser({
                 maskFill: getSidebarBgColor(trackId),
             })
         }
-        const pushSidebarLabelDescriptor = (trackId, rawCenterY, text) => {
+        const pushSidebarLabelDescriptor = (trackId, rawCenterY, text, isCustomTrack = false) => {
             if (!(Number.isFinite(rawCenterY)) || !text) return
             const centerY = Math.round(rawCenterY)
             // Placed exactly as drawToggle places them, since each masks the canvas copy.
-            const showRc = isFlipped && REVERSE_COMPLEMENTED_TRACK_IDS.has(trackId)
+            const showRc = isFlipped && (isCustomTrack || REVERSE_COMPLEMENTED_TRACK_IDS.has(trackId))
             const labelBaseline = centerY + 4 - (showRc ? SIDEBAR_RC_HALF_GAP : 0)
             const labelRightX = (LHS_WIDTH - 13) - (SIDEBAR_TOGGLE_ICON_SIZE / 2) - SIDEBAR_TOGGLE_LABEL_GAP
             let columnX = labelRightX
@@ -8026,7 +8032,7 @@ export default function GenomeBrowser({
                     paddingY: 2,
                 })
             }
-            pushSidebarLabelDescriptor(trackId, getCustomTrackToggleY(trackLayout), 'CT')
+            pushSidebarLabelDescriptor(trackId, getCustomTrackToggleY(trackLayout), 'CT', true)
             pushSidebarToggleDescriptor(
                 trackId,
                 getCustomTrackToggleY(trackLayout),
@@ -8245,7 +8251,7 @@ export default function GenomeBrowser({
                 }
             }
 
-            if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bed_density' && Array.isArray(data.density_bins) && data.density_bins.length > 0) {
+            if (isIntervalTrackType(trackType) && data?.mode === 'bed_density' && Array.isArray(data.density_bins) && data.density_bins.length > 0) {
                 const left = LHS_WIDTH + 2
                 const right = viewWidth - 2
                 const plotWidth = Math.max(1, right - left)
@@ -8286,7 +8292,7 @@ export default function GenomeBrowser({
                 }
             }
 
-            if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bigbed_blocks' && Array.isArray(data.block_spans) && data.block_spans.length > 0) {
+            if (isIntervalTrackType(trackType) && data?.mode === 'bigbed_blocks' && Array.isArray(data.block_spans) && data.block_spans.length > 0) {
                 const left = LHS_WIDTH + 2
                 const right = viewWidth - 2
                 const plotWidth = Math.max(1, right - left)
@@ -8330,7 +8336,7 @@ export default function GenomeBrowser({
                 }
             }
 
-            if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bigbed_detail' && Array.isArray(data.features) && data.features.length > 0) {
+            if (isIntervalTrackType(trackType) && data?.mode === 'bigbed_detail' && Array.isArray(data.features) && data.features.length > 0) {
                 const left = LHS_WIDTH + 2
                 const right = viewWidth - 2
                 const plotWidth = Math.max(1, right - left)
@@ -9323,7 +9329,7 @@ export default function GenomeBrowser({
                 return null
             }
 
-            if ((track.type === 'bigbed' || track.type === 'bed') && data?.mode === 'bigbed_detail' && Array.isArray(data?.features)) {
+            if (isIntervalTrackType(track.type) && data?.mode === 'bigbed_detail' && Array.isArray(data?.features)) {
                 const curSpan = Math.max(1, viewEnd - viewStart)
                 const lanePitch = BIGBED_DETAIL_LANE_PITCH
                 const exonH = BIGBED_DETAIL_EXON_HEIGHT
@@ -11330,7 +11336,7 @@ export default function GenomeBrowser({
         ctx.textAlign = 'center'
 
         // Render circular power toggle with panel-specific active color.
-        const drawToggle = (x, rawY, isHidden, label, trackId) => {
+        const drawToggle = (x, rawY, isHidden, label, trackId, isCustomTrack = false) => {
             // A track of odd height centres on a half pixel, which the label and the
             // glyph then round differently. One whole-pixel centre keeps them level.
             const y = Math.round(rawY)
@@ -11344,7 +11350,7 @@ export default function GenomeBrowser({
             const labelX = x - (SIDEBAR_TOGGLE_ICON_SIZE / 2) - SIDEBAR_TOGGLE_LABEL_GAP
             // Marked on the track itself, so a reverse-complemented strand is never
             // read as the usual one. The two lines are centred on the toggle as a pair.
-            const showRc = isFlipped && REVERSE_COMPLEMENTED_TRACK_IDS.has(trackId)
+            const showRc = isFlipped && (isCustomTrack || REVERSE_COMPLEMENTED_TRACK_IDS.has(trackId))
             const labelBaseline = y + 4 - (showRc ? SIDEBAR_RC_HALF_GAP : 0)
             if (showRc) {
                 // Both lines centred on one column — RC's centre where it would sit
@@ -11400,7 +11406,7 @@ export default function GenomeBrowser({
         for (const [trackId, trackLayout] of Object.entries(customTrackLayouts)) {
             const hidden = !(customTracksById.get(trackId)?.visible)
             const labelY = getCustomTrackToggleY(trackLayout)
-            drawToggle(LHS_WIDTH - 13, labelY, hidden, 'CT', trackId)
+            drawToggle(LHS_WIDTH - 13, labelY, hidden, 'CT', trackId, true)
         }
 
         // ---- Sequence Track ----
@@ -11557,7 +11563,7 @@ export default function GenomeBrowser({
             fillScreenText(ctx, customMirrorAxis, labelText, labelX, labelY)
             ctx.restore()
 
-            const isDiscreteTrack = ['vcf', 'bed', 'bigbed', 'splice_junctions', 'long_reads'].includes(trackType)
+            const isDiscreteTrack = ['vcf', 'splice_junctions', 'long_reads'].includes(trackType) || isIntervalTrackType(trackType)
 
             if (isDiscreteTrack) {
                 if (!data || (data.error && !data.has_data)) {
@@ -12191,7 +12197,7 @@ export default function GenomeBrowser({
                     continue
                 }
 
-                if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bigbed_blocks' && Array.isArray(data.block_spans)) {
+                if (isIntervalTrackType(trackType) && data?.mode === 'bigbed_blocks' && Array.isArray(data.block_spans)) {
                     const spans = data.block_spans
                     // Spans are genomic and were clipped to the view they were projected
                     // for; placing them against the current view keeps them still while
@@ -12236,7 +12242,7 @@ export default function GenomeBrowser({
                     continue
                 }
 
-                if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bigbed_detail' && Array.isArray(data.features)) {
+                if (isIntervalTrackType(trackType) && data?.mode === 'bigbed_detail' && Array.isArray(data.features)) {
                     const viewGToX = (g) => left + ((g - viewStart) / Math.max(1, viewEnd - viewStart)) * width
                     const trackColors = bedTrackColors(track)
                     const lanePitch = BIGBED_DETAIL_LANE_PITCH
@@ -12443,7 +12449,7 @@ export default function GenomeBrowser({
                 }
 
                 // ── BED/BigBed density: features per bin as a histogram ───────────
-                if ((trackType === 'bigbed' || trackType === 'bed') && data?.mode === 'bed_density' && Array.isArray(data.density_bins)) {
+                if (isIntervalTrackType(trackType) && data?.mode === 'bed_density' && Array.isArray(data.density_bins)) {
                     const bins = data.density_bins
                     const maxCount = Math.max(1, Number(data.max_count) || 1)
                     const trackColors = bedTrackColors(track)
@@ -15526,12 +15532,26 @@ export default function GenomeBrowser({
                             ? 'Reverse'
                             : 'Unknown'
                     const scoreNum = Number(f?.score)
-                    const scoreLabel = Number.isFinite(scoreNum)
-                        ? scoreNum.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                        : (String(f?.score || '').trim() || '—')
-                    const extraFields = Array.isArray(f?.extra_fields)
-                        ? f.extra_fields.map((v) => String(v || '').trim()).filter(Boolean)
+                    // A file with no score (GFF's ".") is reported as parsed to "0"; say so
+                    // rather than claim a score of zero.
+                    const scoreLabel = f?.has_score === false
+                        ? '—'
+                        : Number.isFinite(scoreNum)
+                            ? scoreNum.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                            : (String(f?.score || '').trim() || '—')
+                    // Named where the file names them (a BigBed's autoSql, a GFF's type,
+                    // source and attributes); otherwise listed together, as before.
+                    const rawExtraValues = Array.isArray(f?.extra_fields) ? f.extra_fields : []
+                    const rawExtraNames = Array.isArray(f?.extra_field_names) ? f.extra_field_names : []
+                    const namedExtras = rawExtraNames.length === rawExtraValues.length
+                        ? rawExtraValues
+                            .map((value, i) => ({ name: String(rawExtraNames[i] || '').trim(), value: String(value || '').trim() }))
+                            .filter((row) => row.value && row.name && !/^extra_\d+$/.test(row.name))
                         : []
+                    const extraFields = rawExtraValues
+                        .map((v) => String(v || '').trim())
+                        .filter(Boolean)
+                        .filter((v) => !namedExtras.some((row) => row.value === v))
                     const featureName = String(f?.name || '').trim()
                     // Features are held in the browser's frame, [first base, last base + 1).
                     const spanLabel = Number.isFinite(start) && Number.isFinite(end) && end > start
@@ -15596,8 +15616,13 @@ export default function GenomeBrowser({
                                     </span></div>
                                 </>
                             )}
+                            {namedExtras.map((row) => (
+                                <div key={row.name} style={{ overflowWrap: 'anywhere' }}>
+                                    {row.name} <span style={{ fontWeight: 700 }}>{row.value}</span>
+                                </div>
+                            ))}
                             {extraFields.length > 0 && (
-                                <div>Extra <span style={{ fontWeight: 700 }}>{extraFields.join(' | ')}</span></div>
+                                <div style={{ overflowWrap: 'anywhere' }}>Extra <span style={{ fontWeight: 700 }}>{extraFields.join(' | ')}</span></div>
                             )}
                         </div>
                     )

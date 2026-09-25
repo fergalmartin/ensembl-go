@@ -65,7 +65,7 @@ try:
 except Exception:
     pyBigWig = None
 
-from bed_index import get_plain_bed_index, is_plain_bed_path, open_plain_bed
+from bed_index import get_plain_bed_index, is_gff_path, is_plain_bed_path, open_plain_bed
 from download_manager import DownloadManager, SpeciesSummary, FileInfo, DownloadTask, GroupCount
 from assembly_report import (
     KnownRegions,
@@ -20111,6 +20111,13 @@ TRACK_EXTENSION_MAP: Dict[str, str] = {
     ".vcf":        "vcf",
     ".bed.gz":     "bed",
     ".bed":        "bed",
+    # GFF3 and GTF as generic interval tracks (regulatory features, repeats, ...).
+    ".gff":        "gff",
+    ".gff3":       "gff",
+    ".gtf":        "gff",
+    ".gff.gz":     "gff",
+    ".gff3.gz":    "gff",
+    ".gtf.gz":     "gff",
     ".bam":        "bam",
     ".sj.out.tab": "splice_junctions",
 }
@@ -20120,6 +20127,7 @@ TRACK_DISPLAY_MODES: Dict[str, List[str]] = {
     "bigbed":           ["intervals", "density"],
     "vcf":              ["density_lollipop", "adaptive", "ensembl", "lollipop", "density"],
     "bed":              ["intervals", "density"],
+    "gff":              ["intervals", "density"],
     "bam":              ["coverage", "reads_coverage"],
     "long_reads":       ["collapsed_transcripts"],
     "splice_junctions": ["arcs"],
@@ -21997,7 +22005,7 @@ def _hydrate_track_defaults(track: Dict[str, Any]) -> Dict[str, Any]:
     if track_type == "splice_junctions":
         hydrated["splice_settings"] = _normalize_splice_settings(hydrated.get("splice_settings"))
         hydrated["display_mode"] = "arcs"
-    if track_type in ("bed", "bigbed"):
+    if track_type in ("bed", "bigbed", "gff"):
         hydrated["bed_settings"] = _normalize_bed_settings(hydrated.get("bed_settings"))
     return hydrated
 
@@ -22611,7 +22619,7 @@ async def register_track(entry: TrackRegistryEntry):
     if detected_type == "splice_junctions":
         display_mode = "arcs"
         splice_settings = _normalize_splice_settings(entry.splice_settings)
-    if detected_type in ("bed", "bigbed"):
+    if detected_type in ("bed", "bigbed", "gff"):
         bed_settings = _normalize_bed_settings(entry.bed_settings)
         allowed_modes = TRACK_DISPLAY_MODES.get(detected_type, [])
         if allowed_modes and display_mode not in allowed_modes:
@@ -22712,7 +22720,7 @@ def update_track(track_id: str, entry: TrackRegistryUpdateEntry):
                 else:
                     tracks[idx]["display_mode"] = entry.display_mode
 
-        if track_type in ("bed", "bigbed"):
+        if track_type in ("bed", "bigbed", "gff"):
             prev_bed_settings = _normalize_bed_settings(tracks[idx].get("bed_settings"))
             tracks[idx]["bed_settings"] = (
                 _normalize_bed_settings(entry.bed_settings, previous=prev_bed_settings)
@@ -24878,20 +24886,22 @@ async def browse_bed(
 
 
 def _open_bed_tile_source(p: Path) -> Any:
-    """A BigBed handle, or a plain BED file answering the same calls.
+    """A BigBed handle, or a plain BED or GFF/GTF file answering the same calls.
 
-    Plain BED goes through an in-memory index (or its tabix index) built once per file,
-    so the tile endpoints serve both formats with the same tiling and summaries.
+    Plain BED and GFF go through an in-memory index (or their tabix index) built once
+    per file, so the tile endpoints serve every interval format with the same tiling
+    and summaries.
     """
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"Track file not found: {p}")
-    if is_plain_bed_path(p):
+    if is_plain_bed_path(p) or is_gff_path(p):
         try:
             return open_plain_bed(p)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to read BED: {e}")
+            kind = "GFF" if is_gff_path(p) else "BED"
+            raise HTTPException(status_code=400, detail=f"Failed to read {kind}: {e}")
     if not _is_bigbed_path(p):
-        raise HTTPException(status_code=400, detail="path is not a BED or BigBed file")
+        raise HTTPException(status_code=400, detail="path is not a BED, GFF or BigBed file")
     if pyBigWig is None:
         raise HTTPException(status_code=503, detail="BigBed support is unavailable. Install pyBigWig.")
     try:
@@ -25057,6 +25067,49 @@ def _select_bigbed_tile_entries(
     return features, truncated
 
 
+def _select_bigbed_block_entries(
+    bb: Any,
+    resolved_chrom: str,
+    tile_start: int,
+    tile_end: int,
+    max_features: int,
+    schema_info: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Just what a summary block needs from each row: its span, score and colour.
+
+    The full row parse (names, blocks, extra fields) cost ~20µs a row, which a whole-
+    chromosome summary of a dense file — 40k regulatory features — turned into most of
+    a second, all of it thrown away when the rows were folded into blocks.
+    """
+    rest_index = (schema_info or {}).get("rest_index") or {}
+    score_idx = rest_index.get("score", 1 if not rest_index else None)
+    colour_idx = rest_index.get("itemrgb", rest_index.get("reserved", 5 if not rest_index else None))
+    out: List[Dict[str, Any]] = []
+    for row in bb.entries(resolved_chrom, tile_start, tile_end) or []:
+        if not isinstance(row, (tuple, list)) or len(row) < 2:
+            continue
+        try:
+            f_start = int(row[0])
+            f_end = int(row[1])
+        except Exception:
+            continue
+        if f_end <= tile_start or f_start >= tile_end:
+            continue
+        score = "0"
+        colour = ""
+        if len(row) > 2 and (score_idx is not None or colour_idx is not None):
+            rest = row[2]
+            cols = (rest.decode("utf-8", errors="replace") if isinstance(rest, (bytes, bytearray)) else str(rest or "")).split("\t")
+            if score_idx is not None and score_idx < len(cols) and cols[score_idx]:
+                score = cols[score_idx]
+            if colour_idx is not None and colour_idx < len(cols):
+                colour = cols[colour_idx]
+        out.append({"start": f_start, "end": f_end, "score": score, "itemRgb": colour})
+        if len(out) >= max_features:
+            break
+    return out
+
+
 @app.post("/api/browse/bigbed/block_tiles")
 async def browse_bigbed_block_tiles(payload: BigBedBlockTilesRequest):
     def _run():
@@ -25115,7 +25168,7 @@ async def browse_bigbed_block_tiles(payload: BigBedBlockTilesRequest):
                     continue
 
                 # Summary mode intentionally tolerates high row counts; cap to avoid pathological stalls.
-                features, _ = _select_bigbed_tile_entries(
+                features = _select_bigbed_block_entries(
                     bb=bb,
                     resolved_chrom=resolved_chrom,
                     tile_start=tile_start,
