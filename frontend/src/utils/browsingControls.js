@@ -345,6 +345,22 @@ export function isTextEntryTarget(target) {
  */
 const HANDLED_WHEEL_EVENTS = new WeakSet()
 
+/**
+ * Whether a wheel event began inside a modal overlay (its dialog or its backdrop).
+ *
+ * Such an overlay covers the tracks but is not part of them: a wheel there scrolls the
+ * dialog's own list, and must never reach the browser behind it as a zoom. The view's
+ * document-level fallback would otherwise take it — the overlay sits over a panel's
+ * width — and its preventDefault also stopped the list scrolling, which is why a long
+ * track picker scrolled only fitfully while the browser zoomed underneath.
+ */
+const WHEEL_ISOLATED_SELECTOR = '[data-wheel-isolated="true"], [aria-modal="true"]'
+
+export function isWheelInsideIsolatedOverlay(event) {
+    const target = event?.target
+    return Boolean(target && typeof target.closest === 'function' && target.closest(WHEEL_ISOLATED_SELECTOR))
+}
+
 export function markWheelHandled(event) {
     if (event && typeof event === 'object') HANDLED_WHEEL_EVENTS.add(event)
 }

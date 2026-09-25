@@ -43,6 +43,7 @@ import {
     isTextEntryTarget,
     isWheelHandled,
     markWheelHandled,
+    isWheelInsideIsolatedOverlay,
     pickNearestPanel,
     readWheelEvent,
     resolveBrowsingControls,
@@ -2792,6 +2793,9 @@ export default function GenomeBrowserView({
             // Unconditionally, and before anything else can bail out. This is
             // what stops Chromium page-zooming the whole Electron window.
             if (e.ctrlKey || e.metaKey) e.preventDefault()
+
+            // A dialog over the tracks scrolls itself; leave its events alone.
+            if (isWheelInsideIsolatedOverlay(e)) return
 
             // A panel marks every event it resolves, including ones it chose to
             // do nothing with. Propagation alone cannot tell those apart, since

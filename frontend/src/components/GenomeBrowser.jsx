@@ -62,6 +62,7 @@ import {
     resolveKeyAction,
     resolveWheelAction,
     isWheelGestureFromChrome,
+    isWheelInsideIsolatedOverlay,
 } from '../utils/browsingControls'
 import { classifyBiotype } from '../utils/geneBiotypes'
 import {
@@ -10312,6 +10313,8 @@ export default function GenomeBrowser({
         if (!container) return
 
         const handleWheel = (e) => {
+            // A dialog over the tracks scrolls itself and never zooms them.
+            if (isWheelInsideIsolatedOverlay(e)) return
             // A gesture that began on a control bar or in the page margins is a
             // page scroll. Scrolling slides this canvas under the cursor, so
             // without this the rest of the gesture would turn into a zoom.
@@ -14941,7 +14944,7 @@ export default function GenomeBrowser({
         >
 
             {isCustomTrackLabelModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                <div data-wheel-isolated="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
                     <div
                         className={`w-full max-w-md rounded-xl shadow-2xl border ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800 border-gray-700'}`}
                     >
@@ -15012,11 +15015,15 @@ export default function GenomeBrowser({
             {/* ── Track Picker Modal ─────────────────────────────────────────────────── */}
             {isTrackPickerOpen && (
                 <div
+                    data-wheel-isolated="true"
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
                     onClick={closeTrackPicker}
                 >
                     <div
                         data-tour-id="browser-track-picker"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Add registered track"
                         className={`w-full max-w-lg rounded-2xl shadow-2xl border flex flex-col max-h-[80vh] ${isLight ? 'bg-white border-gray-200' : 'bg-gray-900 border-gray-700'}`}
                         onClick={(e) => e.stopPropagation()}
                     >
@@ -15055,7 +15062,7 @@ export default function GenomeBrowser({
                                 const pickerTrackId = String(registeredTrack.id || '')
                                 const selectedForAdd = !alreadyAdded && selectedTrackPickerIds.includes(pickerTrackId)
                                 const typeColor = {
-                                    bigwig: '#3b82f6', vcf: '#f59e0b', bed: '#10b981', bigbed: '#059669',
+                                    bigwig: '#3b82f6', vcf: '#f59e0b', bed: '#10b981', bigbed: '#059669', gff: '#0891b2',
                                     splice_junctions: '#8b5cf6', bam: '#ef4444', long_reads: '#ec4899',
                                 }[registeredTrack.type] || '#64748b'
                                 return (

@@ -11,6 +11,7 @@ import {
   describeBrowsingControls,
   isTextEntryTarget,
   isWheelHandled,
+  isWheelInsideIsolatedOverlay,
   markWheelHandled,
   normalizeBrowsingControlSchemeId,
   normalizeWheelDelta,
@@ -744,4 +745,15 @@ test('wheelZoomFactor is safe to divide by for a magnification-based view', () =
     // Zoom in then back out returns to where it started.
     const roundTrip = (zoom / wheelZoomFactor(60, 0.005)) / wheelZoomFactor(-60, 0.005)
     assert.ok(Math.abs(roundTrip - zoom) < 1e-9, 'zooming in and out is lossless')
+})
+
+test('a wheel inside a modal overlay is isolated from the browser behind it', () => {
+  // Duck-typed: closest() answers for the selector the overlay would match.
+  const inside = (matches) => ({ target: { closest: (selector) => (matches.some((m) => selector.includes(m)) ? {} : null) } })
+  assert.equal(isWheelInsideIsolatedOverlay(inside(['data-wheel-isolated'])), true)
+  assert.equal(isWheelInsideIsolatedOverlay(inside(['aria-modal'])), true)
+  assert.equal(isWheelInsideIsolatedOverlay({ target: { closest: () => null } }), false)
+  assert.equal(isWheelInsideIsolatedOverlay({ target: null }), false)
+  assert.equal(isWheelInsideIsolatedOverlay({ target: {} }), false)
+  assert.equal(isWheelInsideIsolatedOverlay(null), false)
 })
