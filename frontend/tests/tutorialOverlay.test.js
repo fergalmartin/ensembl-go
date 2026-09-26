@@ -842,3 +842,15 @@ test('a spotlight stops at the chrome floating over what it points at', () => {
   assert.match(overlay, /rect \? paddedAround\(\n\s+rect,/)
   assert.match(browserView, /data-tutorial-occluder=\{controlsFollowScroll \? 'true' : undefined\}/)
 })
+
+test('a reader partway through can jump to any step, and the jump starts it there', () => {
+  // The card offers the same list of sections and steps as the Tutorials view, and a jump
+  // is a start at that step: every step sets itself up from a fresh start, where moving
+  // the pointer alone would carry over whatever the steps in between left behind.
+  assert.match(overlay, /data-tutorial-jump-open="true"/)
+  assert.match(overlay, /function TutorialJumpDialog\(/)
+  assert.match(overlay, /tutorialSections\(tutorial\)/)
+  assert.match(provider, /const jumpToStep = useCallback\(async \(stepIndex\) => \{[\s\S]{0,400}return start\(tutorial\.id, \{ outputDir: root, stepIndex: index \}\)/)
+  // The list is the reader's to use while the rest of the app is guarded.
+  assert.match(provider, /closest\('\[data-tutorial-card\], \[data-tutorial-jump\]'\)/)
+})

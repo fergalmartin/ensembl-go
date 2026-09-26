@@ -65,6 +65,7 @@ import {
   isInputAdvanceSatisfied,
   BIOTYPE_CLASSES,
   stepAt,
+  stepCount,
   isAdvanceEventMatch,
   isLastStep as lastStepOf,
   reduceTutorial,
@@ -766,7 +767,7 @@ export function TutorialProvider({ children }) {
     }
     const guard = (event) => {
       if (selfActingRef.current) return
-      if (typeof event.target?.closest === 'function' && event.target.closest('[data-tutorial-card]')) return
+      if (typeof event.target?.closest === 'function' && event.target.closest('[data-tutorial-card], [data-tutorial-jump]')) return
       // Wheel input over a blocker band used to be forwarded to the app's own scroller, so
       // that the Genome Selector — which scrolls at the full-width app level, under the
       // bands covering its side margins — could still be scrolled by hand. It should not
@@ -2323,6 +2324,18 @@ export function TutorialProvider({ children }) {
   ])
   const skip = useCallback(() => dispatch({ type: 'skip' }), [dispatch])
 
+  /** Jump, from inside a running tutorial, to any step: the same as starting it at that
+   *  step from the Tutorials view. Every step establishes what it needs on arrival from a
+   *  fresh start — that is what "start at step N" relies on — whereas moving the pointer
+   *  alone would carry over whatever the steps in between left behind, which Back's
+   *  one-step undo is no help with. */
+  const jumpToStep = useCallback(async (stepIndex) => {
+    const root = userOutputDirRef.current
+    if (!tutorial || !root) return false
+    const index = Math.max(0, Math.min(stepCount(tutorial) - 1, Number(stepIndex) || 0))
+    return start(tutorial.id, { outputDir: root, stepIndex: index })
+  }, [tutorial, start])
+
   /** Establish the selected builder step exactly as playback would establish it.
    *
    * Authoring deliberately navigates to the declared view even when opening that view is
@@ -2894,6 +2907,7 @@ export function TutorialProvider({ children }) {
     next,
     back,
     skip,
+    jumpToStep,
     setAutoplay,
     emitSignal,
     notifyView,
@@ -2911,7 +2925,7 @@ export function TutorialProvider({ children }) {
   }), [
     authoringEnabled, builderAuthoringEnabled, autoplay, autoplayRun, back, busy, configOverride, cursor,
     currentView, dismiss, editStepPosition, editStepSize, editStepText, emitSignal, exit, isRunning, navigateToView, next,
-    fillCopyValue, notifyTheme, notifyView, paced, prepareBuilderPreview, prepareBuilderStep, pulseAnchor, registerHost, skip, speedIndex, start,
+    fillCopyValue, notifyTheme, notifyView, paced, prepareBuilderPreview, prepareBuilderStep, pulseAnchor, registerHost, skip, jumpToStep, speedIndex, start,
     readyStepId, runtimeProblem, dialogRequest, customGenomeRequest, trackRequest, browserTracksRequest, reportRegisteredTracks, registerLocalGenome, settledStepId, selectorListPresentation, state, step, stored,
     theme, toggleTutorialGenome, tutorial,
     selectedDatasetRecipeIds, scenePlaylists, stopBuilderPreview, updateSandboxConfig,

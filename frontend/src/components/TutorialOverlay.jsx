@@ -17,7 +17,9 @@ import {
   stepSection,
   stepShowsSpotlightRing,
   stepShowsSpotlightRingShadow,
+  tutorialSections,
 } from '../utils/tutorialModel'
+import { analyseTutorialCompatibility } from '../utils/tutorialDocument.js'
 import {
   areRectsEqual,
   blockerRects,
@@ -196,17 +198,116 @@ function useSelectorRects(selectors, active) {
   return rects
 }
 
+/** Every section and step of the running tutorial, to jump to — the list the Tutorials
+ *  view offers before starting, here for someone already partway through. */
+function TutorialJumpDialog({ tutorial, currentIndex, isLight, onCancel, onJump }) {
+  const listRef = useRef(null)
+  const sections = useMemo(() => tutorialSections(tutorial), [tutorial])
+  const unavailable = useMemo(() => analyseTutorialCompatibility(tutorial).unavailableSteps || {}, [tutorial])
+
+  // Open on where the reader is, not at the top of a long list.
+  useLayoutEffect(() => {
+    const current = listRef.current?.querySelector('[data-tutorial-jump-current="true"]')
+    current?.scrollIntoView?.({ block: 'center' })
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onCancel()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onCancel])
+
+  return (
+    <div
+      data-tutorial-jump="true"
+      className="fixed inset-0 z-[320] flex items-center justify-center p-4"
+      style={{ pointerEvents: 'auto', backgroundColor: 'rgba(2, 6, 23, 0.45)' }}
+      onClick={onCancel}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tutorial-jump-title"
+        className={`flex w-full max-w-md flex-col rounded-xl border shadow-2xl ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-900'}`}
+        style={{ maxHeight: 'min(72vh, 640px)' }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className={`flex-none border-b px-4 py-3 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+          <h2 id="tutorial-jump-title" className={`text-sm font-semibold ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>Jump to a step</h2>
+          <p className={`mt-0.5 text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+            {tutorial.title} · the tutorial sets each step up as it needs, wherever you land.
+          </p>
+        </div>
+        <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
+          {sections.map((group, groupIndex) => (
+            <section key={`${group.title || 'steps'}-${groupIndex}`}>
+              {group.title && (
+                <h3 className={`sticky top-0 z-[1] rounded px-2.5 py-1.5 text-xs font-semibold ${isLight ? 'bg-gray-100 text-gray-800' : 'bg-gray-800 text-gray-100'}`}>
+                  {group.title}
+                </h3>
+              )}
+              <ol className={`${group.title ? 'mt-1' : ''} space-y-0.5`}>
+                {group.steps.map(({ step: listed, stepIndex }) => {
+                  const current = stepIndex === currentIndex
+                  const blocked = unavailable[listed.id]
+                  return (
+                    <li key={listed.id}>
+                      <button
+                        type="button"
+                        data-tutorial-jump-to={listed.id}
+                        data-tutorial-jump-current={current ? 'true' : undefined}
+                        disabled={Boolean(blocked)}
+                        title={blocked ? blocked.join(' ') : current ? 'You are here' : `Jump to step ${stepIndex + 1}: ${listed.title}`}
+                        onClick={() => onJump(stepIndex)}
+                        className={`flex w-full items-start gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${current
+                          ? (isLight ? 'bg-blue-50 text-blue-900' : 'bg-blue-900/40 text-blue-100')
+                          : blocked
+                            ? (isLight ? 'text-gray-400' : 'text-gray-600')
+                            : (isLight ? 'text-gray-700 hover:bg-gray-100 hover:text-gray-950' : 'text-gray-300 hover:bg-gray-800 hover:text-white')}`}
+                      >
+                        <span className={`w-6 flex-none text-right tabular-nums ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>{stepIndex + 1}.</span>
+                        <span className="min-w-0 flex-1">{listed.title}</span>
+                        {current && <span className={`flex-none text-[10px] font-semibold ${isLight ? 'text-blue-700' : 'text-blue-300'}`}>You are here</span>}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ol>
+            </section>
+          ))}
+        </div>
+        <div className={`flex flex-none justify-end border-t px-4 py-2.5 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+          <button
+            type="button"
+            data-tutorial-jump-cancel="true"
+            onClick={onCancel}
+            className={`rounded-md border px-3 py-1.5 text-xs font-medium ${isLight ? 'border-gray-300 text-gray-700 hover:bg-gray-100' : 'border-gray-600 text-gray-300 hover:bg-gray-800'}`}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function TutorialOverlay() {
   const {
     tutorial, state, step, isRunning, theme, pulseAnchor, cursor, cursorTravelMs,
     autoplay, autoplayRun, speedIndex, setSpeedIndex, busy, presentationReady,
     progressLabel, isLastStep, runtimeProblem, retryPreparation,
-    next, back, skip, exit, dismiss, setAutoplay, authoringEnabled, fillCopyValue, settled,
+    next, back, skip, jumpToStep, exit, dismiss, setAutoplay, authoringEnabled, fillCopyValue, settled,
     editStepPosition, editStepSize, editStepText,
   } = useTutorial()
 
   const isLight = theme === 'light'
   const sectionTitle = stepSection(step)
+  // The list of sections and steps to jump to, as the Tutorials view offers before starting.
+  const [jumpOpen, setJumpOpen] = useState(false)
   const [size, setSize] = useState(() => ({ width: 0, height: 0 }))
   const [cardHeight, setCardHeight] = useState(200)
   // The height the card has in its saved, read-only state. Edit mode adds inputs, a
@@ -234,6 +335,22 @@ export default function TutorialOverlay() {
 
   // ── Editing the wording in place (developer tool; see tutorials/authoring.js) ──
   const [editing, setEditing] = useState(false)
+  // The width the card's top line — tutorial title and step count — needs on one row. The
+  // line is kept from wrapping and the card widened to fit it, within the usual limits.
+  // Measured from the line's natural width, which does not depend on the card's, so the
+  // measurement settles at once rather than chasing its own result.
+  const headingRef = useRef(null)
+  const [headingWidth, setHeadingWidth] = useState(0)
+  useLayoutEffect(() => {
+    const text = headingRef.current
+    const node = text?.parentElement
+    const card = node?.closest?.('[data-tutorial-card]')
+    if (!text || !node || !card) return
+    // The text's own width, from an inline span: the line's scrollWidth never reports less
+    // than the line, so a card widened for a long heading would never narrow again.
+    const needed = Math.ceil(card.getBoundingClientRect().width - node.clientWidth + text.getBoundingClientRect().width) + 1
+    setHeadingWidth((current) => (Math.abs(current - needed) > 1 ? needed : current))
+  }, [tutorial?.title, progressLabel, step?.id, editing, authoringEnabled, presentationReady, isRunning])
   const [draft, setDraft] = useState(null)
   const [editNote, setEditNote] = useState('')
   // A move away from the step, held while the reader decides what to do about the edits
@@ -688,7 +805,7 @@ export default function TutorialOverlay() {
   const requestedCardWidth = authoredSize.width || CARD_WIDTH
   const availableCardWidth = Math.max(0, size.width - (CARD_MARGIN * 2))
   const cardWidth = size.width > 0
-    ? Math.min(Math.max(MIN_CARD_WIDTH, requestedCardWidth), MAX_CARD_WIDTH, availableCardWidth)
+    ? Math.min(Math.max(MIN_CARD_WIDTH, requestedCardWidth, editing ? 0 : headingWidth), MAX_CARD_WIDTH, availableCardWidth)
     : requestedCardWidth
   const cardMaxHeight = size.height > 0 ? Math.max(0, size.height - (CARD_MARGIN * 2)) : undefined
   const authoredCardHeight = authoredSize.height && cardMaxHeight
@@ -1133,9 +1250,24 @@ export default function TutorialOverlay() {
                 ⠿
               </span>
             )}
-            <div className={`min-w-0 flex-1 text-[11px] font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-              {tutorial.title} · {progressLabel}
+            <div className={`min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+              <span ref={headingRef}>{tutorial.title} · {progressLabel}</span>
             </div>
+            {!editingChrome && (tutorial.steps || []).length > 1 && (
+              <button
+                type="button"
+                data-tutorial-jump-open="true"
+                onClick={() => setJumpOpen(true)}
+                disabled={Boolean(busy)}
+                title="Jump to another section or step"
+                className={`-my-0.5 flex flex-none items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold transition-colors disabled:opacity-40 ${isLight ? 'text-[#0099ff] hover:bg-gray-100' : 'text-blue-400 hover:bg-gray-800'}`}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+                </svg>
+                Jump
+              </button>
+            )}
             {/* Developer tool: edit this step's wording where it stands, straight into the
                 definition file. Absent unless the backend says editing is available, which
                 it only is from a source checkout. See tutorials/authoring.js. */}
@@ -1447,6 +1579,19 @@ export default function TutorialOverlay() {
           </>
         )}
       </div>
+      {jumpOpen && (
+        <TutorialJumpDialog
+          tutorial={tutorial}
+          currentIndex={state?.stepIndex ?? 0}
+          isLight={isLight}
+          onCancel={() => setJumpOpen(false)}
+          onJump={(index) => {
+            setJumpOpen(false)
+            if (index === (state?.stepIndex ?? 0)) return
+            guardLeaving(() => { jumpToStep(index) }, 'jump to another step')()
+          }}
+        />
+      )}
     </div>
   )
 }
