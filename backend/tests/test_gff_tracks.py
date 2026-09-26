@@ -67,7 +67,7 @@ class GffParsingTests(unittest.TestCase):
             self.assertTrue(is_gff_path(Path(name)), name)
             self.assertEqual(_detect_track_type(name), "gff", name)
         self.assertFalse(is_gff_path(Path("a.bed")))
-        self.assertEqual(TRACK_DISPLAY_MODES["gff"], ["intervals", "density"])
+        self.assertEqual(TRACK_DISPLAY_MODES["gff"], ["intervals", "transcripts", "density"])
 
 
 class GffEndpointTests(unittest.TestCase):

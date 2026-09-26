@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { API_BASE } from '../backendRuntime'
+import { mergeSelection, rangeBetween } from '../utils/fileSelection'
 
 export default function FileBrowserModal({
     isOpen,
@@ -11,6 +12,13 @@ export default function FileBrowserModal({
     extensions = [],
     defaultFileName = '',
     footerContent = null,
+    // File mode only: tick several files, even across folders, and hand them over
+    // together through onSelectMany. Clicking a file with nothing ticked still picks just
+    // that file, as it always has.
+    multiple = false,
+    onSelectMany = null,
+    // Told each folder the browser shows, so a caller can reopen it where the user was.
+    onDirectoryChange = null,
 }) {
     const [currentPath, setCurrentPath] = useState(initialPath || '.')
     const [items, setItems] = useState([])
@@ -20,6 +28,16 @@ export default function FileBrowserModal({
     const [showAll, setShowAll] = useState(false)
     const [activeExtensions, setActiveExtensions] = useState([])
     const [saveFileName, setSaveFileName] = useState(defaultFileName)
+    // Ticked files, by path, in the order they were ticked. Paths are absolute, so a
+    // selection survives moving between folders.
+    const [checkedPaths, setCheckedPaths] = useState([])
+    const allowMany = multiple && mode === 'file' && typeof onSelectMany === 'function'
+    // The file a Shift-click ranges from: the last one clicked or ticked.
+    const [anchorPath, setAnchorPath] = useState(null)
+    // A drag across rows: where it started and what was ticked before it.
+    const dragRef = useRef(null)
+    // A drag that ends on the row it began on still fires that row's click; this eats it.
+    const suppressClickRef = useRef(false)
 
     // New Directory State
     const [isCreatingDirectory, setIsCreatingDirectory] = useState(false)
@@ -51,6 +69,8 @@ export default function FileBrowserModal({
             setIsCreatingDirectory(false)
             setNewDirectoryName('')
             setSelectedItem(null)
+            setCheckedPaths([])
+            setAnchorPath(null)
             fetchItems(startPath)
             // Reset filters: activeExtensions = all extensions passed, showAll = false (unless no extensions)
             if (extensions && extensions.length > 0) {
@@ -84,6 +104,7 @@ export default function FileBrowserModal({
             if (data.current_path && data.current_path !== currentPath) {
                 setCurrentPath(data.current_path)
             }
+            onDirectoryChange?.(data.current_path || path)
         } catch (e) {
             setError(e.message)
         } finally {
@@ -91,7 +112,7 @@ export default function FileBrowserModal({
         }
     }
 
-    const handleItemClick = (item) => {
+    const handleItemClick = (item, event = null) => {
         if (item.name === '..') {
             fetchItems(item.path)
             setSelectedItem(null)
@@ -104,7 +125,23 @@ export default function FileBrowserModal({
             fetchItems(item.path)
             setSelectedItem(null)
         } else {
-            // It's a file
+            // It's a file. Shift-click takes the range from the last file clicked, Cmd/Ctrl
+            // adds or removes one, and once anything is ticked a plain click does too,
+            // rather than throwing the selection away for this one file.
+            if (allowMany) {
+                if (suppressClickRef.current) {
+                    suppressClickRef.current = false
+                    return
+                }
+                if (event?.shiftKey && anchorPath) {
+                    setCheckedPaths((prev) => mergeSelection(prev, rangeBetween(visibleFilePaths, anchorPath, item.path)))
+                    return
+                }
+                if (event?.metaKey || event?.ctrlKey || checkedPaths.length > 0) {
+                    toggleChecked(item.path)
+                    return
+                }
+            }
             if (mode === 'file' || mode === 'file-or-directory') {
                 setSelectedItem(item)
                 onSelect(item.path, { kind: 'file' })
@@ -114,6 +151,59 @@ export default function FileBrowserModal({
                 setSaveFileName(item.name)
             }
         }
+    }
+
+    const toggleChecked = (path) => {
+        setCheckedPaths((prev) => (prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]))
+        setAnchorPath(path)
+    }
+
+    // The checkbox's own click, which also ranges on Shift.
+    const handleCheckboxClick = (item, event) => {
+        event.stopPropagation()
+        if (event.shiftKey && anchorPath) {
+            setCheckedPaths((prev) => mergeSelection(prev, rangeBetween(visibleFilePaths, anchorPath, item.path)))
+            return
+        }
+        toggleChecked(item.path)
+    }
+
+    // Click-and-drag: pressing on a file and moving over others ticks every row passed,
+    // added to whatever was ticked before the drag began.
+    const handleRowMouseDown = (item, event) => {
+        if (!allowMany || item.is_dir || event.button !== 0) return
+        if (event.shiftKey || event.metaKey || event.ctrlKey) return
+        dragRef.current = { start: item.path, base: checkedPaths, moved: false }
+        // No text selection while dragging across names.
+        event.preventDefault()
+    }
+    const handleRowMouseEnter = (item, event) => {
+        const drag = dragRef.current
+        if (!drag || item.is_dir || !(event.buttons & 1)) return
+        if (!drag.moved && item.path === drag.start) return
+        drag.moved = true
+        setCheckedPaths(mergeSelection(drag.base, rangeBetween(visibleFilePaths, drag.start, item.path)))
+        setAnchorPath(drag.start)
+    }
+    useEffect(() => {
+        if (!isOpen || !allowMany) return undefined
+        const handleMouseUp = () => {
+            const drag = dragRef.current
+            dragRef.current = null
+            if (!drag?.moved) return
+            // The click that may follow this mouseup belongs to the drag, not to a pick.
+            // Cleared after it, so it can never swallow a later click.
+            suppressClickRef.current = true
+            setTimeout(() => { suppressClickRef.current = false }, 0)
+        }
+        window.addEventListener('mouseup', handleMouseUp)
+        return () => window.removeEventListener('mouseup', handleMouseUp)
+    }, [isOpen, allowMany])
+
+    const handleAddChecked = () => {
+        if (!checkedPaths.length) return
+        onSelectMany(checkedPaths.slice())
+        onClose()
     }
 
     const handleSelectDirectory = (path) => {
@@ -157,6 +247,18 @@ export default function FileBrowserModal({
         }
     }
 
+    // What the list shows: directories always, files by the extension filters.
+    const visibleItems = (list) => list.filter((item) => {
+        if (item.is_dir) return true
+        if (mode === 'directory') return false
+        if (showAll) return true
+        if (!extensions || extensions.length === 0) return true
+        return activeExtensions.some((ext) => item.name.toLowerCase().endsWith(ext.toLowerCase()))
+    })
+    const visibleFiles = visibleItems(items).filter((item) => !item.is_dir)
+    const visibleFilePaths = visibleFiles.map((item) => item.path)
+    const allVisibleChecked = visibleFiles.length > 0 && visibleFiles.every((item) => checkedPaths.includes(item.path))
+
     // Styles
     const modalBg = isLight ? 'bg-white' : 'bg-gray-800'
     const textColor = isLight ? 'text-gray-900' : 'text-gray-100'
@@ -181,7 +283,7 @@ export default function FileBrowserModal({
                                 ? 'Select File or Directory'
                                 : mode === 'save'
                                     ? 'Save File'
-                                    : 'Select File'}
+                                    : allowMany ? 'Select Files' : 'Select File'}
                     </h3>
                     <button data-tour-id="file-browser-close" onClick={onClose} className={`p-1 rounded-md ${hoverBg} transition-colors`}>
                         <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -218,32 +320,45 @@ export default function FileBrowserModal({
                         </div>
                     ) : (
                         <div data-tour-id="file-browser-list" className="space-y-0.5">
-                            {items
-                                .filter(item => {
-                                    // Always show directories
-                                    if (item.is_dir) return true
-
-                                    // If selecting directory, hide files (unless overriden? No, user requested 'no need to show files')
-                                    if (mode === 'directory') return false
-
-                                    // If showAll is true, show everything
-                                    if (showAll) return true
-                                    // If no extensions defined, show everything (handled by showAll default)
-                                    if (!extensions || extensions.length === 0) return true
-
-                                    // Filter by active extensions
-                                    return activeExtensions.some(ext => item.name.toLowerCase().endsWith(ext.toLowerCase()))
-                                })
+                            {visibleItems(items)
                                 .map((item) => {
-                                    const isSelected = selectedItem?.path === item.path
+                                    const isChecked = allowMany && checkedPaths.includes(item.path)
+                                    const isSelected = selectedItem?.path === item.path || isChecked
                                     return (
                                         <div
                                             key={item.path}
                                             data-tour-id={`file-browser-entry-${item.name}`}
-                                            onClick={() => handleItemClick(item)}
-                                            className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${isSelected ? activeBg : hoverBg
+                                            onClick={(event) => handleItemClick(item, event)}
+                                            onMouseDown={(event) => handleRowMouseDown(item, event)}
+                                            onMouseEnter={(event) => handleRowMouseEnter(item, event)}
+                                            className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors select-none ${isSelected ? activeBg : hoverBg
                                                 }`}
                                         >
+                                            {allowMany && (
+                                                item.is_dir ? (
+                                                    <span className="w-4 shrink-0" aria-hidden="true" />
+                                                ) : (
+                                                    // A generous target around a small box: a click that lands
+                                                    // just off it still ticks rather than picking the file.
+                                                    <button
+                                                        type="button"
+                                                        role="checkbox"
+                                                        aria-checked={isChecked}
+                                                        aria-label={`Select ${item.name}`}
+                                                        onMouseDown={(event) => event.stopPropagation()}
+                                                        onClick={(event) => handleCheckboxClick(item, event)}
+                                                        className="-my-2 -ml-3 pl-3 pr-2 py-2 shrink-0 flex items-center rounded-lg"
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            readOnly
+                                                            tabIndex={-1}
+                                                            checked={isChecked}
+                                                            className="pointer-events-none rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                                        />
+                                                    </button>
+                                                )
+                                            )}
                                             <div className={isLight ? 'text-gray-500' : 'text-gray-400'}>
                                                 {item.name === '..' ? (
                                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -398,6 +513,43 @@ export default function FileBrowserModal({
                             </button>
                         )}
 
+                        {allowMany && (
+                            <div className={`flex items-center gap-3 text-sm ${textColor}`}>
+                                <label className="flex items-center gap-1.5 cursor-pointer">
+                                    <input
+                                        data-tour-id="file-browser-select-all"
+                                        type="checkbox"
+                                        checked={allVisibleChecked}
+                                        disabled={visibleFiles.length === 0}
+                                        onChange={(e) => {
+                                            const paths = visibleFiles.map((item) => item.path)
+                                            setCheckedPaths((prev) => (e.target.checked
+                                                ? [...prev, ...paths.filter((p) => !prev.includes(p))]
+                                                : prev.filter((p) => !paths.includes(p))))
+                                        }}
+                                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <span className="whitespace-nowrap">Select all here</span>
+                                </label>
+                                {checkedPaths.length === 0 && (
+                                    <span className={`hidden md:inline whitespace-nowrap text-xs ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
+                                        Shift-click, Cmd/Ctrl-click or drag to choose several
+                                    </span>
+                                )}
+                                {checkedPaths.length > 0 && (
+                                    <>
+                                        <span className={`whitespace-nowrap ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>{checkedPaths.length} selected</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setCheckedPaths([])}
+                                            className="text-xs text-blue-500 hover:underline"
+                                        >
+                                            Clear
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        )}
                         <button
                             onClick={onClose}
                             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isLight ? 'text-gray-600 hover:bg-gray-200' : 'text-gray-300 hover:bg-gray-700'
@@ -405,6 +557,16 @@ export default function FileBrowserModal({
                         >
                             Cancel
                         </button>
+                        {allowMany && (
+                            <button
+                                data-tour-id="file-browser-add-selected"
+                                onClick={handleAddChecked}
+                                disabled={checkedPaths.length === 0}
+                                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {checkedPaths.length > 1 ? `Add ${checkedPaths.length} files` : 'Add file'}
+                            </button>
+                        )}
                         {(mode === 'directory' || mode === 'file-or-directory') && (
                             <button
                                 onClick={() => handleSelectDirectory(currentPath)}

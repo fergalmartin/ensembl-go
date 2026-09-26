@@ -22,7 +22,7 @@ import { classifyReadiness, readinessRetryDelay } from '../utils/browserReadines
 import { genomeColorResolver } from '../genomeColorSchemes'
 import useScreenshotTargets from '../hooks/useScreenshotTargets'
 import { rasterizeSvgMarkup } from '../utils/screenshotExport'
-import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch } from '../utils/genomeIdentity'
+import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch, trackAssemblyKey } from '../utils/genomeIdentity'
 import { cycleBottomSpacer } from '../utils/genomeWheel'
 import { findScrollHost, stickyControlsInset, panelAlignmentAnchor } from '../utils/browserScrollRail'
 import { LOCKED_ICON_PATH, UNLOCKED_ICON_PATH } from '../utils/lockIcons'
@@ -2709,7 +2709,9 @@ export default function GenomeBrowserView({
         const byPanel = {}
         for (const panel of panels) {
             byPanel[panel.key] = allRegisteredTracks.filter((track) => (
-                !track.genome_key || genomeKeysMatch(track.genome_key, panel.species)
+                // By assembly: a track registered against one annotation release still
+                // fits a panel showing another release of the same assembly.
+                !track.genome_key || genomeKeysMatch(trackAssemblyKey(track.genome_key), panel.species)
             ))
         }
         return byPanel

@@ -117,6 +117,19 @@ export function stripDatasetReleaseFromSelectionKey(value) {
   return idx >= 0 ? token.slice(0, idx) : token
 }
 
+/**
+ * The assembly a custom track belongs to, from the genome key it was registered with.
+ *
+ * A track's coordinates are the assembly's, whatever annotation release was picked when
+ * it was registered — and the genome picker offers release-specific entries, so the same
+ * assembly reaches the registry both as `ensembl::Homo_sapiens::GCA_000001405.29` and as
+ * `…::dataset::ensembl/2025_12`. Grouping and matching on the raw key split one assembly's
+ * tracks in two, and hid a track from a panel showing another release of its assembly.
+ */
+export function trackAssemblyKey(genomeKey) {
+  return stripDatasetReleaseFromSelectionKey(String(genomeKey || '').trim())
+}
+
 export function datasetReleaseKeyFromSelectionKey(value) {
   const token = String(value || '').trim()
   const idx = token.indexOf(DATASET_SELECTION_SEPARATOR)

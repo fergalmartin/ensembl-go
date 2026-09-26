@@ -6,8 +6,10 @@ arrays sorted by start, and then answers range queries by binary search until th
 changes on disk. A bgzipped file with a tabix index is queried through the index instead,
 so a very large annotation is never pulled into memory.
 
-GFF3 and GTF files are read the same way, as generic intervals: one feature per line,
-with no gene models assembled from them (the custom-genome annotation import does that).
+GFF3 and GTF files are read the same way, as generic intervals: one feature per line.
+Or, as gene models: exons, CDS and UTRs gathered under their transcripts into BED12-
+shaped rows, so the browser draws transcript structures. That is display only — nothing
+here joins the annotation the app uses for genes (the custom-genome import does that).
 Each line becomes a BED-shaped row — 0-based start, a name taken from the usual
 attributes, the file's own colour where it gives one — and its type, source and
 attributes ride along as named extra fields.
@@ -161,6 +163,223 @@ def _split_gff_line(line: str) -> ParsedLine:
     return cols[0], start, end, rest
 
 
+# ── Gene models ───────────────────────────────────────────────────────────────
+
+GENE_MODEL_AUTOSQL = b"""table gffTranscript
+"A transcript assembled from GFF3/GTF exon, CDS and UTR lines"
+(
+  string chrom;        "Sequence name"
+  uint chromStart;     "Start, 0-based"
+  uint chromEnd;       "End, exclusive"
+  string name;         "Transcript or gene name"
+  string score;        "Score"
+  char[1] strand;      "Strand"
+  uint thickStart;     "CDS start"
+  uint thickEnd;       "CDS end"
+  string itemRgb;      "Colour from the color attribute"
+  int blockCount;      "Exon count"
+  int[blockCount] blockSizes;  "Exon sizes"
+  int[blockCount] chromStarts; "Exon starts, relative to chromStart"
+  string Gene;         "Gene name"
+  string GeneID;       "Gene ID"
+  string Transcript;   "Transcript ID"
+  string Biotype;      "Biotype"
+  string Type;         "Feature type (column 3)"
+  string Source;       "Source (column 2)"
+)
+"""
+
+# Lines that describe part of a transcript rather than a feature of their own.
+_EXON_TYPES = {"exon", "noncoding_exon", "pseudogenic_exon"}
+_CDS_TYPES = {"CDS", "cds"}
+_UTR_TYPES = {"five_prime_UTR", "three_prime_UTR", "UTR", "5UTR", "3UTR", "utr",
+              "five_prime_utr", "three_prime_utr"}
+_PART_TYPES = _EXON_TYPES | _CDS_TYPES | _UTR_TYPES | {
+    "start_codon", "stop_codon", "stop_codon_redefined_as_selenocysteine", "Selenocysteine", "intron",
+}
+# Whole-sequence records: drawn, they would be one bar the length of the chromosome.
+_SEQUENCE_TYPES = {"region", "chromosome", "scaffold", "contig", "supercontig"}
+_PARENT_RE = re.compile(r"(?:^|;)\s*Parent=([^;]*)")
+_GTF_TX_RE = re.compile(r'transcript_id\s+"([^"]*)"')
+
+
+def _strip_prefix(value: str) -> str:
+    """Ensembl GFF3 IDs carry a type prefix (``transcript:ENS...``); show the ID alone."""
+    head, sep, tail = str(value or "").partition(":")
+    return tail if sep and head in ("gene", "transcript", "CDS", "exon") else str(value or "")
+
+
+def _merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    out: List[Tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if out and start <= out[-1][1]:
+            if end > out[-1][1]:
+                out[-1] = (out[-1][0], end)
+        else:
+            out.append((start, end))
+    return out
+
+
+def _clean(value: str) -> str:
+    return str(value or "").replace("\t", " ")
+
+
+def build_gene_model_rows(path: Path) -> Dict[str, List[Tuple[int, int, str]]]:
+    """Every transcript in a GFF3/GTF file as a BED12-shaped row, plus the other features.
+
+    Transcripts are whatever exon/CDS/UTR lines name as their parent (GFF3 ``Parent``,
+    GTF ``transcript_id``); their own line, where there is one, supplies the name and
+    biotype, and its parent the gene. A transcript given only as CDS and UTR lines gets
+    its exons from those. Genes and transcripts that were drawn as models are not drawn
+    again; anything else in the file — a gene with no transcripts, a repeat, a
+    regulatory feature — is kept as a plain interval.
+    """
+    opener = gzip.open if str(path).lower().endswith(".gz") else open
+    by_id: Dict[str, Tuple[str, str, int, int, str, str, Dict[str, str]]] = {}
+    gtf_transcripts: Dict[str, Tuple[str, str, int, int, str, str, Dict[str, str]]] = {}
+    # GTF genes have no ID; transcripts reach theirs through gene_id instead of Parent.
+    gtf_genes: Dict[str, Tuple[str, str, int, int, str, str, Dict[str, str]]] = {}
+    parts: Dict[str, Dict[str, list]] = {}
+    others: List[Tuple[str, str, int, int, str, str, str]] = []
+
+    with opener(str(path), "rt", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if line.startswith("#"):
+                if line.startswith("##FASTA"):
+                    break
+                continue
+            cols = line.rstrip("\r\n").split("\t")
+            if len(cols) < 8:
+                continue
+            try:
+                first, last = int(cols[3]), int(cols[4])
+            except ValueError:
+                continue
+            start, end = min(first, last) - 1, max(first, last)
+            ftype = cols[2]
+            attrs_text = cols[8] if len(cols) > 8 else ""
+            strand = cols[6] if cols[6] in ("+", "-") else "."
+
+            if ftype in _PART_TYPES:
+                # Only the parent is needed from a part line; a full attribute parse of
+                # a million exons is most of the load time for nothing.
+                match = _PARENT_RE.search(attrs_text)
+                if match:
+                    parents = [p for p in match.group(1).split(",") if p]
+                else:
+                    gtf = _GTF_TX_RE.search(attrs_text)
+                    parents = [gtf.group(1)] if gtf else []
+                if parents:
+                    kind = "exon" if ftype in _EXON_TYPES else "cds" if ftype in _CDS_TYPES else "utr" if ftype in _UTR_TYPES else ""
+                    for parent in parents:
+                        entry = parts.get(parent)
+                        if entry is None:
+                            entry = parts[parent] = {"exon": [], "cds": [], "utr": [], "loc": [cols[0], strand, cols[1]], "gtf": None}
+                        if kind:
+                            entry[kind].append((start, end))
+                        if entry["gtf"] is None and not match:
+                            entry["gtf"] = attrs_text
+                    continue
+
+            if ftype in _SEQUENCE_TYPES:
+                continue
+            attrs = _gff_attributes(attrs_text)
+            record = (cols[0], cols[1], start, end, strand, ftype, attrs)
+            if attrs.get("ID"):
+                by_id[attrs["ID"]] = record
+            elif ftype == "transcript" and attrs.get("transcript_id"):
+                gtf_transcripts[attrs["transcript_id"]] = record
+            elif ftype == "gene" and attrs.get("gene_id"):
+                gtf_genes[attrs["gene_id"]] = record
+            others.append((cols[0], cols[1], start, end, strand, ftype, attrs_text))
+
+    drawn_ids = set()
+    # GTF genes have no ID, only gene_id; one drawn through its transcripts is skipped too.
+    drawn_gene_ids = set()
+    rows_by_chrom: Dict[str, List[Tuple[int, int, str]]] = {}
+
+    for tx_id, entry in parts.items():
+        tx = by_id.get(tx_id) or gtf_transcripts.get(tx_id)
+        tx_attrs = tx[6] if tx else (_gff_attributes(entry["gtf"]) if entry["gtf"] else {})
+        exons = _merge_intervals(entry["exon"] or (entry["cds"] + entry["utr"]))
+        if not exons:
+            continue
+        chrom, strand, source = entry["loc"]
+        ftype = tx[5] if tx else "transcript"
+        if tx:
+            chrom, source, strand = tx[0], tx[1], tx[4]
+        tx_start = min(exons[0][0], tx[2]) if tx else exons[0][0]
+        tx_end = max(exons[-1][1], tx[3]) if tx else exons[-1][1]
+
+        gene_key = (tx_attrs.get("Parent") or "").split(",")[0]
+        gene = by_id.get(gene_key) or gtf_genes.get(tx_attrs.get("gene_id") or "")
+        gene_attrs = gene[6] if gene else {}
+        gene_name = gene_attrs.get("Name") or tx_attrs.get("gene_name") or gene_attrs.get("gene_name") or ""
+        gene_id = gene_attrs.get("gene_id") or tx_attrs.get("gene_id") or _strip_prefix(gene_key)
+        transcript_id = tx_attrs.get("transcript_id") or _strip_prefix(tx_id)
+        biotype = (tx_attrs.get("biotype") or tx_attrs.get("transcript_biotype") or tx_attrs.get("transcript_type")
+                   or gene_attrs.get("biotype") or gene_attrs.get("gene_biotype") or gene_attrs.get("gene_type")
+                   or tx_attrs.get("gene_biotype") or tx_attrs.get("gene_type") or "")
+        name = tx_attrs.get("Name") or tx_attrs.get("transcript_name") or gene_name or transcript_id
+
+        cds = entry["cds"]
+        thick_start, thick_end = (min(c[0] for c in cds), max(c[1] for c in cds)) if cds else (tx_start, tx_start)
+        colour = next((_item_rgb(tx_attrs[k]) for k in _COLOUR_KEYS if tx_attrs.get(k)), "")
+        rest = "\t".join((
+            _clean(name), "", strand, str(thick_start), str(thick_end), colour,
+            str(len(exons)),
+            ",".join(str(e - s) for s, e in exons) + ",",
+            ",".join(str(s - tx_start) for s, _ in exons) + ",",
+            _clean(gene_name), _clean(gene_id), _clean(transcript_id), _clean(biotype), ftype,
+            source if source != "." else "",
+        ))
+        rows_by_chrom.setdefault(chrom, []).append((tx_start, tx_end, rest))
+        drawn_ids.add(tx_id)
+        if gene_key:
+            drawn_ids.add(gene_key)
+        if gene_id:
+            drawn_gene_ids.add(gene_id)
+
+    for chrom, source, start, end, strand, ftype, attrs_text in others:
+        attrs = _gff_attributes(attrs_text)
+        if attrs.get("ID") in drawn_ids or (ftype == "transcript" and attrs.get("transcript_id") in drawn_ids):
+            continue
+        if not attrs.get("ID") and ftype == "gene" and attrs.get("gene_id") in drawn_gene_ids:
+            continue
+        name = next((attrs[k] for k in _NAME_KEYS if attrs.get(k)), "") or ftype
+        colour = next((_item_rgb(attrs[k]) for k in _COLOUR_KEYS if attrs.get(k)), "")
+        rest = "\t".join((
+            _clean(_strip_prefix(name)), "", strand, "", "", colour, "", "", "",
+            _clean(attrs.get("gene_name") or attrs.get("Name") or ""), _clean(attrs.get("gene_id") or ""),
+            "", _clean(attrs.get("biotype") or attrs.get("gene_biotype") or ""), ftype,
+            source if source != "." else "",
+        ))
+        rows_by_chrom.setdefault(chrom, []).append((start, end, rest))
+    return rows_by_chrom
+
+
+def looks_like_gene_models(path: Path, max_lines: int = 20000) -> bool:
+    """Whether a GFF/GTF file has transcript structure worth drawing as gene models."""
+    opener = gzip.open if str(path).lower().endswith(".gz") else open
+    linked = 0
+    try:
+        with opener(str(path), "rt", encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i >= max_lines:
+                    break
+                cols = line.split("\t", 9)
+                if len(cols) < 9 or cols[2] not in (_EXON_TYPES | _CDS_TYPES):
+                    continue
+                if _PARENT_RE.search(cols[8]) or _GTF_TX_RE.search(cols[8]):
+                    linked += 1
+                    if linked >= 3:
+                        return True
+    except OSError:
+        return False
+    # A small file may have only a transcript or two; any linked exon or CDS counts.
+    return linked > 0
+
+
 class _ChromArrays:
     __slots__ = ("starts", "ends", "rests", "max_end_prefix", "max_end")
 
@@ -195,7 +414,18 @@ class _ChromArrays:
 class PlainBedIndex:
     """A whole BED or GFF file held as sorted arrays per chromosome."""
 
-    def __init__(self, path: Path, parse_line: Callable[[str], ParsedLine] = None, sql: Optional[bytes] = None):
+    def __init__(
+        self,
+        path: Path,
+        parse_line: Callable[[str], ParsedLine] = None,
+        sql: Optional[bytes] = None,
+        rows_by_chrom: Optional[Dict[str, List[Tuple[int, int, str]]]] = None,
+    ):
+        if rows_by_chrom is not None:
+            self._sql = sql
+            self._chroms = {chrom: _ChromArrays(rows) for chrom, rows in rows_by_chrom.items()}
+            self.feature_count = sum(len(rows.starts) for rows in self._chroms.values())
+            return
         if parse_line is None:
             parse_line, sql = _parser_for(path)
         self._sql = sql
@@ -313,9 +543,17 @@ def _parser_for(path: Path) -> Tuple[Callable[[str], ParsedLine], Optional[bytes
     return _split_bed_line, None
 
 
-def get_plain_bed_index(path: Path) -> PlainBedIndex:
-    """The cached index for a BED or GFF file, rebuilt when the file changes."""
-    key = str(path.resolve())
+GENE_MODELS = "transcripts"
+
+
+def get_plain_bed_index(path: Path, feature_model: str = "") -> PlainBedIndex:
+    """The cached index for a BED or GFF file, rebuilt when the file changes.
+
+    ``feature_model="transcripts"`` reads a GFF/GTF as gene models rather than one
+    interval per line; the two are cached separately.
+    """
+    gene_models = feature_model == GENE_MODELS and is_gff_path(path)
+    key = str(path.resolve()) + ("|transcripts" if gene_models else "")
     sig = _signature(path)
     with _INDEX_CACHE_LOCK:
         cached = _INDEX_CACHE.get(key)
@@ -330,8 +568,11 @@ def get_plain_bed_index(path: Path) -> PlainBedIndex:
             cached = _INDEX_CACHE.get(key)
             if cached and cached[0] == sig:
                 return cached[1]
-        parse_line, sql = _parser_for(path)
-        index = PlainBedIndex(path, parse_line=parse_line, sql=sql)
+        if gene_models:
+            index = PlainBedIndex(path, sql=GENE_MODEL_AUTOSQL, rows_by_chrom=build_gene_model_rows(path))
+        else:
+            parse_line, sql = _parser_for(path)
+            index = PlainBedIndex(path, parse_line=parse_line, sql=sql)
         with _INDEX_CACHE_LOCK:
             _INDEX_CACHE[key] = (sig, index)
             _INDEX_CACHE.move_to_end(key)
@@ -340,8 +581,14 @@ def get_plain_bed_index(path: Path) -> PlainBedIndex:
         return index
 
 
-def open_plain_bed(path: Path):
-    """A BigBed-shaped handle on a plain BED or GFF file; the caller closes it."""
+def open_plain_bed(path: Path, feature_model: str = ""):
+    """A BigBed-shaped handle on a plain BED or GFF file; the caller closes it.
+
+    Gene models need the whole file — a transcript's exons can be anywhere in it — so
+    they always come from the in-memory index, tabix or not.
+    """
+    if feature_model == GENE_MODELS and is_gff_path(path):
+        return _NonClosing(get_plain_bed_index(path, feature_model))
     if str(path).lower().endswith(".gz") and _has_tabix_index(path):
         parse_line, sql = _parser_for(path)
         return TabixBedSource(path, parse_line=parse_line, sql=sql)

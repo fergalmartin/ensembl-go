@@ -65,7 +65,7 @@ try:
 except Exception:
     pyBigWig = None
 
-from bed_index import get_plain_bed_index, is_gff_path, is_plain_bed_path, open_plain_bed
+from bed_index import get_plain_bed_index, is_gff_path, is_plain_bed_path, looks_like_gene_models, open_plain_bed
 from download_manager import DownloadManager, SpeciesSummary, FileInfo, DownloadTask, GroupCount
 from assembly_report import (
     KnownRegions,
@@ -16283,6 +16283,98 @@ def _bigwig_binned_means(
     return out
 
 
+# Zone edges for a zoned heatmap scaled to the file: the 50th, 90th, 99th and 99.9th
+# percentile of its peak heights, sampled as the maximum of ~50 kb bins across every
+# chromosome. Percentiles rather than the maximum, because one spike (a 564k pile-up in
+# an RNA-seq file) would otherwise flatten everything else. Cached per file version.
+_BIGWIG_ZONE_SCALE_CACHE: Dict[str, Tuple[Tuple[int, int], Dict[str, Any]]] = {}
+_BIGWIG_ZONE_SCALE_LOCK = threading.Lock()
+_BIGWIG_ZONE_QUANTILES = (0.5, 0.9, 0.99, 0.999)
+
+
+def _bigwig_zone_edges(bin_maxima: List[float]) -> List[float]:
+    """Four increasing zone edges from sampled peak heights."""
+    values = sorted(v for v in bin_maxima if v is not None and math.isfinite(v) and v > 0)
+    if not values:
+        return []
+    edges: List[float] = []
+    for q in _BIGWIG_ZONE_QUANTILES:
+        edge = float(values[min(len(values) - 1, int(q * len(values)))])
+        # Strictly increasing, so no zone is empty even where the percentiles coincide.
+        if edges and edge <= edges[-1]:
+            edge = edges[-1] * 1.05 if edges[-1] > 0 else 1e-6
+        edges.append(edge)
+    return edges
+
+
+def _bigwig_peak_samples(p: Path) -> Tuple[List[float], float]:
+    """A file's peak heights (max of each ~50 kb bin) and its maximum, cached per version."""
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"BigWig not found: {p}")
+    if pyBigWig is None:
+        raise HTTPException(status_code=503, detail="BigWig support is unavailable. Install pyBigWig.")
+    st = p.stat()
+    sig = (int(st.st_mtime_ns), int(st.st_size))
+    key = str(p.resolve())
+    with _BIGWIG_ZONE_SCALE_LOCK:
+        cached = _BIGWIG_ZONE_SCALE_CACHE.get(key)
+        if cached and cached[0] == sig:
+            return cached[1]
+    bw = pyBigWig.open(str(p))
+    if bw is None:
+        raise HTTPException(status_code=400, detail="Failed to open BigWig file.")
+    try:
+        samples: List[float] = []
+        for chrom, length in (bw.chroms() or {}).items():
+            bins = max(1, min(2000, int(length) // 50_000))
+            try:
+                samples.extend(v for v in (bw.stats(chrom, 0, int(length), type="max", nBins=bins) or []) if v)
+            except Exception:
+                continue
+        header = bw.header() or {}
+    finally:
+        bw.close()
+    result = (samples, float(header.get("maxVal") or 0.0))
+    with _BIGWIG_ZONE_SCALE_LOCK:
+        _BIGWIG_ZONE_SCALE_CACHE[key] = (sig, result)
+    return result
+
+
+def _bigwig_zone_scale_for(paths: List[str]) -> Dict[str, Any]:
+    """Zone edges from the peaks of one file, or of several pooled, so they share a scale."""
+    samples: List[float] = []
+    top = 0.0
+    for path in paths:
+        file_samples, file_max = _bigwig_peak_samples(Path(path))
+        samples.extend(file_samples)
+        top = max(top, file_max)
+    return {
+        "thresholds": _bigwig_zone_edges(samples),
+        "quantiles": list(_BIGWIG_ZONE_QUANTILES),
+        "max": top,
+        "samples": len(samples),
+        "files": len(paths),
+    }
+
+
+class BigWigZoneScaleRequest(BaseModel):
+    paths: List[str]
+
+
+@app.get("/api/browse/bigwig/zone_scale")
+async def browse_bigwig_zone_scale(path: str):
+    return await run_in_threadpool(lambda: _bigwig_zone_scale_for([path]))
+
+
+@app.post("/api/browse/bigwig/zone_scale")
+async def browse_bigwig_zone_scale_shared(payload: BigWigZoneScaleRequest):
+    """Zone edges shared by several files: their peaks pooled, so tracks compare directly."""
+    paths = [str(p).strip() for p in (payload.paths or []) if str(p or "").strip()]
+    if not paths:
+        raise HTTPException(status_code=400, detail="paths must not be empty")
+    return await run_in_threadpool(lambda: _bigwig_zone_scale_for(paths))
+
+
 @app.get("/api/browse/bigwig")
 async def browse_bigwig(
     genome: str = "reference",
@@ -20127,7 +20219,8 @@ TRACK_DISPLAY_MODES: Dict[str, List[str]] = {
     "bigbed":           ["intervals", "density"],
     "vcf":              ["density_lollipop", "adaptive", "ensembl", "lollipop", "density"],
     "bed":              ["intervals", "density"],
-    "gff":              ["intervals", "density"],
+    # "transcripts" draws gene models assembled from exon/CDS/UTR lines.
+    "gff":              ["intervals", "transcripts", "density"],
     "bam":              ["coverage", "reads_coverage"],
     "long_reads":       ["collapsed_transcripts"],
     "splice_junctions": ["arcs"],
@@ -20140,23 +20233,51 @@ BIGWIG_DATA_TYPE_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "display_mode": "zoned_heatmap",
         "plot_color": "#3b82f6",
         "zoned_colors": ["#f7cd61", "#f4a940", "#ea7a2d", "#cc2f1f"],
+        # Read coverage: the fixed 100 / 1k / 10k / 100k zones were made for it.
+        "zone_scale": "fixed",
     },
     "atac_seq": {
         "display_mode": "signal_plot",
         "plot_color": "#b52aa1",
         "zoned_colors": ["#86efac", "#4ade80", "#22c55e", "#15803d"],
+        # Signal in the file's own units (an ATAC track can top out below 10), so
+        # the zones are set from the file's peaks rather than read coverage.
+        "zone_scale": "file",
     },
     "chip_seq": {
         "display_mode": "signal_plot",
         "plot_color": "#8b5cf6",
         "zoned_colors": ["#c4b5fd", "#a78bfa", "#8b5cf6", "#6d28d9"],
+        # Signal in the file's own units (an ATAC track can top out below 10), so
+        # the zones are set from the file's peaks rather than read coverage.
+        "zone_scale": "file",
     },
     "custom": {
         "display_mode": "signal_plot",
         "plot_color": "#14b8a6",
         "zoned_colors": ["#93c5fd", "#60a5fa", "#3b82f6", "#1d4ed8"],
+        # Signal in the file's own units (an ATAC track can top out below 10), so
+        # the zones are set from the file's peaks rather than read coverage.
+        "zone_scale": "file",
     },
 }
+
+BIGWIG_ZONE_SCALES: Set[str] = {"fixed", "file", "files", "custom"}
+
+
+def _normalize_bigwig_custom_zones(raw: Any) -> Optional[List[float]]:
+    """Four user-set zone edges, positive and increasing, or None when they are not."""
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    try:
+        zones = [float(v) for v in raw]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) and v > 0 for v in zones):
+        return None
+    if any(b <= a for a, b in zip(zones, zones[1:])):
+        return None
+    return zones
 
 VCF_DISPLAY_MODES: Set[str] = {"density_lollipop", "adaptive"}
 VCF_SETTINGS_DEFAULTS: Dict[str, str] = {
@@ -21893,12 +22014,36 @@ def _normalize_bigwig_settings(raw: Optional[Dict[str, Any]], previous: Optional
     else:
         zoned_colors = _normalize_bigwig_zoned_colors(settings.get("zoned_colors"), prev_zones)
 
+    # How the zoned heatmap's zones are placed: "fixed" (100 / 1k / 10k / 100k, for read
+    # coverage), "file" (from this file's own peak heights), "files" (from the peaks of
+    # every file registered with it, stored in shared_zones, so they compare directly) or
+    # "custom" (edges the user typed, in custom_zones). Unset — every track registered
+    # before the choice existed — takes its data type's default.
+    zone_scale = str(settings.get("zone_scale") or (previous or {}).get("zone_scale") or defaults["zone_scale"]).strip().lower()
+    if zone_scale not in BIGWIG_ZONE_SCALES:
+        zone_scale = defaults["zone_scale"]
+
+    custom_zones = _normalize_bigwig_custom_zones(settings.get("custom_zones"))
+    if custom_zones is None:
+        custom_zones = _normalize_bigwig_custom_zones((previous or {}).get("custom_zones"))
+    shared_zones = _normalize_bigwig_custom_zones(settings.get("shared_zones"))
+    if shared_zones is None:
+        shared_zones = _normalize_bigwig_custom_zones((previous or {}).get("shared_zones"))
+    # Shared zones exist only as computed from a set of files; without them there is
+    # nothing to share, and the file's own peaks are the nearest thing.
+    if zone_scale == "files" and shared_zones is None:
+        zone_scale = "file"
+
     return {
         "data_type": data_type,
         "plot_color": plot_color,
         "zoned_colors": zoned_colors,
         "use_default_plot_color": use_default_plot_color,
         "use_default_zoned_colors": use_default_zoned_colors,
+        "zone_scale": zone_scale,
+        # Kept whichever scale is in use, so switching back to custom finds them again.
+        "custom_zones": custom_zones,
+        "shared_zones": shared_zones,
     }
 
 
@@ -22622,6 +22767,9 @@ async def register_track(entry: TrackRegistryEntry):
     if detected_type in ("bed", "bigbed", "gff"):
         bed_settings = _normalize_bed_settings(entry.bed_settings)
         allowed_modes = TRACK_DISPLAY_MODES.get(detected_type, [])
+        # A GFF/GTF of transcripts opens as gene models unless a mode was asked for.
+        if detected_type == "gff" and not entry.display_mode and looks_like_gene_models(p):
+            display_mode = "transcripts"
         if allowed_modes and display_mode not in allowed_modes:
             display_mode = allowed_modes[0]
 
@@ -22895,6 +23043,8 @@ class BigBedBlockTilesRequest(BaseModel):
     genome: str = "reference"
     # Per-block feature counts, for drawing a density histogram rather than spans.
     include_counts: bool = False
+    # "transcripts": read a GFF/GTF as gene models rather than one interval per line.
+    feature_model: str = ""
 
 
 class BigBedFeatureTileRequest(BaseModel):
@@ -22910,6 +23060,7 @@ class BigBedFeatureTilesRequest(BaseModel):
     tiles: List[BigBedFeatureTileRequest]
     genome: str = "reference"
     max_features_per_tile: int = 3000
+    feature_model: str = ""
 
 
 def _vcf_file_fingerprint(path: Path) -> Tuple[int, int]:
@@ -24885,7 +25036,7 @@ async def browse_bed(
     return await run_in_threadpool(_run)
 
 
-def _open_bed_tile_source(p: Path) -> Any:
+def _open_bed_tile_source(p: Path, feature_model: str = "") -> Any:
     """A BigBed handle, or a plain BED or GFF/GTF file answering the same calls.
 
     Plain BED and GFF go through an in-memory index (or their tabix index) built once
@@ -24896,7 +25047,7 @@ def _open_bed_tile_source(p: Path) -> Any:
         raise HTTPException(status_code=404, detail=f"Track file not found: {p}")
     if is_plain_bed_path(p) or is_gff_path(p):
         try:
-            return open_plain_bed(p)
+            return open_plain_bed(p, feature_model)
         except Exception as e:
             kind = "GFF" if is_gff_path(p) else "BED"
             raise HTTPException(status_code=400, detail=f"Failed to read {kind}: {e}")
@@ -25124,7 +25275,7 @@ async def browse_bigbed_block_tiles(payload: BigBedBlockTilesRequest):
             raise HTTPException(status_code=400, detail="chrom is required")
 
         p = Path(path)
-        bb = _open_bed_tile_source(p)
+        bb = _open_bed_tile_source(p, str(payload.feature_model or ""))
 
         try:
             chrom_sizes = bb.chroms() or {}
@@ -25221,7 +25372,7 @@ async def browse_bigbed_feature_tiles(payload: BigBedFeatureTilesRequest):
             raise HTTPException(status_code=400, detail="chrom is required")
 
         p = Path(path)
-        bb = _open_bed_tile_source(p)
+        bb = _open_bed_tile_source(p, str(payload.feature_model or ""))
 
         try:
             chrom_sizes = bb.chroms() or {}

@@ -64,6 +64,10 @@ import {
     isWheelGestureFromChrome,
     isWheelInsideIsolatedOverlay,
 } from '../utils/browsingControls'
+import { bedThickPieces, bedThickRegion } from '../utils/bedThickRegion'
+import { checkRangeAgainstBounds, parseLocationQuery } from '../utils/locationQuery'
+import { formatZoneLabel, zonedSegments, zonedValueFraction, zoneThresholdsFor } from '../utils/zonedScale'
+import { trackAssemblyKey } from '../utils/genomeIdentity'
 import { classifyBiotype } from '../utils/geneBiotypes'
 import {
     BOX_SELECT_FILL_FRACTION,
@@ -267,6 +271,12 @@ const BIGBED_FEATURE_TILE_SPAN = 120_000
 const BIGBED_BLOCK_MERGE_GAP_PX = 2
 const BIGBED_DETAIL_EXON_HEIGHT = EXON_HEIGHT
 const BIGBED_DETAIL_LANE_PITCH = EXON_HEIGHT + 4
+// Gene models name each transcript under it, as the gene track does.
+const BIGBED_DETAIL_LABEL_ROW = 11
+const BIGBED_DETAIL_LABEL_FONT_PX = 9
+const bigBedLanePitch = (labelled) => BIGBED_DETAIL_LANE_PITCH + (labelled ? BIGBED_DETAIL_LABEL_ROW : 0)
+// A GFF/GTF read as gene models rather than one interval per line.
+const isGeneModelTrack = (track) => track?.type === 'gff' && track?.renderMode === 'transcripts'
 const BIGBED_DETAIL_LANE_TOP_PAD = 4
 const BIGBED_DETAIL_LANE_BOTTOM_PAD = 4
 const BIGBED_DETAIL_TRACK_BASE_HEIGHT = 34
@@ -342,21 +352,25 @@ const BIGWIG_DATA_TYPE_DEFAULTS = {
         display_mode: 'zoned_heatmap',
         plot_color: '#3b82f6',
         zoned_colors: ['#f7cd61', '#f4a940', '#ea7a2d', '#cc2f1f'],
+        zone_scale: 'fixed',
     },
     atac_seq: {
         display_mode: 'signal_plot',
         plot_color: '#b52aa1',
         zoned_colors: ['#86efac', '#4ade80', '#22c55e', '#15803d'],
+        zone_scale: 'file',
     },
     chip_seq: {
         display_mode: 'signal_plot',
         plot_color: '#8b5cf6',
         zoned_colors: ['#c4b5fd', '#a78bfa', '#8b5cf6', '#6d28d9'],
+        zone_scale: 'file',
     },
     custom: {
         display_mode: 'signal_plot',
         plot_color: '#14b8a6',
         zoned_colors: ['#93c5fd', '#60a5fa', '#3b82f6', '#1d4ed8'],
+        zone_scale: 'file',
     },
 }
 
@@ -384,9 +398,6 @@ const VCF_EFFECT_COLORS = {
 const DEFAULT_CUSTOM_TRACK_RENDER_MODE = 'zoned_heatmap'
 const CUSTOM_TRACK_TOOLTIP_DWELL_MS = 1000
 const CUSTOM_TRACK_TOOLTIP_MOVE_TOL_PX = 4
-const ZONED_TRACK_MAX_VALUE = 100000
-const ZONED_THRESHOLDS = [100, 1000, 10000, ZONED_TRACK_MAX_VALUE]
-const ZONED_ZONE_HEIGHTS = [0.4, 0.2, 0.2, 0.2]
 const ZONED_ZONE_SOLID_COLORS = {
     light: ['#f7cd61', '#f4a940', '#ea7a2d', '#cc2f1f'],
     dark: ['#f5c04c', '#ef9a30', '#e36823', '#d03a2a'],
@@ -1108,20 +1119,20 @@ function bigBedBlockStroke(isLight, colors = null) {
     return isLight ? 'rgba(5,150,105,0.5)' : 'rgba(110,231,183,0.62)'
 }
 
-function getBigBedLaneCapacity(plotHeight) {
+function getBigBedLaneCapacity(plotHeight, lanePitch = BIGBED_DETAIL_LANE_PITCH) {
     const available = Math.max(
         BIGBED_DETAIL_EXON_HEIGHT,
         Number(plotHeight || 0) - BIGBED_DETAIL_LANE_TOP_PAD - BIGBED_DETAIL_LANE_BOTTOM_PAD,
     )
-    return Math.max(1, Math.floor((available - BIGBED_DETAIL_EXON_HEIGHT) / BIGBED_DETAIL_LANE_PITCH) + 1)
+    return Math.max(1, Math.floor((available - BIGBED_DETAIL_EXON_HEIGHT) / lanePitch) + 1)
 }
 
-function getBigBedTrackHeightForLanes(laneCount) {
+function getBigBedTrackHeightForLanes(laneCount, lanePitch = BIGBED_DETAIL_LANE_PITCH) {
     const lanes = Math.max(1, Number.isFinite(Number(laneCount)) ? Math.round(Number(laneCount)) : 1)
     return clamp(
         Math.max(
             CUSTOM_TRACK_HEIGHT_STANDARD,
-            Math.round(BIGBED_DETAIL_TRACK_BASE_HEIGHT + lanes * BIGBED_DETAIL_LANE_PITCH),
+            Math.round(BIGBED_DETAIL_TRACK_BASE_HEIGHT + lanes * lanePitch),
         ),
         CUSTOM_TRACK_HEIGHT_STANDARD,
         BIGBED_DETAIL_TRACK_MAX_HEIGHT,
@@ -1246,6 +1257,10 @@ function normalizeBigBedFeatureForRender(feature) {
         }
     }
 
+    // BED9 without blocks: a thick core drawn full height and the rest thin, as UCSC
+    // and IGV do (see utils/bedThickRegion). A single box hid the difference.
+    const thick = structureValid ? null : bedThickRegion(feature, start, end)
+
     return {
         ...feature,
         start,
@@ -1254,8 +1269,10 @@ function normalizeBigBedFeatureForRender(feature) {
         _render_kind: renderKind,
         _exon_blocks: structureValid ? fallbackExons : [],
         _cds_blocks: structureValid ? cdsBlocks : [],
+        _thick: thick,
     }
 }
+
 
 function normalizeBigWigDataType(value, fallback = 'rna_seq') {
     const token = String(value || '').trim().toLowerCase()
@@ -1344,6 +1361,18 @@ function normalizeBigWigSettings(raw = null, previous = null) {
             : normalizeBigWigZonedColors(source.zoned_colors, prev.zoned_colors),
         use_default_plot_color,
         use_default_zoned_colors,
+        // 'fixed' zones for read coverage, 'file': edges from the file's own peaks, or
+        // 'custom': the four edges in custom_zones.
+        zone_scale: ['fixed', 'file', 'files', 'custom'].includes(source.zone_scale)
+            ? source.zone_scale
+            : (['fixed', 'file', 'files', 'custom'].includes(previous?.zone_scale) ? previous.zone_scale : defaults.zone_scale),
+        custom_zones: Array.isArray(source.custom_zones)
+            ? source.custom_zones.map(Number)
+            : (Array.isArray(previous?.custom_zones) ? previous.custom_zones.map(Number) : null),
+        // 'files': edges from the peaks of every file registered together, so they compare.
+        shared_zones: Array.isArray(source.shared_zones)
+            ? source.shared_zones.map(Number)
+            : (Array.isArray(previous?.shared_zones) ? previous.shared_zones.map(Number) : null),
     }
 }
 
@@ -1553,23 +1582,6 @@ function cubicDerivativeAt(p0, p1, p2, p3, t) {
     )
 }
 
-function getZonedValueFraction(value) {
-    const v = clamp(Number.isFinite(value) ? value : 0, 0, ZONED_TRACK_MAX_VALUE)
-    let acc = 0
-    let zoneStart = 0
-    for (let i = 0; i < ZONED_THRESHOLDS.length; i++) {
-        const zoneEnd = ZONED_THRESHOLDS[i]
-        const zoneHeight = ZONED_ZONE_HEIGHTS[i] || 0
-        const zoneSpan = Math.max(1, zoneEnd - zoneStart)
-        if (v <= zoneEnd || i === ZONED_THRESHOLDS.length - 1) {
-            const local = clamp((v - zoneStart) / zoneSpan, 0, 1)
-            return clamp(acc + local * zoneHeight, 0, 1)
-        }
-        acc += zoneHeight
-        zoneStart = zoneEnd
-    }
-    return 1
-}
 
 const REV_COMP = {
     'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N',
@@ -2261,6 +2273,21 @@ export default function GenomeBrowser({
     // Region filter
     const [showFeatureless, setShowFeatureless] = useState(false)
     const [searchInput, setSearchInput] = useState('')
+    // What the search box could not follow, or had to adjust: { tone: 'error' | 'warning', text }.
+    // Errors stay until the query is edited or dismissed; warnings clear themselves.
+    const [searchFeedback, setSearchFeedback] = useState(null)
+    const searchFeedbackTimerRef = useRef(null)
+    const showSearchFeedback = useCallback((tone, text) => {
+        if (searchFeedbackTimerRef.current) clearTimeout(searchFeedbackTimerRef.current)
+        searchFeedbackTimerRef.current = null
+        setSearchFeedback(text ? { tone, text } : null)
+        if (text && tone === 'warning') {
+            searchFeedbackTimerRef.current = setTimeout(() => setSearchFeedback(null), 7000)
+        }
+    }, [])
+    useEffect(() => () => {
+        if (searchFeedbackTimerRef.current) clearTimeout(searchFeedbackTimerRef.current)
+    }, [])
 
     // Loading states
     const [loadingRegions, setLoadingRegions] = useState(false)
@@ -2736,6 +2763,9 @@ export default function GenomeBrowser({
     const spliceLodStateRef = useRef({}) // trackId -> detail | mid | blocks
     const bigBedLodStateRef = useRef({}) // trackId -> detail | blocks
     const bigBedLayoutStateRef = useRef({}) // trackId -> stable buffered lane layout key/range
+    // Zone edges for zoned heatmaps scaled to their file, by path: [t1, t2, t3, t4].
+    const [bigWigZoneScales, setBigWigZoneScales] = useState({})
+    const bigWigZoneScaleFetchesRef = useRef(new Set())
     const bedDensityScaleRef = useRef({}) // trackId|chrom|level -> { values, n, scale }: every non-zero bin fetched
     const vcfBlockTileCacheRef = useRef(new Map()) // key -> VCF block tile (adaptive mode)
     const vcfBlockTileFetchSetRef = useRef(new Set())
@@ -3777,7 +3807,8 @@ export default function GenomeBrowser({
         }
     }, [makeBigBedBlockTileKey])
 
-    const projectBigBedFeatureTilesToView = useCallback((trackId, chrom, visStart, visEnd, innerWidthPx) => {
+    const projectBigBedFeatureTilesToView = useCallback((trackId, chrom, visStart, visEnd, innerWidthPx, options = {}) => {
+        const labelled = Boolean(options?.labelled)
         const tileSpan = BIGBED_FEATURE_TILE_SPAN
         const viewSpan = Math.max(1, visEnd - visStart)
         const layoutBuffer = clamp(viewSpan * 0.5, 80_000, 500_000)
@@ -3914,11 +3945,16 @@ export default function GenomeBrowser({
 
         const laneEnds = []
         const visibleFeatures = []
+        // A labelled lane also holds each name, which can run past a short feature.
+        const labelBpPerPx = viewSpan / Math.max(1, innerWidthPx || 1)
         for (const feature of features) {
+            const reservedEnd = labelled
+                ? Math.max(feature.end, feature.start + (String(feature?.name || '').length * 5.4 + 8) * labelBpPerPx)
+                : feature.end
             let lane = 0
             while (lane < laneEnds.length && feature.start <= laneEnds[lane]) lane += 1
-            if (lane >= laneEnds.length) laneEnds.push(feature.end)
-            else laneEnds[lane] = feature.end
+            if (lane >= laneEnds.length) laneEnds.push(reservedEnd)
+            else laneEnds[lane] = reservedEnd
             feature._lane = lane
             if (feature.end > visStart && feature.start < visEnd) visibleFeatures.push(feature)
         }
@@ -3943,6 +3979,7 @@ export default function GenomeBrowser({
             mode: 'bigbed_detail',
             start: visStart,
             end: visEnd,
+            labelled,
             features: visibleFeatures,
             has_data: visibleFeatures.length > 0,
             lane_count: Math.max(1, laneEnds.length),
@@ -4051,7 +4088,7 @@ export default function GenomeBrowser({
         if (getBigBedLodMode(track.id, curBpPerPx) === 'blocks') {
             return projectBigBedBlockTilesToView(track.id, currentChrom, getBigBedBlockLevel(curBpPerPx), curStart, curEnd, innerWidth)
         }
-        return projectBigBedFeatureTilesToView(track.id, currentChrom, curStart, curEnd, innerWidth)
+        return projectBigBedFeatureTilesToView(track.id, currentChrom, curStart, curEnd, innerWidth, { labelled: isGeneModelTrack(track) })
     }, [
         getBedDensityLevel,
         getBigBedBlockLevel,
@@ -4781,6 +4818,32 @@ export default function GenomeBrowser({
         selectedChrom,
     ])
 
+    // Zone edges for zoned heatmaps scaled to their file, fetched once per file. Until they
+    // arrive the fixed zones are drawn, so the track is never blank while it waits.
+    useEffect(() => {
+        for (const track of customTracks) {
+            if (!track?.path || (track.type || 'bigwig') !== 'bigwig') continue
+            if (normalizeBigWigDisplayMode(track.renderMode, track?.bigwigSettings?.data_type) !== 'zoned_heatmap') continue
+            const zoneSettings = normalizeBigWigSettings(track?.bigwigSettings || track?.bigwig_settings)
+            const needsOwnPeaks = zoneSettings.zone_scale === 'file'
+                || (zoneSettings.zone_scale === 'files' && !(Array.isArray(zoneSettings.shared_zones) && zoneSettings.shared_zones.length === 4))
+            if (!needsOwnPeaks) continue
+            const path = String(track.path)
+            if (bigWigZoneScales[path] || bigWigZoneScaleFetchesRef.current.has(path)) continue
+            bigWigZoneScaleFetchesRef.current.add(path)
+            fetch(`${API_BASE}/api/browse/bigwig/zone_scale?path=${encodeURIComponent(path)}`)
+                .then((r) => (r.ok ? r.json() : null))
+                .then((data) => {
+                    const thresholds = Array.isArray(data?.thresholds) ? data.thresholds.map(Number) : []
+                    if (thresholds.length === 4) {
+                        setBigWigZoneScales((prev) => ({ ...prev, [path]: thresholds }))
+                    }
+                })
+                .catch(() => {})
+                .finally(() => bigWigZoneScaleFetchesRef.current.delete(path))
+        }
+    }, [customTracks, bigWigZoneScales])
+
     // ── Unified custom track LOD fetch engine ─────────────────────────────────────────────────
     // Runs on every viewport change. Immediately projects from cache (no debounce on rendering),
     // then issues new fetch requests with a 50ms debounce to avoid request storms during panning.
@@ -4942,6 +5005,7 @@ export default function GenomeBrowser({
                         visStart,
                         visEnd,
                         Math.max(1, viewWidth - LHS_WIDTH),
+                        { labelled: isGeneModelTrack(track) },
                     )
                     setCustomTrackData((prev) => {
                         const prevData = prev[track.id]
@@ -5533,6 +5597,7 @@ export default function GenomeBrowser({
                         chrom: selectedChrom,
                         genome,
                         tiles,
+                        feature_model: isGeneModelTrack(track) ? 'transcripts' : '',
                     }),
                 })
                     .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
@@ -5617,6 +5682,7 @@ export default function GenomeBrowser({
                         genome,
                         max_features_per_tile: BIGBED_DETAIL_MAX_FEATURES_PER_TILE,
                         tiles,
+                        feature_model: isGeneModelTrack(track) ? 'transcripts' : '',
                     }),
                 })
                     .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
@@ -6668,11 +6734,12 @@ export default function GenomeBrowser({
     // Compute shared, rounded base-cell boundaries so adjacent bases always
     // share edges exactly (prevents tiny scrolling gaps from float drift).
     const getBasePixelBounds = useCallback((overlayBaseStart, pxPerBpValue) => {
-        const rawPx = Number.isFinite(pxPerBpValue) && pxPerBpValue > 0 ? pxPerBpValue : (1 / Math.max(1e-9, bpPerPx))
-        // At base-level zoom, snap px to the nearest integer so every panel places bases
-        // at identical pixel offsets (LHS_WIDTH + n*px) regardless of tiny viewWidth or
-        // span differences — gives a hard grid for cross-panel alignment and no drift.
-        const px = rawPx >= 4 ? Math.round(rawPx) : rawPx
+        // The exact scale every other track draws with. Rounding it to whole pixels (and
+        // the view start to whole bases) was meant to give a hard base grid, but it put the
+        // sequence up to a base away from the ruler and the custom tracks, and made every
+        // zoom step near base level jump by whole pixels per base: the jitter seen when
+        // zooming in. Only the edges are rounded, so boxes stay crisp and abut exactly.
+        const px = Number.isFinite(pxPerBpValue) && pxPerBpValue > 0 ? pxPerBpValue : (1 / Math.max(1e-9, bpPerPx))
         let x1
         let x2
         if (isFlipped) {
@@ -6711,6 +6778,18 @@ export default function GenomeBrowser({
         const right = Math.max(x1, x2)
         return { x1: left, x2: right, width: Math.max(0, right - left) }
     }, [getBasePixelBounds, genomicToOverlay, overlayToScreen])
+
+    // The same bounds for a custom track, which is drawn unflipped and mirrored as a whole
+    // when the panel is flipped. The bounds above already follow the flip, so drawn inside
+    // that mirror they were flipped twice: a flipped panel showed its gene models the
+    // usual way round. Reflecting them back about the mirror's axis leaves the mirror to
+    // flip them once — onto exactly the pixels the gene track uses.
+    const getCustomTrackIntervalPixelBounds = useCallback((genomicStart, genomicEnd, pxPerBpValue, snapToBaseGrid = false) => {
+        const bounds = getGenomicIntervalPixelBounds(genomicStart, genomicEnd, pxPerBpValue, snapToBaseGrid)
+        if (!bounds || !isFlipped) return bounds
+        const axis = LHS_WIDTH + viewWidth
+        return { x1: axis - bounds.x2, x2: axis - bounds.x1, width: bounds.width }
+    }, [getGenomicIntervalPixelBounds, isFlipped, viewWidth])
 
     // ============ Resize Observer ============
 
@@ -6899,16 +6978,9 @@ export default function GenomeBrowser({
         const currentTrackWidth = Math.max(1, viewWidth - LHS_WIDTH)
         const currentPerPx = currentSpan / currentTrackWidth
         const dBp = isFlipped ? -dx * currentPerPx : dx * currentPerPx
-        let [newStart, newEnd] = clampView(currentStart + dBp, currentEnd + dBp)
-
-        // At base-level zoom, snap to integer positions so bases align between tracks
-        const span = newEnd - newStart
-        if (span <= 1000) {
-            const snappedStart = Math.round(newStart)
-            newEnd = snappedStart + span
-            newStart = snappedStart
-                ;[newStart, newEnd] = clampView(newStart, newEnd)
-        }
+        // Not snapped to whole bases: every track draws with the same exact scale, so
+        // they align at any start, and snapping made the view jump under the cursor.
+        const [newStart, newEnd] = clampView(currentStart + dBp, currentEnd + dBp)
 
         scheduleInteractiveViewport(newStart, newEnd)
     }, [viewWidth, clampView, isFlipped, onManualNavigate, scheduleInteractiveViewport])
@@ -7254,7 +7326,7 @@ export default function GenomeBrowser({
                         if (customTrackLoading?.[trackId] && Number(data?.tile_coverage || 0) < 0.6) {
                             return CUSTOM_TRACK_HEIGHT_STANDARD
                         }
-                        return getBigBedTrackHeightForLanes(laneCount)
+                        return getBigBedTrackHeightForLanes(laneCount, bigBedLanePitch(data?.labelled))
                     }
                 }
                 if (mode === 'zoned_heatmap') return CUSTOM_TRACK_HEIGHT_ZONED
@@ -8102,9 +8174,10 @@ export default function GenomeBrowser({
                         const colW = Math.max(1, Math.ceil(binWidth))
                         const zoneColors = bigWigSettings?.zoned_colors
                             || (isLight ? ZONED_ZONE_SOLID_COLORS.light : ZONED_ZONE_SOLID_COLORS.dark)
+                        const zoneThresholds = zoneThresholdsFor(bigWigSettings?.zone_scale, bigWigZoneScales[track?.path], bigWigSettings?.custom_zones, bigWigSettings?.shared_zones)
                         const isSecondaryZoned = !isPrimaryPanel
                         const zoneYForValue = (value) => {
-                            const frac = getZonedValueFraction(value)
+                            const frac = zonedValueFraction(value, zoneThresholds)
                             return isSecondaryZoned
                                 ? (bottom - frac * plotHeight)
                                 : (top + frac * plotHeight)
@@ -8113,7 +8186,7 @@ export default function GenomeBrowser({
                         bigWigMarkup.push(
                             `<line x1="${left}" y1="${baselineY}" x2="${right}" y2="${baselineY}" stroke="${escapeXml(isLight ? '#e8a534' : '#f0b44d')}" stroke-width="1" />`
                         )
-                        const boundaryValues = [100, 1000, 10000, 100000]
+                        const boundaryValues = zoneThresholds
                         for (const boundary of boundaryValues) {
                             const y = zoneYForValue(boundary)
                             bigWigMarkup.push(
@@ -8123,37 +8196,24 @@ export default function GenomeBrowser({
                         for (let i = 0; i < values.length; i += 1) {
                             const value = values[i]
                             if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) continue
-                            const capped = clamp(value, 0, ZONED_TRACK_MAX_VALUE)
                             const x = left + i * binWidth
-                            let zoneStart = 0
                             let yOffset = 0
-                            for (let zoneIdx = 0; zoneIdx < ZONED_THRESHOLDS.length; zoneIdx += 1) {
-                                const zoneEnd = ZONED_THRESHOLDS[zoneIdx]
-                                if (capped <= zoneStart) break
-                                const coveredEnd = Math.min(capped, zoneEnd)
-                                if (coveredEnd <= zoneStart) {
-                                    zoneStart = zoneEnd
-                                    continue
-                                }
-                                const zoneSpan = Math.max(1, zoneEnd - zoneStart)
-                                const coveredFraction = (coveredEnd - zoneStart) / zoneSpan
-                                const segH = plotHeight * (ZONED_ZONE_HEIGHTS[zoneIdx] || 0) * coveredFraction
-                                if (segH > 0) {
-                                    const segY = isSecondaryZoned
-                                        ? (bottom - yOffset - segH)
-                                        : (top + yOffset)
-                                    bigWigMarkup.push(
-                                        `<rect x="${x}" y="${segY}" width="${colW}" height="${segH}" fill="${escapeXml(zoneColors[zoneIdx] || zoneColors[zoneColors.length - 1])}" />`
-                                    )
-                                    yOffset += segH
-                                }
-                                zoneStart = zoneEnd
+                            for (const segment of zonedSegments(value, zoneThresholds)) {
+                                const segH = plotHeight * segment.height
+                                if (!(segH > 0)) continue
+                                const segY = isSecondaryZoned
+                                    ? (bottom - yOffset - segH)
+                                    : (top + yOffset)
+                                bigWigMarkup.push(
+                                    `<rect x="${x}" y="${segY}" width="${colW}" height="${segH}" fill="${escapeXml(zoneColors[segment.zone] || zoneColors[zoneColors.length - 1])}" />`
+                                )
+                                yOffset += segH
                             }
                         }
                         for (const boundary of boundaryValues) {
                             const y = zoneYForValue(boundary)
                             bigWigAxisMarkup.push(
-                                `<text x="${viewWidth - 4}" y="${y}" fill="${escapeXml(isLight ? '#64748b' : '#94a3b8')}" text-anchor="end" dominant-baseline="middle" style="font:${escapeXml(sansFont(9))};">${escapeXml(`>${boundary.toLocaleString()}`)}</text>`
+                                `<text x="${viewWidth - 4}" y="${y}" fill="${escapeXml(isLight ? '#64748b' : '#94a3b8')}" text-anchor="end" dominant-baseline="middle" style="font:${escapeXml(sansFont(9))};">${escapeXml(formatZoneLabel(boundary))}</text>`
                             )
                         }
                     } else if (renderMode === 'signal_plot') {
@@ -8344,10 +8404,10 @@ export default function GenomeBrowser({
                 const top = trackLayout.y + 18
                 const bottom = trackLayout.y + trackLayout.height - 8
                 const plotHeight = Math.max(8, bottom - top)
-                const lanePitch = BIGBED_DETAIL_LANE_PITCH
+                const lanePitch = bigBedLanePitch(data?.labelled)
                 const exonH = BIGBED_DETAIL_EXON_HEIGHT
                 const laneBaseY = top + BIGBED_DETAIL_LANE_TOP_PAD
-                const maxVisibleLanes = getBigBedLaneCapacity(plotHeight)
+                const maxVisibleLanes = getBigBedLaneCapacity(plotHeight, lanePitch)
                 const clickedKey = clickedBigBedFeature?.trackId === trackId
                     ? bigBedFeatureKey(clickedBigBedFeature.feature)
                     : ''
@@ -8416,7 +8476,7 @@ export default function GenomeBrowser({
                         && feature._exon_blocks.length > 0
 
                     if (isTranscript) {
-                        const txBounds = getGenomicIntervalPixelBounds(s, e, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
+                        const txBounds = getCustomTrackIntervalPixelBounds(s, e - 1, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
                         const txX1 = txBounds ? Math.max(left, txBounds.x1) : Math.max(left, gToX(Math.max(viewStart, s)))
                         const txX2 = txBounds ? Math.min(right, txBounds.x2) : Math.min(right, gToX(Math.min(viewEnd, e)))
                         const txDrawW = txX2 - txX1
@@ -8446,14 +8506,16 @@ export default function GenomeBrowser({
                         const cdsBlocks = Array.isArray(feature?._cds_blocks) ? feature._cds_blocks : []
                         for (const exon of exons) {
                             const es = Number(exon?.start)
-                            const ee = Number(exon?.end)
+                            // Blocks end exclusively; these renderers and getGenomicIntervalPixelBounds work in
+                            // inclusive last bases (as the gene track does), or every exon ran one base long.
+                            const ee = Number(exon?.end) - 1
                             if (!Number.isFinite(es) || !Number.isFinite(ee) || ee < es) continue
-                            if (ee <= viewStart || es >= viewEnd) continue
+                            if (ee < viewStart || es >= viewEnd) continue
 
                             const overlaps = cdsBlocks
                                 .map((cds) => {
                                     const cdsStart = Number(cds?.start)
-                                    const cdsEnd = Number(cds?.end)
+                                    const cdsEnd = Number(cds?.end) - 1
                                     if (!Number.isFinite(cdsStart) || !Number.isFinite(cdsEnd) || cdsEnd < cdsStart) return null
                                     const overlapStart = Math.max(es, cdsStart)
                                     const overlapEnd = Math.min(ee, cdsEnd)
@@ -8481,7 +8543,7 @@ export default function GenomeBrowser({
                             }
 
                             for (const seg of segments) {
-                                const segBounds = getGenomicIntervalPixelBounds(seg.start, seg.end, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
+                                const segBounds = getCustomTrackIntervalPixelBounds(seg.start, seg.end, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
                                 const sx1 = segBounds ? Math.max(left, segBounds.x1) : Math.max(left, gToX(Math.max(viewStart, seg.start)))
                                 const sx2 = segBounds ? Math.min(right, segBounds.x2) : Math.min(right, gToX(Math.min(viewEnd, seg.end)))
                                 const segW = sx2 - sx1
@@ -8508,6 +8570,18 @@ export default function GenomeBrowser({
                                 )
                             }
                         }
+                    } else if (feature?._thick) {
+                        const strokeWidth = isFocused ? 2 : (isHovered ? 1.5 : 0.9)
+                        for (const piece of bedThickPieces(feature, gToX, { left, right, viewStart, viewEnd, yMid, exonH })) {
+                            bigBedMarkup.push(
+                                `<rect x="${piece.x}" y="${piece.y}" width="${piece.w}" height="${piece.h}" fill="${escapeXml(color.fill)}" opacity="${featureOpacity}" />`
+                            )
+                            if (piece.w > 2) {
+                                bigBedMarkup.push(
+                                    `<rect x="${piece.x + 0.5}" y="${piece.y + 0.5}" width="${Math.max(0.5, piece.w - 1)}" height="${Math.max(0.5, piece.h - 1)}" fill="none" stroke="${escapeXml(strokeColor)}" stroke-width="${strokeWidth}" opacity="${featureOpacity}" />`
+                                )
+                            }
+                        }
                     } else {
                         const drawWidth = Math.max(1, drawW)
                         bigBedMarkup.push(
@@ -8518,6 +8592,14 @@ export default function GenomeBrowser({
                                 `<rect x="${x1 + 0.5}" y="${y + 0.5}" width="${Math.max(0.5, drawWidth - 1)}" height="${Math.max(0.5, exonH - 1)}" fill="none" stroke="${escapeXml(strokeColor)}" stroke-width="${isFocused ? 2 : (isHovered ? 1.5 : 0.9)}" opacity="${featureOpacity}" />`
                             )
                         }
+                    }
+                    if (data.labelled && feature?.name) {
+                        // Mirrored markup reflects x and swaps the anchor, so a flipped
+                        // panel anchors the name at the feature's end: it lands on the
+                        // feature's left end on screen, as the canvas draws it.
+                        bigBedMarkup.push(
+                            `<text x="${isFlipped ? x2 : Math.max(left + 1, x1)}" y="${yMid + exonH / 2 + 1.5}" fill="${escapeXml(isFocused ? strokeColor : colors.geneLabelText)}" text-anchor="${isFlipped ? 'end' : 'start'}" dominant-baseline="hanging" opacity="${featureOpacity}" style="font:${escapeXml(sansFont(BIGBED_DETAIL_LABEL_FONT_PX))};">${escapeXml(String(feature.name))}</text>`
+                        )
                     }
                 }
 
@@ -8570,7 +8652,12 @@ export default function GenomeBrowser({
                     }
                     if (!base) continue
                     const displayBase = isFlipped ? (REV_COMP[base] || base) : base
-                    const { bxL, bxR, bxW } = getBasePixelBounds(i, seqPxPerBp)
+                    // Trimmed to the track area: the view can start part-way through a base.
+                    const baseBounds = getBasePixelBounds(i, seqPxPerBp)
+                    const bxL = Math.max(baseBounds.bxL, LHS_WIDTH)
+                    const bxR = Math.min(baseBounds.bxR, viewWidth)
+                    const bxW = bxR - bxL
+                    if (bxW <= 0) continue
                     const alignedBp = Math.round(overlayToGenomic(i))
                     sequenceMarkup.push(
                         `<rect x="${bxL}" y="${seqBoxT}" width="${bxW}" height="${seqBoxH}" fill="${escapeXml(getBaseColor(displayBase, colors))}" />`
@@ -8603,10 +8690,15 @@ export default function GenomeBrowser({
                 const seqFont = seqPxPerBp >= 10 ? monoFont(12) : monoFont(9)
                 for (let i = 0; i < sequence.length; i += 1) {
                     const bp = seqRange.start + i
-                    if (bp < viewStart || bp >= viewEnd) continue
+                    if (bp + 1 <= viewStart || bp >= viewEnd) continue
                     const base = sequence[i]
                     const displayBase = isFlipped ? (REV_COMP[base] || base) : base
-                    const { bxL, bxR, bxW } = getBasePixelBounds(bp, seqPxPerBp)
+                    // Trimmed to the track area: the view can start part-way through a base.
+                    const baseBounds = getBasePixelBounds(bp, seqPxPerBp)
+                    const bxL = Math.max(baseBounds.bxL, LHS_WIDTH)
+                    const bxR = Math.min(baseBounds.bxR, viewWidth)
+                    const bxW = bxR - bxL
+                    if (bxW <= 0) continue
                     sequenceMarkup.push(
                         `<rect x="${bxL}" y="${seqBoxT}" width="${bxW}" height="${seqBoxH}" fill="${escapeXml(getBaseColor(displayBase, colors))}" />`
                     )
@@ -9035,7 +9127,7 @@ export default function GenomeBrowser({
             svgMarkup,
             backgroundColor: colors.bg,
         }
-    }, [ANCHOR_ICON_BODY, REV_COMP, alignData, alignmentCoords, bpPerPx, clickedBigBedFeature, clickedVcfVariant, colors, colors.bg, colors.geneLabelText, colors.rulerBg, colors.rulerText, customTrackData, customTracksById, dimNonSelectedGenes, effectiveFocusBarPosition, effectiveHiddenStrands, effectiveRulerHeight, effectiveRulerPosition, effectiveToolbarPosition, expandedGenes, flattenTracks, genes, genomicToScreen, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackToggleY, getEffectiveTranscriptLimit, getGeneRowCountForWidth, getVcfBlockLevel, hoveredBigBedFeature, hoveredSeqBase, hoveredVcfBlock, isAligned, isLight, isPrimaryPanel, isFlipped, isSelectedHidden, isLocationFocusVisible, isTranscriptCompressionActive, isCompressedLayoutActive, isCustomTrackId, layout, overlayToGenomic, panelPillColor, sidebarToggleIconColor, selectedGene, seqRange, sequence, sequenceTrackLabel, showSequenceTrack, shouldForceGeneBlockView, trackOrder, trackWidth, transcriptCache, transcriptLayoutMetrics, viewEnd, viewHeight, viewSpan, viewStart, viewWidth])
+    }, [ANCHOR_ICON_BODY, REV_COMP, alignData, alignmentCoords, bpPerPx, clickedBigBedFeature, clickedVcfVariant, colors, colors.bg, colors.geneLabelText, colors.rulerBg, colors.rulerText, customTrackData, customTracksById, dimNonSelectedGenes, effectiveFocusBarPosition, effectiveHiddenStrands, effectiveRulerHeight, effectiveRulerPosition, effectiveToolbarPosition, expandedGenes, flattenTracks, genes, genomicToScreen, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackIntervalPixelBounds, bigWigZoneScales, getCustomTrackToggleY, getEffectiveTranscriptLimit, getGeneRowCountForWidth, getVcfBlockLevel, hoveredBigBedFeature, hoveredSeqBase, hoveredVcfBlock, isAligned, isLight, isPrimaryPanel, isFlipped, isSelectedHidden, isLocationFocusVisible, isTranscriptCompressionActive, isCompressedLayoutActive, isCustomTrackId, layout, overlayToGenomic, panelPillColor, sidebarToggleIconColor, selectedGene, seqRange, sequence, sequenceTrackLabel, showSequenceTrack, shouldForceGeneBlockView, trackOrder, trackWidth, transcriptCache, transcriptLayoutMetrics, viewEnd, viewHeight, viewSpan, viewStart, viewWidth])
 
     const buildPanelExportSnapshotRef = useRef(buildPanelExportSnapshot)
     useEffect(() => {
@@ -9332,10 +9424,10 @@ export default function GenomeBrowser({
 
             if (isIntervalTrackType(track.type) && data?.mode === 'bigbed_detail' && Array.isArray(data?.features)) {
                 const curSpan = Math.max(1, viewEnd - viewStart)
-                const lanePitch = BIGBED_DETAIL_LANE_PITCH
+                const lanePitch = bigBedLanePitch(data?.labelled)
                 const exonH = BIGBED_DETAIL_EXON_HEIGHT
                 const laneBaseY = top + BIGBED_DETAIL_LANE_TOP_PAD
-                const maxVisibleLanes = getBigBedLaneCapacity(plotHeight)
+                const maxVisibleLanes = getBigBedLaneCapacity(plotHeight, lanePitch)
                 let best = null
                 let bestDist = Infinity
                 let bestRank = Infinity
@@ -9539,17 +9631,11 @@ export default function GenomeBrowser({
             : currentStart + ratio * currentSpan
         const startRatio = isFlipped ? (1 - ratio) : ratio
 
-        let newStart = anchor - newSpan * startRatio
-        let newEnd = newStart + newSpan
-        let [clampedStart, clampedEnd] = clampView(newStart, newEnd)
-
-        // At base-level zoom, snap to integer positions so bases align between tracks
-        if ((clampedEnd - clampedStart) <= 1000) {
-            const snappedStart = Math.round(clampedStart)
-            clampedEnd = snappedStart + (clampedEnd - clampedStart)
-            clampedStart = snappedStart
-                ;[clampedStart, clampedEnd] = clampView(clampedStart, clampedEnd)
-        }
+        const newStart = anchor - newSpan * startRatio
+        const newEnd = newStart + newSpan
+        // Not snapped to whole bases, which moved the base under the cursor by up to half
+        // a base on every step: tens of pixels near base level, back and forth.
+        const [clampedStart, clampedEnd] = clampView(newStart, newEnd)
 
         // Pass ratio so linked panels apply the same screen-position anchor.
         scheduleInteractiveViewport(clampedStart, clampedEnd, targetTrack, ratio)
@@ -11418,6 +11504,12 @@ export default function GenomeBrowser({
             const seqTrackViewH = seqBgHeight
 
             const pxPerBp = trackWidth / viewSpan
+            // The view can start part-way through a base, so the first base is partly
+            // off the left edge; keep it out of the label gutter.
+            ctx.save()
+            ctx.beginPath()
+            ctx.rect(LHS_WIDTH, seqY, viewWidth - LHS_WIDTH, seqTrackViewH)
+            ctx.clip()
             if (isAligned && alignData && viewSpan <= 1000) {
                 if (pxPerBp >= 2) {
                     ctx.font = pxPerBp >= 10 ? monoFont(12) : monoFont(9)
@@ -11481,7 +11573,7 @@ export default function GenomeBrowser({
                     ctx.textBaseline = 'middle'
                     for (let i = 0; i < sequence.length; i++) {
                         const bp = seqRange.start + i
-                        if (bp < viewStart || bp >= viewEnd) continue
+                        if (bp + 1 <= viewStart || bp >= viewEnd) continue
                         const base = sequence[i]
                         const displayBase = isFlipped ? (REV_COMP[base] || base) : base
                         const { bxL, bxR, bxW } = getBasePixelBounds(bp, pxPerBp)
@@ -11519,6 +11611,7 @@ export default function GenomeBrowser({
                 ctx.textAlign = 'center'
                 ctx.fillText('zoom in to see sequence', LHS_WIDTH + trackW / 2, seqY + seqTrackViewH / 2 + 4)
             }
+            ctx.restore()
         }
 
         // ---- Custom BigWig Tracks ----
@@ -12248,10 +12341,10 @@ export default function GenomeBrowser({
                 if (isIntervalTrackType(trackType) && data?.mode === 'bigbed_detail' && Array.isArray(data.features)) {
                     const viewGToX = (g) => left + ((g - viewStart) / Math.max(1, viewEnd - viewStart)) * width
                     const trackColors = bedTrackColors(track)
-                    const lanePitch = BIGBED_DETAIL_LANE_PITCH
+                    const lanePitch = bigBedLanePitch(data?.labelled)
                     const exonH = BIGBED_DETAIL_EXON_HEIGHT
                     const laneBaseY = top + BIGBED_DETAIL_LANE_TOP_PAD
-                    const maxVisibleLanes = getBigBedLaneCapacity(plotHeight)
+                    const maxVisibleLanes = getBigBedLaneCapacity(plotHeight, lanePitch)
                     const hoveredKey = hoveredBigBedFeature?.trackId === trackId ? hoveredBigBedFeature.key : ''
                     const clickedKey = clickedBigBedFeature?.trackId === trackId
                         ? bigBedFeatureKey(clickedBigBedFeature.feature)
@@ -12315,7 +12408,7 @@ export default function GenomeBrowser({
                         ctx.globalAlpha = dimmed ? 0.2 : (isFocused ? 1 : (isHovered ? 1 : 0.86))
 
                         if (isTranscript) {
-                            const txBounds = getGenomicIntervalPixelBounds(s, e, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
+                            const txBounds = getCustomTrackIntervalPixelBounds(s, e - 1, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
                             const txX1 = txBounds ? Math.max(left, txBounds.x1) : Math.max(left, viewGToX(Math.max(viewStart, s)))
                             const txX2 = txBounds ? Math.min(right, txBounds.x2) : Math.min(right, viewGToX(Math.min(viewEnd, e)))
                             const txDrawW = txX2 - txX1
@@ -12355,14 +12448,16 @@ export default function GenomeBrowser({
                             const cdsBlocks = Array.isArray(feature?._cds_blocks) ? feature._cds_blocks : []
                             for (const exon of exons) {
                                 const es = Number(exon?.start)
-                                const ee = Number(exon?.end)
+                                // Blocks end exclusively; these renderers and getGenomicIntervalPixelBounds work in
+                                // inclusive last bases (as the gene track does), or every exon ran one base long.
+                                const ee = Number(exon?.end) - 1
                                 if (!Number.isFinite(es) || !Number.isFinite(ee) || ee < es) continue
-                                if (ee <= viewStart || es >= viewEnd) continue
+                                if (ee < viewStart || es >= viewEnd) continue
 
                                 const overlaps = cdsBlocks
                                     .map((cds) => {
                                         const cdsStart = Number(cds?.start)
-                                        const cdsEnd = Number(cds?.end)
+                                        const cdsEnd = Number(cds?.end) - 1
                                         if (!Number.isFinite(cdsStart) || !Number.isFinite(cdsEnd) || cdsEnd < cdsStart) return null
                                         const overlapStart = Math.max(es, cdsStart)
                                         const overlapEnd = Math.min(ee, cdsEnd)
@@ -12390,7 +12485,7 @@ export default function GenomeBrowser({
                                 }
 
                                 for (const seg of segments) {
-                                    const segBounds = getGenomicIntervalPixelBounds(seg.start, seg.end, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
+                                    const segBounds = getCustomTrackIntervalPixelBounds(seg.start, seg.end, 1 / Math.max(1e-9, bpPerPx), viewSpan <= 1000 && (1 / Math.max(1e-9, bpPerPx)) >= 2)
                                     const sx1 = segBounds ? Math.max(left, segBounds.x1) : Math.max(left, viewGToX(Math.max(viewStart, seg.start)))
                                     const sx2 = segBounds ? Math.min(right, segBounds.x2) : Math.min(right, viewGToX(Math.min(viewEnd, seg.end)))
                                     const segW = sx2 - sx1
@@ -12415,6 +12510,16 @@ export default function GenomeBrowser({
                                     ctx.strokeRect(drawX, drawY, boxW, boxH)
                                 }
                             }
+                        } else if (feature?._thick) {
+                            ctx.fillStyle = color.fill
+                            ctx.strokeStyle = strokeColor
+                            ctx.lineWidth = isFocused ? 2 : (isHovered ? 1.5 : 0.9)
+                            for (const piece of bedThickPieces(feature, viewGToX, { left, right, viewStart, viewEnd, yMid, exonH })) {
+                                ctx.fillRect(piece.x, piece.y, piece.w, piece.h)
+                                if (piece.w > 2) {
+                                    ctx.strokeRect(piece.x + 0.5, piece.y + 0.5, Math.max(0.5, piece.w - 1), Math.max(0.5, piece.h - 1))
+                                }
+                            }
                         } else {
                             ctx.fillStyle = color.fill
                             ctx.strokeStyle = strokeColor
@@ -12429,6 +12534,19 @@ export default function GenomeBrowser({
                                     Math.max(0.5, exonH - 1)
                                 )
                             }
+                        }
+                        // Gene models are named under their structure, as the gene track
+                        // names its transcripts; lanes were packed with room for it.
+                        if (data.labelled && feature?.name) {
+                            ctx.font = sansFont(BIGBED_DETAIL_LABEL_FONT_PX)
+                            ctx.fillStyle = isFocused ? strokeColor : colors.geneLabelText
+                            ctx.textAlign = 'left'
+                            ctx.textBaseline = 'top'
+                            // fillScreenText takes a screen position. Flipped, the feature's
+                            // left end on screen is its genomic end, reflected — where the
+                            // gene track puts its names too.
+                            const labelScreenX = isFlipped ? (customMirrorAxis - x2) : x1
+                            fillScreenText(ctx, customMirrorAxis, String(feature.name), Math.max(left + 1, labelScreenX), yMid + exonH / 2 + 1.5)
                         }
                         ctx.restore()
                     }
@@ -12852,15 +12970,18 @@ export default function GenomeBrowser({
                 const zoneColors = (trackType === 'bigwig' && bigWigSettings)
                     ? bigWigSettings.zoned_colors
                     : (isLight ? ZONED_ZONE_SOLID_COLORS.light : ZONED_ZONE_SOLID_COLORS.dark)
+                // The fixed zones (100 / 1k / 10k / 100k) suit read coverage; a track scaled
+                // to its file uses that file's peak heights once they have been measured.
+                const zoneThresholds = zoneThresholdsFor(bigWigSettings?.zone_scale, bigWigZoneScales[track?.path], bigWigSettings?.custom_zones, bigWigSettings?.shared_zones)
                 const isSecondaryZoned = !isPrimaryPanel
                 const zoneYForValue = (value) => {
-                    const frac = getZonedValueFraction(value)
+                    const frac = zonedValueFraction(value, zoneThresholds)
                     return isSecondaryZoned
                         ? (bottom - frac * plotHeight)
                         : (top + frac * plotHeight)
                 }
 
-                // Top baseline and fixed zone guides: 0-100, 100-1k, 1k-10k, 10k-100k (capped).
+                // Top baseline and zone guides, one at each zone edge.
                 ctx.save()
                 ctx.strokeStyle = isLight ? '#e8a534' : '#f0b44d'
                 ctx.lineWidth = 1
@@ -12870,7 +12991,7 @@ export default function GenomeBrowser({
                 ctx.lineTo(right, baselineY)
                 ctx.stroke()
 
-                const boundaryValues = [100, 1000, 10000, 100000]
+                const boundaryValues = zoneThresholds
                 ctx.setLineDash([4, 3])
                 ctx.strokeStyle = isLight ? 'rgba(100, 116, 139, 0.35)' : 'rgba(148, 163, 184, 0.32)'
                 for (const boundary of boundaryValues) {
@@ -12885,31 +13006,17 @@ export default function GenomeBrowser({
                 for (let i = 0; i < values.length; i++) {
                     const value = values[i]
                     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) continue
-                    const capped = clamp(value, 0, ZONED_TRACK_MAX_VALUE)
                     const x = left + i * binWidth
-                    let zoneStart = 0
                     let yOffset = 0
-
-                    for (let zoneIdx = 0; zoneIdx < ZONED_THRESHOLDS.length; zoneIdx++) {
-                        const zoneEnd = ZONED_THRESHOLDS[zoneIdx]
-                        if (capped <= zoneStart) break
-                        const coveredEnd = Math.min(capped, zoneEnd)
-                        if (coveredEnd <= zoneStart) {
-                            zoneStart = zoneEnd
-                            continue
-                        }
-                        const zoneSpan = Math.max(1, zoneEnd - zoneStart)
-                        const coveredFraction = (coveredEnd - zoneStart) / zoneSpan
-                        const segH = plotHeight * (ZONED_ZONE_HEIGHTS[zoneIdx] || 0) * coveredFraction
-                        if (segH > 0) {
-                            ctx.fillStyle = zoneColors[zoneIdx] || zoneColors[zoneColors.length - 1]
-                            const segY = isSecondaryZoned
-                                ? (bottom - yOffset - segH)
-                                : (top + yOffset)
-                            ctx.fillRect(x, segY, colW, segH)
-                            yOffset += segH
-                        }
-                        zoneStart = zoneEnd
+                    for (const segment of zonedSegments(value, zoneThresholds)) {
+                        const segH = plotHeight * segment.height
+                        if (!(segH > 0)) continue
+                        ctx.fillStyle = zoneColors[segment.zone] || zoneColors[zoneColors.length - 1]
+                        const segY = isSecondaryZoned
+                            ? (bottom - yOffset - segH)
+                            : (top + yOffset)
+                        ctx.fillRect(x, segY, colW, segH)
+                        yOffset += segH
                     }
                 }
 
@@ -12921,7 +13028,7 @@ export default function GenomeBrowser({
                 ctx.textBaseline = 'middle'
                 for (const boundary of boundaryValues) {
                     const y = zoneYForValue(boundary)
-                    fillScreenText(ctx, customMirrorAxis, `>${boundary.toLocaleString()}`, viewWidth - 4, y)
+                    fillScreenText(ctx, customMirrorAxis, formatZoneLabel(boundary), viewWidth - 4, y)
                 }
                 ctx.restore()
             } else if (trackType === 'bigwig' && renderMode === 'signal_plot') {
@@ -13117,7 +13224,7 @@ export default function GenomeBrowser({
             }
         }
 
-    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, focusLocationRange, isLocationFocusVisible, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, sidebarToggleIconColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight, expandedFooterGeneIds])
+    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, focusLocationRange, isLocationFocusVisible, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, sidebarToggleIconColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackIntervalPixelBounds, bigWigZoneScales, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight, expandedFooterGeneIds])
 
     useLayoutEffect(() => {
         const anchor = verticalZoomTrackAnchorRef.current
@@ -13432,6 +13539,8 @@ export default function GenomeBrowser({
     const handleSearch = useCallback(async () => {
         const rawQuery = searchInput.trim()
         if (!rawQuery) return
+        showSearchFeedback(null)
+        const genomeName = String(genomePillLabel || '').trim() || 'this genome'
 
         const resolveRegionChrom = (rawChrom) => {
             const token = String(rawChrom || '').trim()
@@ -13503,9 +13612,11 @@ export default function GenomeBrowser({
             return { region: null, ambiguous: false }
         }
 
+        // The backend's name for a sequence, or null when it has none: echoing the typed
+        // name back on failure is what let an unknown sequence be "loaded".
         const resolveChromViaBackend = async (chrom, hintStart) => {
             const requested = String(chrom || '').trim()
-            if (!requested) return requested
+            if (!requested) return null
             const numericHint = Number(hintStart)
             const probeStart = Number.isFinite(numericHint)
                 ? Math.max(0, Math.floor(numericHint) - 1)
@@ -13515,13 +13626,30 @@ export default function GenomeBrowser({
                 const res = await fetch(
                     `${API_BASE}/api/browse/sequence?genome=${genome}&chrom=${encodeURIComponent(requested)}&start=${probeStart}&end=${probeEnd}`
                 )
-                if (!res.ok) return requested
+                if (!res.ok) return null
                 const data = await res.json()
                 const resolved = String(data?.chrom || '').trim()
-                return resolved || requested
+                return resolved || null
             } catch {
-                return requested
+                return null
             }
+        }
+
+        // The sequence a typed name refers to: the panel's own list first, then the
+        // backend's aliases. { region, chrom, ambiguous }; chrom is null when neither knows it.
+        const resolveQueryChrom = async (chrom, hintStart) => {
+            const { region, ambiguous } = resolveRegionChrom(chrom)
+            if (region) return { region, chrom: String(region.chrom), ambiguous: false }
+            if (ambiguous) return { region: null, chrom: null, ambiguous: true }
+            const backendChrom = await resolveChromViaBackend(chrom, hintStart)
+            if (!backendChrom) return { region: null, chrom: null, ambiguous: false }
+            const known = regions.find((r) => String(r.chrom || '').trim() === backendChrom) || null
+            return { region: known, chrom: backendChrom, ambiguous: false }
+        }
+        const regionBounds = (region) => {
+            const min = Math.max(1, Math.floor(Number(region?.browsable_start) || 1))
+            const max = Math.max(min + 1, Math.floor(Number(region?.browsable_end) || Number(region?.end) || min + 1))
+            return { min, max }
         }
 
         const buildIdentifierWindow = (region, maxSpan = 1_000_000) => {
@@ -13565,10 +13693,9 @@ export default function GenomeBrowser({
 
             if (!region && resolvedChrom) {
                 const backendResolvedChrom = await resolveChromViaBackend(resolvedChrom, start)
-                if (backendResolvedChrom) {
-                    resolvedChrom = backendResolvedChrom
-                    region = regions.find((r) => String(r.chrom || '').trim() === resolvedChrom) || null
-                }
+                if (!backendResolvedChrom) return false
+                resolvedChrom = backendResolvedChrom
+                region = regions.find((r) => String(r.chrom || '').trim() === resolvedChrom) || null
             }
             if (!resolvedChrom) return false
 
@@ -13622,25 +13749,60 @@ export default function GenomeBrowser({
             return resolvedChrom
         }
 
-        // Coordinate format: chr:start-end
         const coordQuery = rawQuery.replace(/[–—]/g, '-')
-        const coordMatch = coordQuery.match(/^([^:\s]+)\s*:\s*([\d,\s]+)\s*-\s*([\d,\s]+)$/)
-        if (coordMatch) {
-            const chrom = coordMatch[1]
-            const start = parseInt(coordMatch[2].replace(/[,\s]/g, ''), 10)
-            const end = parseInt(coordMatch[3].replace(/[,\s]/g, ''), 10)
-            // Framed like a focused gene rather than filling the view edge to edge:
-            // padded so the boundary lines are visible, and shifted clear of the
+        const parsed = parseLocationQuery(rawQuery)
+        if (parsed.kind === 'malformed') {
+            showSearchFeedback('error', parsed.message)
+            return
+        }
+
+        // Coordinates: chr:start-end, or chr:position.
+        if (parsed.kind === 'range' || parsed.kind === 'position') {
+            const chrom = parsed.chrom
+            const target = await resolveQueryChrom(chrom, parsed.kind === 'range' ? parsed.start : parsed.position)
+            if (target.ambiguous) {
+                showSearchFeedback('error', `"${chrom}" matches more than one sequence in ${genomeName}. Use the sequence's full name.`)
+                return
+            }
+            if (!target.chrom) {
+                showSearchFeedback('error', `There is no sequence called "${chrom}" in ${genomeName}.`)
+                return
+            }
+            let start = parsed.kind === 'range' ? parsed.start : parsed.position
+            let end = parsed.kind === 'range' ? parsed.end : parsed.position
+            const notes = []
+            if (parsed.swapped) notes.push('The start and end were the wrong way round.')
+            // A range that runs off either end shows what there is; one wholly off it
+            // shows the nearest end. Either way the reader is told, rather than left to
+            // notice that the view is not what they typed.
+            if (target.region) {
+                const checked = checkRangeAgainstBounds({ start, end }, { ...regionBounds(target.region), chrom: target.chrom })
+                start = checked.start
+                end = checked.end
+                if (checked.warning) notes.push(checked.warning)
+            }
+            // A single position is centred in a short window rather than focused: a focus
+            // is at least two bases wide, which would misstate what was asked for.
+            const isPosition = parsed.kind === 'position'
+            // A range is framed like a focused gene rather than filling the view edge to
+            // edge: padded so the boundary lines are visible, and shifted clear of the
             // drawer that focusing the location is about to slide over this panel.
             const requestedSpan = Math.max(1, end - start)
             const flank = Math.max(1, (requestedSpan / FOCUS_RANGE_FILL_FRACTION - requestedSpan) / 2)
-            const framedRegion = frameFocusRange(start - flank, end + flank, { gainingFocus: true })
-            const resolvedChrom = await jumpToRange(chrom, framedRegion.start, framedRegion.end, null)
-            if (resolvedChrom) focusLocation({ chrom: resolvedChrom, start, end })
+            const framedRegion = isPosition
+                ? { start: start - 50, end: start + 50 }
+                : frameFocusRange(start - flank, end + flank, { gainingFocus: true })
+            const resolvedChrom = await jumpToRange(target.chrom, framedRegion.start, framedRegion.end, null)
+            if (!resolvedChrom) {
+                showSearchFeedback('error', `Could not show ${chrom}:${start.toLocaleString('en-US')}-${end.toLocaleString('en-US')} in ${genomeName}.`)
+                return
+            }
+            if (!isPosition) focusLocation({ chrom: resolvedChrom, start, end })
+            if (notes.length) showSearchFeedback('warning', notes.join(' '))
             // A tutorial step about the search box cannot wait for the box to hold what
             // was typed — jumpToRange empties it — so it waits for this instead. Emitted
             // whether the user typed it or the tutorial did, which is what lets someone
-            // who types it themselves move straight on.
+            // who types it themselves move straight on. Only for a location that exists.
             emitTutorialSignal('browser.regionSearched', { chrom, start, end })
             return
         }
@@ -13656,9 +13818,13 @@ export default function GenomeBrowser({
                     return
                 }
             }
-            if (ambiguous) return
+            if (ambiguous) {
+                showSearchFeedback('error', `"${identifierQuery}" matches more than one sequence in ${genomeName}. Use the sequence's full name.`)
+                return
+            }
         }
 
+        let searchUnavailable = false
         try {
             const res = await fetch(
                 `${API_BASE}/api/resolve_id?genome=${genome}&query=${encodeURIComponent(rawQuery)}`
@@ -13679,7 +13845,10 @@ export default function GenomeBrowser({
 
                     const span = Math.max(1, focusEnd - focusStart)
                     const padding = Math.max(100, span * 0.5)
-                    await jumpToRange(gene.chrom, focusStart - padding, focusEnd + padding, gene)
+                    if (!await jumpToRange(gene.chrom, focusStart - padding, focusEnd + padding, gene)) {
+                        showSearchFeedback('error', `Found "${rawQuery}" on ${gene.chrom}, but that sequence is not available in ${genomeName}.`)
+                        return
+                    }
                     trackAchievement('browser.idSearch')
                     trackAchievement('browser.geneFocus')
                     return
@@ -13687,6 +13856,7 @@ export default function GenomeBrowser({
             }
         } catch (e) {
             console.error('Search resolve failed:', e)
+            searchUnavailable = true
         }
 
         // Fallback to currently cached genes if API resolve is unavailable.
@@ -13699,8 +13869,13 @@ export default function GenomeBrowser({
             await jumpToRange(match.chrom, match.start - padding, match.end + padding, match)
             trackAchievement('browser.idSearch')
             trackAchievement('browser.geneFocus')
+            return
         }
-    }, [searchInput, regions, selectedChrom, genome, genes, onManualNavigate, onPositionChange, focusDrawerInsetOnFocus, isFlipped, emitTutorialSignal, focusLocation, frameFocusRange])
+
+        showSearchFeedback('error', searchUnavailable
+            ? `Could not search ${genomeName} for "${rawQuery}": the search service did not respond.`
+            : `No gene, transcript or sequence called "${rawQuery}" was found in ${genomeName}.`)
+    }, [searchInput, regions, selectedChrom, genome, genes, onManualNavigate, onPositionChange, focusDrawerInsetOnFocus, isFlipped, emitTutorialSignal, focusLocation, frameFocusRange, genomePillLabel, showSearchFeedback])
 
     const handleRegionChange = useCallback((chrom) => {
         setSelectedChrom(chrom)
@@ -14421,23 +14596,61 @@ export default function GenomeBrowser({
                 alongside the field it belongs to. */}
             <div
                 data-tour-id="browser-location-search-field"
-                className="flex items-center gap-0.5 ml-2 mr-0.5 shrink-0"
+                className="relative flex items-center gap-0.5 ml-2 mr-0.5 shrink-0"
                 style={{ width: `${toolbarColumnWidths.search}px` }}
             >
                 <input
                     data-tour-id="browser-location-search"
                     type="text"
                     value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    onChange={(e) => {
+                        setSearchInput(e.target.value)
+                        if (searchFeedback) showSearchFeedback(null)
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSearch()
+                        else if (e.key === 'Escape' && searchFeedback) showSearchFeedback(null)
+                    }}
                     placeholder="Gene name or chr:start-end"
+                    aria-invalid={searchFeedback?.tone === 'error' ? 'true' : undefined}
+                    aria-describedby={searchFeedback ? `${screenshotTargetId || 'browser'}-search-feedback` : undefined}
                     className="text-xs px-2 py-1 rounded border flex-1 min-w-0"
                     style={{
                         backgroundColor: colors.bg,
                         color: colors.infoText,
-                        borderColor: isLight ? '#ced4da' : '#495057',
+                        borderColor: searchFeedback?.tone === 'error'
+                            ? (isLight ? '#dc2626' : '#f87171')
+                            : (isLight ? '#ced4da' : '#495057'),
                     }}
                 />
+                {searchFeedback && (
+                    <div
+                        id={`${screenshotTargetId || 'browser'}-search-feedback`}
+                        data-tour-id="browser-location-search-feedback"
+                        role={searchFeedback.tone === 'error' ? 'alert' : 'status'}
+                        className="absolute left-0 top-full mt-1 z-40 flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-[11px] leading-snug shadow-lg"
+                        style={{
+                            width: 'max(100%, 340px)',
+                            backgroundColor: searchFeedback.tone === 'error'
+                                ? (isLight ? '#fef2f2' : '#3b1219')
+                                : (isLight ? '#fffbeb' : '#3a2a0a'),
+                            borderColor: searchFeedback.tone === 'error'
+                                ? (isLight ? '#fca5a5' : '#7f1d1d')
+                                : (isLight ? '#fcd34d' : '#78350f'),
+                            color: searchFeedback.tone === 'error'
+                                ? (isLight ? '#991b1b' : '#fecaca')
+                                : (isLight ? '#92400e' : '#fde68a'),
+                        }}
+                    >
+                        <span className="flex-1">{searchFeedback.text}</span>
+                        <button
+                            type="button"
+                            onClick={() => showSearchFeedback(null)}
+                            aria-label="Dismiss"
+                            className="shrink-0 opacity-70 hover:opacity-100"
+                        >✕</button>
+                    </div>
+                )}
                 <button
                     data-tour-id="browser-location-search-go"
                     onClick={handleSearch}
@@ -15116,7 +15329,7 @@ export default function GenomeBrowser({
                                             </span>
                                             {registeredTrack.genome_key && (
                                                 <span className={`text-[10px] shrink-0 px-1.5 py-0.5 rounded font-mono ${isLight ? 'bg-gray-100 text-gray-500' : 'bg-gray-700 text-gray-400'}`}>
-                                                    {registeredTrack.genome_key.split('::').slice(-1)[0] || registeredTrack.genome_key}
+                                                    {trackAssemblyKey(registeredTrack.genome_key).split('::').slice(-1)[0] || registeredTrack.genome_key}
                                                 </span>
                                             )}
                                             {alreadyAdded && (
@@ -15613,6 +15826,13 @@ export default function GenomeBrowser({
                             <div>Score <span style={{ fontWeight: 700 }}>{scoreLabel}</span></div>
                             <div>Strand <span style={{ fontWeight: 700 }}>{strandLabel}</span></div>
                             <div>Model <span style={{ fontWeight: 700 }}>{isTranscriptModel ? 'Transcript-like' : 'Interval'}</span></div>
+                            {f?._thick && (
+                                <div>Thick <span style={{ fontWeight: 700 }}>
+                                    {f._thick.end > f._thick.start
+                                        ? `${formatCoord(f._thick.start)}-${formatCoord(f._thick.end - 1)}`
+                                        : 'None (all thin)'}
+                                </span></div>
+                            )}
                             {isTranscriptModel && (
                                 <>
                                     <div>Exons <span style={{ fontWeight: 700 }}>{exonBlocks.length}</span></div>
