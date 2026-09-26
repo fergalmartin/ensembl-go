@@ -67,6 +67,8 @@ import { useTutorialHost } from './hooks/useTutorial'
 import { resetTutorialWorkspace } from './tutorials/demoGenomeApi'
 import { isTutorialSandboxActive, withoutTutorialSandboxFields } from './tutorials/sandbox'
 import SelectedSpeciesPillsBar, { PILLS_ROW_HEIGHT } from './components/SelectedSpeciesPillsBar'
+import ActiveTasksButton from './components/ActiveTasksButton'
+import { getDownloadTasksSnapshot, subscribeDownloadTasks } from './utils/downloadTasksStore'
 import { cycleSelection } from './utils/genomeWheel'
 import WindowsBackendSetupView from './components/WindowsBackendSetupView'
 import ScreenshotSelectionOverlay from './components/ScreenshotSelectionOverlay'
@@ -1332,15 +1334,13 @@ function App() {
   }, [alignmentInputs])
 
   useEffect(() => {
-    let cancelled = false
     const inProgressStatuses = new Set(['pending', 'downloading'])
 
-    const pollDownloadTasksForSelectorRefresh = async () => {
+    // Rides the shared task poll rather than running its own: subscribing directly,
+    // not through the hook, because none of this needs App itself to re-render.
+    const refreshSelectorFromDownloadTasks = (tasks) => {
       try {
-        const res = await fetch(`${API_BASE}/api/remote/tasks`)
-        if (!res.ok || cancelled) return
-        const tasks = await res.json()
-        if (cancelled || !Array.isArray(tasks)) return
+        if (!Array.isArray(tasks)) return
 
         const latestByGenomeKey = new Map()
         const newlyCompleted = []
@@ -1394,12 +1394,8 @@ function App() {
       }
     }
 
-    pollDownloadTasksForSelectorRefresh()
-    const id = window.setInterval(pollDownloadTasksForSelectorRefresh, 2000)
-    return () => {
-      cancelled = true
-      window.clearInterval(id)
-    }
+    refreshSelectorFromDownloadTasks(getDownloadTasksSnapshot())
+    return subscribeDownloadTasks(() => refreshSelectorFromDownloadTasks(getDownloadTasksSnapshot()))
   }, [])
 
   useEffect(() => {
@@ -6869,6 +6865,12 @@ function App() {
                 emptyState={showNoGenomesMessage ? (
                   <NoGenomesPillsMessage isLight={isLight} onOpenView={handleTopBarButtonClick} />
                 ) : null}
+                trailing={(
+                  <ActiveTasksButton
+                    theme={theme}
+                    onOpenDownloads={currentView === 'download' ? null : () => handleTopBarButtonClick('download')}
+                  />
+                )}
               />
             </div>
           )}

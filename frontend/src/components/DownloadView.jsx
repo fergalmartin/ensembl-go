@@ -22,6 +22,13 @@ import {
 } from '../utils/genomeIdentity'
 import { datasetReleaseDownloadMetadata } from '../utils/downloadMetadata'
 import {
+    getDownloadTasksSnapshot,
+    refreshDownloadTasks,
+    subscribeDownloadTasks,
+    useDownloadTasks,
+} from '../utils/downloadTasksStore'
+import ActiveDownloadsPanel from './ActiveDownloadsPanel'
+import {
     DOWNLOAD_FILE_DEFS,
     fileTypeLabel,
     fileTypeTooltip,
@@ -2338,7 +2345,7 @@ export default function DownloadView({
     const [activeDownloadTypes, setActiveDownloadTypes] = useState(() => new Set(DEFAULT_DOWNLOAD_FILE_TYPES))
 
     const [myList, setMyList] = useState([])
-    const [tasks, setTasks] = useState([])
+    const tasks = useDownloadTasks()
     const [downloading, setDownloading] = useState(false)
     const [deletingLocalGenomes, setDeletingLocalGenomes] = useState(false)
     const [statusMsg, setStatusMsg] = useState(null)
@@ -2691,12 +2698,12 @@ export default function DownloadView({
     }, [myList])
 
     useEffect(() => {
-        const poll = async () => {
+        // Runs on every shared poll, not only when the list changes: rows below are
+        // retired against local files that arrive independently of the tasks.
+        const onTasks = () => {
             try {
-                const res = await fetch(`${API_BASE}/api/remote/tasks`)
-                if (res.ok) {
-                    const newTasks = await res.json()
-                    setTasks(newTasks)
+                const newTasks = getDownloadTasksSnapshot()
+                if (Array.isArray(newTasks)) {
                     const latestByKey = new Map()
                     for (const task of newTasks) {
                         const key = getAssemblyGenomeKey(task)
@@ -2824,9 +2831,8 @@ export default function DownloadView({
                 }
             } catch { /* ignore */ }
         }
-        poll()
-        const id = setInterval(poll, 2000)
-        return () => clearInterval(id)
+        onTasks()
+        return subscribeDownloadTasks(onTasks)
     }, [allSpecies, fetchLocalAssemblies, ncbiSpecies])
 
     const sidebarGroups = useMemo(() => {
@@ -2948,6 +2954,7 @@ export default function DownloadView({
             setTimeout(() => setStatusMsg(null), 6000)
         } finally {
             setDownloading(false)
+            void refreshDownloadTasks()
         }
     }, [config?.output_dir, fetchLocalAssemblies, markItemsActive, postDownloadFile])
 
@@ -2971,13 +2978,7 @@ export default function DownloadView({
             const data = await res.json().catch(() => ({}))
             if (!res.ok) throw new Error(data?.detail || 'Failed to cancel downloads')
             const cancelledIds = new Set(Array.isArray(data?.task_ids) ? data.task_ids : [])
-            if (cancelledIds.size > 0) {
-                setTasks((prev) => prev.map((task) => (
-                    cancelledIds.has(task.id)
-                        ? { ...task, status: 'canceled', progress: 0, error: null, cancel_requested: true }
-                        : task
-                )))
-            }
+            if (cancelledIds.size > 0) void refreshDownloadTasks()
             setStatusMsg({
                 text: cancelledIds.size > 0
                     ? `Canceled ${cancelledIds.size} download${cancelledIds.size === 1 ? '' : 's'}.`
@@ -3490,6 +3491,7 @@ export default function DownloadView({
                     : entry
             ))
             setStatusMsg({ text: `Retrying ${fileTypeLabel(fileType)} download for ${getAssemblyAccession(item)}…`, isError: false })
+            void refreshDownloadTasks()
             setTimeout(() => setStatusMsg(null), 4000)
         } catch (e) {
             setStatusMsg({ text: `Retry failed: ${e?.message || 'Unknown error'}`, isError: true })
@@ -3602,6 +3604,7 @@ export default function DownloadView({
             setStatusMsg({ text: `Error: ${e.message}`, isError: true })
         } finally {
             setDownloading(false)
+            void refreshDownloadTasks()
             setTimeout(() => setStatusMsg(null), 5000)
         }
     }
@@ -3960,6 +3963,8 @@ export default function DownloadView({
                                 {statusMsg.text}
                             </div>
                         )}
+
+                        <ActiveDownloadsPanel theme={theme} />
 
                         {activeProvider === 'ensembl' && activeGroup === 'Local genomes' ? (
                             <>

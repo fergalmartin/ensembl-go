@@ -46,6 +46,9 @@ NCBI_DATASETS_API_BASE = "https://api.ncbi.nlm.nih.gov/datasets/v2"
 NCBI_DATASETS_API_HOST = "api.ncbi.nlm.nih.gov"
 NCBI_DATASETS_API_PATH_PREFIX = "/datasets/"
 NCBI_API_DEFAULT_DELAY_SECONDS = 1.0
+# Files downloaded at once. The rest wait as 'pending' and start in the order they
+# were requested, so the user sees a real queue rather than every file crawling.
+MAX_CONCURRENT_DOWNLOADS = 3
 NCBI_API_DEFAULT_429_DELAY_SECONDS = 10.0
 NCBI_METADATA_DISCOVERY_TTL_SECONDS = 60 * 60 * 24  # 24 hours
 CATALOG_REFRESH_TTL_SECONDS = 60 * 60 * 24  # 24 hours
@@ -395,6 +398,14 @@ class DownloadTask(BaseModel):
     dataset_release_source: str = ""
     dataset_release_date: str = ""
     dataset_release_label: str = ""
+    # Names carried from the request so a list of tasks can say what each one is
+    # without going back to the catalogue.
+    scientific_name: str = ""
+    common_name: str = ""
+    display_name: str = ""
+    assembly_name: str = ""
+    source_database: str = ""
+    created_at: str = ""
     status: str  # 'pending', 'downloading', 'completed', 'failed', 'canceled'
     progress: float = 0.0
     error: Optional[str] = None
@@ -1045,6 +1056,10 @@ class DownloadManager:
         self.data_path = data_path
         self.species_data: Dict[str, Any] = {}
         self.tasks: Dict[str, DownloadTask] = {}
+        # Created on first use so it binds to the event loop that runs the downloads
+        # (on Python 3.9 a semaphore belongs to the loop current when it is made).
+        self._download_slots: Optional[asyncio.Semaphore] = None
+        self._download_slots_loop: Optional[asyncio.AbstractEventLoop] = None
         self._species_cache: Optional[List[SpeciesSummary]] = None
         self._metadata_url_cache: Dict[str, Dict[str, Any]] = {}
         self._pairwise_alignment_rows_cache: List[Dict[str, str]] = []
@@ -3465,4 +3480,14 @@ class DownloadManager:
                 task.error = str(e)
                 _unlink_quietly(temp_file)
 
-        await asyncio.to_thread(_download_sync)
+        running_loop = asyncio.get_running_loop()
+        if self._download_slots is None or self._download_slots_loop is not running_loop:
+            self._download_slots = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+            self._download_slots_loop = running_loop
+        async with self._download_slots:
+            # Cancelled while it waited its turn: never start it.
+            if task.cancel_requested or str(task.status or "") == "canceled":
+                task.status = "canceled"
+                task.progress = 0.0
+                return
+            await asyncio.to_thread(_download_sync)

@@ -79,6 +79,8 @@ import {
 } from '../utils/genomeBundle'
 import GenomeBundlePreviewModal from './GenomeBundlePreviewModal'
 import { deregisterGenomesFromConfig } from '../utils/genomeDeregistration'
+import ActiveDownloadsPanel from './ActiveDownloadsPanel'
+import { refreshDownloadTasks } from '../utils/downloadTasksStore'
 import {
     REMOVAL_FILL_ALL,
     REMOVAL_FILL_SELECTED,
@@ -2851,6 +2853,7 @@ export default function GenomeSelectorView({
             const pendingIds = readPendingSelectorGenomeIds()
             for (const key of startedKeys) pendingIds.add(key)
             writePendingSelectorGenomeIds(pendingIds)
+            void refreshDownloadTasks()
         }
 
         setDownloadingMissingKeys((prev) => {
@@ -5130,6 +5133,8 @@ export default function GenomeSelectorView({
                     ) : null}
                 </div>
             ) : null}
+
+            <ActiveDownloadsPanel theme={theme} className="order-2 flex-none mb-3" />
 
             <div
                 ref={genomeListRef}

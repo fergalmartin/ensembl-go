@@ -59,6 +59,9 @@ export default function SelectedSpeciesPillsBar({
     nonPrimarySelectedColor = '',
     reserveRowHeight = false,
     emptyState = null,
+    // Pinned to the right end of the strip, after the scroll arrow (the Active tasks
+    // button). The strip gives up its width, so pills it would cover scroll instead.
+    trailing = null,
 }) {
     const isLight = theme === 'light'
     const resolveGenomeColor = useMemo(() => genomeColorResolver(config), [config])
@@ -352,6 +355,15 @@ export default function SelectedSpeciesPillsBar({
                         </svg>
                     </button>
                 )}
+
+                {trailing ? (
+                    // Padded as a pill is: the scroller's `pt-1 pb-0.5` plus the 8px each
+                    // pill leaves beneath itself for its badge. So the button lines up
+                    // with the pills, not with the middle of the strip.
+                    <div className="flex-shrink-0 flex items-center pl-1.5 empty:hidden" style={{ paddingTop: 4, paddingBottom: 10 }}>
+                        {trailing}
+                    </div>
+                ) : null}
             </div>
 
             {pillToast && (

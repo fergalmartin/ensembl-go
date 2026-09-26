@@ -7709,6 +7709,18 @@ async def start_download(request: DownloadRequest):
     return response
 
 
+def _download_task_names(request: DownloadRequest) -> Dict[str, str]:
+    """The names a task carries so the active-downloads lists can label it."""
+    return {
+        "scientific_name": str(request.scientific_name or ""),
+        "common_name": str(request.common_name or ""),
+        "display_name": str(request.display_name or ""),
+        "assembly_name": str(request.assembly_name or ""),
+        "source_database": str(request.source_database or ""),
+        "created_at": now_iso(),
+    }
+
+
 def _prepare_download(
     request: DownloadRequest,
 ) -> Tuple[Dict[str, Any], List[Tuple[str, Path, str, List[str]]]]:
@@ -7788,6 +7800,7 @@ def _prepare_download(
         dataset_release_source=release_source,
         dataset_release_date=release_date,
         dataset_release_label=request.dataset_release_label or _release_label(release_source, release_date),
+        **_download_task_names(request),
         status="pending",
         destination=str(dest),
     )
@@ -7852,6 +7865,7 @@ def _prepare_download(
                         dataset_release_source="",
                         dataset_release_date="",
                         dataset_release_label="",
+                        **_download_task_names(request),
                         status="pending",
                         destination=str(metadata_dest),
                     )
@@ -8149,23 +8163,84 @@ async def cancel_downloads(request: CancelDownloadRequest):
             continue
         if filenames and task_type == "metadata" and not implicit_metadata and task_filename and task_filename not in filenames:
             continue
-        task.cancel_requested = True
-        task.status = "canceled"
-        task.progress = 0.0
-        task.error = None
+        _cancel_download_task(task)
         canceled_task_ids.append(task_id)
-        for raw_path in (
-            task.current_download_path,
-            str(Path(task.destination).with_suffix(Path(task.destination).suffix + ".tmp")) if task.destination else "",
-        ):
-            if not raw_path:
+    return {
+        "status": "canceled" if canceled_task_ids else "not_found",
+        "task_ids": canceled_task_ids,
+        "count": len(canceled_task_ids),
+    }
+
+
+def _cancel_download_task(task: DownloadTask) -> None:
+    """Mark a task cancelled and remove whatever it has written so far.
+
+    A running worker notices ``cancel_requested`` and stops; a queued one never
+    starts.
+    """
+    task.cancel_requested = True
+    task.status = "canceled"
+    task.progress = 0.0
+    task.error = None
+    for raw_path in (
+        task.current_download_path,
+        str(Path(task.destination).with_suffix(Path(task.destination).suffix + ".tmp")) if task.destination else "",
+    ):
+        if not raw_path:
+            continue
+        try:
+            path = Path(raw_path)
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
+
+
+def _cancel_download_tasks_by_id(task_ids: List[str], cancel_all: bool = False) -> List[str]:
+    """Cancel the given in-progress tasks, or every one when ``cancel_all``.
+
+    Cancelling a genome's FASTA or GFF3 also cancels the assembly metadata that was
+    fetched alongside it, as the species-level cancel does; otherwise it would be
+    left downloading for a genome the user has just abandoned.
+    """
+    active_statuses = {"pending", "downloading"}
+    wanted = {str(value or "").strip() for value in (task_ids or []) if str(value or "").strip()}
+    targets: Dict[str, DownloadTask] = {}
+    for task_id, task in list(download_manager.tasks.items()):
+        if str(task.status or "") not in active_statuses:
+            continue
+        if cancel_all or task_id in wanted:
+            targets[task_id] = task
+
+    core_genomes = {
+        (str(task.species_key or ""), str(task.assembly or ""), normalize_provider(task.provider))
+        for task in targets.values()
+        if str(task.file_type or "") in {"fasta", "gff3"}
+    }
+    if core_genomes:
+        for task_id, task in list(download_manager.tasks.items()):
+            if task_id in targets or str(task.file_type or "") != "metadata":
                 continue
-            try:
-                path = Path(raw_path)
-                if path.exists():
-                    path.unlink()
-            except Exception:
-                pass
+            if str(task.status or "") not in active_statuses:
+                continue
+            genome = (str(task.species_key or ""), str(task.assembly or ""), normalize_provider(task.provider))
+            if genome in core_genomes:
+                targets[task_id] = task
+
+    for task in targets.values():
+        _cancel_download_task(task)
+    return list(targets.keys())
+
+
+class CancelDownloadTasksRequest(BaseModel):
+    task_ids: List[str] = []
+    all: bool = False
+
+
+@app.post("/api/remote/tasks/cancel")
+async def cancel_download_tasks(request: CancelDownloadTasksRequest):
+    """Cancel download tasks by id, or every queued and running download."""
+    canceled_task_ids = _cancel_download_tasks_by_id(request.task_ids, cancel_all=request.all)
     return {
         "status": "canceled" if canceled_task_ids else "not_found",
         "task_ids": canceled_task_ids,
