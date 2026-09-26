@@ -263,12 +263,22 @@ export default function TutorialsView({ theme = 'dark', config = null, onOpenCon
                 </div>
 
                 <details
-                  className={`mt-3 border-t pt-3 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
+                  className={`mt-3 border-t pt-3 scroll-mt-4 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
                   data-tutorial-step-list={tutorial.id}
                   onToggle={(event) => {
                     // Read the state here: React has blanked `currentTarget` by the time
                     // the updater below runs, and a null read takes the whole view down.
                     const isOpen = event.target.open
+                    const details = event.target
+                    // Opened to be read: a list that opened below the fold is brought up
+                    // to the top of the view, rather than left with its end cut off.
+                    if (isOpen) {
+                      requestAnimationFrame(() => {
+                        const list = details.querySelector('[data-tutorial-step-list-body]')
+                        const bottom = list?.getBoundingClientRect().bottom ?? 0
+                        if (bottom > window.innerHeight - 12) details.scrollIntoView({ block: 'start', behavior: 'smooth' })
+                      })
+                    }
                     setOpenStepLists((current) => {
                       const next = new Set(current)
                       if (isOpen) next.add(tutorial.id)
@@ -284,7 +294,7 @@ export default function TutorialsView({ theme = 'dark', config = null, onOpenCon
                   >
                     Browse and jump to steps
                   </summary>
-                  <div className={`mt-3 max-h-72 space-y-3 overflow-y-auto rounded-lg border p-1.5 ${
+                  <div data-tutorial-step-list-body="true" className={`mt-3 max-h-72 space-y-3 overflow-y-auto rounded-lg border p-1.5 ${
                     isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-900/35'
                   }`}>
                     {tutorialSections(tutorial).map((group, groupIndex) => (

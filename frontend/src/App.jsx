@@ -1017,6 +1017,7 @@ function App() {
     show_fps_counter: false,
     browsing_control_scheme: DEFAULT_BROWSING_CONTROL_SCHEME_ID,
     sv_hide_inactive_tracks: false,
+    remember_browser_tracks: true,
     genome_default_color: DEFAULT_GENOME_COLOR,
     genome_colors: {},
     genome_color_palette: [],

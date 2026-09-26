@@ -2665,12 +2665,88 @@ export default function GenomeBrowserView({
     }), [])
 
     const [allRegisteredTracks, setAllRegisteredTracks] = useState([])
+    const [allTrackGroups, setAllTrackGroups] = useState([])
+    const [registryLoaded, setRegistryLoaded] = useState(false)
     const refreshRegisteredTracks = useCallback(() => {
         fetch(`${API_BASE}/api/tracks`)
-            .then((r) => (r.ok ? r.json() : { tracks: [] }))
-            .then((data) => setAllRegisteredTracks(data.tracks || []))
+            .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+            .then((data) => {
+                setAllRegisteredTracks(data.tracks || [])
+                setAllTrackGroups(Array.isArray(data.groups) ? data.groups : [])
+                setRegistryLoaded(true)
+            })
             .catch(() => { })
     }, [])
+
+    /* The custom tracks and groups each genome had open, remembered between sessions
+     * (Configuration → General, on unless switched off). Read once; each panel reopens its
+     * genome's when it first has the registry too, and reports what it has open after
+     * that, which is saved a moment later. Switched off, nothing is read or saved and what
+     * was saved is forgotten. Nothing is remembered during a tutorial: it lays out its own. */
+    const rememberBrowserTracks = config?.remember_browser_tracks !== false
+    const [sessionTracksByGenome, setSessionTracksByGenome] = useState(null)
+    const pendingSessionSavesRef = useRef(new Map())
+    useEffect(() => {
+        let cancelled = false
+        if (!rememberBrowserTracks) {
+            setSessionTracksByGenome({})
+            fetch(`${API_BASE}/api/browser/session-tracks`, { method: 'DELETE' }).catch(() => { })
+            return undefined
+        }
+        fetch(`${API_BASE}/api/browser/session-tracks`)
+            .then((r) => (r.ok ? r.json() : { genomes: {} }))
+            .then((data) => { if (!cancelled) setSessionTracksByGenome(data?.genomes && typeof data.genomes === 'object' ? data.genomes : {}) })
+            .catch(() => { if (!cancelled) setSessionTracksByGenome({}) })
+        return () => { cancelled = true }
+    }, [rememberBrowserTracks])
+
+    const sendSessionTracks = useCallback((genomeKey, entries, keepalive = false) => {
+        fetch(`${API_BASE}/api/browser/session-tracks`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ genome_key: genomeKey, entries }),
+            keepalive,
+        }).catch(() => { })
+    }, [])
+
+    const saveSessionTracks = useCallback((genomeKey, entries) => {
+        setSessionTracksByGenome((prev) => ({ ...(prev || {}), [genomeKey]: { entries } }))
+        const pending = pendingSessionSavesRef.current
+        const previous = pending.get(genomeKey)
+        if (previous) clearTimeout(previous.timer)
+        const timer = setTimeout(() => {
+            pending.delete(genomeKey)
+            sendSessionTracks(genomeKey, entries)
+        }, 600)
+        pending.set(genomeKey, { timer, entries })
+    }, [sendSessionTracks])
+
+    // Closing the app inside that moment still saves.
+    useEffect(() => {
+        const pending = pendingSessionSavesRef.current
+        const flush = () => {
+            for (const [genomeKey, { timer, entries }] of pending) {
+                clearTimeout(timer)
+                sendSessionTracks(genomeKey, entries, true)
+            }
+            pending.clear()
+        }
+        window.addEventListener('beforeunload', flush)
+        return () => {
+            window.removeEventListener('beforeunload', flush)
+            flush()
+        }
+    }, [sendSessionTracks])
+
+    const sessionActive = rememberBrowserTracks && !tutorialRunning
+    const sessionReady = sessionActive && registryLoaded && sessionTracksByGenome !== null
+    // One stable callback per genome, so a panel's effect does not rerun on every render.
+    const sessionHandlersRef = useRef(new Map())
+    const sessionHandlerFor = useCallback((genomeKey) => {
+        const handlers = sessionHandlersRef.current
+        if (!handlers.has(genomeKey)) handlers.set(genomeKey, (entries) => saveSessionTracks(genomeKey, entries))
+        return handlers.get(genomeKey)
+    }, [saveSessionTracks])
 
     useEffect(() => {
         refreshRegisteredTracks()
@@ -2716,6 +2792,17 @@ export default function GenomeBrowserView({
         }
         return byPanel
     }, [allRegisteredTracks, panels])
+
+    // A group belongs to one genome; a panel lists the groups for its assembly.
+    const availableGroupsByPanel = useMemo(() => {
+        const byPanel = {}
+        for (const panel of panels) {
+            byPanel[panel.key] = allTrackGroups.filter((group) => (
+                group.genome_key && genomeKeysMatch(trackAssemblyKey(group.genome_key), panel.species)
+            ))
+        }
+        return byPanel
+    }, [allTrackGroups, panels])
 
     // Stacking several genomes at a uniform band height leaves a lot of dead space
     // under the sparser ones, so multi-genome defaults to adaptive.
@@ -3421,6 +3508,10 @@ export default function GenomeBrowserView({
                                                 : 'Base level view of the primary genome'}
                                             customTrackBrowsePath={trackBrowsePath}
                                             availableTracks={availableTracksByPanel[panelKey] || []}
+                                            availableGroups={availableGroupsByPanel[panelKey] || []}
+                                            sessionTracks={sessionTracksByGenome?.[trackAssemblyKey(getGenomeKey(panel.species))]?.entries || null}
+                                            sessionReady={sessionReady}
+                                            onSessionTracksChange={sessionActive ? sessionHandlerFor(trackAssemblyKey(getGenomeKey(panel.species))) : null}
                                             refreshAvailableTracks={refreshRegisteredTracks}
                                             tutorialTracksRequest={browserTracksRequest}
                                             onTutorialHideInactive={setHideInactiveMode}

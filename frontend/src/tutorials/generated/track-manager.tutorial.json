@@ -2,15 +2,15 @@
   "format": "ensembl-go-tutorial",
   "schemaVersion": 1,
   "id": "track-manager",
-  "revision": 1,
+  "revision": 2,
   "title": "Adding your own data tracks",
-  "blurb": "This tutorial introduces you to the Track Manager view, where you can register your own tracks and attach them to a genome. It demonstrates this for a few different data types and shows how to subsequently view them in the Genome Browser.",
-  "estimatedMinutes": 10,
+  "blurb": "This tutorial introduces you to the Track Manager view, where you can register your own tracks and attach them to a genome. It demonstrates this for a few different data types, shows how to view them in the Genome Browser, and keeps them together as a track group.",
+  "estimatedMinutes": 13,
   "usesDemoGenome": true,
-  "completionBody": "You can now bring your own data into Ensembl Go and read it beside the genes. Your own registered tracks were never touched, and the tutorial's temporary data has been cleared away.",
+  "completionBody": "You can now bring your own data into Ensembl Go, read it beside the genes and keep tracks that belong together as a group. Your own registered tracks were never touched, and the tutorial's temporary data has been cleared away.",
   "author": "",
   "createdAt": "2026-09-13T00:00:00Z",
-  "updatedAt": "2026-09-13T00:00:00Z",
+  "updatedAt": "2026-09-26T00:00:00Z",
   "datasets": [],
   "defaultArrive": [
     {
@@ -305,6 +305,10 @@
       },
       "interactionPolicy": {
         "targets": []
+      },
+      "cardPosition": {
+        "x": 0.6733,
+        "y": 0.0155
       }
     },
     {
@@ -313,7 +317,7 @@
       "view": "track_manager",
       "placement": "left",
       "title": "Find the file",
-      "body": "Press Browse for file to open the app's file browser — or press Next and the tutorial will open it for you.",
+      "body": "Press Browse for files… to open the app's file browser — or press Next and the tutorial will open it for you.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -381,11 +385,11 @@
       "align": "start",
       "interactive": false,
       "cardPosition": {
-        "x": 0.015,
-        "y": 0.03
+        "x": 0.6733,
+        "y": 0.0155
       },
       "title": "The demo data folder",
-      "body": "The browser has opened in the tutorial's own folder, which holds the three demo files. It lists only the types a track can be made from, so anything you can see here is something the app can draw.",
+      "body": "The browser has opened in the tutorial's own folder, which holds the three demo files. It lists only the types a track can be made from, so anything you can see here is something the app can draw. Ticking several registers them together; we will take them one at a time.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -540,6 +544,10 @@
       ],
       "interactionPolicy": {
         "targets": []
+      },
+      "cardPosition": {
+        "x": 0.5068,
+        "y": 0.4276
       }
     },
     {
@@ -723,7 +731,7 @@
       "view": "track_manager",
       "placement": "left",
       "title": "Which genome",
-      "body": "This is the field to get right, and we have filled it in with the demo slice. A track left with no genome is registered and then never drawn — the browser only offers tracks belonging to the genome in front of you.",
+      "body": "This is the field to get right, and we have filled it in with the demo slice. A track with no genome is never drawn — the browser only offers tracks belonging to the genome in front of you — so registering without one asks you to confirm first.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -816,6 +824,13 @@
             ]
           }
         ]
+      },
+      "advanceOn": {
+        "type": "signal",
+        "name": "tracks.registered",
+        "match": {
+          "label": "Brain expression"
+        }
       }
     },
     {
@@ -827,7 +842,7 @@
       "interactive": false,
       "deferUntilReady": true,
       "title": "It is in the list",
-      "body": "The wizard has closed and the track is on the page, under a heading for the genome it belongs to. The badge is its file type, and the line beneath tells you how it will be drawn.",
+      "body": "The wizard has closed and the track is on the page, under a heading for the genome it belongs to. The badge is its file type, and the lines beneath tell you how it will be drawn. The box on its left selects it — we will come back to that.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -1117,6 +1132,13 @@
             ]
           }
         ]
+      },
+      "advanceOn": {
+        "type": "signal",
+        "name": "tracks.registered",
+        "match": {
+          "label": "ATAC-seq peaks"
+        }
       }
     },
     {
@@ -1255,7 +1277,7 @@
         "y": 0.015
       },
       "title": "Three registered",
-      "body": "All three are on the page now, grouped under the genome they belong to. Registering them is as far as the Track Manager goes — none of them is on screen in the browser yet.",
+      "body": "All three are on the page now, listed under the genome they belong to. Registering them is as far as the Track Manager goes — none of them is on screen in the browser yet.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -1503,7 +1525,7 @@
       "align": "start",
       "interactive": false,
       "title": "What is available",
-      "body": "Only tracks registered against this genome are offered, which is the genome field from the wizard doing its work. Each row shows the type, the label you gave it and where the file is.",
+      "body": "Only tracks registered against this genome are offered, which is the genome field from the wizard doing its work. Each row shows the type, the label you gave it and where the file is, with a button to add it.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -1559,8 +1581,8 @@
       "view": "genome_browser",
       "placement": "left",
       "align": "start",
-      "title": "Tick all three",
-      "body": "Tick each of the three — or press Next and the tutorial will tick whichever you have not. Nothing is added until the button below, so this is only a choice.",
+      "title": "Add all three",
+      "body": "Press Add on each of the three — or press Next and the tutorial will do the ones you have not. A row you have added lights up and its button turns to Remove; nothing reaches the panel until you apply.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -1710,10 +1732,10 @@
       "id": "add-them",
       "section": "Into the browser",
       "view": "genome_browser",
-      "placement": "left",
+      "placement": "right",
       "align": "end",
-      "title": "Add them",
-      "body": "Press Add — or press Next. The count on the button is how many are ticked.",
+      "title": "Apply",
+      "body": "Press Apply — or press Next. The note in the bottom corner counts what is about to change.",
       "ensure": [
         "slice-genome-active"
       ],
@@ -3374,11 +3396,1273 @@
       }
     },
     {
+      "id": "groups-intro",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "top",
+      "align": "start",
+      "interactive": false,
+      "deferUntilReady": true,
+      "cardPosition": {
+        "x": 0.015,
+        "y": 0.015
+      },
+      "title": "Tracks that belong together",
+      "body": "Back in the Track Manager. Tracks you read together can be kept as a track group — a name, an order and a way of showing them — so that one press puts them all on a panel. A group belongs to one genome and never changes the tracks in it.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [],
+          "selected": [],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "closed",
+            "name": "",
+            "layout": "separate",
+            "members": []
+          }
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "tracks.list",
+            "version": 1
+          },
+          "offset": 90
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.list",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "groups-select",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "top",
+      "align": "start",
+      "title": "Select the three",
+      "body": "Tick the box on each card — or the one beside the genome's name, which ticks them all. Or press Next and the tutorial will tick them for you.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [],
+          "selected": [],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "closed",
+            "name": "",
+            "layout": "separate",
+            "members": []
+          }
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "tracks.list",
+            "version": 1
+          },
+          "offset": 90
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.list",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "tracks.cardSelect",
+              "version": 1,
+              "params": {
+                "label": "Brain expression"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "tracks.cardSelect",
+              "version": 1,
+              "params": {
+                "label": "ATAC-seq peaks"
+              }
+            },
+            "capability": "activate"
+          },
+          {
+            "target": {
+              "id": "tracks.cardSelect",
+              "version": 1,
+              "params": {
+                "label": "Variants"
+              }
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "desiredEngaged": true
+        }
+      },
+      "advanceOn": {
+        "type": "all-clicks",
+        "targets": [
+          {
+            "id": "tracks.cardSelect",
+            "version": 1,
+            "params": {
+              "label": "Brain expression"
+            }
+          },
+          {
+            "id": "tracks.cardSelect",
+            "version": 1,
+            "params": {
+              "label": "ATAC-seq peaks"
+            }
+          },
+          {
+            "id": "tracks.cardSelect",
+            "version": 1,
+            "params": {
+              "label": "Variants"
+            }
+          }
+        ]
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.cardSelect",
+              "version": 1,
+              "params": {
+                "label": "Brain expression"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "tracks.cardSelect",
+              "version": 1,
+              "params": {
+                "label": "ATAC-seq peaks"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "tracks.cardSelect",
+              "version": 1,
+              "params": {
+                "label": "Variants"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          },
+          {
+            "target": {
+              "id": "tracks.selectGenome",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "groups-add-to-group",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "bottom",
+      "align": "start",
+      "title": "Add to group",
+      "body": "The bar at the top counts what is selected and offers two things to do with it: Edit changes the tracks themselves, and Add to group keeps them together without changing them. Press Add to group — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [],
+          "selected": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "closed",
+            "name": "",
+            "layout": "separate",
+            "members": []
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.addToGroup",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "tracks.addToGroup",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "tracks.addToGroup",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.addToGroup",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "groups-new",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "right",
+      "align": "start",
+      "title": "A new group",
+      "body": "This genome has no groups yet, so the menu offers only a new one. Once there are some, they are listed here too, to add the selection to. Press New group — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [],
+          "selected": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "groupMenu": "open",
+          "groupDialog": {
+            "state": "closed",
+            "name": "",
+            "layout": "separate",
+            "members": []
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.groupMenu",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "tracks.newGroup",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "tracks.newGroup",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.newGroup",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "groups-dialog",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "center",
+      "interactive": false,
+      "title": "The group dialog",
+      "body": "A group is a name, a way of showing it and its tracks in order — here the three you selected, in the order they were listed. Nothing is saved until you create it.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [],
+          "selected": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "open",
+            "name": "",
+            "layout": "separate",
+            "members": [
+              "expression",
+              "atac",
+              "variants"
+            ]
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.groupDialog",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "groups-name",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "bottom",
+      "align": "start",
+      "title": "Name it",
+      "body": "A group needs a name — it is what the picker lists and what heads the group in the browser. Type ‘PHGDH region’ — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [],
+          "selected": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "open",
+            "name": "",
+            "layout": "separate",
+            "members": [
+              "expression",
+              "atac",
+              "variants"
+            ]
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.groupName",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "tracks.groupName",
+              "version": 1
+            },
+            "capability": "input",
+            "value": "PHGDH region",
+            "overwrite": true,
+            "submit": false
+          }
+        ]
+      },
+      "advanceOn": {
+        "type": "input",
+        "target": {
+          "id": "tracks.groupName",
+          "version": 1
+        },
+        "value": "PHGDH region",
+        "ms": 400
+      },
+      "copy": "PHGDH region",
+      "copyTarget": {
+        "id": "tracks.groupName",
+        "version": 1
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.groupName",
+              "version": 1
+            },
+            "capabilities": [
+              "input"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "groups-order",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "right",
+      "align": "start",
+      "interactive": false,
+      "title": "In browser order",
+      "body": "This list is the order the tracks will be drawn in, top to bottom. Drag a row to move it, or select one and use Alt+↑ and ↓. Selecting a track here also lets the group give it settings of its own — a different display mode, say — without changing the track itself.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [],
+          "selected": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "open",
+            "name": "PHGDH region",
+            "layout": "separate",
+            "members": [
+              "expression",
+              "atac",
+              "variants"
+            ]
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.groupMembers",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "groups-layout",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "bottom",
+      "align": "end",
+      "title": "Separate or joined",
+      "body": "Separate tracks gives each its own row, marked CG, switched on and off together. One joined track stacks them all in a single row with a single switch. Choose One joined track — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [],
+          "selected": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "open",
+            "name": "PHGDH region",
+            "layout": "separate",
+            "members": [
+              "expression",
+              "atac",
+              "variants"
+            ]
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.groupLayout",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "tracks.groupLayoutJoined",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "tracks.groupLayoutJoined",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.groupLayoutJoined",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "groups-create",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "top",
+      "align": "end",
+      "title": "Create it",
+      "body": "Press Create group — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [],
+          "selected": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "open",
+            "name": "PHGDH region",
+            "layout": "joined",
+            "members": [
+              "expression",
+              "atac",
+              "variants"
+            ]
+          }
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.groupSave",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "tracks.groupSave",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "advanceOn": {
+        "type": "signal",
+        "name": "tracks.groupSaved",
+        "match": {
+          "label": "PHGDH region"
+        }
+      },
+      "holdMs": 1200,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "tracks.groupSave",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "groups-card",
+      "section": "Track groups",
+      "view": "track_manager",
+      "placement": "bottom",
+      "align": "start",
+      "interactive": false,
+      "deferUntilReady": true,
+      "title": "The group's card",
+      "body": "Groups sit above the tracks, under the same genome, saying what they hold and how they are shown, and each track's card now says which group it is in. The pencil reopens the dialog to rename, reorder or add to it; deleting a group leaves its tracks registered.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [
+            {
+              "name": "PHGDH region",
+              "layout": "joined",
+              "members": [
+                "expression",
+                "atac",
+                "variants"
+              ]
+            }
+          ],
+          "selected": [],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "closed",
+            "name": "",
+            "layout": "separate",
+            "members": []
+          }
+        },
+        {
+          "type": "pageScroll",
+          "target": {
+            "id": "tracks.list",
+            "version": 1
+          },
+          "offset": 90
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "tracks.groupCard",
+          "version": 1,
+          "params": {
+            "label": "PHGDH region"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "groups-to-browser",
+      "section": "Track groups",
+      "view": "genome_browser",
+      "placement": "right",
+      "align": "start",
+      "title": "Back to the browser",
+      "body": "Press Genome Browser — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [
+            {
+              "name": "PHGDH region",
+              "layout": "joined",
+              "members": [
+                "expression",
+                "atac",
+                "variants"
+              ]
+            }
+          ],
+          "selected": [],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "closed",
+            "name": "",
+            "layout": "separate",
+            "members": []
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "app.viewButton",
+          "version": 1,
+          "params": {
+            "buttonId": "genome_browser"
+          }
+        }
+      },
+      "advanceOn": {
+        "type": "view",
+        "view": "genome_browser"
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "app.viewButton",
+              "version": 1,
+              "params": {
+                "buttonId": "genome_browser"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "groups-picker",
+      "section": "Track groups",
+      "view": "genome_browser",
+      "placement": "left",
+      "align": "start",
+      "title": "Groups in the picker",
+      "body": "The picker lists this genome's track groups above its tracks, with what each one holds. Press Add on ‘PHGDH region’ — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [
+            {
+              "name": "PHGDH region",
+              "layout": "joined",
+              "members": [
+                "expression",
+                "atac",
+                "variants"
+              ]
+            }
+          ],
+          "selected": [],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "closed",
+            "name": "",
+            "layout": "separate",
+            "members": []
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "open",
+          "chosen": [],
+          "added": [],
+          "groupsAdded": [],
+          "groupsChosen": []
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.trackPickerGroup",
+          "version": 1,
+          "params": {
+            "label": "PHGDH region"
+          }
+        }
+      },
+      "autoplay": {
+        "actions": [
+          {
+            "target": {
+              "id": "browser.trackPickerGroup",
+              "version": 1,
+              "params": {
+                "label": "PHGDH region"
+              }
+            },
+            "capability": "activate"
+          }
+        ],
+        "options": {
+          "desiredEngaged": true
+        }
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "browser.trackPickerGroup",
+          "version": 1,
+          "params": {
+            "label": "PHGDH region"
+          }
+        }
+      },
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.trackPickerGroup",
+              "version": 1,
+              "params": {
+                "label": "PHGDH region"
+              }
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "groups-apply",
+      "section": "Track groups",
+      "view": "genome_browser",
+      "placement": "right",
+      "align": "end",
+      "title": "Apply",
+      "body": "Press Apply — or press Next.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [
+            {
+              "name": "PHGDH region",
+              "layout": "joined",
+              "members": [
+                "expression",
+                "atac",
+                "variants"
+              ]
+            }
+          ],
+          "selected": [],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "closed",
+            "name": "",
+            "layout": "separate",
+            "members": []
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "open",
+          "chosen": [],
+          "added": [],
+          "groupsAdded": [],
+          "groupsChosen": [
+            "PHGDH region"
+          ]
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.trackPickerAdd",
+          "version": 1
+        }
+      },
+      "autoplay": {
+        "action": {
+          "target": {
+            "id": "browser.trackPickerAdd",
+            "version": 1
+          },
+          "capability": "activate"
+        }
+      },
+      "advanceOn": {
+        "type": "click",
+        "target": {
+          "id": "browser.trackPickerAdd",
+          "version": 1
+        }
+      },
+      "holdMs": 1600,
+      "interactionPolicy": {
+        "targets": [
+          {
+            "target": {
+              "id": "browser.trackPickerAdd",
+              "version": 1
+            },
+            "capabilities": [
+              "activate"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "groups-joined",
+      "section": "Track groups",
+      "view": "genome_browser",
+      "placement": "top",
+      "placementTarget": {
+        "id": "browser.viewport",
+        "version": 1
+      },
+      "interactive": false,
+      "title": "One row, three tracks",
+      "body": "The group is a single row, headed with its name and marked CG — custom group — in the left-hand panel. Its three tracks are stacked inside it in the group's order, each drawn just as it would be on its own, and the one switch turns them all off and on together.",
+      "ensure": [
+        "slice-genome-active"
+      ],
+      "arrive": [
+        {
+          "type": "trackRegistry",
+          "registered": [
+            "expression",
+            "atac",
+            "variants"
+          ],
+          "wizard": "closed",
+          "file": "",
+          "fields": {
+            "label": ""
+          },
+          "dataType": "",
+          "displayMode": "",
+          "genome": "",
+          "browser": {
+            "state": "closed",
+            "directory": "demo"
+          },
+          "groups": [
+            {
+              "name": "PHGDH region",
+              "layout": "joined",
+              "members": [
+                "expression",
+                "atac",
+                "variants"
+              ]
+            }
+          ],
+          "selected": [],
+          "groupMenu": "closed",
+          "groupDialog": {
+            "state": "closed",
+            "name": "",
+            "layout": "separate",
+            "members": []
+          }
+        },
+        {
+          "type": "browserView",
+          "locus": "1:119,640,000-119,755,000"
+        },
+        {
+          "type": "browserTracks",
+          "picker": "closed",
+          "chosen": [],
+          "added": [],
+          "groupsAdded": [
+            "PHGDH region"
+          ],
+          "groupsChosen": []
+        }
+      ],
+      "spotlight": {
+        "target": {
+          "id": "browser.viewport",
+          "version": 1
+        }
+      },
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
+      "id": "groups-remembered",
+      "section": "Track groups",
+      "placement": "center",
+      "title": "Still there next time",
+      "body": "Whatever tracks and groups you leave open on a genome are there again the next time you open Ensembl Go. If you would rather start with an empty panel, turn off Remember Open Tracks under Configuration → General.",
+      "interactionPolicy": {
+        "targets": []
+      }
+    },
+    {
       "id": "review",
       "section": "Wrapping up",
       "placement": "center",
       "title": "What you have done",
-      "body": "We registered three files in the Track Manager — naming each one, saying what kind of data it held and which genome it belonged to — then added them to a browser panel and read all three: banded expression over PHGDH's exons, an ATAC-seq peak in a shared promoter, and a variant track from counted blocks down to single bases. Then we switched two off from the left-hand panel and used Hide to close the space up.",
+      "body": "We registered three files in the Track Manager — naming each one, saying what kind of data it held and which genome it belonged to — then added them to a browser panel and read all three: banded expression over PHGDH's exons, an ATAC-seq peak in a shared promoter, and a variant track from counted blocks down to single bases. Then we switched two off from the left-hand panel and used Hide to close the space up. Finally we kept all three together as a track group, shown as one joined row, and put the whole group on the panel at once.",
       "interactionPolicy": {
         "targets": []
       }

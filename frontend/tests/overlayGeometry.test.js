@@ -7,6 +7,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  padVisibleRect,
   areRectListsEqual,
   areRectsEqual,
   areSizesEqual,
@@ -375,4 +376,41 @@ test('a union covers every rect given, and ignores the degenerate ones', () => {
   assert.equal(unionRect([]), null)
   assert.equal(unionRect(null), null)
   assert.equal(unionRect([{ left: 5, top: 5, width: 0, height: 10 }]), null)
+})
+
+test('a whole target keeps its breathing room even flush against its panel', () => {
+  // A header filling its view: every side of it is visible, so the ring clears all four.
+  const full = { left: 24, top: 212, right: 1358, bottom: 295, width: 1334, height: 83 }
+  const padded = padVisibleRect({ ...full }, full, 6, { width: 1400, height: 900 })
+  assert.deepEqual([padded.left, padded.top, padded.left + padded.width, padded.top + padded.height], [18, 206, 1364, 301])
+})
+
+test('a target cut off on one side is ringed only where the cut is', () => {
+  // A row scrolled half out of the top of its list: the ring stops at the list's edge
+  // there and keeps its padding on the other three sides.
+  const full = { left: 100, top: 80, right: 400, bottom: 140, width: 300, height: 60 }
+  const visible = { left: 100, top: 100, right: 400, bottom: 140, width: 300, height: 40 }
+  const padded = padVisibleRect(visible, full, 6, { width: 1000, height: 800 })
+  assert.deepEqual([padded.left, padded.top, padded.left + padded.width, padded.top + padded.height], [94, 100, 406, 146])
+  // Still kept inside the screen, and an inset applies everywhere.
+  const atEdge = padVisibleRect({ left: 0, top: 0, right: 50, bottom: 20, width: 50, height: 20 }, { left: 0, top: 0, right: 50, bottom: 20 }, 6, { width: 1000, height: 800 })
+  assert.deepEqual([atEdge.left, atEdge.top], [0, 0])
+  const inset = padVisibleRect(visible, full, -2)
+  assert.deepEqual([inset.left, inset.top, inset.width, inset.height], [102, 102, 296, 36])
+})
+
+test('chrome behind a dialog does not cover what is in the dialog', () => {
+  // The browser's control bar floats over the panels; the track picker is a fixed dialog
+  // above all of that, so a row level with the bar is not under it.
+  const bar = elementAt(viewportRectOf({ left: 24, top: 220, width: 1334, height: 45 }))
+  const dialog = { parentElement: null, contains: () => false }
+  const row = { parentElement: dialog, contains: () => false }
+  const styles = new Map([[dialog, { position: 'fixed' }], [row, { position: 'static' }]])
+  const readStyle = (node) => styles.get(node)
+  const rowRect = viewportRectOf({ left: 397, top: 244, width: 486, height: 65 })
+  assert.equal(rectClearOfOccluders(rowRect, row, [bar], readStyle).top, 244)
+  // The same row in the page itself is trimmed as before.
+  const pageRow = { parentElement: null, contains: () => false }
+  styles.set(pageRow, { position: 'static' })
+  assert.equal(rectClearOfOccluders(rowRect, pageRow, [bar], readStyle).top, 265)
 })

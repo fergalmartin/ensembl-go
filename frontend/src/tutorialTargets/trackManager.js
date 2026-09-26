@@ -60,5 +60,35 @@ export default {
     // safe — but the capability should say what it does.
     { id: 'tracks.wizardRegister', anchor: 'track-wizard-register', label: 'Register Track', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
     { id: 'tracks.wizardBack', anchor: 'track-wizard-back', label: 'Back to the file step', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
+
+    // ── Track groups ────────────────────────────────────────────────────────────
+    // Choosing tracks: a card's own box, by the label the tutorial gave the track, or the
+    // box beside the genome's name that ticks all of them. Ticking writes nothing.
+    {
+      id: 'tracks.cardSelect', selectorTemplate: '[data-tutorial-track-select="{label}"]', label: 'Select a registered track', kind: 'toggle',
+      parameters: { label: { type: 'string', required: true } },
+      capabilities: ['spotlight', 'activate'], safety: 'read',
+    },
+    { id: 'tracks.selectGenome', anchor: 'track-manager-select-genome', label: "Select all of a genome's tracks", kind: 'toggle', capabilities: ['spotlight', 'activate'], safety: 'read' },
+    { id: 'tracks.selection', anchor: 'track-manager-selection', label: 'What is selected', kind: 'region', capabilities: ['spotlight'], safety: 'read' },
+    { id: 'tracks.addToGroup', anchor: 'track-manager-add-to-group', label: 'Add to group', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
+    { id: 'tracks.groupMenu', anchor: 'track-manager-group-menu', label: 'Groups to add to', kind: 'region', capabilities: ['spotlight'], safety: 'read' },
+    { id: 'tracks.newGroup', anchor: 'track-manager-new-group', label: 'New group', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
+
+    // The group dialog. Nothing is written until Create group, which is why only that press
+    // is `sandbox-write`.
+    { id: 'tracks.groupDialog', anchor: 'track-group-dialog', label: 'Track group dialog', kind: 'dialog', capabilities: ['spotlight'], safety: 'read' },
+    { id: 'tracks.groupName', anchor: 'track-group-name', label: 'Group name', kind: 'field', capabilities: ['spotlight', 'input'], safety: 'read', recordValue: true },
+    { id: 'tracks.groupLayout', anchor: 'track-group-layout', label: 'How the group is shown', kind: 'group', capabilities: ['spotlight'], safety: 'read' },
+    { id: 'tracks.groupLayoutJoined', anchor: 'track-group-layout-joined', label: 'One joined track', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'read' },
+    { id: 'tracks.groupMembers', anchor: 'track-group-members', label: "The group's tracks, in order", kind: 'region', capabilities: ['spotlight'], safety: 'read' },
+    { id: 'tracks.groupSave', anchor: 'track-group-save', label: 'Create group', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+
+    // A group's card, by the name the tutorial gave it: its id is minted when it is made.
+    {
+      id: 'tracks.groupCard', selectorTemplate: '[data-tutorial-group-label="{label}"]', label: 'A track group', kind: 'row',
+      parameters: { label: { type: 'string', required: true } },
+      capabilities: ['spotlight'], safety: 'read',
+    },
   ],
 }

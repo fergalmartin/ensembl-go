@@ -899,6 +899,33 @@ export default function ConfigurationView({ config, onConfigChange, onSave, them
                     <div className="flex items-center justify-between">
                         <div>
                             <p className={`text-sm font-semibold ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
+                                Remember Open Tracks
+                            </p>
+                            <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
+                                Reopen each genome&apos;s custom tracks and track groups in the Genome Browser as you left them. Turning this off forgets them.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={config.remember_browser_tracks !== false}
+                            aria-label="Remember open tracks"
+                            data-tour-id="config-remember-browser-tracks"
+                            onClick={() => updateField('remember_browser_tracks', !(config.remember_browser_tracks !== false))}
+                            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${(config.remember_browser_tracks !== false)
+                                ? (isLight ? 'bg-[#0099ff]' : 'bg-blue-500')
+                                : (isLight ? 'bg-gray-300' : 'bg-gray-600')
+                                }`}
+                        >
+                            <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform shadow-sm ${(config.remember_browser_tracks !== false) ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                    </div>
+
+                    <div className={`my-4 ${divider}`} />
+
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className={`text-sm font-semibold ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>
                                 Hide Inactive SV Tracks
                             </p>
                             <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>

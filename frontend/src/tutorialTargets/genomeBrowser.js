@@ -192,7 +192,14 @@ export default {
       parameters: { label: { type: 'string', required: true } },
       capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
     },
-    { id: 'browser.trackPickerAdd', anchor: 'browser-track-picker-add', label: 'Add the chosen tracks', kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
+    // A track group in the picker, by its name.
+    {
+      id: 'browser.trackPickerGroup', selectorTemplate: '[data-tutorial-picker-group="{label}"]', label: 'A track group to add', kind: 'row',
+      parameters: { label: { type: 'string', required: true } },
+      capabilities: ['spotlight', 'activate'], safety: 'sandbox-write',
+    },
+    // Nothing the picker's Add and Remove buttons mark is done until this is pressed.
+    { id: 'browser.trackPickerAdd', anchor: 'browser-track-picker-add', label: "Apply the picker's changes", kind: 'button', capabilities: ['spotlight', 'activate'], safety: 'sandbox-write' },
     // One custom track's switch in the gutter. An invisible button over the canvas-drawn
     // control, calling the same setter, so there is still one code path for the switch —
     // the same trick as the GF/GR/SL toggles above. By label, because the registry id is

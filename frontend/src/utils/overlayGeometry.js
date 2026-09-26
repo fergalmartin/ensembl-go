@@ -178,14 +178,34 @@ const OCCLUDER_COVERAGE = 0.5
  *  A target that *is* the chrome — a step pointing at the control bar itself — and one
  *  that lives inside it are left alone, or a spotlight would trim itself away. Returns
  *  null when nothing of the rect is left visible. */
-export function rectClearOfOccluders(rect, element = null, occluders = overlayOccluders()) {
+/** The fixed-position ancestor an element lives in (a dialog, a popover), or null. */
+function fixedLayerOf(element, readStyle) {
+  for (let node = element; node && typeof node === 'object'; node = node.parentElement) {
+    try {
+      if (readStyle(node)?.position === 'fixed') return node
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+const defaultReadStyle = (node) => (typeof window !== 'undefined' ? window.getComputedStyle(node) : null)
+
+export function rectClearOfOccluders(rect, element = null, occluders = overlayOccluders(), readStyle = defaultReadStyle) {
   if (!rect) return null
   let { left, top } = rect
   let right = rect.right ?? rect.left + rect.width
   let bottom = rect.bottom ?? rect.top + rect.height
+  // A target in a fixed layer — a dialog over the page — is above the page's chrome, so
+  // a bar floating over the panels behind the dialog covers nothing of it. Without this
+  // the track picker's first row, level with the browser's control bar behind it, had its
+  // spotlight cut through the middle.
+  const layer = element && typeof element === 'object' ? fixedLayerOf(element, readStyle) : null
   for (const node of occluders) {
     if (!node?.getBoundingClientRect) continue
     if (element && (node === element || node.contains?.(element) || element.contains?.(node))) continue
+    if (layer && !layer.contains?.(node)) continue
     const chrome = node.getBoundingClientRect()
     if (!(chrome.width > 0 && chrome.height > 0)) continue
     const overlap = Math.min(chrome.right, right) - Math.max(chrome.left, left)
@@ -245,6 +265,37 @@ export function viewportRect() {
 
 /** Grow a rect by `padding` on every side, without letting it escape `size`.
  *  Used to leave a little breathing room around a spotlit control. */
+/** A spotlight's padded rect: `visible` grown by `padding` on every side where the target
+ *  is whole, and not at all where it is cut off.
+ *
+ *  Trimming the grown rect back to the target's clipping ancestors (the old way) took the
+ *  breathing room away wherever a target sat flush against its panel — an app button at
+ *  the top of its bar, a header filling its view — and the ring's border, which is drawn
+ *  inside the padded rect, then lay over the target's own edge: a ring that is not quite
+ *  around the thing it points at. Where the target itself is cut off — a row half
+ *  scrolled out of a list, a panel under the sticky control bar — the ring still stops at
+ *  the cut, which is what the trimming was for. `full` is the target's whole box.
+ *  An inset (negative padding) never escapes anything and applies everywhere. */
+export function padVisibleRect(visible, full, padding = 0, size = null) {
+  if (!visible) return null
+  if (!(padding > 0) || !full) return expandRect(visible, padding, size)
+  // Generous: a panel whose edge overhangs its container by a sub-pixel or a pixel is
+  // whole for this purpose, and reading it as cut off took the ring's room on that side.
+  const tol = 1.5
+  const right = visible.right ?? visible.left + visible.width
+  const bottom = visible.bottom ?? visible.top + visible.height
+  const fullRight = full.right ?? full.left + full.width
+  const fullBottom = full.bottom ?? full.top + full.height
+  const grown = {
+    left: full.left >= visible.left - tol ? visible.left - padding : visible.left,
+    top: full.top >= visible.top - tol ? visible.top - padding : visible.top,
+    right: fullRight <= right + tol ? right + padding : right,
+    bottom: fullBottom <= bottom + tol ? bottom + padding : bottom,
+  }
+  const rect = { left: grown.left, top: grown.top, width: grown.right - grown.left, height: grown.bottom - grown.top }
+  return expandRect(rect, 0, size)
+}
+
 export function expandRect(rect, padding = 0, size = null) {
   if (!rect) return null
   const grown = {

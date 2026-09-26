@@ -265,6 +265,23 @@ export const TRACK_WIZARD_STATES = Object.freeze(['closed', 'file', 'details'])
  *  zoned heatmap or as a signal plot. */
 export const TRACK_DATA_TYPES = Object.freeze(['', 'rna_seq', 'atac_seq', 'chip_seq', 'custom'])
 
+/** How a track group is shown in the browser: its tracks on rows of their own, or one row. */
+export const TRACK_GROUP_LAYOUTS = Object.freeze(['separate', 'joined'])
+
+const trackKeyList = (value) => (Array.isArray(value) ? value : [])
+  .map((key) => String(key || '').trim())
+  .filter((key) => TRACK_KEYS.includes(key))
+
+/** A track group a step declares: by name, because its id is minted when it is made and
+ *  cannot be written into a document, with its tracks in order by key. */
+function arrivalTrackGroup(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const name = String(raw.name || '').trim()
+  if (!name) return null
+  const layout = String(raw.layout || 'separate').trim()
+  return { name, layout: TRACK_GROUP_LAYOUTS.includes(layout) ? layout : 'separate', members: trackKeyList(raw.members) }
+}
+
 /** The state of the Track Manager a step expects to find.
  *
  *  The same argument as `customGenome`, and for a form filled in the same way: the Track
@@ -303,6 +320,22 @@ export function arrivalTrackRegistry(arrival) {
       directory: String(browser.directory || '').trim(),
       target: String(browser.target || '').trim(),
     },
+    // The track groups that exist, which cards are ticked, and whether the "Add to group"
+    // menu or the new-group dialog is up — the group section walks through all four, and
+    // each step has to be able to put them back. `groups: []` means none.
+    groups: (Array.isArray(arrival.groups) ? arrival.groups : []).map(arrivalTrackGroup).filter(Boolean),
+    selected: trackKeyList(arrival.selected),
+    groupMenu: String(arrival.groupMenu || 'closed').trim() === 'open' ? 'open' : 'closed',
+    groupDialog: (() => {
+      const dialog = arrival.groupDialog && typeof arrival.groupDialog === 'object' ? arrival.groupDialog : {}
+      const layout = String(dialog.layout || 'separate').trim()
+      return {
+        state: String(dialog.state || 'closed').trim() === 'open' ? 'open' : 'closed',
+        name: String(dialog.name || ''),
+        layout: TRACK_GROUP_LAYOUTS.includes(layout) ? layout : 'separate',
+        members: trackKeyList(dialog.members),
+      }
+    })(),
   }
 }
 
@@ -320,6 +353,7 @@ export function arrivalBrowserTracks(arrival) {
   const keys = (value) => (Array.isArray(value) ? value : [])
     .map((key) => String(key || '').trim())
     .filter((key) => TRACK_KEYS.includes(key))
+  const names = (value) => (Array.isArray(value) ? value : []).map((name) => String(name || '').trim()).filter(Boolean)
   const added = keys(arrival.added)
   return {
     picker: String(arrival.picker || 'closed').trim() === 'open' ? 'open' : 'closed',
@@ -331,6 +365,9 @@ export function arrivalBrowserTracks(arrival) {
     // Absent means "all of them", so a step that does not care need not say.
     visible: arrival.visible === undefined ? added : keys(arrival.visible),
     hideInactive: Boolean(arrival.hideInactive),
+    // Track groups, by name: which are on the panel, and which are chosen in the picker.
+    groupsAdded: names(arrival.groupsAdded),
+    groupsChosen: names(arrival.groupsChosen),
   }
 }
 
@@ -1367,6 +1404,41 @@ export function validateTutorial(tutorial, options = {}) {
         if (wizard === 'closed' && (file || dataType || String(arrival.genome || '').trim())) {
           problems.push(`${where} arrive: trackRegistry declares wizard fields while the wizard is closed.`)
         }
+        // Groups and selections are made of registered tracks, one dialog is up at a time,
+        // and the menu offers groups for what is selected.
+        const registered = (Array.isArray(arrival.registered) ? arrival.registered : []).map((key) => String(key || '').trim())
+        const notRegistered = (field, keys) => {
+          for (const key of Array.isArray(keys) ? keys : []) {
+            if (!registered.includes(String(key || '').trim())) {
+              problems.push(`${where} arrive: trackRegistry ${field} names "${String(key || '')}", which it does not register.`)
+            }
+          }
+        }
+        const groupNames = new Set()
+        for (const group of Array.isArray(arrival.groups) ? arrival.groups : []) {
+          const name = String(group?.name || '').trim()
+          if (!name) problems.push(`${where} arrive: every trackRegistry group needs the name the tutorial gives it.`)
+          else if (groupNames.has(name)) problems.push(`${where} arrive: trackRegistry declares the group "${name}" twice.`)
+          groupNames.add(name)
+          if (group?.layout && !TRACK_GROUP_LAYOUTS.includes(String(group.layout))) {
+            problems.push(`${where} arrive: trackRegistry group layout must be ${TRACK_GROUP_LAYOUTS.join(' or ')}.`)
+          }
+          notRegistered(`group "${name}"`, group?.members)
+        }
+        notRegistered('selected', arrival.selected)
+        const dialog = arrival.groupDialog && typeof arrival.groupDialog === 'object' ? arrival.groupDialog : null
+        const dialogOpen = String(dialog?.state || 'closed').trim() === 'open'
+        if (dialog) notRegistered('groupDialog', dialog.members)
+        if (dialogOpen && wizard !== 'closed') {
+          problems.push(`${where} arrive: trackRegistry opens the group dialog over the registration wizard.`)
+        }
+        const menuOpen = String(arrival.groupMenu || 'closed').trim() === 'open'
+        if (menuOpen && dialogOpen) {
+          problems.push(`${where} arrive: trackRegistry opens the group menu and the group dialog at once.`)
+        }
+        if (menuOpen && !(Array.isArray(arrival.selected) ? arrival.selected : []).length) {
+          problems.push(`${where} arrive: trackRegistry opens the group menu with nothing selected to put in a group.`)
+        }
       } else if (arrival.type === 'browserTracks') {
         for (const field of ['added', 'chosen', 'visible']) {
           for (const key of (Array.isArray(arrival[field]) ? arrival[field] : [])) {
@@ -1379,6 +1451,9 @@ export function validateTutorial(tutorial, options = {}) {
         // step describing something nobody can see.
         if (String(arrival.picker || 'closed').trim() !== 'open' && (Array.isArray(arrival.chosen) ? arrival.chosen : []).length) {
           problems.push(`${where} arrive: browserTracks chooses tracks while the picker is closed.`)
+        }
+        if (String(arrival.picker || 'closed').trim() !== 'open' && (Array.isArray(arrival.groupsChosen) ? arrival.groupsChosen : []).length) {
+          problems.push(`${where} arrive: browserTracks chooses groups while the picker is closed.`)
         }
         // A track cannot be switched on unless it is on the panel at all.
         for (const key of (Array.isArray(arrival.visible) ? arrival.visible : [])) {

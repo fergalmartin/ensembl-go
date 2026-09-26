@@ -5644,6 +5644,9 @@ DEFAULT_CONFIG = {
     # "default" on the frontend, so no server-side validation is needed.
     "browsing_control_scheme": "default",
     "sv_hide_inactive_tracks": False,
+    # Reopen each genome's custom tracks and track groups in the Genome Browser as they
+    # were left. What was open is kept beside the track registry, not in here.
+    "remember_browser_tracks": True,
     "enable_sv_rust_render_bar": False,
     # Paths of SV alignment config files the user has attached. Persisted so a
     # loaded config survives a restart rather than having to be re-opened.
@@ -6619,6 +6622,7 @@ class ConfigUpdate(BaseModel):
     show_fps_counter: Optional[bool] = None
     browsing_control_scheme: Optional[str] = None
     sv_hide_inactive_tracks: Optional[bool] = None
+    remember_browser_tracks: Optional[bool] = None
     enable_sv_rust_render_bar: Optional[bool] = None
     active_species: Optional[List[Dict[str, Any]]] = None
     next_previous_session_genomes: Optional[List[Dict[str, Any]]] = None
@@ -22443,9 +22447,11 @@ def list_tracks(genome_key: Optional[str] = None):
     registry = _load_track_registry(config)
     _ensure_track_registry_sidecar(config)
     tracks = [_hydrate_track_genome_label(_hydrate_track_defaults(t), config) for t in registry.get("tracks", [])]
+    groups = _hydrate_track_groups(registry)
     if genome_key:
         tracks = [t for t in tracks if t.get("genome_key") == genome_key]
-    return {"tracks": tracks}
+        groups = [g for g in groups if _track_assembly_key(g.get("genome_key")) == _track_assembly_key(genome_key)]
+    return {"tracks": tracks, "groups": groups}
 
 
 @app.post("/api/tracks/trackhub/discover")
@@ -22808,6 +22814,77 @@ async def register_track(entry: TrackRegistryEntry):
     return _hydrate_track_defaults(new_track)
 
 
+def _apply_track_settings_update(track: Dict[str, Any], entry: "TrackRegistryUpdateEntry") -> None:
+    """Apply an update's display mode and type settings to a track dict, in place.
+
+    Shared by track edits and by a track group's own settings for a member, so a group
+    member's settings are normalised exactly as the track's would be.
+    """
+    track_type = track.get("type")
+    if track_type == "bigwig":
+        prev_settings = _normalize_bigwig_settings(track.get("bigwig_settings"))
+        prev_data_type = prev_settings["data_type"]
+        prev_default_mode = str(BIGWIG_DATA_TYPE_DEFAULTS[prev_data_type]["display_mode"])
+        prev_mode = _normalize_bigwig_display_mode(track.get("display_mode"), prev_data_type)
+
+        next_settings = prev_settings
+        data_type_changed = False
+        if entry.bigwig_settings is not None:
+            next_settings = _normalize_bigwig_settings(entry.bigwig_settings, previous=prev_settings)
+            track["bigwig_settings"] = next_settings
+            data_type_changed = next_settings["data_type"] != prev_data_type
+        else:
+            track["bigwig_settings"] = prev_settings
+
+        if entry.display_mode is not None:
+            track["display_mode"] = _normalize_bigwig_display_mode(entry.display_mode, next_settings["data_type"])
+        elif data_type_changed:
+            next_default_mode = str(BIGWIG_DATA_TYPE_DEFAULTS[next_settings["data_type"]]["display_mode"])
+            track["display_mode"] = next_default_mode if prev_mode == prev_default_mode else prev_mode
+        elif not track.get("display_mode"):
+            track["display_mode"] = str(BIGWIG_DATA_TYPE_DEFAULTS[next_settings["data_type"]]["display_mode"])
+        else:
+            track["display_mode"] = _normalize_bigwig_display_mode(track.get("display_mode"), next_settings["data_type"])
+    elif track_type == "vcf":
+        prev_vcf_settings = _normalize_vcf_settings(track.get("vcf_settings"))
+        if entry.vcf_settings is not None:
+            track["vcf_settings"] = _normalize_vcf_settings(entry.vcf_settings, previous=prev_vcf_settings)
+        else:
+            track["vcf_settings"] = prev_vcf_settings
+
+        if entry.display_mode is not None:
+            track["display_mode"] = _normalize_vcf_display_mode(entry.display_mode)
+        elif not track.get("display_mode"):
+            track["display_mode"] = "density_lollipop"
+        else:
+            track["display_mode"] = _normalize_vcf_display_mode(track.get("display_mode"))
+    else:
+        if entry.display_mode is not None:
+            if track_type == "splice_junctions":
+                track["display_mode"] = "arcs"
+            else:
+                track["display_mode"] = entry.display_mode
+
+    if track_type in ("bed", "bigbed", "gff"):
+        prev_bed_settings = _normalize_bed_settings(track.get("bed_settings"))
+        track["bed_settings"] = (
+            _normalize_bed_settings(entry.bed_settings, previous=prev_bed_settings)
+            if entry.bed_settings is not None
+            else prev_bed_settings
+        )
+        allowed_modes = TRACK_DISPLAY_MODES.get(track_type, [])
+        if allowed_modes and track.get("display_mode") not in allowed_modes:
+            track["display_mode"] = allowed_modes[0]
+
+    if entry.splice_settings is not None:
+        if track_type == "splice_junctions":
+            track["splice_settings"] = _normalize_splice_settings(entry.splice_settings)
+        else:
+            track["splice_settings"] = entry.splice_settings
+    elif track_type == "splice_junctions" and not isinstance(track.get("splice_settings"), dict):
+        track["splice_settings"] = _normalize_splice_settings(None)
+
+
 @app.put("/api/tracks/{track_id}")
 def update_track(track_id: str, entry: TrackRegistryUpdateEntry):
     """Update label, display_mode, or genome_key for an existing track."""
@@ -22818,74 +22895,14 @@ def update_track(track_id: str, entry: TrackRegistryUpdateEntry):
         idx = next((i for i, t in enumerate(tracks) if t.get("id") == track_id), None)
         if idx is None:
             raise HTTPException(status_code=404, detail=f"Track not found: {track_id}")
-        track_type = tracks[idx].get("type")
         if entry.label is not None:
             tracks[idx]["label"] = entry.label
         if entry.genome_key is not None:
             tracks[idx]["genome_key"] = entry.genome_key
 
-        if track_type == "bigwig":
-            prev_settings = _normalize_bigwig_settings(tracks[idx].get("bigwig_settings"))
-            prev_data_type = prev_settings["data_type"]
-            prev_default_mode = str(BIGWIG_DATA_TYPE_DEFAULTS[prev_data_type]["display_mode"])
-            prev_mode = _normalize_bigwig_display_mode(tracks[idx].get("display_mode"), prev_data_type)
-
-            next_settings = prev_settings
-            data_type_changed = False
-            if entry.bigwig_settings is not None:
-                next_settings = _normalize_bigwig_settings(entry.bigwig_settings, previous=prev_settings)
-                tracks[idx]["bigwig_settings"] = next_settings
-                data_type_changed = next_settings["data_type"] != prev_data_type
-            else:
-                tracks[idx]["bigwig_settings"] = prev_settings
-
-            if entry.display_mode is not None:
-                tracks[idx]["display_mode"] = _normalize_bigwig_display_mode(entry.display_mode, next_settings["data_type"])
-            elif data_type_changed:
-                next_default_mode = str(BIGWIG_DATA_TYPE_DEFAULTS[next_settings["data_type"]]["display_mode"])
-                tracks[idx]["display_mode"] = next_default_mode if prev_mode == prev_default_mode else prev_mode
-            elif not tracks[idx].get("display_mode"):
-                tracks[idx]["display_mode"] = str(BIGWIG_DATA_TYPE_DEFAULTS[next_settings["data_type"]]["display_mode"])
-            else:
-                tracks[idx]["display_mode"] = _normalize_bigwig_display_mode(tracks[idx].get("display_mode"), next_settings["data_type"])
-        elif track_type == "vcf":
-            prev_vcf_settings = _normalize_vcf_settings(tracks[idx].get("vcf_settings"))
-            if entry.vcf_settings is not None:
-                tracks[idx]["vcf_settings"] = _normalize_vcf_settings(entry.vcf_settings, previous=prev_vcf_settings)
-            else:
-                tracks[idx]["vcf_settings"] = prev_vcf_settings
-
-            if entry.display_mode is not None:
-                tracks[idx]["display_mode"] = _normalize_vcf_display_mode(entry.display_mode)
-            elif not tracks[idx].get("display_mode"):
-                tracks[idx]["display_mode"] = "density_lollipop"
-            else:
-                tracks[idx]["display_mode"] = _normalize_vcf_display_mode(tracks[idx].get("display_mode"))
-        else:
-            if entry.display_mode is not None:
-                if track_type == "splice_junctions":
-                    tracks[idx]["display_mode"] = "arcs"
-                else:
-                    tracks[idx]["display_mode"] = entry.display_mode
-
-        if track_type in ("bed", "bigbed", "gff"):
-            prev_bed_settings = _normalize_bed_settings(tracks[idx].get("bed_settings"))
-            tracks[idx]["bed_settings"] = (
-                _normalize_bed_settings(entry.bed_settings, previous=prev_bed_settings)
-                if entry.bed_settings is not None
-                else prev_bed_settings
-            )
-            allowed_modes = TRACK_DISPLAY_MODES.get(track_type, [])
-            if allowed_modes and tracks[idx].get("display_mode") not in allowed_modes:
-                tracks[idx]["display_mode"] = allowed_modes[0]
-
-        if entry.splice_settings is not None:
-            if track_type == "splice_junctions":
-                tracks[idx]["splice_settings"] = _normalize_splice_settings(entry.splice_settings)
-            else:
-                tracks[idx]["splice_settings"] = entry.splice_settings
-        elif track_type == "splice_junctions" and not isinstance(tracks[idx].get("splice_settings"), dict):
-            tracks[idx]["splice_settings"] = _normalize_splice_settings(None)
+        _apply_track_settings_update(tracks[idx], entry)
+        if entry.genome_key is not None:
+            _prune_track_from_other_genome_groups(registry, track_id, tracks[idx].get("genome_key"))
 
         _save_track_registry(registry, config)
         return _hydrate_track_defaults(tracks[idx])
@@ -22902,8 +22919,293 @@ def delete_track(track_id: str):
         if len(new_tracks) == len(tracks):
             raise HTTPException(status_code=404, detail=f"Track not found: {track_id}")
         registry["tracks"] = new_tracks
+        # Groups hold tracks by id; a deleted track leaves every group it was in.
+        for group in registry.get("groups") or []:
+            if isinstance(group, dict) and isinstance(group.get("members"), list):
+                group["members"] = [m for m in group["members"] if not (isinstance(m, dict) and m.get("track_id") == track_id)]
         _save_track_registry(registry, config)
     return {"deleted": track_id}
+
+
+# ── Track groups ──────────────────────────────────────────────────────────────
+#
+# A named, ordered set of one genome's registered tracks, kept in the track registry
+# beside the tracks as ``{"groups": [...]}``. A member's ``settings`` is None to use the
+# track's own settings (edits to the track then reach the group), or the group's own copy
+# of display_mode and the type's settings, normalised as the track's would be.
+
+TRACK_GROUP_LAYOUTS = ("separate", "joined")
+TRACK_GROUP_SETTING_FIELDS = ("display_mode", "bigwig_settings", "vcf_settings", "bed_settings", "splice_settings")
+DATASET_SELECTION_SEPARATOR = "::dataset::"
+
+
+def _track_assembly_key(genome_key: Any) -> str:
+    """A genome key without its dataset suffix: the same assembly, however it was chosen."""
+    token = str(genome_key or "").strip()
+    idx = token.find(DATASET_SELECTION_SEPARATOR)
+    return token[:idx] if idx >= 0 else token
+
+
+class TrackGroupMember(BaseModel):
+    track_id: str
+    settings: Optional[Dict[str, Any]] = None
+
+
+class TrackGroupEntry(BaseModel):
+    label: str
+    genome_key: Optional[str] = None
+    layout: Optional[str] = "separate"
+    members: List[TrackGroupMember] = []
+
+
+class TrackGroupUpdateEntry(BaseModel):
+    label: Optional[str] = None
+    layout: Optional[str] = None
+    members: Optional[List[TrackGroupMember]] = None
+
+
+def _normalize_group_member_settings(track: Dict[str, Any], settings: Any) -> Optional[Dict[str, Any]]:
+    """A group's own settings for one member, normalised against that track's type."""
+    if not isinstance(settings, dict):
+        return None
+    candidate = _hydrate_track_defaults(track)
+    fields = {k: settings[k] for k in TRACK_GROUP_SETTING_FIELDS if k in settings}
+    _apply_track_settings_update(candidate, TrackRegistryUpdateEntry(**fields))
+    return {k: candidate[k] for k in TRACK_GROUP_SETTING_FIELDS if k in candidate}
+
+
+def _normalize_group_members(members: List[Any], tracks_by_id: Dict[str, Dict[str, Any]], assembly: str) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for member in members:
+        raw = member.model_dump() if hasattr(member, "model_dump") else member
+        if not isinstance(raw, dict):
+            continue
+        track_id = str(raw.get("track_id") or "").strip()
+        if not track_id or track_id in seen:
+            continue
+        track = tracks_by_id.get(track_id)
+        if track is None:
+            raise HTTPException(status_code=404, detail=f"Track not found: {track_id}")
+        if _track_assembly_key(track.get("genome_key")) != assembly:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Track {track.get('label') or track_id} belongs to a different genome; a group holds one genome's tracks.",
+            )
+        seen.add(track_id)
+        out.append({"track_id": track_id, "settings": _normalize_group_member_settings(track, raw.get("settings"))})
+    return out
+
+
+def _normalize_group_label(label: Any) -> str:
+    text = " ".join(str(label or "").split())
+    if not text:
+        raise HTTPException(status_code=400, detail="A group needs a name")
+    return text[:120]
+
+
+def _normalize_group_layout(layout: Any) -> str:
+    token = str(layout or "separate").strip().lower()
+    return token if token in TRACK_GROUP_LAYOUTS else "separate"
+
+
+def _hydrate_track_groups(registry: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Groups as listed: members whose track is gone are left out, the rest in order."""
+    track_ids = {str(t.get("id")) for t in registry.get("tracks", []) if isinstance(t, dict)}
+    groups = []
+    for group in registry.get("groups") or []:
+        if not isinstance(group, dict) or not group.get("id"):
+            continue
+        members = [
+            {"track_id": str(m.get("track_id")), "settings": m.get("settings") if isinstance(m.get("settings"), dict) else None}
+            for m in group.get("members") or []
+            if isinstance(m, dict) and str(m.get("track_id") or "") in track_ids
+        ]
+        groups.append({
+            "id": group["id"],
+            "label": str(group.get("label") or ""),
+            "genome_key": str(group.get("genome_key") or ""),
+            "layout": _normalize_group_layout(group.get("layout")),
+            "members": members,
+            "created_at": group.get("created_at"),
+            "updated_at": group.get("updated_at"),
+        })
+    return groups
+
+
+def _prune_track_from_other_genome_groups(registry: Dict[str, Any], track_id: str, genome_key: Any) -> None:
+    """A track moved to another genome leaves the groups of the genome it left."""
+    assembly = _track_assembly_key(genome_key)
+    for group in registry.get("groups") or []:
+        if not isinstance(group, dict) or _track_assembly_key(group.get("genome_key")) == assembly:
+            continue
+        if isinstance(group.get("members"), list):
+            group["members"] = [m for m in group["members"] if not (isinstance(m, dict) and m.get("track_id") == track_id)]
+
+
+@app.post("/api/track-groups")
+def create_track_group(entry: TrackGroupEntry):
+    """Create a group from a name and an ordered list of one genome's tracks."""
+    config = _tracks_config()
+    with _track_registry_lock:
+        registry = _load_track_registry(config)
+        tracks_by_id = {str(t.get("id")): t for t in registry.get("tracks", []) if isinstance(t, dict)}
+        genome_key = str(entry.genome_key or "").strip()
+        if not genome_key and entry.members:
+            first = tracks_by_id.get(str(entry.members[0].track_id))
+            genome_key = str((first or {}).get("genome_key") or "").strip()
+        if not genome_key:
+            raise HTTPException(status_code=400, detail="A group belongs to a genome; choose tracks with one set")
+        now = _utc_now_iso()
+        group = {
+            "id": f"grp_{uuid.uuid4().hex[:12]}",
+            "label": _normalize_group_label(entry.label),
+            "genome_key": genome_key,
+            "layout": _normalize_group_layout(entry.layout),
+            "members": _normalize_group_members(entry.members, tracks_by_id, _track_assembly_key(genome_key)),
+            "created_at": now,
+            "updated_at": now,
+        }
+        registry.setdefault("groups", []).append(group)
+        _save_track_registry(registry, config)
+    return group
+
+
+@app.put("/api/track-groups/{group_id}")
+def update_track_group(group_id: str, entry: TrackGroupUpdateEntry):
+    """Rename a group, change its layout, or replace its members (order and settings)."""
+    config = _tracks_config()
+    with _track_registry_lock:
+        registry = _load_track_registry(config)
+        groups = registry.get("groups") or []
+        group = next((g for g in groups if isinstance(g, dict) and g.get("id") == group_id), None)
+        if group is None:
+            raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
+        if entry.label is not None:
+            group["label"] = _normalize_group_label(entry.label)
+        if entry.layout is not None:
+            group["layout"] = _normalize_group_layout(entry.layout)
+        if entry.members is not None:
+            tracks_by_id = {str(t.get("id")): t for t in registry.get("tracks", []) if isinstance(t, dict)}
+            group["members"] = _normalize_group_members(entry.members, tracks_by_id, _track_assembly_key(group.get("genome_key")))
+        group["updated_at"] = _utc_now_iso()
+        _save_track_registry(registry, config)
+    return next(g for g in _hydrate_track_groups(registry) if g["id"] == group_id)
+
+
+@app.delete("/api/track-groups/{group_id}")
+def delete_track_group(group_id: str):
+    """Remove a group. Its tracks stay registered."""
+    config = _tracks_config()
+    with _track_registry_lock:
+        registry = _load_track_registry(config)
+        groups = registry.get("groups") or []
+        remaining = [g for g in groups if not (isinstance(g, dict) and g.get("id") == group_id)]
+        if len(remaining) == len(groups):
+            raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
+        registry["groups"] = remaining
+        _save_track_registry(registry, config)
+    return {"deleted": group_id}
+
+
+# ── Browser session tracks ────────────────────────────────────────────────────
+#
+# Which custom tracks and track groups each genome had open in the Genome Browser, so the
+# next session opens with them. Kept beside the track registry the ids refer to, so a
+# tutorial's workspace has its own and never touches the user's. Keyed by assembly; each
+# genome's entries are its custom rows top to bottom:
+#   {"type": "track", "track_id", "visible"}            a track on its own
+#   {"type": "group_track", "group_id", "track_id", "visible"}  one of a group's tracks
+#   {"type": "group", "group_id", "visible"}            a group shown joined, as one row
+
+BROWSER_SESSION_TRACKS_FILENAME = "browser_session_tracks.json"
+BROWSER_SESSION_ENTRY_TYPES = ("track", "group_track", "group")
+BROWSER_SESSION_MAX_ENTRIES = 400
+_browser_session_lock = threading.Lock()
+
+
+class BrowserSessionTracksEntry(BaseModel):
+    genome_key: str
+    # Anything; entries that do not make sense are dropped one by one, not the request.
+    entries: List[Any] = []
+
+
+def _browser_session_tracks_path(config: Optional[Dict[str, Any]] = None) -> Path:
+    return _primary_track_registry_store_path(config or _tracks_config()).with_name(BROWSER_SESSION_TRACKS_FILENAME)
+
+
+def _normalize_browser_session_entry(raw: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    kind = str(raw.get("type") or "").strip()
+    if kind not in BROWSER_SESSION_ENTRY_TYPES:
+        return None
+    out: Dict[str, Any] = {"type": kind, "visible": raw.get("visible") is not False}
+    if kind in ("track", "group_track"):
+        track_id = str(raw.get("track_id") or "").strip()
+        if not track_id:
+            return None
+        out["track_id"] = track_id
+    if kind in ("group", "group_track"):
+        group_id = str(raw.get("group_id") or "").strip()
+        if not group_id:
+            return None
+        out["group_id"] = group_id
+    return out
+
+
+def _load_browser_session_tracks(path: Path) -> Dict[str, Any]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        genomes = data.get("genomes") if isinstance(data, dict) else None
+        return {"genomes": genomes if isinstance(genomes, dict) else {}}
+    except Exception:
+        return {"genomes": {}}
+
+
+@app.get("/api/browser/session-tracks")
+def get_browser_session_tracks():
+    """The custom tracks and groups each genome had open in the Genome Browser."""
+    return _load_browser_session_tracks(_browser_session_tracks_path())
+
+
+@app.put("/api/browser/session-tracks")
+def put_browser_session_tracks(entry: BrowserSessionTracksEntry):
+    """Replace one genome's open tracks. No entries forgets the genome."""
+    genome = _track_assembly_key(entry.genome_key)
+    if not genome:
+        raise HTTPException(status_code=400, detail="genome_key is required")
+    entries = [e for e in (_normalize_browser_session_entry(raw) for raw in entry.entries) if e]
+    path = _browser_session_tracks_path()
+    with _browser_session_lock:
+        state = _load_browser_session_tracks(path)
+        if entries:
+            state["genomes"][genome] = {"entries": entries[:BROWSER_SESSION_MAX_ENTRIES], "updated_at": _utc_now_iso()}
+        else:
+            state["genomes"].pop(genome, None)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+            os.replace(tmp_path, path)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    return {"genome_key": genome, "entries": state["genomes"].get(genome, {}).get("entries", [])}
+
+
+@app.delete("/api/browser/session-tracks")
+def clear_browser_session_tracks():
+    """Forget every genome's open tracks: remembering them was switched off."""
+    path = _browser_session_tracks_path()
+    with _browser_session_lock:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    return {"cleared": True}
 
 
 @app.get("/api/tracks/type_info")

@@ -23,11 +23,9 @@ import {
   blockerRects,
   unionRect,
   cutoutPathD,
-  clipRectToClippingAncestors,
   expandRect,
   nonOverlappingRects,
-  overlayOccluders,
-  rectClearOfOccluders,
+  padVisibleRect,
   placeCard,
   TUTORIAL_CARD_MARGIN,
   TUTORIAL_CARD_WIDTH,
@@ -631,21 +629,24 @@ export default function TutorialOverlay() {
   // clean strip between rows. Ordinary target + context reveals retain their breathing
   // room because context reveals are not rings.
   const highlightPadding = highlightedRectCount > 1 ? MULTI_HIGHLIGHT_INSET : HOLE_PADDING
-  // The breathing room put around a measured rect escapes everything the measurement was
-  // cut back to: a few pixels of ring outside the panel that owns the target, over the
-  // page behind it, or back under the control bar the panel is scrolled beneath. A grown
-  // rect therefore goes through the same clipping and the same trim again.
-  const occluders = overlayOccluders()
-  const clearOfChrome = (rect, forSelector) => {
+  // Breathing room goes on each side where the target is whole, and not where it is cut
+  // off. Trimming the grown rect back to the target's panel instead left no room at all
+  // round a target flush against that panel — an app button at the top of its bar — and
+  // the ring, drawn inside the grown rect, then sat on the target's own edge. Where the
+  // target is cut off (half scrolled out of a list, under the sticky control bar), the
+  // measurement already stops at the cut and the ring stops with it.
+  // The browser's floating control bar is one of those cuts: a panel scrolled under it is
+  // measured from below it, so its ring stops there too. A target merely sitting against
+  // the bar keeps its room, and its ring overlaps the bar's edge rather than its own.
+  const paddedAround = (rect, forSelector, padding) => {
     if (!rect) return rect
     let node = null
     try { node = forSelector ? document.querySelector(forSelector) : null } catch { node = null }
-    if (!node) return rect
-    return rectClearOfOccluders(clipRectToClippingAncestors(rect, node), node, occluders)
+    return padVisibleRect(rect, node?.getBoundingClientRect?.() || null, padding, size)
   }
   // A canvas starts at its ruler. Insetting its ring would paint over that ruler;
   // unlike adjacent list rows, browser panels have space for an outside outline.
-  const padded = clearOfChrome(expandRect(hole, selector.includes('[data-browser-canvas-surface]') ? HOLE_PADDING : highlightPadding, size), selector)
+  const padded = paddedAround(hole, selector, selector.includes('[data-browser-canvas-surface]') ? HOLE_PADDING : highlightPadding)
   const interactive = stepIsInteractive(step)
   // A settled step has been done and is only waiting out its pause, so its ring comes off
   // at once — it would otherwise spend that pause insisting on a control there is nothing
@@ -657,9 +658,10 @@ export default function TutorialOverlay() {
   // When the step is only pointing something out, the hole is covered as well, so the
   // spotlight reads as "look at this" rather than "use this".
   const revealed = revealRects.map((rect, index) => (
-    rect ? clearOfChrome(
-      expandRect(rect, anchorSelector(reveals[index]?.anchor).includes('[data-browser-canvas-surface]') ? HOLE_PADDING : (reveals[index]?.ring ? highlightPadding : HOLE_PADDING), size),
+    rect ? paddedAround(
+      rect,
       anchorSelector(reveals[index]?.anchor),
+      anchorSelector(reveals[index]?.anchor).includes('[data-browser-canvas-surface]') ? HOLE_PADDING : (reveals[index]?.ring ? highlightPadding : HOLE_PADDING),
     ) : null
   ))
   // Scrollable regions are pointer pass-throughs, but not visual cutouts: the four rows

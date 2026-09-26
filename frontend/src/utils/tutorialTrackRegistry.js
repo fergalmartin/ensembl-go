@@ -26,14 +26,64 @@ export const TUTORIAL_TRACK_PRESETS = Object.freeze({
   variants: { label: 'Variants', type: 'vcf', displayMode: 'density_lollipop' },
 })
 
-async function listTracks() {
+async function listRegistry() {
   try {
     const response = await fetch(`${API_BASE}/api/tracks`)
-    if (!response.ok) return []
+    if (!response.ok) return { tracks: [], groups: [] }
     const data = await response.json()
-    return Array.isArray(data?.tracks) ? data.tracks : []
+    return {
+      tracks: Array.isArray(data?.tracks) ? data.tracks : [],
+      groups: Array.isArray(data?.groups) ? data.groups : [],
+    }
   } catch {
-    return []
+    return { tracks: [], groups: [] }
+  }
+}
+
+async function listTracks() {
+  return (await listRegistry()).tracks
+}
+
+async function send(method, path, body) {
+  try {
+    await fetch(`${API_BASE}${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    })
+  } catch { /* reported by the arrival's own wait, which finds the registry short */ }
+}
+
+/** Set the track groups to exactly the ones a step declares, by name.
+ *
+ *  Same rules as the tracks: set, never added to, and only the tutorial's own touched — a
+ *  group is the tutorial's when every track in it is one of the demo files. Each declared
+ *  group is made, or brought to the declared layout and tracks, so re-entering a step that
+ *  describes a group finds exactly one of it, laid out as the step says. */
+async function reconcileTutorialGroups({ files, wanted, genomeKey }) {
+  const { tracks, groups } = await listRegistry()
+  const idFor = (key) => tracks.find((track) => files[key] && String(track.path || '') === files[key])?.id
+  const ourIds = new Set(Object.keys(files).map(idFor).filter(Boolean))
+  const isOurs = (group) => (group.members || []).every((m) => ourIds.has(String(m.track_id)))
+  const membersFor = (keys) => keys.map(idFor).filter(Boolean).map((id) => ({ track_id: id, settings: null }))
+
+  for (const group of groups) {
+    if (!isOurs(group) || wanted.some((w) => w.name === group.label)) continue
+    await send('DELETE', `/api/track-groups/${encodeURIComponent(group.id)}`)
+  }
+  for (const want of wanted) {
+    const members = membersFor(want.members)
+    const existing = groups.find((group) => group.label === want.name && isOurs(group))
+    if (!existing) {
+      await send('POST', '/api/track-groups', { label: want.name, genome_key: genomeKey, layout: want.layout, members })
+      continue
+    }
+    const sameMembers = JSON.stringify((existing.members || []).map((m) => String(m.track_id)))
+      === JSON.stringify(members.map((m) => m.track_id))
+    const sameSettings = (existing.members || []).every((m) => !m.settings)
+    if (existing.layout !== want.layout || !sameMembers || !sameSettings) {
+      await send('PUT', `/api/track-groups/${encodeURIComponent(existing.id)}`, { layout: want.layout, members })
+    }
   }
 }
 
@@ -49,7 +99,7 @@ async function listTracks() {
  *  @param wanted   the track keys the step wants registered
  *  @param genomeKey which genome to register them against; without it they never draw
  */
-export async function reconcileTutorialTracks({ files = {}, wanted = [], genomeKey = '' } = {}) {
+export async function reconcileTutorialTracks({ files = {}, wanted = [], groups = [], genomeKey = '' } = {}) {
   const existing = await listTracks()
   const pathFor = (key) => String(files[key] || '')
   const isOurs = (track) => Object.values(files).some((path) => path && String(track?.path || '') === path)
@@ -83,5 +133,6 @@ export async function reconcileTutorialTracks({ files = {}, wanted = [], genomeK
     } catch { /* reported by the arrival's own wait, which finds the track missing */ }
   }
 
+  await reconcileTutorialGroups({ files, wanted: Array.isArray(groups) ? groups : [], genomeKey })
   return listTracks()
 }

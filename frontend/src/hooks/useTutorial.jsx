@@ -1694,6 +1694,7 @@ export function TutorialProvider({ children }) {
     await reconcileTutorialTracks({
       files: Object.fromEntries(TRACK_KEYS.map((key) => [key, String(files[key] || '')])),
       wanted: wanted.registered,
+      groups: wanted.groups,
       genomeKey: sliceGenome ? getGenomeKey(sliceGenome) : '',
     })
 
@@ -1711,6 +1712,10 @@ export function TutorialProvider({ children }) {
         ...wanted.browser,
         directory: wanted.browser.directory === 'demo' ? String(files.directory || '') : '',
       },
+      groups: wanted.groups,
+      selected: wanted.selected,
+      groupMenu: wanted.groupMenu,
+      groupDialog: wanted.groupDialog,
       requestedAt: Date.now(),
     })
     await nextFrame()

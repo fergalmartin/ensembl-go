@@ -67,7 +67,8 @@ import {
 import { bedThickPieces, bedThickRegion } from '../utils/bedThickRegion'
 import { checkRangeAgainstBounds, parseLocationQuery } from '../utils/locationQuery'
 import { formatZoneLabel, zonedSegments, zonedValueFraction, zoneThresholdsFor } from '../utils/zonedScale'
-import { trackAssemblyKey } from '../utils/genomeIdentity'
+import { effectiveMemberTrack, gatherRows, groupRowIdFor, isGroupRowId } from '../utils/trackGroups'
+import { describeSessionTracks, planSessionRestore } from '../utils/sessionTracks'
 import { classifyBiotype } from '../utils/geneBiotypes'
 import {
     BOX_SELECT_FILL_FRACTION,
@@ -91,7 +92,7 @@ import {
     rulerTicks,
 } from './genomeBrowserRuler'
 import { FONT_MONO, monoFont, sansFont } from '../utils/typography'
-import { drawPowerGlyph, powerGlyphPaths, powerGlyphSvgMarkup } from '../utils/powerGlyph'
+import { drawPowerGlyph, powerGlyphSvgMarkup } from '../utils/powerGlyph'
 import { noteBubbleGlyphSvgMarkup } from '../utils/noteBubbleGlyph'
 import NoteGlyph from './NoteGlyph'
 
@@ -161,6 +162,37 @@ const SIDEBAR_TOGGLE_ICON_SIZE = 16
 const SIDEBAR_TOGGLE_HIT_RADIUS = 12
 const SIDEBAR_TOGGLE_LABEL_GAP = 6
 const CUSTOM_TRACK_HEIGHT_STANDARD = 54
+/* The track picker adds and removes; switching a track on and off is the gutter's job.
+ * Each row has one button, Add or Remove, for what it will be once applied, and rows that
+ * are (or will be) on the panel are highlighted. Nothing changes until Apply. */
+function PickerRowButton({ willShow, onClick, isLight, disabled = false, tourId }) {
+    return (
+        <button
+            type="button"
+            data-tour-id={tourId}
+            disabled={disabled}
+            onClick={(e) => { e.stopPropagation(); onClick() }}
+            className={`shrink-0 min-w-[4.5rem] px-2.5 py-1 rounded-md text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${willShow
+                ? isLight ? 'border border-gray-300 bg-white text-gray-700 hover:border-red-300 hover:text-red-700' : 'border border-gray-600 bg-gray-900 text-gray-200 hover:border-red-500/70 hover:text-red-300'
+                : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+        >
+            {willShow ? 'Remove' : 'Add'}
+        </button>
+    )
+}
+
+const pickerRowClass = (willShow, isLight) => `w-full text-left px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${willShow
+    ? isLight ? 'border-blue-300 bg-blue-50' : 'border-blue-600/80 bg-blue-900/25'
+    : isLight ? 'border-gray-200 hover:border-blue-200 hover:bg-gray-50' : 'border-gray-700 hover:border-gray-600 hover:bg-gray-800/40'}`
+
+// The track picker's selection holds registry track ids and, for groups, 'group:<id>'.
+const TRACK_PICKER_GROUP_PREFIX = 'group:'
+// A joined track group's row opens with a band naming the group.
+const JOINED_GROUP_HEADER_HEIGHT = 16
+const joinedGroupHeaderText = (rowLayout) => {
+    const count = rowLayout?.memberIds?.length || 0
+    return `${rowLayout?.label || 'Track group'} · ${count} track${count === 1 ? '' : 's'}`
+}
 const CUSTOM_TRACK_HEIGHT_ZONED = 81
 const CUSTOM_TRACK_HEIGHT_ENSEMBL_VCF = 100
 const CUSTOM_TRACK_HEIGHT_ADAPTIVE_VCF = 108
@@ -193,28 +225,6 @@ const extractSvgBody = (svgRaw) => {
 }
 const RESET_ICON_PATH_D = extractPathData(iconResetRaw)
 const ANCHOR_ICON_BODY = extractSvgBody(iconAnchorRaw)
-
-// The same stroked glyph the canvas toggles draw, for the DOM buttons that
-// toggle a track from the track picker. Takes its colour from the button.
-function PowerGlyph({ size = SIDEBAR_TOGGLE_ICON_SIZE }) {
-    const paths = powerGlyphPaths(size)
-    if (!paths) return null
-    return (
-        <svg
-            width={size}
-            height={size}
-            viewBox={`0 0 ${size} ${size}`}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={paths.stroke}
-            strokeLinecap="round"
-            aria-hidden="true"
-        >
-            <path d={paths.ring} />
-            <path d={paths.stem} />
-        </svg>
-    )
-}
 
 // 5-level LOD pyramid for custom tracks
 // binsPerTile × bpPerBin = tile size in bp
@@ -1760,6 +1770,13 @@ export default function GenomeBrowser({
     sequenceTrackTooltip = 'Base level view of the reference',
     customTrackBrowsePath = '.',
     availableTracks = [],  // all registered tracks from Track Manager API
+    availableGroups = [],  // track groups for this panel's genome, from the same API
+    // What this genome had open last session, and where to report what it has open now.
+    // `sessionReady` says the registry and the saved session have both been read; null
+    // `onSessionTracksChange` means nothing is being remembered (switched off, or a tutorial).
+    sessionTracks = null,
+    sessionReady = false,
+    onSessionTracksChange = null,
     refreshAvailableTracks = null,  // callback to re-fetch registered tracks
     tutorialTracksRequest = null,  // a tutorial's `browserTracks` arrival, reconciled below
     dimNonSelectedGenes = true,
@@ -1886,6 +1903,8 @@ export default function GenomeBrowser({
     const [isCustomTrackLabelModalOpen, setIsCustomTrackLabelModalOpen] = useState(false)
     const [isTrackPickerOpen, setIsTrackPickerOpen] = useState(false) // new Track Picker Modal
     const [selectedTrackPickerIds, setSelectedTrackPickerIds] = useState([])
+    // What the picker will take off the panel when applied: registry ids and 'group:<id>'.
+    const [pendingPickerRemovals, setPendingPickerRemovals] = useState([])
     const [pendingCustomTrackPath, setPendingCustomTrackPath] = useState('')
     const [customTrackLabelInput, setCustomTrackLabelInput] = useState('Custom track')
     const [customTrackRenderModeInput, setCustomTrackRenderModeInput] = useState(DEFAULT_CUSTOM_TRACK_RENDER_MODE)
@@ -2247,17 +2266,33 @@ export default function GenomeBrowser({
     const [draggingTrack, setDraggingTrack] = useState(null)
     const [hoveredTrack, setHoveredTrack] = useState(null)
     const isCustomTrackId = useCallback((trackId) => trackId.startsWith('ct_'), [])
+    // Groups switched on (or re-laid out) since the order was last synced: their tracks are
+    // gathered into group order where the first of them sits.
+    const pendingGroupOrderRef = useRef(new Set())
 
-    // Keep track order in sync with current custom tracks.
+    // Keep track order in sync with current custom tracks. A track group shown joined is
+    // one row (`cg_…`) in the order; its tracks are laid out inside that row instead.
     useEffect(() => {
-        const customIds = new Set(customTracks.map((track) => track.id))
+        const rowIds = []
+        const seenRows = new Set()
+        for (const track of customTracks) {
+            const rowId = track.joinedRowId || track.id
+            if (seenRows.has(rowId)) continue
+            seenRows.add(rowId)
+            rowIds.push(rowId)
+        }
+        const regroup = pendingGroupOrderRef.current
+        pendingGroupOrderRef.current = new Set()
+        const groupRowOrder = (groupId) => customTracks
+            .filter((track) => track.group?.id === groupId && !track.joinedRowId)
+            .sort((a, b) => a.group.index - b.group.index)
+            .map((track) => track.id)
         setTrackOrder((prev) => {
-            const existingCustomOrder = prev.filter((trackId) => isCustomTrackId(trackId) && customIds.has(trackId))
+            const existingCustomOrder = prev.filter((trackId) => (isCustomTrackId(trackId) || isGroupRowId(trackId)) && seenRows.has(trackId))
             const existingCustomSet = new Set(existingCustomOrder)
-            const newCustomIds = customTracks
-                .map((track) => track.id)
-                .filter((trackId) => !existingCustomSet.has(trackId))
-            const nextCustomOrder = [...existingCustomOrder, ...newCustomIds]
+            const newCustomIds = rowIds.filter((trackId) => !existingCustomSet.has(trackId))
+            let nextCustomOrder = [...existingCustomOrder, ...newCustomIds]
+            for (const groupId of regroup) nextCustomOrder = gatherRows(nextCustomOrder, groupRowOrder(groupId))
             // Keep whichever strand is on top: a flipped panel puts GR first.
             const strandOrder = prev.indexOf('reverse') < prev.indexOf('forward')
                 ? ['reverse', 'forward']
@@ -2496,6 +2531,24 @@ export default function GenomeBrowser({
         return map
     }, [customTracks])
 
+    // Joined track groups on this panel: row id -> the group and its tracks in group order.
+    const joinedRows = useMemo(() => {
+        const map = new Map()
+        for (const t of customTracks) {
+            if (!t.joinedRowId) continue
+            if (!map.has(t.joinedRowId)) {
+                map.set(t.joinedRowId, { rowId: t.joinedRowId, groupId: t.group?.id, label: t.group?.label || 'Track group', tracks: [] })
+            }
+            map.get(t.joinedRowId).tracks.push(t)
+        }
+        for (const row of map.values()) {
+            row.tracks.sort((a, b) => (a.group?.index ?? 0) - (b.group?.index ?? 0))
+            row.memberIds = row.tracks.map((t) => t.id)
+            row.hidden = row.tracks.every((t) => t.visible === false)
+        }
+        return map
+    }, [customTracks])
+
     // Keep browser track config synced with Track Manager registry updates.
     // This avoids stale renderMode/settings when users edit a registered track.
     useEffect(() => {
@@ -2509,6 +2562,7 @@ export default function GenomeBrowser({
             }
             if (registered.path) byPath.set(String(registered.path), registered)
         }
+        const groupsById = new Map((Array.isArray(availableGroups) ? availableGroups : []).map((g) => [String(g.id), g]))
 
         const fullRefreshIds = new Set()
         let localChanged = false
@@ -2522,9 +2576,36 @@ export default function GenomeBrowser({
             }
             if (!registered) return track
 
+            // One of a group's tracks shows with the group's own settings for it, and follows
+            // the group's name and layout. A group that is gone leaves a plain custom track.
+            let groupInfo = track.group
+            let joinedRowId = track.joinedRowId
+            if (track.group) {
+                const group = groupsById.get(String(track.group.id))
+                if (!group) {
+                    groupInfo = undefined
+                    joinedRowId = undefined
+                } else {
+                    const memberIndex = (group.members || []).findIndex((m) => String(m.track_id) === String(registered.id))
+                    if (memberIndex >= 0) registered = effectiveMemberTrack(registered, group.members[memberIndex])
+                    groupInfo = {
+                        id: group.id,
+                        label: group.label,
+                        layout: group.layout,
+                        index: memberIndex >= 0 ? memberIndex : track.group.index,
+                    }
+                    joinedRowId = group.layout === 'joined' ? groupRowIdFor(group.id) : undefined
+                }
+                if (joinedRowId !== track.joinedRowId || groupInfo?.index !== track.group.index) {
+                    if (groupInfo) pendingGroupOrderRef.current.add(groupInfo.id)
+                }
+            }
+
             const registeredType = registered.type || track.type || 'bigwig'
             const synced = {
                 ...track,
+                group: groupInfo,
+                joinedRowId,
                 registryTrackId: registered.id,
                 type: registeredType,
                 label: registered.label || track.label,
@@ -2574,6 +2655,8 @@ export default function GenomeBrowser({
                 || synced.type !== track.type
                 || synced.path !== track.path
                 || String(synced.registryTrackId || '') !== String(track.registryTrackId || '')
+                || JSON.stringify(synced.group || null) !== JSON.stringify(track.group || null)
+                || synced.joinedRowId !== track.joinedRowId
                 || settingsChanged
                 || vcfSettingsChanged
                 || spliceChanged
@@ -2638,7 +2721,7 @@ export default function GenomeBrowser({
             for (const trackId of fullRefreshIds) next[trackId] = true
             return next
         })
-    }, [availableTracks, customTracks])
+    }, [availableTracks, availableGroups, customTracks])
 
     useEffect(() => {
         if (!clickedSpliceJunction) return
@@ -7341,6 +7424,11 @@ export default function GenomeBrowser({
                 }
                 return CUSTOM_TRACK_HEIGHT_STANDARD
             }
+            if (isGroupRowId(trackId) && joinedRows.has(trackId)) {
+                const row = joinedRows.get(trackId)
+                if (row.hidden) return hideInactiveTracks ? 0 : 36
+                return JOINED_GROUP_HEADER_HEIGHT + row.memberIds.reduce((sum, id) => sum + getTrackHeight(id), 0)
+            }
             return 0
         }
 
@@ -7380,6 +7468,7 @@ export default function GenomeBrowser({
         let SEQUENCE_Y = -999
         let currentY = startY
         const customTrackLayouts = {}
+        const groupRowLayouts = {}
         const orderedTracks = []
 
         for (const trackId of activeTrackOrder) {
@@ -7390,6 +7479,21 @@ export default function GenomeBrowser({
             else if (trackId === 'reverse') REVERSE_Y = currentY
             else if (trackId === 'sequence') SEQUENCE_Y = currentY
             else if (isCustomTrackId(trackId)) customTrackLayouts[trackId] = { y: currentY, height: h }
+            else if (isGroupRowId(trackId)) {
+                // One row for the group; each of its tracks is laid out in a band of it,
+                // under a header naming the group, so everything that draws or hit-tests a
+                // custom track finds them where they are.
+                const row = joinedRows.get(trackId)
+                groupRowLayouts[trackId] = { y: currentY, height: h, memberIds: row.memberIds, label: row.label, hidden: row.hidden }
+                if (!row.hidden) {
+                    let memberY = currentY + JOINED_GROUP_HEADER_HEIGHT
+                    row.memberIds.forEach((memberId, index) => {
+                        const memberHeight = getTrackHeight(memberId)
+                        customTrackLayouts[memberId] = { y: memberY, height: memberHeight, joinedRowId: trackId, joinedIndex: index }
+                        memberY += memberHeight
+                    })
+                }
+            }
 
             orderedTracks.push({ id: trackId, y: currentY, height: h })
             currentY += h
@@ -7418,9 +7522,10 @@ export default function GenomeBrowser({
             fwdPadding,
             revPadding,
             customTrackLayouts,
+            groupRowLayouts,
             orderedTracks,
         }
-    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, isLocationFocusVisible, hiddenStrands, selectedGeneHiddenByBiotype, isGeneHiddenFromTracks, hiddenGeneIdSet, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight, stickyLayoutResetEpoch, holdGeneTrackHeight])
+    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, joinedRows, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, isLocationFocusVisible, hiddenStrands, selectedGeneHiddenByBiotype, isGeneHiddenFromTracks, hiddenGeneIdSet, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight, stickyLayoutResetEpoch, holdGeneTrackHeight])
 
     // Where the note about the gene index goes: the forward and reverse tracks
     // taken together, minus whichever of them the user has hidden. Null when
@@ -7734,9 +7839,16 @@ export default function GenomeBrowser({
         if (trackId === 'forward') return 'Genes on the forward strand'
         if (trackId === 'reverse') return 'Genes on the reverse strand'
         if (trackId === 'sequence') return sequenceTrackTooltip
-        if (isCustomTrackId(trackId)) return 'Custom BigWig track'
+        if (isGroupRowId(trackId)) {
+            const row = joinedRows.get(trackId)
+            return row ? `Track group ${row.label}: ${row.memberIds.length} track${row.memberIds.length === 1 ? '' : 's'} in one row` : 'Track group'
+        }
+        if (isCustomTrackId(trackId)) {
+            const group = customTracksById.get(trackId)?.group
+            return group ? `Custom track in the group ${group.label}` : 'Custom track'
+        }
         return ''
-    }, [sequenceTrackTooltip, isCustomTrackId, isFlipped])
+    }, [sequenceTrackTooltip, isCustomTrackId, isFlipped, joinedRows, customTracksById])
 
     const isPrimaryPanel = useMemo(() => {
         const lowerLabel = String(label || '').toLowerCase()
@@ -7799,7 +7911,8 @@ export default function GenomeBrowser({
             return true
         })
         const getExportTrackBgColor = (trackId) => {
-            const index = visibleTrackOrder.indexOf(trackId)
+            // A joined group's tracks sit on their group's row.
+            const index = visibleTrackOrder.indexOf(layout.customTrackLayouts?.[trackId]?.joinedRowId || trackId)
             if (index % 2 === 0) {
                 return isLight ? '#ffffff' : '#1a1b1e'
             }
@@ -7810,6 +7923,7 @@ export default function GenomeBrowser({
                 || (trackId === 'reverse' && effectiveHiddenStrands.reverse)
                 || (trackId === 'sequence' && effectiveHiddenStrands.sequence)
                 || (isCustomTrackId(trackId) && !(customTracksById.get(trackId)?.visible))
+                || (isGroupRowId(trackId) && Boolean(joinedRows.get(trackId)?.hidden))
             if (isHidden) return isLight ? '#e9ecef' : '#141517'
             return getExportTrackBgColor(trackId)
         }
@@ -7908,7 +8022,7 @@ export default function GenomeBrowser({
             const labelBand = 14
             const topPad = 4
             const bottomPad = 6
-            const labelBelow = isPrimaryPanel
+            const labelBelow = isPrimaryPanel && !trackLayout.joinedRowId
             if (labelBelow) {
                 return trackLayout.y + trackLayout.height - bottomPad - (labelBand / 2)
             }
@@ -8089,6 +8203,22 @@ export default function GenomeBrowser({
                 effectiveHiddenStrands.sequence
             )
         }
+        for (const [rowId, rowLayout] of Object.entries(layout.groupRowLayouts || {})) {
+            pushExportText({
+                text: joinedGroupHeaderText(rowLayout),
+                x: LHS_WIDTH + 8,
+                y: rowLayout.y + (rowLayout.hidden ? rowLayout.height / 2 : JOINED_GROUP_HEADER_HEIGHT / 2),
+                font: sansFont(10, 600),
+                fill: isLight ? '#4338ca' : '#a5b4fc',
+                bgFill: getSidebarBgColor(rowId),
+                textAnchor: 'start',
+                dominantBaseline: 'middle',
+                paddingX: 3,
+                paddingY: 1,
+            })
+            pushSidebarLabelDescriptor(rowId, getCustomTrackToggleY(rowLayout), 'CG', true)
+            pushSidebarToggleDescriptor(rowId, getCustomTrackToggleY(rowLayout), rowLayout.hidden)
+        }
         for (const [trackId, trackLayout] of Object.entries(layout.customTrackLayouts || {})) {
             const track = customTracksById.get(trackId)
             if (track) {
@@ -8105,12 +8235,16 @@ export default function GenomeBrowser({
                     paddingY: 2,
                 })
             }
-            pushSidebarLabelDescriptor(trackId, getCustomTrackToggleY(trackLayout), 'CT', true)
-            pushSidebarToggleDescriptor(
-                trackId,
-                getCustomTrackToggleY(trackLayout),
-                !(customTracksById.get(trackId)?.visible)
-            )
+            // A joined group has one toggle for its row, drawn below; a group's tracks
+            // shown separately are CG, not CT.
+            if (!trackLayout.joinedRowId) {
+                pushSidebarLabelDescriptor(trackId, getCustomTrackToggleY(trackLayout), track?.group ? 'CG' : 'CT', true)
+                pushSidebarToggleDescriptor(
+                    trackId,
+                    getCustomTrackToggleY(trackLayout),
+                    !(customTracksById.get(trackId)?.visible)
+                )
+            }
 
             const trackType = track?.type || 'bigwig'
             const rawRenderMode = track?.renderMode || DEFAULT_CUSTOM_TRACK_RENDER_MODE
@@ -8139,7 +8273,7 @@ export default function GenomeBrowser({
                         const topPad = 4
                         const bottomPad = 6
                         const gap = 2
-                        const labelBelow = isPrimaryPanel
+                        const labelBelow = isPrimaryPanel && !trackLayout.joinedRowId
                         if (labelBelow) {
                             top = trackLayout.y + topPad
                             bottom = trackLayout.y + trackLayout.height - (labelBand + bottomPad + gap)
@@ -9127,7 +9261,7 @@ export default function GenomeBrowser({
             svgMarkup,
             backgroundColor: colors.bg,
         }
-    }, [ANCHOR_ICON_BODY, REV_COMP, alignData, alignmentCoords, bpPerPx, clickedBigBedFeature, clickedVcfVariant, colors, colors.bg, colors.geneLabelText, colors.rulerBg, colors.rulerText, customTrackData, customTracksById, dimNonSelectedGenes, effectiveFocusBarPosition, effectiveHiddenStrands, effectiveRulerHeight, effectiveRulerPosition, effectiveToolbarPosition, expandedGenes, flattenTracks, genes, genomicToScreen, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackIntervalPixelBounds, bigWigZoneScales, getCustomTrackToggleY, getEffectiveTranscriptLimit, getGeneRowCountForWidth, getVcfBlockLevel, hoveredBigBedFeature, hoveredSeqBase, hoveredVcfBlock, isAligned, isLight, isPrimaryPanel, isFlipped, isSelectedHidden, isLocationFocusVisible, isTranscriptCompressionActive, isCompressedLayoutActive, isCustomTrackId, layout, overlayToGenomic, panelPillColor, sidebarToggleIconColor, selectedGene, seqRange, sequence, sequenceTrackLabel, showSequenceTrack, shouldForceGeneBlockView, trackOrder, trackWidth, transcriptCache, transcriptLayoutMetrics, viewEnd, viewHeight, viewSpan, viewStart, viewWidth])
+    }, [ANCHOR_ICON_BODY, joinedRows, REV_COMP, alignData, alignmentCoords, bpPerPx, clickedBigBedFeature, clickedVcfVariant, colors, colors.bg, colors.geneLabelText, colors.rulerBg, colors.rulerText, customTrackData, customTracksById, dimNonSelectedGenes, effectiveFocusBarPosition, effectiveHiddenStrands, effectiveRulerHeight, effectiveRulerPosition, effectiveToolbarPosition, expandedGenes, flattenTracks, genes, genomicToScreen, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackIntervalPixelBounds, bigWigZoneScales, getCustomTrackToggleY, getEffectiveTranscriptLimit, getGeneRowCountForWidth, getVcfBlockLevel, hoveredBigBedFeature, hoveredSeqBase, hoveredVcfBlock, isAligned, isLight, isPrimaryPanel, isFlipped, isSelectedHidden, isLocationFocusVisible, isTranscriptCompressionActive, isCompressedLayoutActive, isCustomTrackId, layout, overlayToGenomic, panelPillColor, sidebarToggleIconColor, selectedGene, seqRange, sequence, sequenceTrackLabel, showSequenceTrack, shouldForceGeneBlockView, trackOrder, trackWidth, transcriptCache, transcriptLayoutMetrics, viewEnd, viewHeight, viewSpan, viewStart, viewWidth])
 
     const buildPanelExportSnapshotRef = useRef(buildPanelExportSnapshot)
     useEffect(() => {
@@ -9199,7 +9333,9 @@ export default function GenomeBrowser({
         const topPad = 4
         const bottomPad = 6
         const gap = 2
-        const labelBelow = isPrimaryPanel
+        // In a joined group every track is named above its band, so a heatmap's name
+        // under it would read as the name of the track below.
+        const labelBelow = isPrimaryPanel && !trackLayout.joinedRowId
         if (labelBelow) {
             const top = trackLayout.y + topPad
             const bottom = trackLayout.y + trackLayout.height - (labelBand + bottomPad + gap)
@@ -9942,7 +10078,12 @@ export default function GenomeBrowser({
                     toggleTrackId = 'sequence'
                 } else if (layout.customTrackLayouts) {
                     for (const [tid, tLayout] of Object.entries(layout.customTrackLayouts)) {
+                        if (tLayout.joinedRowId) continue
                         if (hitsToggle(getCustomTrackToggleY(tLayout))) { toggleTrackId = tid; break }
+                    }
+                    for (const [rid, rLayout] of Object.entries(layout.groupRowLayouts || {})) {
+                        if (toggleTrackId) break
+                        if (hitsToggle(getCustomTrackToggleY(rLayout))) toggleTrackId = rid
                     }
                 }
 
@@ -9963,6 +10104,13 @@ export default function GenomeBrowser({
                                 : track
                         )
                     )
+                    return
+                } else if (toggleTrackId && isGroupRowId(toggleTrackId)) {
+                    // A joined group turns on and off as one.
+                    const turnOn = Boolean(joinedRows.get(toggleTrackId)?.hidden)
+                    setCustomTracks((prev) => prev.map((track) => (
+                        track.joinedRowId === toggleTrackId ? { ...track, visible: turnOn } : track
+                    )))
                     return
                 }
 
@@ -10911,8 +11059,45 @@ export default function GenomeBrowser({
             ctx.restore()
         }
         for (const [trackId, trackLayout] of Object.entries(customTrackLayouts)) {
+            if (trackLayout.joinedRowId) continue
             const track = customTracksById.get(trackId)
             drawTrackBg(trackLayout.y, trackLayout.height, trackId, track ? !track.visible : true)
+        }
+        // A joined track group: one background for the row, a header naming the group, and
+        // its tracks on alternating bands with a hairline between them.
+        for (const [rowId, rowLayout] of Object.entries(layout.groupRowLayouts || {})) {
+            drawTrackBg(rowLayout.y, rowLayout.height, rowId, rowLayout.hidden)
+            ctx.save()
+            if (!rowLayout.hidden) {
+                const bandShade = isLight ? 'rgba(15, 23, 42, 0.035)' : 'rgba(255, 255, 255, 0.035)'
+                const hairline = isLight ? 'rgba(100, 116, 139, 0.28)' : 'rgba(148, 163, 184, 0.2)'
+                ctx.fillStyle = isLight ? 'rgba(99, 102, 241, 0.07)' : 'rgba(129, 140, 248, 0.09)'
+                ctx.fillRect(0, rowLayout.y, viewWidth, JOINED_GROUP_HEADER_HEIGHT)
+                ctx.strokeStyle = hairline
+                ctx.lineWidth = 1
+                for (const memberId of rowLayout.memberIds) {
+                    const band = customTrackLayouts[memberId]
+                    if (!band) continue
+                    if (band.joinedIndex % 2 === 1) {
+                        ctx.fillStyle = bandShade
+                        ctx.fillRect(LHS_WIDTH, band.y, viewWidth - LHS_WIDTH, band.height)
+                    }
+                    ctx.beginPath()
+                    ctx.moveTo(LHS_WIDTH, band.y + 0.5)
+                    ctx.lineTo(viewWidth, band.y + 0.5)
+                    ctx.stroke()
+                }
+            }
+            ctx.font = sansFont(10, 600)
+            ctx.fillStyle = isLight ? '#4338ca' : '#a5b4fc'
+            ctx.textAlign = 'left'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(
+                joinedGroupHeaderText(rowLayout),
+                LHS_WIDTH + 8,
+                rowLayout.y + (rowLayout.hidden ? rowLayout.height / 2 : JOINED_GROUP_HEADER_HEIGHT / 2),
+            )
+            ctx.restore()
         }
 
         // Background Directional Arrows
@@ -11406,7 +11591,11 @@ export default function GenomeBrowser({
             drawSidebarHighlight(SEQUENCE_Y, seqBgHeight, 'sequence')
         }
         for (const [trackId, trackLayout] of Object.entries(customTrackLayouts)) {
+            if (trackLayout.joinedRowId) continue
             drawSidebarHighlight(trackLayout.y, trackLayout.height, trackId)
+        }
+        for (const [rowId, rowLayout] of Object.entries(layout.groupRowLayouts || {})) {
+            drawSidebarHighlight(rowLayout.y, rowLayout.height, rowId)
         }
         ctx.strokeStyle = colors.gutterLine
         ctx.lineWidth = 1
@@ -11493,9 +11682,15 @@ export default function GenomeBrowser({
             drawToggle(LHS_WIDTH - 13, seqLabelY, effectiveHiddenStrands.sequence, sequenceTrackLabel, 'sequence')
         }
         for (const [trackId, trackLayout] of Object.entries(customTrackLayouts)) {
-            const hidden = !(customTracksById.get(trackId)?.visible)
+            if (trackLayout.joinedRowId) continue
+            const track = customTracksById.get(trackId)
+            const hidden = !(track?.visible)
             const labelY = getCustomTrackToggleY(trackLayout)
-            drawToggle(LHS_WIDTH - 13, labelY, hidden, 'CT', trackId, true)
+            // CG: one of a track group's tracks, shown on its own row.
+            drawToggle(LHS_WIDTH - 13, labelY, hidden, track?.group ? 'CG' : 'CT', trackId, true)
+        }
+        for (const [rowId, rowLayout] of Object.entries(layout.groupRowLayouts || {})) {
+            drawToggle(LHS_WIDTH - 13, getCustomTrackToggleY(rowLayout), rowLayout.hidden, 'CG', rowId, true)
         }
 
         // ---- Sequence Track ----
@@ -14995,6 +15190,15 @@ export default function GenomeBrowser({
     const closeTrackPicker = useCallback(() => {
         setIsTrackPickerOpen(false)
         setSelectedTrackPickerIds([])
+        setPendingPickerRemovals([])
+    }, [])
+
+    // A row's button stages its change: an add for something not on the panel (or a
+    // group's missing tracks), a removal for something that is. Pressing it again undoes it.
+    const togglePickerChange = useCallback((pickerId, isOnPanel) => {
+        const flip = (prev) => (prev.includes(pickerId) ? prev.filter((id) => id !== pickerId) : [...prev, pickerId])
+        if (isOnPanel) setPendingPickerRemovals(flip)
+        else setSelectedTrackPickerIds(flip)
     }, [])
 
     const buildCustomTrackFromRegistered = useCallback((registeredTrack) => {
@@ -15055,13 +15259,15 @@ export default function GenomeBrowser({
             const keep = wanted.map((key) => {
                 const registeredTrack = matching(key)
                 if (!registeredTrack) return null
-                const existing = prev.find((ct) =>
+                const existing = prev.find((ct) => !ct.group && (
                     String(ct.registryTrackId || '') === String(registeredTrack.id || '')
                     || String(ct.path || '') === String(registeredTrack.path || '')
-                )
+                ))
                 const base = existing || buildCustomTrackFromRegistered(registeredTrack)
                 return base.visible === shouldShow(key) ? base : { ...base, visible: shouldShow(key) }
             }).filter(Boolean)
+            // A group's tracks are the group arrival's business, below.
+            keep.push(...prev.filter((ct) => ct.group))
             const same = keep.length === prev.length
                 && keep.every((track, index) => track === prev[index])
             return same ? prev : keep
@@ -15089,48 +15295,194 @@ export default function GenomeBrowser({
         )
         const selected = chosen.map(matching)
         if (selected.some((track) => !track)) return
+        const chosenGroups = (Array.isArray(tutorialTracksRequest.groupsChosen) ? tutorialTracksRequest.groupsChosen : [])
+            .map((name) => (Array.isArray(availableGroups) ? availableGroups : []).find((group) => group.label === name))
+        if (chosenGroups.some((group) => !group)) return
         seededTrackPickerRequestRef.current = tutorialTracksRequest
-        setSelectedTrackPickerIds(selected.map((track) => String(track.id || '')))
-    }, [tutorialTracksRequest, availableTracks])
+        setSelectedTrackPickerIds([
+            ...selected.map((track) => String(track.id || '')),
+            ...chosenGroups.map((group) => `${TRACK_PICKER_GROUP_PREFIX}${group.id}`),
+        ])
+    }, [tutorialTracksRequest, availableTracks, availableGroups])
 
-    const addSelectedRegisteredTracksToBrowser = useCallback(() => {
-        if (!Array.isArray(selectedTrackPickerIds) || selectedTrackPickerIds.length === 0) return
+    /* Track groups on this panel.
+     *
+     * A group's tracks are ordinary custom tracks that carry `group` (and, shown joined,
+     * the row they share), so they load, draw and hit-test as any other. Switched on, a
+     * group puts back any of its tracks that were removed, turns them all on and gathers
+     * them into group order; switched off, whatever of it is here is turned off. */
+    const registryTracksById = useMemo(
+        () => new Map((Array.isArray(availableTracks) ? availableTracks : []).map((t) => [String(t.id), t])),
+        [availableTracks]
+    )
+
+    const buildGroupMemberTrack = useCallback((group, member, index) => {
+        const registered = registryTracksById.get(String(member?.track_id || ''))
+        if (!registered) return null
+        const built = buildCustomTrackFromRegistered(effectiveMemberTrack(registered, member))
+        return {
+            ...built,
+            group: { id: group.id, label: group.label, layout: group.layout, index },
+            joinedRowId: group.layout === 'joined' ? groupRowIdFor(group.id) : undefined,
+        }
+    }, [registryTracksById, buildCustomTrackFromRegistered])
+
+    /* A tutorial's groups on this panel, by name: exactly those, each with all its tracks,
+     * switched on. Waits for the registry to list them, since the arrival makes the group
+     * a moment before the panel hears about it. */
+    useEffect(() => {
+        if (!tutorialTracksRequest) return
+        const names = Array.isArray(tutorialTracksRequest.groupsAdded) ? tutorialTracksRequest.groupsAdded : []
+        const groups = names.map((name) => (Array.isArray(availableGroups) ? availableGroups : []).find((group) => group.label === name))
+        if (groups.some((group) => !group)) return
+        const wantedIds = new Set(groups.map((group) => group.id))
+        setCustomTracks((prev) => {
+            let next = prev.filter((ct) => !ct.group || wantedIds.has(ct.group.id))
+            for (const group of groups) {
+                const present = new Set(next.filter((ct) => ct.group?.id === group.id).map((ct) => String(ct.registryTrackId || '')))
+                ;(group.members || []).forEach((member, index) => {
+                    if (present.has(String(member.track_id))) return
+                    const built = buildGroupMemberTrack(group, member, index)
+                    if (built) next.push(built)
+                })
+            }
+            next = next.map((ct) => (ct.group && !ct.visible ? { ...ct, visible: true } : ct))
+            const same = next.length === prev.length && next.every((track, index) => track === prev[index])
+            return same ? prev : next
+        })
+    }, [tutorialTracksRequest, availableGroups, buildGroupMemberTrack])
+
+    const showTrackGroup = useCallback((group) => {
+        if (!group?.id) return
+        pendingGroupOrderRef.current.add(group.id)
+        setCustomTracks((prev) => {
+            const present = new Set(prev.filter((t) => t.group?.id === group.id).map((t) => String(t.registryTrackId || '')))
+            const next = prev.map((t) => (t.group?.id === group.id && !t.visible ? { ...t, visible: true } : t))
+            ;(group.members || []).forEach((member, index) => {
+                if (present.has(String(member.track_id))) return
+                const built = buildGroupMemberTrack(group, member, index)
+                if (built) next.push(built)
+            })
+            return next
+        })
+    }, [buildGroupMemberTrack])
+
+    // ── Reopening last session's tracks ──
+    // Once, when the panel first has both the registry and the saved session, and only onto
+    // a panel with nothing open yet. Until then nothing is reported, so the empty panel of
+    // a fresh start never overwrites what was saved.
+    const sessionRestoredRef = useRef(false)
+    const sessionRestoringRef = useRef(false)
+    const lastReportedSessionRef = useRef(null)
+    useEffect(() => {
+        if (sessionRestoredRef.current || !sessionReady || tutorialTracksRequest) return
+        sessionRestoredRef.current = true
+        const entries = Array.isArray(sessionTracks) ? sessionTracks : []
+        if (!entries.length) return
+        const groupsById = new Map((Array.isArray(availableGroups) ? availableGroups : []).map((g) => [String(g.id), g]))
+        const plan = planSessionRestore(entries, { tracksById: registryTracksById, groupsById })
+        const restored = []
+        for (const item of plan) {
+            if (item.kind === 'track') {
+                restored.push({ ...buildCustomTrackFromRegistered(item.track), visible: item.visible })
+            } else if (item.kind === 'group_track') {
+                const built = buildGroupMemberTrack(item.group, item.member, item.index)
+                if (built) restored.push({ ...built, visible: item.visible })
+            } else {
+                ;(item.group.members || []).forEach((member, index) => {
+                    const built = buildGroupMemberTrack(item.group, member, index)
+                    if (built) restored.push({ ...built, visible: item.visible })
+                })
+            }
+        }
+        if (!restored.length) return
+        sessionRestoringRef.current = true
+        setCustomTracks((prev) => (prev.length ? prev : restored))
+    }, [sessionReady, sessionTracks, tutorialTracksRequest, availableGroups, registryTracksById, buildCustomTrackFromRegistered, buildGroupMemberTrack])
+
+    useEffect(() => {
+        if (!sessionRestoredRef.current || !onSessionTracksChange || tutorialTracksRequest) return
+        // Not between renders: while reopened tracks have not landed, or the order has not
+        // caught up with the tracks, what is open is not yet what will be.
+        if (sessionRestoringRef.current && !customTracks.length) return
+        const orderIds = new Set(trackOrder)
+        if (customTracks.some((t) => !orderIds.has(t.joinedRowId || t.id))) return
+        sessionRestoringRef.current = false
+        const entries = describeSessionTracks(customTracks, trackOrder)
+        const signature = JSON.stringify(entries)
+        if (lastReportedSessionRef.current === null) {
+            // The first look after reopening: what was saved is what is open, unless some of
+            // it could not be reopened.
+            lastReportedSessionRef.current = JSON.stringify(Array.isArray(sessionTracks) ? sessionTracks : [])
+        }
+        if (signature === lastReportedSessionRef.current) return
+        lastReportedSessionRef.current = signature
+        onSessionTracksChange(entries)
+    }, [customTracks, trackOrder, onSessionTracksChange, tutorialTracksRequest, sessionTracks])
+
+    const pickerHasChanges = selectedTrackPickerIds.length > 0 || pendingPickerRemovals.length > 0
+
+    const applyTrackPickerChanges = useCallback(() => {
+        const removals = new Set(pendingPickerRemovals.map(String))
+        if (removals.size) {
+            setCustomTracks((prev) => prev.filter((ct) => {
+                if (ct.group) return !removals.has(`${TRACK_PICKER_GROUP_PREFIX}${ct.group.id}`)
+                return !removals.has(String(ct.registryTrackId || ''))
+            }))
+        }
+        if (!Array.isArray(selectedTrackPickerIds) || selectedTrackPickerIds.length === 0) {
+            closeTrackPicker()
+            return
+        }
         const selectedIdSet = new Set(selectedTrackPickerIds.map((id) => String(id)))
         const tracksToAdd = (Array.isArray(availableTracks) ? availableTracks : []).filter((track) =>
             selectedIdSet.has(String(track?.id || ''))
         )
-        if (tracksToAdd.length === 0) {
+        const groupsToAdd = (Array.isArray(availableGroups) ? availableGroups : []).filter((group) =>
+            selectedIdSet.has(`${TRACK_PICKER_GROUP_PREFIX}${group.id}`)
+        )
+        if (tracksToAdd.length === 0 && groupsToAdd.length === 0) {
             closeTrackPicker()
             return
         }
-        setCustomTracks((prev) => {
-            const next = [...prev]
-            for (const registeredTrack of tracksToAdd) {
-                const duplicate = next.some((ct) =>
-                    String(ct.registryTrackId || '') === String(registeredTrack.id || '')
-                    || (
-                        String(ct.path || '') === String(registeredTrack.path || '')
-                        && String(ct.type || 'bigwig') === String(registeredTrack.type || 'bigwig')
-                    )
-                )
-                if (duplicate) continue
-                next.push(buildCustomTrackFromRegistered(registeredTrack))
-            }
-            return next
-        })
+        if (tracksToAdd.length) {
+            setCustomTracks((prev) => {
+                const next = [...prev]
+                for (const registeredTrack of tracksToAdd) {
+                    // A group's copy of a track is its own; this looks for the track on its own.
+                    const duplicate = next.some((ct) => !ct.group && (
+                        String(ct.registryTrackId || '') === String(registeredTrack.id || '')
+                        || (
+                            String(ct.path || '') === String(registeredTrack.path || '')
+                            && String(ct.type || 'bigwig') === String(registeredTrack.type || 'bigwig')
+                        )
+                    ))
+                    if (duplicate) continue
+                    next.push(buildCustomTrackFromRegistered(registeredTrack))
+                }
+                return next
+            })
+        }
+        for (const group of groupsToAdd) showTrackGroup(group)
         closeTrackPicker()
-    }, [selectedTrackPickerIds, availableTracks, closeTrackPicker, buildCustomTrackFromRegistered])
+    }, [selectedTrackPickerIds, pendingPickerRemovals, availableTracks, availableGroups, closeTrackPicker, buildCustomTrackFromRegistered, showTrackGroup])
 
     useEffect(() => {
         if (!isTrackPickerOpen) return
         const valid = new Set((Array.isArray(availableTracks) ? availableTracks : []).map((track) => String(track?.id || '')))
+        for (const group of Array.isArray(availableGroups) ? availableGroups : []) valid.add(`${TRACK_PICKER_GROUP_PREFIX}${group.id}`)
         setSelectedTrackPickerIds((prev) => {
             if (!Array.isArray(prev) || prev.length === 0) return prev
             const next = prev.filter((id) => valid.has(String(id)))
             if (next.length === prev.length && next.every((id, idx) => id === prev[idx])) return prev
             return next
         })
-    }, [availableTracks, isTrackPickerOpen])
+        setPendingPickerRemovals((prev) => {
+            if (!prev.length) return prev
+            const next = prev.filter((id) => valid.has(String(id)))
+            return next.length === prev.length ? prev : next
+        })
+    }, [availableTracks, availableGroups, isTrackPickerOpen])
 
     // The panel is as loaded as it is going to get once the regions are in. What
     // it would otherwise still be waiting on is the first gene tile, and while
@@ -15247,7 +15599,7 @@ export default function GenomeBrowser({
                                 <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
                                     {availableTracks.length === 0
                                         ? 'No tracks registered. Go to Track Manager to register tracks.'
-                                        : `${availableTracks.length} track${availableTracks.length !== 1 ? 's' : ''} available`
+                                        : `${availableTracks.length} track${availableTracks.length !== 1 ? 's' : ''}${availableGroups.length ? ` and ${availableGroups.length} group${availableGroups.length !== 1 ? 's' : ''}` : ''} available`
                                     }
                                 </p>
                             </div>
@@ -15258,22 +15610,103 @@ export default function GenomeBrowser({
                         </div>
                         {/* Track list */}
                         <div data-tour-id="browser-track-picker-list" className="flex-1 overflow-y-auto p-3 space-y-1.5">
+                            {availableGroups.length > 0 && (
+                                <div className={`px-1 text-[10px] font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Track groups</div>
+                            )}
+                            {availableGroups.map((group) => {
+                                const onPanel = customTracks.filter((ct) => ct.group?.id === group.id)
+                                const isOnPanel = onPanel.length > 0
+                                const memberCount = (group.members || []).filter((m) => registryTracksById.has(String(m.track_id))).length
+                                const presentIds = new Set(onPanel.map((ct) => String(ct.registryTrackId || '')))
+                                const missing = (group.members || []).filter((m) => registryTracksById.has(String(m.track_id)) && !presentIds.has(String(m.track_id))).length
+                                const pickerId = `${TRACK_PICKER_GROUP_PREFIX}${group.id}`
+                                const pendingAdd = selectedTrackPickerIds.includes(pickerId)
+                                const pendingRemove = pendingPickerRemovals.includes(pickerId)
+                                const willShow = isOnPanel ? !pendingRemove : pendingAdd
+                                const toggle = () => {
+                                    if (!isOnPanel && !memberCount) return
+                                    togglePickerChange(pickerId, isOnPanel)
+                                }
+                                const typeCounts = new Map()
+                                for (const m of group.members || []) {
+                                    const type = registryTracksById.get(String(m.track_id))?.type
+                                    if (type) typeCounts.set(type, (typeCounts.get(type) || 0) + 1)
+                                }
+                                return (
+                                    <div
+                                        key={group.id}
+                                        data-tour-id={`browser-track-picker-group-${group.id}`}
+                                        data-tutorial-picker-group={group.label || ''}
+                                        data-tutorial-engaged={willShow ? 'true' : 'false'}
+                                        aria-pressed={willShow}
+                                        role="button"
+                                        tabIndex={!isOnPanel && !memberCount ? -1 : 0}
+                                        onClick={toggle}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() }
+                                        }}
+                                        className={pickerRowClass(willShow, isLight)}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${isLight ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 'bg-indigo-900/50 text-indigo-300 border border-indigo-800'}`}>
+                                                group
+                                            </span>
+                                            <span className={`text-sm font-medium flex-1 min-w-0 truncate ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
+                                                {group.label}
+                                            </span>
+                                            {isOnPanel && !pendingRemove && missing > 0 && (
+                                                <button
+                                                    type="button"
+                                                    data-tour-id={`browser-track-picker-group-restore-${group.id}`}
+                                                    aria-pressed={pendingAdd}
+                                                    onClick={(e) => { e.stopPropagation(); togglePickerChange(pickerId, false) }}
+                                                    className={`rounded-md px-1.5 py-1 text-[11px] font-medium ${pendingAdd
+                                                        ? isLight ? 'bg-indigo-100 text-indigo-800' : 'bg-indigo-900/60 text-indigo-200'
+                                                        : isLight ? 'text-indigo-700 hover:bg-indigo-100' : 'text-indigo-300 hover:bg-indigo-900/50'}`}
+                                                    title="Put back the group's tracks that are not on this panel, in group order"
+                                                >
+                                                    {pendingAdd ? `✓ Adding ${missing} missing` : `+ ${missing} missing`}
+                                                </button>
+                                            )}
+                                            <PickerRowButton
+                                                willShow={willShow}
+                                                disabled={!isOnPanel && !memberCount}
+                                                onClick={toggle}
+                                                isLight={isLight}
+                                                tourId={`browser-track-picker-group-toggle-${group.id}`}
+                                            />
+                                        </div>
+                                        <p className={`text-[11px] mt-0.5 truncate ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                            {memberCount} track{memberCount === 1 ? '' : 's'}
+                                            {' · '}{group.layout === 'joined' ? 'one joined row' : 'separate rows'}
+                                            {typeCounts.size ? ` · ${[...typeCounts.entries()].map(([type, n]) => `${n} ${type}`).join(', ')}` : ''}
+                                            {isOnPanel && missing > 0 ? ` · ${missing} not on this panel` : ''}
+                                        </p>
+                                    </div>
+                                )
+                            })}
+                            {availableGroups.length > 0 && availableTracks.length > 0 && (
+                                <div className={`px-1 pt-2 text-[10px] font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Tracks</div>
+                            )}
                             {availableTracks.length === 0 ? (
                                 <div className={`text-center py-10 text-sm ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
                                     <p>Open <strong>Track Manager</strong> → click <strong>Add Track</strong> → register your data files.</p>
                                 </div>
                             ) : availableTracks.map((registeredTrack) => {
-                                const addedTrack = customTracks.find((ct) =>
+                                // The track on its own; a group's copy of it is the group's.
+                                const addedTrack = customTracks.find((ct) => !ct.group && (
                                     String(ct.registryTrackId || '') === String(registeredTrack.id || '')
                                     || (
                                         String(ct.path || '') === String(registeredTrack.path || '')
                                         && String(ct.type || 'bigwig') === String(registeredTrack.type || 'bigwig')
                                     )
-                                )
+                                ))
                                 const alreadyAdded = Boolean(addedTrack)
-                                const isAddedVisible = Boolean(addedTrack?.visible)
                                 const pickerTrackId = String(registeredTrack.id || '')
-                                const selectedForAdd = !alreadyAdded && selectedTrackPickerIds.includes(pickerTrackId)
+                                const willShow = alreadyAdded
+                                    ? !pendingPickerRemovals.includes(pickerTrackId)
+                                    : selectedTrackPickerIds.includes(pickerTrackId)
+                                const toggle = () => togglePickerChange(pickerTrackId, alreadyAdded)
                                 const typeColor = {
                                     bigwig: '#3b82f6', vcf: '#f59e0b', bed: '#10b981', bigbed: '#059669', gff: '#0891b2',
                                     splice_junctions: '#8b5cf6', bam: '#ef4444', long_reads: '#ec4899',
@@ -15283,39 +15716,19 @@ export default function GenomeBrowser({
                                         key={registeredTrack.id}
                                         data-tour-id={`browser-track-picker-row-${registeredTrack.id}`}
                                         data-tutorial-picker-track={registeredTrack.label || ''}
-                                        // Ticked, or already on the panel. A tutorial step that asks the reader to
-                                        // choose several rows reads this to leave alone the ones they have already
-                                        // done — without it, pressing Next after ticking two of three unticked
-                                        // those two on its way past.
-                                        data-tutorial-engaged={(selectedForAdd || alreadyAdded) ? 'true' : 'false'}
-                                        aria-pressed={selectedForAdd || alreadyAdded}
-                                        onClick={() => {
-                                            if (alreadyAdded) return
-                                            setSelectedTrackPickerIds((prev) =>
-                                                prev.includes(pickerTrackId)
-                                                    ? prev.filter((id) => id !== pickerTrackId)
-                                                    : [...prev, pickerTrackId]
-                                            )
-                                        }}
+                                        // On the panel, or will be once applied. A tutorial step that asks the
+                                        // reader to choose several rows reads this to leave alone the ones they
+                                        // have already done — without it, pressing Next after choosing two of
+                                        // three unchose those two on its way past.
+                                        data-tutorial-engaged={willShow ? 'true' : 'false'}
+                                        aria-pressed={willShow}
+                                        onClick={toggle}
                                         onKeyDown={(e) => {
-                                            if (alreadyAdded) return
-                                            if (e.key === 'Enter' || e.key === ' ') {
-                                                e.preventDefault()
-                                                setSelectedTrackPickerIds((prev) =>
-                                                    prev.includes(pickerTrackId)
-                                                        ? prev.filter((id) => id !== pickerTrackId)
-                                                        : [...prev, pickerTrackId]
-                                                )
-                                            }
+                                            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() }
                                         }}
                                         role="button"
-                                        tabIndex={alreadyAdded ? -1 : 0}
-                                        className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors ${alreadyAdded
-                                            ? isLight ? 'border-gray-200 bg-gray-50/80' : 'border-gray-700 bg-gray-800/50'
-                                            : selectedForAdd
-                                                ? isLight ? 'border-blue-300 bg-blue-50' : 'border-blue-600 bg-blue-900/20'
-                                                : isLight ? 'border-gray-200 hover:border-blue-300 hover:bg-blue-50' : 'border-gray-700 hover:border-blue-600 hover:bg-blue-900/20'
-                                            }`}
+                                        tabIndex={0}
+                                        className={pickerRowClass(willShow, isLight)}
                                     >
                                         <div className="flex items-center gap-2">
                                             <span
@@ -15327,68 +15740,7 @@ export default function GenomeBrowser({
                                             <span className={`text-sm font-medium flex-1 min-w-0 truncate ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
                                                 {registeredTrack.label}
                                             </span>
-                                            {registeredTrack.genome_key && (
-                                                <span className={`text-[10px] shrink-0 px-1.5 py-0.5 rounded font-mono ${isLight ? 'bg-gray-100 text-gray-500' : 'bg-gray-700 text-gray-400'}`}>
-                                                    {trackAssemblyKey(registeredTrack.genome_key).split('::').slice(-1)[0] || registeredTrack.genome_key}
-                                                </span>
-                                            )}
-                                            {alreadyAdded && (
-                                                <div className="ml-1 inline-flex items-center gap-1">
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation()
-                                                            const targetId = addedTrack?.id
-                                                            if (!targetId) return
-                                                            setCustomTracks((prev) =>
-                                                                prev.map((track) =>
-                                                                    track.id === targetId
-                                                                        ? { ...track, visible: !track.visible }
-                                                                        : track
-                                                                )
-                                                            )
-                                                        }}
-                                                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors ${isLight ? 'hover:bg-black/5' : 'hover:bg-white/10'}`}
-                                                        style={{ color: sidebarToggleIconColor(isAddedVisible) }}
-                                                        title={isAddedVisible ? 'Turn track off' : 'Turn track on'}
-                                                    >
-                                                        <PowerGlyph size={15} />
-                                                        <span className="text-[10px] font-semibold">{isAddedVisible ? 'On' : 'Off'}</span>
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation()
-                                                            const targetId = addedTrack?.id
-                                                            if (!targetId) return
-                                                            setCustomTracks((prev) => prev.filter((track) => track.id !== targetId))
-                                                        }}
-                                                        className={`inline-flex items-center justify-center rounded-md px-1.5 py-1 text-[10px] font-semibold ${isLight ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-red-900/35 text-red-300 hover:bg-red-900/55'}`}
-                                                        title="Remove from browser"
-                                                    >
-                                                        Remove
-                                                    </button>
-                                                </div>
-                                            )}
-                                            {!alreadyAdded && (
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation()
-                                                        setSelectedTrackPickerIds((prev) =>
-                                                            prev.includes(pickerTrackId)
-                                                                ? prev.filter((id) => id !== pickerTrackId)
-                                                                : [...prev, pickerTrackId]
-                                                        )
-                                                    }}
-                                                    className={`ml-2 inline-flex items-center gap-1 rounded-md px-1.5 py-1 shrink-0 transition-colors ${isLight ? 'hover:bg-black/5' : 'hover:bg-white/10'}`}
-                                                    style={{ color: sidebarToggleIconColor(selectedForAdd) }}
-                                                    title={selectedForAdd ? 'Selected for add' : 'Select for add'}
-                                                    aria-pressed={selectedForAdd}
-                                                >
-                                                    <PowerGlyph size={15} />
-                                                </button>
-                                            )}
+                                            <PickerRowButton willShow={willShow} onClick={toggle} isLight={isLight} />
                                         </div>
                                         <p className={`text-[11px] font-mono mt-0.5 truncate ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
                                             {registeredTrack.path}
@@ -15397,24 +15749,27 @@ export default function GenomeBrowser({
                                 )
                             })}
                         </div>
-                        {/* Footer action */}
-                        <div className={`px-5 py-3 border-t flex justify-end items-center gap-2 flex-none ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-800 bg-gray-900/50'}`}>
-                            <button
-                                data-tour-id="browser-track-picker-add"
-                                onClick={addSelectedRegisteredTracksToBrowser}
-                                disabled={selectedTrackPickerIds.length === 0}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${selectedTrackPickerIds.length === 0
-                                    ? isLight ? 'bg-blue-200 text-blue-700/70 cursor-not-allowed' : 'bg-blue-900/40 text-blue-200/50 cursor-not-allowed'
-                                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                                    }`}
-                            >
-                                Add{selectedTrackPickerIds.length > 0 ? ` (${selectedTrackPickerIds.length})` : ''}
-                            </button>
+                        {/* Footer: nothing changes until Apply. */}
+                        <div className={`px-5 py-3 border-t flex items-center gap-2 flex-none ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-800 bg-gray-900/50'}`}>
+                            <span data-tour-id="browser-track-picker-summary" className={`text-xs mr-auto ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                                {[
+                                    selectedTrackPickerIds.length ? `${selectedTrackPickerIds.length} to add` : '',
+                                    pendingPickerRemovals.length ? `${pendingPickerRemovals.length} to remove` : '',
+                                ].filter(Boolean).join(' · ') || 'No changes'}
+                            </span>
                             <button
                                 data-tour-id="browser-track-picker-close"
                                 onClick={closeTrackPicker}
-                                className={`px-3 py-1.5 rounded-lg text-xs ${isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-800'}`}
-                            >Close</button>
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${isLight ? 'border-gray-300 text-gray-700 hover:bg-gray-100' : 'border-gray-600 text-gray-300 hover:bg-gray-800'}`}
+                            >Cancel</button>
+                            <button
+                                data-tour-id="browser-track-picker-add"
+                                onClick={applyTrackPickerChanges}
+                                disabled={!pickerHasChanges}
+                                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                Apply
+                            </button>
                         </div>
                     </div>
                 </div>

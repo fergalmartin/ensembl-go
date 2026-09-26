@@ -833,11 +833,12 @@ test('hiding a transcript for the reader does not leave a pointer behind', () =>
 })
 
 test('a spotlight stops at the chrome floating over what it points at', () => {
-  // A padded rect can reach back under the bar the measurement was trimmed out of, so
-  // the overlay trims again after growing one — and the browser only calls itself chrome
+  // The measurement stops at the bar (visibleElementRect trims it), and a padded rect is
+  // grown only on the sides where the target is whole — so the ring cannot reach back
+  // under the bar the target is scrolled beneath. The browser only calls itself chrome
   // while the bar actually floats, not while it scrolls with the panels.
-  assert.match(overlay, /const occluders = overlayOccluders\(\)/)
-  assert.match(overlay, /const padded = clearOfChrome\(expandRect\(hole,/)
-  assert.match(overlay, /rect \? clearOfChrome\(\n\s+expandRect\(rect,/)
+  assert.match(overlay, /padVisibleRect\(rect, node\?\.getBoundingClientRect\?\.\(\) \|\| null, padding, size\)/)
+  assert.match(overlay, /const padded = paddedAround\(hole, selector,/)
+  assert.match(overlay, /rect \? paddedAround\(\n\s+rect,/)
   assert.match(browserView, /data-tutorial-occluder=\{controlsFollowScroll \? 'true' : undefined\}/)
 })
