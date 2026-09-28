@@ -194,16 +194,27 @@
    keep their furniture in the same place. A name too long for it ellipsises,
    which is what the app's own pills do everywhere else, and the whole of it is
    on the tooltip. */
-.sv-bar .sv-genome {
+.sv-bar .sv-genome,
+.sv-genome-host .sv-genome {
   display: inline-flex; align-items: center; gap: 5px;
   height: 30px; width: 180px; padding: 0 4px 0 0;
   background: transparent; border: 1px solid transparent; border-radius: 999px;
 }
 /* Fills the column, and shrinks inside it. In the menu below, where the point is
    to read the names, the pills are still as wide as their own text. */
-.sv-bar .sv-genome > .sv-genome-pill { flex: 1; }
-.sv-bar .sv-genome:hover:not(:disabled) { border-color: var(--sv-border); background: transparent; }
-.sv-bar .sv-genome.menu-open { border-color: var(--sv-accent); box-shadow: none; }
+.sv-bar .sv-genome > .sv-genome-pill,
+.sv-genome-host .sv-genome > .sv-genome-pill { flex: 1; }
+.sv-bar .sv-genome:hover:not(:disabled),
+.sv-genome-host .sv-genome:hover:not(:disabled) { border-color: var(--sv-border); background: transparent; }
+.sv-bar .sv-genome.menu-open,
+.sv-genome-host .sv-genome.menu-open { border-color: var(--sv-accent); box-shadow: none; }
+/* The same control off the sequence bar -- the Feature Explorer's header wears
+   it too -- where the bar's own button rules do not reach. */
+.sv-genome-host .sv-genome {
+  cursor: pointer; color: var(--sv-text);
+  font: 12px/1.45 Lato, system-ui, sans-serif;
+}
+.sv-genome-host :focus-visible { outline: 2px solid var(--sv-accent); outline-offset: 2px; }
 .sv-genome-pill {
   display: inline-flex; align-items: baseline; gap: 6px; min-width: 0;
   padding: 4px 11px; border: 1px solid; border-radius: 999px;

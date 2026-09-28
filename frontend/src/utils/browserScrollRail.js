@@ -65,15 +65,19 @@ export const SCROLL_RAIL_MIN_OVERFLOW = 12
  *  above that — the padding above the control bar, and the bar itself while it
  *  is locked into the page — but none of that slack belongs to a genome, and
  *  spending rail on it left a dead gap above the first dot. So the top of the
- *  rail *is* the first dot, and scrolling up past it leaves the ring there. */
-export function scrollRailGeometry(hostRect, { maxScroll = 0, minScroll = 0, margin = 10 } = {}) {
+ *  rail *is* the first dot, and scrolling up past it leaves the ring there.
+ *
+ *  `left` places the rail somewhere other than just inside the scroll
+ *  container's left edge — for a view whose scroll container is an inner panel,
+ *  so the rail can still sit in the app's page padding rather than over it. */
+export function scrollRailGeometry(hostRect, { maxScroll = 0, minScroll = 0, margin = 10, left = null } = {}) {
     const height = Math.max(0, hostRect.height - margin * 2)
     const padding = Math.min(SCROLL_RAIL_INSET, height / 4)
     const end = Math.max(0, maxScroll)
     const start = Math.max(0, Math.min(minScroll, end))
     return {
         top: hostRect.top + margin,
-        left: hostRect.left + 1,
+        left: Number.isFinite(left) ? left : hostRect.left + 1,
         height,
         padding,
         track: Math.max(0, height - padding * 2),

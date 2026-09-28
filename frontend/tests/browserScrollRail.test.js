@@ -131,3 +131,10 @@ test('a lone genome still gets a rail: its dot at the top, the ring free to trav
   assert.equal(activeScrollRailStop(900, single), 0)
   assert.ok(railOffsetForScroll(900, tall) > single[0].offset)
 })
+
+test('the rail can be placed away from an inner scroll container, into the page padding', () => {
+  const inner = scrollRailGeometry({ top: 300, left: 250, height: 600 }, { maxScroll: 900, left: 227 })
+  assert.equal(inner.left, 227)
+  assert.equal(inner.top, 310)
+  assert.equal(scrollRailGeometry({ top: 0, left: 250, height: 600 }, { maxScroll: 900 }).left, 251)
+})

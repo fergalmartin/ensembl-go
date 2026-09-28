@@ -85,10 +85,14 @@ export default function FeatureExplorerStructurePanel({
   transcriptById = new Map(),
   containerRef = null,
   onRegisterScreenshot = null,
+  // Open from the start, which also starts the structure lookup: set for
+  // annotation the structure service can map (Ensembl and RefSeq), left off
+  // for custom annotation, where the lookup is unlikely to find anything.
+  defaultOpen = false,
 }) {
   const isLight = theme === 'light'
   const mode = isLight ? 'light' : 'dark'
-  const [collapsed, setCollapsed] = useState(true)
+  const [collapsed, setCollapsed] = useState(() => !defaultOpen)
   const [transcriptId, setTranscriptId] = useState('')
   const [colorMode, setColorMode] = useState('exons')
   const [resolution, setResolution] = useState(null)

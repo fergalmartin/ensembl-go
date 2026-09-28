@@ -23,12 +23,22 @@ export function orderedExonsFivePrimeToThreePrime(tx) {
   return exons
 }
 
+/**
+ * An exon's drawable pieces, split where coding starts and stops.
+ *
+ * Exons and CDS arrive 1-based and inclusive, but a segment's `start`/`end` are
+ * half-open: `end` is the position just past its last base. Drawn from
+ * `scale(start)` to `scale(end)`, a segment therefore covers every one of its
+ * bases, the last included, and neighbouring pieces of one exon meet exactly
+ * rather than overlapping by a base. `exonStart`/`exonEnd` stay inclusive, as
+ * the annotation gives them, because they key the exon elsewhere.
+ */
 export function buildTranscriptSegments(tx) {
   const exons = Array.isArray(tx?.exons) ? tx.exons : []
   const cdsList = Array.isArray(tx?.cds_list)
     ? tx.cds_list
       .map((cds) => ({ start: Number(cds?.start), end: Number(cds?.end) }))
-      .filter((cds) => Number.isFinite(cds.start) && Number.isFinite(cds.end))
+      .filter((cds) => Number.isFinite(cds.start) && Number.isFinite(cds.end) && cds.end >= cds.start)
       .sort((a, b) => a.start - b.start)
     : []
 
@@ -36,66 +46,76 @@ export function buildTranscriptSegments(tx) {
   exons.forEach((exon, exonIndex) => {
     const exonStart = Number(exon?.start)
     const exonEnd = Number(exon?.end)
-    if (!Number.isFinite(exonStart) || !Number.isFinite(exonEnd) || exonEnd <= exonStart) return
+    if (!Number.isFinite(exonStart) || !Number.isFinite(exonEnd) || exonEnd < exonStart) return
 
     const overlaps = cdsList
       .map((cds) => {
         const overlapStart = Math.max(exonStart, cds.start)
         const overlapEnd = Math.min(exonEnd, cds.end)
-        return overlapEnd > overlapStart ? { start: overlapStart, end: overlapEnd } : null
+        return overlapEnd >= overlapStart ? { start: overlapStart, end: overlapEnd } : null
       })
       .filter(Boolean)
-      .sort((a, b) => a.start - b.start)
 
     let cursor = exonStart
     let segmentIndex = 0
-    overlaps.forEach((coding) => {
-      if (coding.start > cursor) {
-        segments.push({
-          start: cursor,
-          end: coding.start,
-          coding: false,
-          exonStart,
-          exonEnd,
-          key: `${exonIndex}-u-${segmentIndex}`,
-        })
-        segmentIndex += 1
-      }
+    const push = (start, endInclusive, coding) => {
       segments.push({
-        start: coding.start,
-        end: coding.end,
-        coding: true,
+        start,
+        end: endInclusive + 1,
+        coding,
         exonStart,
         exonEnd,
-        key: `${exonIndex}-c-${segmentIndex}`,
+        key: `${exonIndex}-${coding ? 'c' : 'u'}-${segmentIndex}`,
       })
       segmentIndex += 1
-      cursor = Math.max(cursor, coding.end)
+    }
+    overlaps.forEach((coding) => {
+      if (coding.end < cursor) return
+      const codingStart = Math.max(cursor, coding.start)
+      if (codingStart > cursor) push(cursor, codingStart - 1, false)
+      push(codingStart, coding.end, true)
+      cursor = coding.end + 1
     })
-
-    if (cursor < exonEnd) {
-      segments.push({
-        start: cursor,
-        end: exonEnd,
-        coding: false,
-        exonStart,
-        exonEnd,
-        key: `${exonIndex}-u-${segmentIndex}`,
-      })
-    }
-    if (!overlaps.length) {
-      segments.push({
-        start: exonStart,
-        end: exonEnd,
-        coding: false,
-        exonStart,
-        exonEnd,
-        key: `${exonIndex}-u-0`,
-      })
-    }
+    if (cursor <= exonEnd) push(cursor, exonEnd, false)
   })
 
   return segments
+}
+
+/**
+ * The intron bases either side of each exon–intron boundary, `flankBp` deep.
+ *
+ * Takes exonic intervals (1-based, inclusive, in any order) and returns
+ * inclusive ranges. Only the gaps between exons count: the transcript's own
+ * ends are not splice sites. An intron no longer than both flanks together is
+ * returned whole, once.
+ */
+export function intronFlankRanges(exons, flankBp = 10) {
+  const depth = Math.max(0, Math.floor(Number(flankBp) || 0))
+  const sorted = (Array.isArray(exons) ? exons : [])
+    .map((exon) => ({ start: Number(exon?.start), end: Number(exon?.end) }))
+    .filter((exon) => Number.isFinite(exon.start) && Number.isFinite(exon.end) && exon.end >= exon.start)
+    .sort((a, b) => a.start - b.start)
+  const merged = []
+  for (const exon of sorted) {
+    const last = merged[merged.length - 1]
+    if (last && exon.start <= last.end + 1) last.end = Math.max(last.end, exon.end)
+    else merged.push({ ...exon })
+  }
+  const ranges = []
+  if (depth === 0) return ranges
+  for (let i = 0; i < merged.length - 1; i += 1) {
+    const gapStart = merged[i].end + 1
+    const gapEnd = merged[i + 1].start - 1
+    if (gapEnd < gapStart) continue
+    if ((gapEnd - gapStart) + 1 <= depth * 2) {
+      ranges.push({ start: gapStart, end: gapEnd })
+      continue
+    }
+    ranges.push({ start: gapStart, end: gapStart + depth - 1 })
+    ranges.push({ start: gapEnd - depth + 1, end: gapEnd })
+  }
+  return ranges
 }
 
 export function getTranscriptIntrons(transcript) {

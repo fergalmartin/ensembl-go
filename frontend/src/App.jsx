@@ -1067,7 +1067,6 @@ function App() {
   const [svRegionExplicitlySelected, setSvRegionExplicitlySelected] = useState(false)
   const svSavedViewportRef = useRef(null)
   const [featureExplorerGenomeKey, setFeatureExplorerGenomeKey] = useState('')
-  const [lastDemotedFeatureExplorerGenomeKey, setLastDemotedFeatureExplorerGenomeKey] = useState('')
   const dualViewFocusRef = useRef(dualViewFocus)
   const inactiveSelectedSpeciesRef = useRef(inactiveSelectedSpecies)
   const nextPreviousSessionSignatureRef = useRef('')
@@ -5550,28 +5549,6 @@ function App() {
   }, [featureExplorerAvailableGenomes, featureExplorerGenomeKey])
   const featureExplorerActiveGenome = featureExplorerSelectedGenome || refSpecies || featureExplorerAvailableGenomes[0] || null
   const featureExplorerActiveGenomeKey = featureExplorerActiveGenome ? speciesItemKey(featureExplorerActiveGenome) : ''
-  const featureExplorerOtherGenomes = useMemo(() => {
-    const activeKey = String(featureExplorerActiveGenomeKey || '').trim()
-    const demotedKey = String(lastDemotedFeatureExplorerGenomeKey || '').trim()
-    const otherGenomes = featureExplorerAvailableGenomes.filter((species) => speciesItemKey(species) !== activeKey)
-    const focused = []
-    const unfocused = []
-    for (const species of otherGenomes) {
-      const key = speciesItemKey(species)
-      if (focusGeneByGenome?.[key]) focused.push(species)
-      else unfocused.push(species)
-    }
-    const prioritizeDemoted = (items) => {
-      if (!demotedKey) return items
-      const idx = items.findIndex((species) => speciesItemKey(species) === demotedKey)
-      if (idx <= 0) return items
-      const next = [...items]
-      const [demoted] = next.splice(idx, 1)
-      next.unshift(demoted)
-      return next
-    }
-    return [...prioritizeDemoted(focused), ...prioritizeDemoted(unfocused)]
-  }, [featureExplorerAvailableGenomes, featureExplorerActiveGenomeKey, focusGeneByGenome, lastDemotedFeatureExplorerGenomeKey])
   const featureExplorerSeedQuery = useMemo(() => {
     const genomeKey = String(featureExplorerActiveGenomeKey || '').trim()
     if (!genomeKey) return ''
@@ -5798,7 +5775,6 @@ function App() {
     const previousView = previousViewRef.current
     if (currentView === 'feature_explorer' && previousView !== 'feature_explorer') {
       setFeatureExplorerGenomeKey(featureExplorerDefaultGenomeKey)
-      setLastDemotedFeatureExplorerGenomeKey('')
     }
     previousViewRef.current = currentView
   }, [currentView, featureExplorerDefaultGenomeKey])
@@ -5811,16 +5787,11 @@ function App() {
       if (currentKey && validKeys.has(currentKey)) return prev
       return fallbackKey
     })
-    setLastDemotedFeatureExplorerGenomeKey((prev) => {
-      const currentKey = String(prev || '').trim()
-      return currentKey && validKeys.has(currentKey) ? prev : ''
-    })
   }, [featureExplorerAvailableGenomes, featureExplorerDefaultGenomeKey])
 
   const handleFeatureExplorerGenomeSelect = useCallback((species) => {
     const nextKey = speciesItemKey(species)
     if (!nextKey || nextKey === featureExplorerActiveGenomeKey) return
-    setLastDemotedFeatureExplorerGenomeKey(featureExplorerActiveGenomeKey)
     setFeatureExplorerGenomeKey(nextKey)
   }, [featureExplorerActiveGenomeKey])
 
@@ -7072,7 +7043,7 @@ function App() {
               focusGene={featureExplorerActiveGenomeKey ? (focusGeneByGenome?.[featureExplorerActiveGenomeKey] || null) : null}
               seedQuery={featureExplorerSeedQuery}
               onFocusGene={(gene) => handleGenomeFocusGeneSelect(featureExplorerActiveGenomeKey, gene)}
-              otherGenomes={featureExplorerOtherGenomes}
+              genomes={featureExplorerAvailableGenomes}
               focusGeneByGenome={focusGeneByGenome}
               onSelectGenome={handleFeatureExplorerGenomeSelect}
               screenshotMode={currentView === 'feature_explorer' ? screenshotMode : false}

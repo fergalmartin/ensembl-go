@@ -305,3 +305,15 @@ body {
   inherits: true;
   initial-value: 1;
 }
+
+/* Feature Explorer transcript rows. While a zoom or pan is previewed by
+   transforming the drawn rows (FeatureExplorerView, applyTranscriptViewPreview),
+   strokes keep their on-screen width rather than stretching with the rows. A
+   zoom would distort base letters, so they wait for the redraw; a pan only
+   shifts them, so they stay. */
+[data-transcript-previewing] [data-transcript-zoom-layer] * {
+  vector-effect: non-scaling-stroke;
+}
+[data-transcript-previewing="zoom"] [data-transcript-base-letters] {
+  visibility: hidden;
+}

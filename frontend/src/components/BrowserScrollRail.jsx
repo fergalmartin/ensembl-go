@@ -51,7 +51,28 @@ function layoutSignature(layout) {
  * still worth having, because one genome with every transcript expanded is an
  * easy three screens tall.
  */
-export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump, cyclePreview = null, isActive, isLight }) {
+/**
+ * Also used outside the genome browser (the Feature Explorer's sections), which
+ * is what the optional props are for: `resolveAnchor` finds the element a stop
+ * is aligned by, `anchorGap` leaves that much room above it, `resolveRailLeft`
+ * places the rail when the scroll container is an inner panel rather than the
+ * page, and `overlayRef` (the browser's sticky control bar) may be left out.
+ */
+export default function BrowserScrollRail({
+    panels,
+    hostRef,
+    overlayRef = null,
+    onJump,
+    cyclePreview = null,
+    isActive,
+    isLight,
+    resolveAnchor = panelAlignmentAnchor,
+    anchorGap = 0,
+    resolveRailLeft = null,
+    ariaLabel = 'Browser position',
+    tourId = 'browser-scroll-rail',
+    stopTourPrefix = 'browser-scroll-rail-genome-',
+}) {
     const railRef = useRef(null)
     const indicatorRef = useRef(null)
     const scrollerRef = useRef(null)
@@ -81,13 +102,13 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
         // Locked, it scrolls away instead, and the inset is zero — which is what
         // makes the first genome's own alignment the right floor for the rail in
         // either mode, rather than any fixed number of pixels.
-        const inset = stickyControlsInset(overlayRef.current)
+        const inset = stickyControlsInset(overlayRef?.current)
         const measured = panels.map((panel) => {
-            const anchor = panelAlignmentAnchor(host, panel.key)
+            const anchor = resolveAnchor(host, panel.key)
             if (!anchor) return null
             return {
                 ...panel,
-                scrollTop: anchor.getBoundingClientRect().top - hostRect.top + scroller.scrollTop - inset,
+                scrollTop: anchor.getBoundingClientRect().top - hostRect.top + scroller.scrollTop - inset - anchorGap,
             }
         }).filter((stop) => stop && Number.isFinite(stop.scrollTop))
         if (!measured.length || hostRect.height < 80) {
@@ -95,9 +116,11 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
             setLayout((prev) => (prev ? null : prev))
             return
         }
+        const railLeft = resolveRailLeft ? resolveRailLeft(scroller) : null
         const geometry = scrollRailGeometry(hostRect, {
             maxScroll,
             minScroll: Math.min(...measured.map((stop) => stop.scrollTop)),
+            left: Number.isFinite(railLeft) ? railLeft : null,
         })
         if (geometry.span < SCROLL_RAIL_MIN_OVERFLOW) {
             layoutRef.current = null
@@ -108,7 +131,7 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
         const next = { geometry, stops }
         setLayout((prev) => (layoutSignature(prev) === layoutSignature(next) ? prev : next))
         layoutRef.current = next
-    }, [hostRef, overlayRef, isActive, panels])
+    }, [hostRef, overlayRef, isActive, panels, resolveAnchor, anchorGap, resolveRailLeft])
 
     // Panels grow for a while after they mount as their tracks lay out, which
     // moves every dot below them, so the rail is remeasured from the page rather
@@ -317,10 +340,10 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
             // Chrome, not track surface: the view's wheel router and its
             // drag-to-scroll both stand down over anything marked this way.
             data-browser-controls="true"
-            data-tour-id="browser-scroll-rail"
+            data-tour-id={tourId}
             role="slider"
             aria-orientation="vertical"
-            aria-label="Browser position"
+            aria-label={ariaLabel}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
@@ -361,7 +384,7 @@ export default function BrowserScrollRail({ panels, hostRef, overlayRef, onJump,
                     tabIndex={-1}
                     aria-hidden="true"
                     data-rail-stop={stop.key}
-                    data-tour-id={`browser-scroll-rail-genome-${stop.tourId || stop.key}`}
+                    data-tour-id={`${stopTourPrefix}${stop.tourId || stop.key}`}
                     className={`browser-scroll-rail-stop ${index === activeIndex ? 'current' : ''} ${index === candidateIndex ? 'candidate' : ''}`}
                     style={{ top: stop.offset, '--dot': stop.color }}
                 >

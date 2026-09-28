@@ -1,18 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react'
 import { trackAchievement } from '../achievements/tracker.js'
 import { LOCKED_ICON_PATH } from '../utils/lockIcons'
 import { FONT_MONO } from '../utils/typography'
-import TranscriptSplicingHeatmap from './TranscriptSplicingHeatmap'
-import FeatureExplorerExonsPanel from './FeatureExplorerExonsPanel'
-import FeatureExplorerSequencesPanel from './FeatureExplorerSequencesPanel'
-import FeatureExplorerProteinsPanel from './FeatureExplorerProteinsPanel'
-import FeatureExplorerStructurePanel from './FeatureExplorerStructurePanel'
-import ExportSequencesPanel from './ExportSequencesPanel'
-import FeatureExplorerGenomeStrip from './FeatureExplorerGenomeStrip'
+import TranscriptSplicingHeatmapBase, { heatColorFromFraction } from './TranscriptSplicingHeatmap'
+import { computeExonCoverage, exonCoverageProfile } from '../utils/exonCoverage'
+import FeatureExplorerExonsPanelBase from './FeatureExplorerExonsPanel'
+import FeatureExplorerSequencesPanelBase from './FeatureExplorerSequencesPanel'
+import FeatureExplorerProteinsPanelBase from './FeatureExplorerProteinsPanel'
+import FeatureExplorerStructurePanelBase from './FeatureExplorerStructurePanel'
+import ExportSequencesPanelBase from './ExportSequencesPanel'
+import GenomeTool from './sequence-view/GenomeTool'
+import './sequence-view/controls.css'
+import { genomePillLabels } from './GenomePill'
+import { genomeColorResolver } from '../genomeColorSchemes'
+import { getGenomeKey } from '../utils/genomeIdentity'
 import ScreenshotExportModal from './ScreenshotExportModal'
+import BrowserScrollRail from './BrowserScrollRail'
+import { SCROLL_RAIL_WIDTH } from '../utils/browserScrollRail'
 import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
 import {
   buildTranscriptSegments,
+  intronFlankRanges,
   orderedExonsFivePrimeToThreePrime,
   orientedBoundaries,
 } from './featureExplorerTranscriptGeometry'
@@ -34,6 +42,26 @@ import {
   buildSvgDocument,
   rasterizeSvgMarkup,
 } from '../utils/screenshotExport'
+// The panels below the transcript tracks do not depend on the tracks' zoom or
+// hover state, so they are memoised: a redraw of the tracks (every committed
+// zoom, every exon hover) does not re-render thousands of elements they own.
+// Their callback props come from useStableCallback for the same reason.
+const TranscriptSplicingHeatmap = memo(TranscriptSplicingHeatmapBase)
+const FeatureExplorerExonsPanel = memo(FeatureExplorerExonsPanelBase)
+const FeatureExplorerSequencesPanel = memo(FeatureExplorerSequencesPanelBase)
+const FeatureExplorerProteinsPanel = memo(FeatureExplorerProteinsPanelBase)
+const FeatureExplorerStructurePanel = memo(FeatureExplorerStructurePanelBase)
+const ExportSequencesPanel = memo(ExportSequencesPanelBase)
+
+/** A function whose identity never changes but which always calls the latest `fn`. */
+function useStableCallback(fn) {
+  const ref = useRef(fn)
+  useLayoutEffect(() => {
+    ref.current = fn
+  })
+  return useCallback((...args) => ref.current?.(...args), [])
+}
+
 const BROWSER_COLORS = {
   light: {
     // Same greys as the genome browser ruler, sampled from www.ensembl.org.
@@ -53,6 +81,21 @@ const BROWSER_COLORS = {
 }
 const TRANSCRIPT_TRACK_ROW_HEIGHT = 42
 const TRANSCRIPT_TRACK_MIN_VIEW_SPAN_BP = 24
+// How long a zoom or pan has to pause before the rows are redrawn at the new
+// view. Until then the drawn rows are moved with a transform (see
+// applyTranscriptViewPreview), so a gesture costs no React renders at all.
+const TRANSCRIPT_VIEW_COMMIT_IDLE_MS = 110
+// Wheel zoom draws the point it started on towards the middle of the track.
+// Per step the point's distance from the centre is multiplied by
+// exp(-PULL * |ln(zoom factor)|), so the pull depends on how far the view has
+// zoomed, not on how many wheel events that took: zooming 2x brings the point
+// about 65% of the way to the centre, 4x about 88%.
+const TRANSCRIPT_ZOOM_CENTRE_PULL = 1.5
+// The point being zoomed on is kept while the pointer stays put. Otherwise each
+// step would pick up whatever had just slid under the pointer, and zooming at
+// the edge of the track would turn into a steady pan.
+const TRANSCRIPT_ZOOM_ANCHOR_MOVE_PX = 4
+const TRANSCRIPT_ZOOM_ANCHOR_IDLE_MS = 800
 
 /**
  * The transcript track spans one gene, not a chromosome, so the genome
@@ -63,32 +106,73 @@ const TRANSCRIPT_TRACK_BROWSING_TUNING = Object.freeze({
   zoomSensitivity: 0.00195,
   pinchSensitivity: 0.00195,
   panAmplification: 1,
+  // Zooming out past the whole gene should stop, not start scrolling the page.
+  // A scroll that began outside the panel still passes through (see the
+  // window-capture listener on the track viewport).
+  zoomAtExtentHandoff: false,
 })
 const TRANSCRIPT_TRACK_BASEBLOCK_MIN_PX_PER_BP = 1.1
 const TRANSCRIPT_TRACK_BASEBLOCK_MAX_SPAN_BP = 2200
 const TRANSCRIPT_TRACK_BASEBLOCK_MAX_COUNT = 1800
 const TRANSCRIPT_TRACK_BASETEXT_MIN_PX_PER_BP = 8
 const TRANSCRIPT_TRACK_BASETEXT_MAX_COUNT = 420
+// Intron bases shown either side of each exon–intron boundary once individual
+// bases are drawn, so the splice sites can be read.
+const TRANSCRIPT_TRACK_INTRON_FLANK_BP = 10
+// What one sequence request may cover (the backend's limit is 100 kb), and how
+// far past the gene's ends to fetch so the intron flanks at its ends are there.
+const TRANSCRIPT_SEQUENCE_MAX_FETCH_BP = 99000
+const TRANSCRIPT_SEQUENCE_FLANK_BP = 200
 const FEATURE_SECTION_JUMPS = [
   { key: 'genes', label: 'Genes' },
-  { key: 'transcript', label: 'Transcript' },
+  { key: 'transcript', label: 'Transcripts' },
   { key: 'exons', label: 'Exons' },
   { key: 'proteins', label: 'Proteins' },
   { key: 'structure', label: 'Structure' },
   { key: 'export', label: 'Export' },
 ]
 
-// The genome strip is a browsing aid for the top of the page. Once the user has
-// scrolled into the feature sections it is only costing vertical space, so it
-// retreats into the header bar and returns when they scroll back up. The two
-// thresholds give it hysteresis so a strip that is collapsing (which shortens
-// the content and nudges scrollTop) cannot immediately re-expand itself.
-const GENOME_STRIP_COLLAPSE_SCROLL = 24
-const GENOME_STRIP_EXPAND_SCROLL = 8
-
 const SPLICE_LOCK_ICON_SIZE = 21
 const SPLICE_LOCK_GUTTER_WIDTH = 28
+// The exon coverage heatmap row pinned above the transcripts. It shares the
+// transcript rows' expand/collapse set under this id, which no transcript has.
+const EXON_COVERAGE_ROW_ID = '__exon_coverage__'
+const EXON_COVERAGE_ROW_LABEL = 'Exon coverage heatmap'
+const EXON_COVERAGE_LEGEND_GRADIENT = 'linear-gradient(90deg, #3b82f6 0%, #8b5cf6 33%, #f59e0b 66%, #ef4444 100%)'
 const BASE_COMPLEMENT_MAP = { A: 'T', C: 'G', G: 'C', T: 'A', N: 'N' }
+
+/** `top` laid over `bottom` at `alpha`, as one opaque `#rrggbb`. */
+function blendHexColor(top, bottom, alpha) {
+  const a = clamp(Number(alpha) || 0, 0, 1)
+  const t = parseInt(String(top || '').replace('#', ''), 16)
+  const b = parseInt(String(bottom || '').replace('#', ''), 16)
+  if (!Number.isFinite(t) || !Number.isFinite(b)) return top
+  const mix = (shift) => Math.round((((t >> shift) & 255) * a) + (((b >> shift) & 255) * (1 - a)))
+  return `#${[16, 8, 0].map((shift) => mix(shift).toString(16).padStart(2, '0')).join('')}`
+}
+
+/** Near-black or near-white, whichever reads better on a `#rrggbb` fill. */
+function readableTextOn(hex) {
+  const n = parseInt(String(hex || '').replace('#', ''), 16)
+  if (!Number.isFinite(n)) return '#111827'
+  const channel = (v) => {
+    const c = v / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  }
+  const luminance = (0.2126 * channel((n >> 16) & 255)) + (0.7152 * channel((n >> 8) & 255)) + (0.0722 * channel(n & 255))
+  return luminance > 0.33 ? '#111827' : '#ffffff'
+}
+
+/** Which of `positions` fall in any of the inclusive `ranges`, within [from, to]. */
+function positionsInRanges(ranges, from, to) {
+  const out = new Set()
+  for (const range of ranges) {
+    const start = Math.max(from, range.start)
+    const end = Math.min(to, range.end)
+    for (let pos = start; pos <= end; pos += 1) out.add(pos)
+  }
+  return out
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -162,13 +246,6 @@ function transcriptDisplayId(rawId) {
   const text = String(rawId || '')
   if (text.length <= 26) return text
   return `${text.slice(0, 23)}...`
-}
-
-function formatAssemblyCompact(assembly) {
-  const text = String(assembly || '')
-  if (!text) return ''
-  if (text.length <= 10) return text
-  return `${text.slice(0, 7)}...`
 }
 
 function formatStrand(strand) {
@@ -360,6 +437,134 @@ function transcriptInfoRowCount(metadata, codonStatus) {
   return rows
 }
 
+function formatPercent(fraction) {
+  const value = Number(fraction)
+  if (!Number.isFinite(value)) return '—'
+  const pct = value * 100
+  if (pct > 0 && pct < 0.1) return '<0.1%'
+  return `${pct.toFixed(1).replace(/\.0$/, '')}%`
+}
+
+function formatBasesWithShare(bases, whole) {
+  const b = Number(bases) || 0
+  const w = Number(whole) || 0
+  return `${formatCoord(b)} bp${w > 0 ? ` (${formatPercent(b / w)})` : ''}`
+}
+
+const EXON_COVERAGE_TEXT_ROW_PX = 20
+const EXON_COVERAGE_CHART_ROW_PX = 84
+
+/**
+ * The exon coverage row's info panel, as grid rows of one or two cells. Built
+ * once and used both to draw the panel and to size the row, so the two cannot
+ * disagree about how tall it is. Each cell's `hint` is its hover explanation:
+ * one or two short sentences on what the number is, not how to read the gene.
+ */
+function exonCoverageInfoRows(stats, chrom, profile = []) {
+  const s = stats || {}
+  const n = Number(s.activeCount) || 0
+  const rows = [[{
+    key: 'basis',
+    label: 'Based on',
+    value: `${formatCoord(n)} active transcript${n === 1 ? '' : 's'} of ${formatCoord(s.totalCount)} total`,
+    hint: 'Every figure here uses only the transcripts switched on in the list. Switch transcripts on or off to change them.',
+  }]]
+  if (n === 0 || !s.spanLength) {
+    rows.push([{ key: 'empty', label: '', value: 'Activate a transcript to see its exon coverage.' }])
+    return rows
+  }
+  const chromLabel = String(chrom || '').trim()
+  const covered = Number(s.coveredBases) || 0
+  rows.push([
+    {
+      key: 'span',
+      label: 'Span',
+      value: `${chromLabel ? `${chromLabel}:` : ''}${formatCoord(s.spanStart)}–${formatCoord(s.spanEnd)}`,
+      hint: 'From the first base to the last base of any active transcript.',
+    },
+    { key: 'span-length', label: 'Span length', value: `${formatCoord(s.spanLength)} bp`, hint: 'Number of bases in the span, introns included.' },
+  ])
+  rows.push([
+    {
+      key: 'covered',
+      label: 'Exonic bases',
+      value: formatBasesWithShare(covered, s.spanLength),
+      hint: 'Bases in an exon of at least one active transcript, as a share of the span.',
+    },
+    {
+      key: 'uncovered',
+      label: 'Non-exonic bases',
+      value: formatBasesWithShare(s.uncoveredBases, s.spanLength),
+      hint: 'Bases in the span that are intronic in every active transcript, as a share of the span.',
+    },
+  ])
+  rows.push([
+    {
+      key: 'mean',
+      label: 'Mean coverage',
+      value: `${formatPercent(s.meanCoverageFraction)} of active transcripts`,
+      hint: 'On average, the share of active transcripts that include an exonic base. 100% means every exonic base is in every active transcript.',
+    },
+    {
+      key: 'depth',
+      label: 'Mean depth',
+      value: `${(Number(s.meanTranscriptsPerCoveredBase) || 0).toFixed(2)} transcripts per exonic base`,
+      hint: 'The same average as a count: how many active transcripts include a typical exonic base.',
+    },
+  ])
+  rows.push([
+    {
+      key: 'blocks',
+      label: 'Exonic blocks',
+      value: formatCoord(s.exonicBlocks),
+      hint: 'Separate stretches of exon once the exons of all active transcripts are overlaid.',
+    },
+    {
+      key: 'peak',
+      label: 'Peak depth',
+      value: `${formatCoord(s.maxCount)} of ${formatCoord(n)}`,
+      hint: 'The most active transcripts that share any one base.',
+    },
+  ])
+  const shared = [{
+    key: 'constitutive',
+    label: 'In every active transcript',
+    value: formatBasesWithShare(s.constitutiveBases, covered),
+    hint: 'Exonic bases present in all active transcripts, as a share of exonic bases.',
+  }]
+  if (n > 1) {
+    shared.push({
+      key: 'unique',
+      label: 'In only one transcript',
+      value: formatBasesWithShare(s.uniqueBases, covered),
+      hint: 'Exonic bases found in just one active transcript, as a share of exonic bases.',
+    })
+  }
+  rows.push(shared)
+  rows.push([{
+    key: 'coding',
+    label: 'Coding in any transcript',
+    value: formatBasesWithShare(s.codingBases, covered),
+    hint: 'Exonic bases inside the coding sequence of at least one active transcript, as a share of exonic bases.',
+  }])
+  if (Array.isArray(profile) && profile.length > 0) {
+    rows.push([{
+      key: 'profile',
+      type: 'chart',
+      height: EXON_COVERAGE_CHART_ROW_PX,
+      label: 'Coverage along the gene',
+      hint: `The span cut into ${formatCoord(profile.length)} equal slices from 5′ to 3′. `
+        + 'Bar height is the average coverage of the exonic bases in each slice; a gap means no exon there.',
+      bins: profile,
+    }])
+  }
+  return rows
+}
+
+function exonCoverageInfoPanelHeight(rows) {
+  return rows.reduce((sum, row) => sum + (row[0]?.height || EXON_COVERAGE_TEXT_ROW_PX), 0) + 14
+}
+
 function transcriptInfoPanelHeight(metadata, codonStatus) {
   const rows = transcriptInfoRowCount(metadata, codonStatus)
   if (rows <= 0) return 0
@@ -368,9 +573,24 @@ function transcriptInfoPanelHeight(metadata, codonStatus) {
 
 function getFeatureBoundaryCoords(segment, featureType) {
   if (featureType === 'cds') {
-    return { featureStart: Number(segment.start), featureEnd: Number(segment.end) }
+    // Segment ends are half-open (see buildTranscriptSegments); boundaries are
+    // inclusive, like the exon's own, so the two kinds compare alike.
+    return { featureStart: Number(segment.start), featureEnd: Number(segment.end) - 1 }
   }
   return { featureStart: Number(segment.exonStart), featureEnd: Number(segment.exonEnd) }
+}
+
+/**
+ * Where an inclusive boundary base meets its neighbour, as a coordinate to draw
+ * at. A feature's genomic-left base is drawn from its own start; its
+ * genomic-right base runs to the next position, so that last base is inside the
+ * line rather than beyond it. Which of 5' and 3' is on the right depends on the
+ * strand.
+ */
+function boundaryEdgeCoord(coord, isFivePrime, strand) {
+  const value = Number(coord)
+  const onRight = strand === '-' ? isFivePrime : !isFivePrime
+  return onRight ? value + 1 : value
 }
 
 function exonKeyFromBounds(fivePrime, threePrime) {
@@ -411,6 +631,74 @@ function segmentBoundaryMatch(segment, transcriptId, hoveredBoundaryFeature, str
     fivePrime: boundaries.fivePrime,
     threePrime: boundaries.threePrime,
   }
+}
+
+/**
+ * A small bar chart of exon coverage along the gene, 5' on the left as the
+ * transcript rows draw it. Each bar is one slice of the span; its height is
+ * the mean coverage of that slice's exonic bases, in the heatmap's colours.
+ */
+function ExonCoverageProfileChart({ cell, stats, strand, chrom, isLight }) {
+  const bins = Array.isArray(cell?.bins) ? cell.bins : []
+  const chartHeight = 40
+  const muted = isLight ? 'text-gray-500' : 'text-gray-400'
+  const guide = isLight ? '#d1d5db' : '#4b5563'
+  const chromLabel = String(chrom || '').trim()
+  const fivePrime = strand === '-' ? stats?.spanEnd : stats?.spanStart
+  const threePrime = strand === '-' ? stats?.spanStart : stats?.spanEnd
+  return (
+    <div className="col-span-2 flex flex-col" style={{ height: `${cell.height}px` }}>
+      <div className="h-5 truncate" title={cell.hint}>{cell.label}</div>
+      <div className="flex items-stretch gap-1.5">
+        <div className={`w-8 shrink-0 flex flex-col justify-between text-right text-[9px] leading-none ${muted}`} style={{ height: `${chartHeight + 4}px` }}>
+          <span>100%</span>
+          <span>50%</span>
+          <span>0%</span>
+        </div>
+        <svg
+          className="flex-1 min-w-0"
+          style={{ height: `${chartHeight + 4}px` }}
+          viewBox={`0 -2 ${bins.length} ${chartHeight + 4}`}
+          preserveAspectRatio="none"
+        >
+          {[0, chartHeight / 2].map((y) => (
+            <line key={`guide-${y}`} x1={0} x2={bins.length} y1={y} y2={y} stroke={guide} strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
+          ))}
+          <line x1={0} x2={bins.length} y1={chartHeight} y2={chartHeight} stroke={guide} vectorEffect="non-scaling-stroke" />
+          {bins.map((bin, index) => {
+            const hasExon = bin.meanCoverageFraction !== null && bin.meanCoverageFraction !== undefined
+            const barHeight = hasExon ? Math.max(1.5, bin.meanCoverageFraction * chartHeight) : 0
+            const range = `${chromLabel ? `${chromLabel}:` : ''}${formatCoord(Math.min(bin.start, bin.end))}–${formatCoord(Math.max(bin.start, bin.end))}`
+            return (
+              <g key={`profile-${bin.start}`}>
+                {hasExon && (
+                  <rect
+                    x={index + 0.1}
+                    y={chartHeight - barHeight}
+                    width={0.8}
+                    height={barHeight}
+                    fill={heatColorFromFraction(bin.meanCoverageFraction)}
+                    pointerEvents="none"
+                  />
+                )}
+                <rect x={index} y={-2} width={1} height={chartHeight + 4} fill="transparent">
+                  <title>
+                    {hasExon
+                      ? `${range} · ${formatCoord(bin.exonicBases)} of ${formatCoord(bin.length)} bp exonic · ${formatPercent(bin.meanCoverageFraction)} avg coverage`
+                      : `${range} · no exonic bases`}
+                  </title>
+                </rect>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+      <div className={`flex justify-between pl-[38px] text-[9px] leading-4 ${muted}`}>
+        <span>5′ · {formatCoord(fivePrime)}</span>
+        <span>{formatCoord(threePrime)} · 3′</span>
+      </div>
+    </div>
+  )
 }
 
 function TranscriptRuler({
@@ -513,7 +801,7 @@ export default function FeatureExplorerView({
   focusGene = null,
   seedQuery = '',
   onFocusGene = null,
-  otherGenomes = [],
+  genomes = [],
   focusGeneByGenome = {},
   onSelectGenome = null,
   screenshotMode = false,
@@ -525,20 +813,34 @@ export default function FeatureExplorerView({
   const palette = BROWSER_COLORS[isLight ? 'light' : 'dark']
   const activeGenomeKey = String(genomeKey || '').trim()
   const hasGenome = Boolean(activeGenomeKey && selectedGenome?.files?.gff3)
-  const selectedGenomeName = String(
-    selectedGenome?.common_name ||
-    selectedGenome?.scientific_name ||
-    selectedGenome?.species_key ||
-    ''
-  ).trim()
-  const selectedGenomeAssemblyShort = formatAssemblyCompact(selectedGenome?.assembly_name || selectedGenome?.assembly || '')
-  const selectedGenomePillLabel = selectedGenomeAssemblyShort
-    ? `${selectedGenomeName} - ${selectedGenomeAssemblyShort}`
-    : selectedGenomeName
-  const selectedGenomeTooltip = [
-    String(selectedGenome?.scientific_name || selectedGenome?.common_name || selectedGenome?.species_key || 'Genome').trim(),
-    String(selectedGenome?.assembly_name || selectedGenome?.assembly || '').trim(),
-  ].filter(Boolean).join(' | ')
+  // The genome pill and the list behind it, built the way the sequence view
+  // builds its own so the two views wear and switch genomes identically. What
+  // each genome would open on is its focused gene.
+  const resolveGenomeColour = useMemo(() => genomeColorResolver(config), [config])
+  const genomeOptions = useMemo(
+    () => (Array.isArray(genomes) ? genomes : []).map((item) => {
+      const key = getGenomeKey(item)
+      const name = item?.display_name || item?.species || key
+      const gene = focusGeneByGenome?.[key] || null
+      return {
+        key,
+        label: name,
+        species: item,
+        pill: {
+          name,
+          assembly: item?.assembly_name || item?.assembly || '',
+          colour: resolveGenomeColour(item),
+          tooltip: genomePillLabels(item).pillTooltip,
+        },
+        at: String(gene?.name || gene?.id || '').trim(),
+      }
+    }).filter((item) => item.key),
+    [genomes, focusGeneByGenome, resolveGenomeColour],
+  )
+  const handleGenomeOptionChange = useCallback((key) => {
+    const option = genomeOptions.find((item) => item.key === key)
+    if (option) onSelectGenome?.(option.species)
+  }, [genomeOptions, onSelectGenome])
   const externalFocusGeneId = String(focusGene?.id || '').trim()
   const externalFocusGeneName = String(focusGene?.name || '').trim()
   const externalFocusQuery = (externalFocusGeneName || externalFocusGeneId).trim()
@@ -549,7 +851,8 @@ export default function FeatureExplorerView({
   const [manualOrderIds, setManualOrderIds] = useState([])
   const [expandedTranscriptIds, setExpandedTranscriptIds] = useState(new Set())
   const [collapseInactiveRows, setCollapseInactiveRows] = useState(true)
-  const [genomeStripCollapsed, setGenomeStripCollapsed] = useState(false)
+  const [exonCoverageRowActive, setExonCoverageRowActive] = useState(true)
+  const [exonCoverageRowHovered, setExonCoverageRowHovered] = useState(false)
   const [geneSectionCollapsed, setGeneSectionCollapsed] = useState(false)
   const [transcriptsSectionCollapsed, setTranscriptsSectionCollapsed] = useState(false)
   const [transcriptListCollapsed, setTranscriptListCollapsed] = useState(false)
@@ -557,6 +860,8 @@ export default function FeatureExplorerView({
   const [transcriptSelectionRect, setTranscriptSelectionRect] = useState(null)
   const [transcriptViewRange, setTranscriptViewRange] = useState(null)
   const [transcriptDetailMode, setTranscriptDetailMode] = useState('segment')
+  const transcriptDetailModeRef = useRef('segment')
+  transcriptDetailModeRef.current = transcriptDetailMode
   const [transcriptVisibleSequence, setTranscriptVisibleSequence] = useState({
     key: '',
     start: 0,
@@ -595,7 +900,13 @@ export default function FeatureExplorerView({
   const liveTranscriptViewStartRef = useRef(null)
   const liveTranscriptViewEndRef = useRef(null)
   const pendingViewRangeRafRef = useRef(0)
+  // The view the rows were last rendered at, the pending commit of the live
+  // view to state, and whether the live view is the whole gene.
+  const committedTranscriptViewRef = useRef({ start: null, end: null })
+  const transcriptViewCommitTimerRef = useRef(0)
+  const liveTranscriptViewIsFullRef = useRef(true)
   const transcriptWheelHandlerRef = useRef(null)
+  const transcriptZoomAnchorRef = useRef(null)
   const transcriptWheelGestureRef = useRef({ lastTs: 0, kind: '', direction: 0, source: '', mode: '' })
   const browsingSchemeId = config?.browsing_control_scheme
   const browsingControls = useMemo(
@@ -603,8 +914,16 @@ export default function FeatureExplorerView({
     [browsingSchemeId]
   )
   const transcriptSelectionRectRef = useRef(null)
+  const transcriptSequenceRequestKeyRef = useRef('')
   const transcriptVisibleSequenceReqRef = useRef(0)
   const featureExplorerRootRef = useRef(null)
+  // Menus are portalled into the root so they inherit its tokens. Held as state
+  // so the render after mount already has it.
+  const [genomeMenuRoot, setGenomeMenuRoot] = useState(null)
+  const setFeatureExplorerRoot = useCallback((node) => {
+    featureExplorerRootRef.current = node
+    setGenomeMenuRoot(node)
+  }, [])
   const contentScrollRef = useRef(null)
   const screenshotContentRef = useRef(null)
   const geneSectionRef = useRef(null)
@@ -657,6 +976,7 @@ export default function FeatureExplorerView({
     setExpandedTranscriptIds(new Set(defaultExpandedTranscriptIds(transcripts)))
     setCodonStatusById({})
     setCollapseInactiveRows(true)
+    setExonCoverageRowActive(true)
   }, [])
 
   const resolveGene = useCallback(async (rawQuery, options = {}) => {
@@ -1268,7 +1588,7 @@ export default function FeatureExplorerView({
     const s = Number(tx?.start)
     const e = Number(tx?.end)
     return Number.isFinite(s) && Number.isFinite(e) ? Math.max(acc, s, e) : acc
-  }, Number(longestTranscript?.end || 0))
+  }, Number(longestTranscript?.end || 0)) + 1 // past the last base, so it is drawn whole
   const transcriptViewStart = Number.isFinite(transcriptViewRange?.start)
     ? Number(transcriptViewRange.start)
     : fullTranscriptViewStart
@@ -1278,6 +1598,7 @@ export default function FeatureExplorerView({
 
   const currentTranscriptSpan = Math.max(1, Math.abs(transcriptViewEnd - transcriptViewStart))
   const transcriptPxPerBp = trackInnerWidth / Math.max(1, currentTranscriptSpan)
+  const transcriptBaseRenderMargin = Math.ceil(currentTranscriptSpan)
   const longestLength = Math.max(1, transcriptLength(longestTranscript))
   const reverseOrientation = String(longestTranscript?.strand || resolved?.gene?.strand || '+') === '-'
   const hasTranscriptZoom = (
@@ -1296,10 +1617,104 @@ export default function FeatureExplorerView({
   }, [transcriptPxPerBp, currentTranscriptSpan])
 
   useLayoutEffect(() => {
-    if (pendingViewRangeRafRef.current) return
+    // Mid-gesture the live view is ahead of state; state catching up to an
+    // older view must not drag it back.
+    if (pendingViewRangeRafRef.current || transcriptViewCommitTimerRef.current || transcriptZoomAnimationRef.current) return
     liveTranscriptViewStartRef.current = transcriptViewStart
     liveTranscriptViewEndRef.current = transcriptViewEnd
-  }, [transcriptViewStart, transcriptViewEnd])
+    liveTranscriptViewIsFullRef.current = !transcriptViewRange
+  }, [transcriptViewStart, transcriptViewEnd, transcriptViewRange])
+
+  /**
+   * Moves the drawn rows from the view they were rendered at to the live view,
+   * without rendering.
+   *
+   * Every row's geometry is drawn by mapCoordToTrack, which is linear in the
+   * genomic coordinate, so going from one view to another is the same affine
+   * map for every element: x' = a·x + b. It is written straight onto each row's
+   * zoom layer, which is how a gesture over dozens of transcripts stays at frame
+   * rate. Base letters would be stretched by it, so they are hidden until the
+   * view is committed and the rows redrawn exactly.
+   */
+  const applyTranscriptViewPreview = useCallback(() => {
+    const viewport = transcriptTrackViewportRef.current
+    if (!viewport) return
+    const committed = committedTranscriptViewRef.current
+    const liveStart = liveTranscriptViewStartRef.current
+    const liveEnd = liveTranscriptViewEndRef.current
+    let transform = ''
+    let scale = 1
+    let offset = 0
+    if (
+      Number.isFinite(committed.start) && Number.isFinite(committed.end) &&
+      Number.isFinite(liveStart) && Number.isFinite(liveEnd) &&
+      (Math.abs(liveStart - committed.start) > 1e-9 || Math.abs(liveEnd - committed.end) > 1e-9)
+    ) {
+      const span = Math.max(1e-9, Math.abs(committed.end - committed.start))
+      const nextSpan = Math.max(1e-9, Math.abs(liveEnd - liveStart))
+      scale = span / nextSpan
+      const shift = trackInnerWidth * (committed.start - liveStart) / nextSpan
+      offset = reverseOrientation
+        ? (trackMarginLeft + trackInnerWidth) - shift - (scale * (trackMarginLeft + trackInnerWidth))
+        : trackMarginLeft + shift - (scale * trackMarginLeft)
+      transform = `matrix(${scale} 0 0 1 ${offset} 0)`
+    }
+    for (const layer of viewport.querySelectorAll('[data-transcript-zoom-layer="true"]')) {
+      if (transform) layer.setAttribute('transform', transform)
+      else layer.removeAttribute('transform')
+    }
+    // A pure pan only shifts the rows, so base letters can stay; a zoom would
+    // stretch them.
+    const isPan = Math.abs(scale - 1) < 1e-9
+    if (transform) viewport.setAttribute('data-transcript-previewing', isPan ? 'pan' : 'zoom')
+    else viewport.removeAttribute('data-transcript-previewing')
+    return { isPan, offset }
+  }, [reverseOrientation, trackInnerWidth])
+
+  // After every render: the rows now show the committed view, so the preview is
+  // measured from there. Rows added by the render get the transform too.
+  useLayoutEffect(() => {
+    committedTranscriptViewRef.current = { start: transcriptViewStart, end: transcriptViewEnd }
+    applyTranscriptViewPreview()
+  })
+
+  const commitLiveTranscriptView = useCallback(() => {
+    if (transcriptViewCommitTimerRef.current) {
+      clearTimeout(transcriptViewCommitTimerRef.current)
+      transcriptViewCommitTimerRef.current = 0
+    }
+    const start = liveTranscriptViewStartRef.current
+    const end = liveTranscriptViewEndRef.current
+    if (liveTranscriptViewIsFullRef.current || !Number.isFinite(start) || !Number.isFinite(end)) {
+      setTranscriptViewRange(null)
+    } else {
+      setTranscriptViewRange({ start, end })
+    }
+  }, [])
+
+  const previewLiveTranscriptView = useCallback(() => {
+    if (!pendingViewRangeRafRef.current) {
+      pendingViewRangeRafRef.current = requestAnimationFrame(() => {
+        pendingViewRangeRafRef.current = 0
+        const preview = applyTranscriptViewPreview()
+        // At base level the bases are only drawn a screen's width beyond the
+        // view. A pan that gets most of the way there is redrawn straight away
+        // rather than scrolling into blank track while the gesture goes on.
+        if (
+          transcriptDetailModeRef.current === 'base' &&
+          preview?.isPan &&
+          Math.abs(preview.offset) > trackInnerWidth * 0.6
+        ) {
+          commitLiveTranscriptView()
+        }
+      })
+    }
+    if (transcriptViewCommitTimerRef.current) clearTimeout(transcriptViewCommitTimerRef.current)
+    transcriptViewCommitTimerRef.current = setTimeout(() => {
+      transcriptViewCommitTimerRef.current = 0
+      commitLiveTranscriptView()
+    }, TRANSCRIPT_VIEW_COMMIT_IDLE_MS)
+  }, [applyTranscriptViewPreview, commitLiveTranscriptView, trackInnerWidth])
 
   const stopTranscriptZoomAnimation = useCallback(() => {
     if (!transcriptZoomAnimationRef.current) return
@@ -1325,6 +1740,10 @@ export default function FeatureExplorerView({
     const fromStart = liveTranscriptViewStartRef.current ?? fullTranscriptViewStart
     const fromEnd = liveTranscriptViewEndRef.current ?? fullTranscriptViewEnd
     stopTranscriptZoomAnimation()
+    if (transcriptViewCommitTimerRef.current) {
+      clearTimeout(transcriptViewCommitTimerRef.current)
+      transcriptViewCommitTimerRef.current = 0
+    }
 
     const targetMatchesFull = (
       Math.abs(clampedTargetStart - fullTranscriptViewStart) < 1e-6 &&
@@ -1338,30 +1757,33 @@ export default function FeatureExplorerView({
       const end = lerp(fromEnd, clampedTargetEnd, t)
       liveTranscriptViewStartRef.current = start
       liveTranscriptViewEndRef.current = end
-      setTranscriptViewRange({ start, end })
+      liveTranscriptViewIsFullRef.current = false
       if (tRaw >= 1) {
         transcriptZoomAnimationRef.current = 0
-        if (targetMatchesFull) {
-          setTranscriptViewRange(null)
-        } else {
-          setTranscriptViewRange({ start: clampedTargetStart, end: clampedTargetEnd })
-        }
+        liveTranscriptViewStartRef.current = clampedTargetStart
+        liveTranscriptViewEndRef.current = clampedTargetEnd
+        liveTranscriptViewIsFullRef.current = targetMatchesFull
+        commitLiveTranscriptView()
         return
       }
+      applyTranscriptViewPreview()
       transcriptZoomAnimationRef.current = requestAnimationFrame(step)
     }
     transcriptZoomAnimationRef.current = requestAnimationFrame(step)
-  }, [fullTranscriptViewStart, fullTranscriptViewEnd, stopTranscriptZoomAnimation])
+  }, [fullTranscriptViewStart, fullTranscriptViewEnd, stopTranscriptZoomAnimation, applyTranscriptViewPreview, commitLiveTranscriptView])
 
   const resetTranscriptZoom = useCallback((animated = true) => {
-    if (!hasTranscriptZoom && !transcriptViewRange) return
+    if (!hasTranscriptZoom && !transcriptViewRange && liveTranscriptViewIsFullRef.current) return
     if (animated) {
       animateTranscriptViewTo(fullTranscriptViewStart, fullTranscriptViewEnd, 200)
     } else {
       stopTranscriptZoomAnimation()
-      setTranscriptViewRange(null)
+      liveTranscriptViewIsFullRef.current = true
+      liveTranscriptViewStartRef.current = fullTranscriptViewStart
+      liveTranscriptViewEndRef.current = fullTranscriptViewEnd
+      commitLiveTranscriptView()
     }
-  }, [hasTranscriptZoom, transcriptViewRange, animateTranscriptViewTo, fullTranscriptViewStart, fullTranscriptViewEnd, stopTranscriptZoomAnimation])
+  }, [hasTranscriptZoom, transcriptViewRange, animateTranscriptViewTo, fullTranscriptViewStart, fullTranscriptViewEnd, stopTranscriptZoomAnimation, commitLiveTranscriptView])
 
   const setTranscriptViewRangeImmediate = useCallback((nextStart, nextEnd) => {
     if (!Number.isFinite(fullTranscriptViewStart) || !Number.isFinite(fullTranscriptViewEnd)) {
@@ -1380,12 +1802,8 @@ export default function FeatureExplorerView({
     if (span >= fullSpan - 1e-6) {
       liveTranscriptViewStartRef.current = fullTranscriptViewStart
       liveTranscriptViewEndRef.current = fullTranscriptViewEnd
-      if (!pendingViewRangeRafRef.current) {
-        pendingViewRangeRafRef.current = requestAnimationFrame(() => {
-          pendingViewRangeRafRef.current = 0
-          setTranscriptViewRange(null)
-        })
-      }
+      liveTranscriptViewIsFullRef.current = true
+      previewLiveTranscriptView()
       return
     }
     let clampedStart = clamp(start, fullTranscriptViewStart, fullTranscriptViewEnd - span)
@@ -1397,14 +1815,9 @@ export default function FeatureExplorerView({
     // Update live refs immediately so subsequent wheel events read the correct position
     liveTranscriptViewStartRef.current = clampedStart
     liveTranscriptViewEndRef.current = clampedEnd
-    // Throttle React state updates to at most one per animation frame (max 60fps)
-    if (!pendingViewRangeRafRef.current) {
-      pendingViewRangeRafRef.current = requestAnimationFrame(() => {
-        pendingViewRangeRafRef.current = 0
-        setTranscriptViewRange({ start: liveTranscriptViewStartRef.current, end: liveTranscriptViewEndRef.current })
-      })
-    }
-  }, [fullTranscriptViewStart, fullTranscriptViewEnd])
+    liveTranscriptViewIsFullRef.current = false
+    previewLiveTranscriptView()
+  }, [fullTranscriptViewStart, fullTranscriptViewEnd, previewLiveTranscriptView])
 
   const mapCoordToTrack = useCallback((coord) => {
     const value = Number(coord)
@@ -1414,6 +1827,26 @@ export default function FeatureExplorerView({
     if (reverseOrientation) fraction = 1 - fraction
     return trackMarginLeft + (trackInnerWidth * fraction)
   }, [longestLength, transcriptViewStart, currentTranscriptSpan, reverseOrientation, trackInnerWidth])
+
+  // The base at a genomic position as the track shows it: complemented on a
+  // reverse-strand gene, and '' where the fetched sequence does not reach.
+  const trackBaseAt = useCallback((pos) => {
+    const sequence = String(transcriptVisibleSequence.sequence || '')
+    const index = pos - Number(transcriptVisibleSequence.start || 0)
+    if (index < 0 || index >= sequence.length) return ''
+    const base = String(sequence[index] || '').toUpperCase()
+    return reverseOrientation ? (BASE_COMPLEMENT_MAP[base] || base) : base
+  }, [transcriptVisibleSequence.sequence, transcriptVisibleSequence.start, reverseOrientation])
+
+  const trackBaseLettersReady = useCallback((from, to) => (
+    transcriptDetailMode === 'base' &&
+    transcriptPxPerBp >= TRANSCRIPT_TRACK_BASETEXT_MIN_PX_PER_BP &&
+    to >= from &&
+    ((to - from) + 1) <= TRANSCRIPT_TRACK_BASETEXT_MAX_COUNT &&
+    transcriptVisibleSequence.start <= from &&
+    transcriptVisibleSequence.end >= to &&
+    String(transcriptVisibleSequence.sequence || '').length > 0
+  ), [transcriptDetailMode, transcriptPxPerBp, transcriptVisibleSequence.start, transcriptVisibleSequence.end, transcriptVisibleSequence.sequence])
 
   const resolveTranscriptTrackSurfaceRect = useCallback((sourceNode = null) => {
     const viewport = transcriptTrackViewportRef.current
@@ -1503,15 +1936,39 @@ export default function FeatureExplorerView({
     if (intent.type === 'zoom') {
       const effectiveStart = liveStart ?? fullTranscriptViewStart
       const zoomSpan = clamp(liveSpan, minSpan, fullSpan)
-      const anchor = intent.anchor === 'center'
-        ? effectiveStart + (zoomSpan / 2)
-        : trackClientXToGenomicCoord(event.clientX, event.target)
+      let anchor
+      if (intent.anchor === 'center') {
+        anchor = effectiveStart + (zoomSpan / 2)
+      } else {
+        const now = wheel.ts || performance.now()
+        const held = transcriptZoomAnchorRef.current
+        const pointerStill = held
+          && Math.abs(event.clientX - held.clientX) <= TRANSCRIPT_ZOOM_ANCHOR_MOVE_PX
+          && Math.abs(event.clientY - held.clientY) <= TRANSCRIPT_ZOOM_ANCHOR_MOVE_PX
+          && (now - held.ts) <= TRANSCRIPT_ZOOM_ANCHOR_IDLE_MS
+        anchor = pointerStill ? held.coord : trackClientXToGenomicCoord(event.clientX, event.target)
+        if (Number.isFinite(anchor)) {
+          transcriptZoomAnchorRef.current = {
+            coord: anchor,
+            clientX: pointerStill ? held.clientX : event.clientX,
+            clientY: pointerStill ? held.clientY : event.clientY,
+            ts: now,
+          }
+        }
+      }
       if (!Number.isFinite(anchor)) return
       stopTranscriptZoomAnimation()
       let nextSpan = clamp(zoomSpan * intent.factor, minSpan, fullSpan)
       if (!Number.isFinite(nextSpan) || nextSpan <= 0) nextSpan = zoomSpan
       if (Math.abs(nextSpan - zoomSpan) < 1e-6) return
-      const anchorRatio = clamp((anchor - effectiveStart) / zoomSpan, 0, 1)
+      // Where the anchor sits across the view, drawn towards the middle in
+      // proportion to how much this step zoomed. A centred anchor keeps the
+      // old zoom-about-a-point behaviour.
+      const currentRatio = clamp((anchor - effectiveStart) / zoomSpan, 0, 1)
+      const pull = intent.anchor === 'center'
+        ? 0
+        : 1 - Math.exp(-TRANSCRIPT_ZOOM_CENTRE_PULL * Math.abs(Math.log(nextSpan / zoomSpan)))
+      const anchorRatio = currentRatio + ((0.5 - currentRatio) * pull)
       let nextStart = anchor - (anchorRatio * nextSpan)
       let nextEnd = nextStart + nextSpan
       if (nextStart < fullTranscriptViewStart) {
@@ -1577,43 +2034,56 @@ export default function FeatureExplorerView({
       }
       transcriptWheelGestureRef.current = {
         ...gesture,
-        source: viewport.contains(event.target) ? 'panel' : 'outside',
+        // An info box sits inside the track area but is reading matter, not
+        // track: a gesture that starts there scrolls the page, and keeps
+        // scrolling if the pointer then drifts onto a track.
+        source: viewport.contains(event.target) && !event.target?.closest?.('[data-transcript-info-panel="true"]')
+          ? 'panel'
+          : 'outside',
       }
     }
     window.addEventListener('wheel', onWindowWheelCapture, { passive: true, capture: true })
     return () => window.removeEventListener('wheel', onWindowWheelCapture, { capture: true })
   }, [])
 
+  // Sequence for the base letters. Fetched as soon as the track reaches
+  // base-level detail rather than when letters first fit, and kept when the
+  // view zooms back out. The whole gene is fetched when one request can hold it
+  // (the backend serves up to 100 kb at a time, in a few milliseconds), so
+  // panning and zooming at base level never wait on the network. A longer gene
+  // gets a window around the view, refilled before the view nears its edge.
   useEffect(() => {
     const chrom = String(resolved?.gene?.chrom || '').trim()
-    const shouldFetch = (
-      transcriptDetailMode === 'base' &&
-      transcriptPxPerBp >= TRANSCRIPT_TRACK_BASETEXT_MIN_PX_PER_BP &&
-      currentTranscriptSpan <= TRANSCRIPT_TRACK_BASETEXT_MAX_COUNT &&
-      Boolean(chrom)
-    )
-    if (!shouldFetch) {
-      setTranscriptVisibleSequence((prev) => (
-        prev.loading || prev.sequence || prev.key
-          ? { key: '', start: 0, end: 0, sequence: '', loading: false }
-          : prev
-      ))
-      return
-    }
+    if (transcriptDetailMode !== 'base' || !chrom) return
     const viewStart = Math.floor(Math.min(transcriptViewStart, transcriptViewEnd))
     const viewEnd = Math.ceil(Math.max(transcriptViewStart, transcriptViewEnd))
-    const fetchPadding = clamp(Math.round(currentTranscriptSpan * 0.4), 60, 720)
-    const rawStart = Math.max(1, viewStart - fetchPadding)
-    const rawEnd = Math.max(rawStart, viewEnd + fetchPadding)
-    const bucket = Math.max(12, Math.round(currentTranscriptSpan * 0.2))
-    const fetchStart = Math.max(1, Math.floor(rawStart / bucket) * bucket)
-    const fetchEnd = Math.max(fetchStart, (Math.ceil(rawEnd / bucket) * bucket))
+    const reach = Math.ceil(currentTranscriptSpan) * 2
+    const needStart = Math.max(1, viewStart - reach)
+    const needEnd = viewEnd + reach
+    const buffer = transcriptVisibleSequence
+    if (
+      buffer.sequence &&
+      String(buffer.key || '').startsWith(`${chrom}:`) &&
+      buffer.start <= needStart &&
+      buffer.end >= needEnd
+    ) return
+
+    const geneStart = Math.max(1, Math.floor(fullTranscriptViewStart) - TRANSCRIPT_SEQUENCE_FLANK_BP)
+    const geneEnd = Math.ceil(fullTranscriptViewEnd) + TRANSCRIPT_SEQUENCE_FLANK_BP
+    let fetchStart = geneStart
+    let fetchEnd = geneEnd
+    if ((geneEnd - geneStart) + 1 > TRANSCRIPT_SEQUENCE_MAX_FETCH_BP) {
+      const centre = Math.round((viewStart + viewEnd) / 2)
+      fetchStart = Math.max(1, centre - Math.floor(TRANSCRIPT_SEQUENCE_MAX_FETCH_BP / 2))
+      fetchEnd = fetchStart + TRANSCRIPT_SEQUENCE_MAX_FETCH_BP - 1
+    }
     const fetchKey = `${chrom}:${fetchStart}:${fetchEnd}`
-    if (transcriptVisibleSequence.key === fetchKey && transcriptVisibleSequence.sequence) return
+    // Already on its way, or already failed: do not ask again for the same range.
+    if (transcriptSequenceRequestKeyRef.current === fetchKey) return
+    transcriptSequenceRequestKeyRef.current = fetchKey
 
     const reqId = transcriptVisibleSequenceReqRef.current + 1
     transcriptVisibleSequenceReqRef.current = reqId
-
     const start0 = Math.max(0, fetchStart - 1)
     const end0 = Math.max(start0 + 1, fetchEnd)
     const url = `${API_BASE}/api/browse/sequence?genome=${encodeURIComponent(activeGenomeKey || 'reference')}&chrom=${encodeURIComponent(chrom)}&start=${start0}&end=${end0}`
@@ -1622,24 +2092,18 @@ export default function FeatureExplorerView({
       .then(({ ok, payload }) => {
         if (transcriptVisibleSequenceReqRef.current !== reqId) return
         if (!ok) throw new Error(payload?.detail || 'Failed to fetch transcript zoom sequence')
-        const sequence = String(payload?.sequence || '').toUpperCase()
         setTranscriptVisibleSequence({
           key: fetchKey,
           start: fetchStart,
           end: fetchEnd,
-          sequence,
+          sequence: String(payload?.sequence || '').toUpperCase(),
           loading: false,
         })
       })
       .catch(() => {
         if (transcriptVisibleSequenceReqRef.current !== reqId) return
-        setTranscriptVisibleSequence({
-          key: fetchKey,
-          start: fetchStart,
-          end: fetchEnd,
-          sequence: '',
-          loading: false,
-        })
+        // Keep whatever was already held; the request key stays set so the
+        // same failing range is not retried on every render.
       })
   }, [
     activeGenomeKey,
@@ -1648,9 +2112,9 @@ export default function FeatureExplorerView({
     transcriptViewStart,
     transcriptViewEnd,
     transcriptDetailMode,
-    transcriptPxPerBp,
-    transcriptVisibleSequence.key,
-    transcriptVisibleSequence.sequence,
+    fullTranscriptViewStart,
+    fullTranscriptViewEnd,
+    transcriptVisibleSequence,
   ])
 
   useEffect(() => {
@@ -1709,16 +2173,28 @@ export default function FeatureExplorerView({
   }, [trackClientXToGenomicCoord, animateTranscriptViewTo])
 
   useEffect(() => {
+    if (transcriptViewCommitTimerRef.current) {
+      clearTimeout(transcriptViewCommitTimerRef.current)
+      transcriptViewCommitTimerRef.current = 0
+    }
+    liveTranscriptViewIsFullRef.current = true
+    liveTranscriptViewStartRef.current = null
+    liveTranscriptViewEndRef.current = null
     setTranscriptViewRange(null)
     setTranscriptSelectionRect(null)
     setIsTranscriptBoxSelectMode(false)
     setTranscriptDetailMode('segment')
     setTranscriptVisibleSequence({ key: '', start: 0, end: 0, sequence: '', loading: false })
     transcriptSelectionDragRef.current = null
+    transcriptSequenceRequestKeyRef.current = ''
     transcriptVisibleSequenceReqRef.current += 1
   }, [resolved?.gene?.id])
 
-  useEffect(() => () => stopTranscriptZoomAnimation(), [stopTranscriptZoomAnimation])
+  useEffect(() => () => {
+    stopTranscriptZoomAnimation()
+    if (transcriptViewCommitTimerRef.current) clearTimeout(transcriptViewCommitTimerRef.current)
+    if (pendingViewRangeRafRef.current) cancelAnimationFrame(pendingViewRangeRafRef.current)
+  }, [stopTranscriptZoomAnimation])
 
   const toggleTranscript = (transcriptId) => {
     if (suppressClickAfterDragRef.current) {
@@ -1761,6 +2237,30 @@ export default function FeatureExplorerView({
     return Math.max(0, container.scrollTop + (tRect.top - cRect.top) - 8)
   }, [getFeatureSectionNode])
 
+  // The genome browser's scroll rail, down the left of the sections: one dot per
+  // section, placed where that section's jump button scrolls to (8px below the
+  // top), and pressing a dot is that same jump.
+  const sectionRailStops = useMemo(() => FEATURE_SECTION_JUMPS.map((item) => ({
+    key: item.key,
+    label: item.label,
+    tourId: item.key,
+    color: isLight ? '#7b8da6' : '#8da2c7',
+  })), [isLight])
+  const resolveSectionRailAnchor = useCallback((_host, sectionKey) => getFeatureSectionNode(sectionKey), [getFeatureSectionNode])
+  // The sections scroll inside their own panel, so the rail is placed in the
+  // app's page padding to the left of it -- where the browser's rail sits --
+  // rather than over the panel's edge.
+  const resolveSectionRailLeft = useCallback((scroller) => {
+    let node = scroller?.parentElement || null
+    while (node && node !== document.body) {
+      if (parseFloat(window.getComputedStyle(node).paddingLeft) >= SCROLL_RAIL_WIDTH) {
+        return node.getBoundingClientRect().left + 1
+      }
+      node = node.parentElement
+    }
+    return null
+  }, [])
+
   const scrollToFeatureSection = useCallback((sectionKey) => {
     const container = contentScrollRef.current
     if (!container) return
@@ -1768,42 +2268,6 @@ export default function FeatureExplorerView({
     if (!Number.isFinite(nextTop)) return
     container.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' })
   }, [getFeatureSectionScrollTop])
-
-  // Auto-retract of the genome strip. `genomeStripAutoRef` remembers what the
-  // scroll position last asked for; an explicit click on the chevron overrides
-  // it until the scroll position crosses a threshold again, so the listener
-  // never argues with a choice the user just made.
-  const genomeStripAutoRef = useRef(false)
-  const genomeStripManualRef = useRef(false)
-
-  const toggleGenomeStrip = useCallback(() => {
-    genomeStripManualRef.current = true
-    setGenomeStripCollapsed((prev) => !prev)
-  }, [])
-
-  useEffect(() => {
-    const container = contentScrollRef.current
-    if (!container || otherGenomes.length === 0) return undefined
-
-    // Handled straight off the scroll event rather than inside a rAF: the work
-    // is one comparison and an early return, and a rAF would tie a layout the
-    // user is looking at to a frame callback that is throttled whenever the
-    // window is not being painted.
-    const apply = () => {
-      const top = container.scrollTop
-      const desired = genomeStripAutoRef.current
-        ? top > GENOME_STRIP_EXPAND_SCROLL
-        : top >= GENOME_STRIP_COLLAPSE_SCROLL
-      if (desired === genomeStripAutoRef.current) return
-      genomeStripAutoRef.current = desired
-      genomeStripManualRef.current = false
-      setGenomeStripCollapsed(desired)
-    }
-
-    container.addEventListener('scroll', apply, { passive: true })
-    apply()
-    return () => container.removeEventListener('scroll', apply)
-  }, [otherGenomes.length, hasGenome])
 
   const transcriptRowHeight = TRANSCRIPT_TRACK_ROW_HEIGHT
   const transcriptControlsMeasureRef = useRef(null)
@@ -1831,6 +2295,7 @@ export default function FeatureExplorerView({
     setActiveTranscriptIds(new Set(defaultIds))
     setExpandedTranscriptIds(new Set(defaultExpandedTranscriptIds(orderedTranscripts)))
     setCollapseInactiveRows(true)
+    setExonCoverageRowActive(true)
   }
 
   useLayoutEffect(() => {
@@ -1991,12 +2456,30 @@ export default function FeatureExplorerView({
     return { sameBoundary, sameState, total: orderedTranscripts.length }
   }, [clickedExonInfo, orderedTranscripts, transcriptExonStateMapById])
 
+  const exonCoverage = useMemo(
+    () => computeExonCoverage(activeTranscripts, orderedTranscripts.length),
+    [activeTranscripts, orderedTranscripts.length]
+  )
+  const exonCoverageStrand = String(resolved?.gene?.strand || activeTranscripts[0]?.strand || '+')
+  const exonCoverageInfo = useMemo(
+    () => exonCoverageInfoRows(
+      exonCoverage.stats,
+      resolved?.gene?.chrom,
+      exonCoverageProfile(exonCoverage, exonCoverageStrand),
+    ),
+    [exonCoverage, exonCoverageStrand, resolved?.gene?.chrom]
+  )
+  const showExonCoverageRow = orderedTranscripts.length > 0 && (exonCoverageRowActive || !collapseInactiveRows)
+
   const expandedInfoHeightFor = useCallback((transcriptId) => {
     if (!expandedTranscriptIds.has(transcriptId)) return 0
+    if (transcriptId === EXON_COVERAGE_ROW_ID) {
+      return exonCoverageInfoPanelHeight(exonCoverageInfo) + 6
+    }
     const metadata = transcriptMetaById[transcriptId]
     const codonStatus = codonStatusById[transcriptId]
     return transcriptInfoPanelHeight(metadata, codonStatus) + 6
-  }, [expandedTranscriptIds, transcriptMetaById, codonStatusById])
+  }, [expandedTranscriptIds, transcriptMetaById, codonStatusById, exonCoverageInfo])
 
   const transcriptRowHeightFor = useCallback((transcriptId) => (
     transcriptRowHeight + expandedInfoHeightFor(transcriptId)
@@ -2175,6 +2658,19 @@ export default function FeatureExplorerView({
     }
   }, [spliceHoveredTranscriptId, splicePathSelection?.hasSelection, splicePathSetsByTranscript])
 
+  const toggleTranscriptStable = useStableCallback(toggleTranscript)
+  const setAllVisibleStable = useStableCallback(setAllVisible)
+  const restoreDefaultOrderingStable = useStableCallback(restoreDefaultOrdering)
+  const handleSpliceGraphPointerDown = useStableCallback(() => resetTranscriptZoom(true))
+  // Ensembl and RefSeq (NCBI) annotation: open the structure panel and look the
+  // structure up straight away. A genome with no recorded provider is Ensembl,
+  // as the backend reads it; custom ('manual') and demo annotation start closed.
+  const structurePanelDefaultOpen = ['ensembl', 'ncbi'].includes(
+    String(selectedGenome?.provider || 'ensembl').trim().toLowerCase()
+  )
+  const registerStructureScreenshot = useCallback((builder) => { structureSnapshotRef.current = builder }, [])
+  const clearExportSeedSequence = useCallback(() => setExportSeedSequence(null), [])
+
   const activeActionButtonClass = isLight
     ? 'bg-[#0099ff] text-white border-transparent hover:bg-[#0099ff]'
     : 'bg-[#0077cc] text-white border-transparent hover:bg-[#0077cc]'
@@ -2256,19 +2752,40 @@ export default function FeatureExplorerView({
 
   return (
     <>
-    <div ref={featureExplorerRootRef} className="relative h-full flex flex-col gap-3">
+    <div ref={setFeatureExplorerRoot} className={`relative h-full flex flex-col gap-3 sv-controls ${isLight ? 'light' : ''}`}>
+      <BrowserScrollRail
+        panels={sectionRailStops}
+        hostRef={screenshotContentRef}
+        onJump={scrollToFeatureSection}
+        isActive={Boolean(resolved?.gene) && !screenshotMode}
+        isLight={isLight}
+        resolveAnchor={resolveSectionRailAnchor}
+        anchorGap={8}
+        resolveRailLeft={resolveSectionRailLeft}
+        ariaLabel="Feature Explorer position"
+        tourId="feature-scroll-rail"
+        stopTourPrefix="feature-scroll-rail-section-"
+      />
       <div className={`rounded-xl border px-4 py-3 ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3 flex-1 min-w-0">
-            <div
-              className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full border font-medium min-w-[110px] max-w-[180px] ${hasGenome
-                ? (isLight ? 'bg-[#0099ff] text-white border-transparent' : 'bg-[#0077cc] text-white border-transparent')
-                : (isLight ? 'bg-gray-100 text-gray-400 border-gray-300' : 'bg-gray-800 text-gray-500 border-gray-700')
-                }`}
-              title={selectedGenomeTooltip || 'Genome'}
-            >
-              <span className="block truncate">{selectedGenomePillLabel || 'Genome'}</span>
-            </div>
+            {genomeOptions.length > 0 ? (
+              <div className="sv-genome-host flex-shrink-0">
+                <GenomeTool
+                  options={genomeOptions}
+                  genomeKey={activeGenomeKey}
+                  isLight={isLight}
+                  root={genomeMenuRoot}
+                  onChange={handleGenomeOptionChange}
+                />
+              </div>
+            ) : (
+              <div
+                className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full border font-medium min-w-[110px] ${isLight ? 'bg-gray-100 text-gray-400 border-gray-300' : 'bg-gray-800 text-gray-500 border-gray-700'}`}
+              >
+                Genome
+              </div>
+            )}
             <form onSubmit={onSubmit} className="flex items-center gap-2 min-w-[220px] flex-1 max-w-[480px]">
               <input
                 type="text"
@@ -2315,33 +2832,7 @@ export default function FeatureExplorerView({
               })}
             </div>
           </div>
-          {otherGenomes.length > 0 && (
-            <button
-              type="button"
-              onClick={toggleGenomeStrip}
-              className={`w-7 h-7 flex-shrink-0 rounded border flex items-center justify-center transition-colors ${isLight
-                ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                }`}
-              title={genomeStripCollapsed ? 'Expand genome list' : 'Collapse genome list'}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                {genomeStripCollapsed
-                  ? <polyline points="6 9 12 15 18 9" />
-                  : <polyline points="18 15 12 9 6 15" />}
-              </svg>
-            </button>
-          )}
         </div>
-        {otherGenomes.length > 0 && !genomeStripCollapsed && (
-          <FeatureExplorerGenomeStrip
-            theme={theme}
-            otherGenomes={otherGenomes}
-            focusGeneByGenome={focusGeneByGenome}
-            onSelectGenome={onSelectGenome}
-            embedded={true}
-          />
-        )}
         {error && (
           <div className={`mt-2 text-xs ${isLight ? 'text-red-600' : 'text-red-300'}`}>
             {error}
@@ -2634,6 +3125,28 @@ export default function FeatureExplorerView({
                         style={{ gridTemplateColumns: `32px minmax(0,1fr) ${transcriptListCollapsed ? 36 : transcriptListPanelWidth}px` }}
                       >
                 <div className={isLight ? 'border-r border-gray-200' : 'border-r border-gray-700'}>
+                  {showExonCoverageRow && (
+                    <div
+                      className={`px-1 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'} flex items-start justify-center`}
+                      style={{ height: `${transcriptRowHeightFor(EXON_COVERAGE_ROW_ID)}px` }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleTranscriptExpanded(EXON_COVERAGE_ROW_ID)}
+                        className={`mt-2 w-6 h-6 rounded border flex items-center justify-center transition-colors ${isLight
+                          ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
+                          : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
+                          }`}
+                        title={expandedTranscriptIds.has(EXON_COVERAGE_ROW_ID) ? 'Collapse exon coverage info' : 'Expand exon coverage info'}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                          {expandedTranscriptIds.has(EXON_COVERAGE_ROW_ID)
+                            ? <polyline points="18 15 12 9 6 15" />
+                            : <polyline points="6 9 12 15 18 9" />}
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                   {visibleDisplayIds.map((id) => {
                     const tx = transcriptById.get(id)
                     if (!tx) return null
@@ -2676,6 +3189,161 @@ export default function FeatureExplorerView({
                   }}
                   style={{ cursor: isTranscriptBoxSelectMode ? 'crosshair' : 'default' }}
                 >
+                  {showExonCoverageRow && (() => {
+                    const coverageDrawn = exonCoverageRowActive || exonCoverageRowHovered
+                    const { runs, stats } = exonCoverage
+                    // Bases, as the transcript rows draw them: over each exonic
+                    // base in a colour that reads on its heat, and lower-case in
+                    // grey for the intron bases at each exon–intron boundary.
+                    const coverageLetters = []
+                    const letterFrom = Math.max(Number(stats.spanStart), Math.floor(Math.min(transcriptViewStart, transcriptViewEnd)))
+                    const letterTo = Math.min(Number(stats.spanEnd), Math.ceil(Math.max(transcriptViewStart, transcriptViewEnd)))
+                    if (coverageDrawn && runs.length > 0 && trackBaseLettersReady(letterFrom, letterTo)) {
+                      const drawFrom = Math.max(Number(stats.spanStart), letterFrom - transcriptBaseRenderMargin)
+                      const drawTo = Math.min(Number(stats.spanEnd), letterTo + transcriptBaseRenderMargin)
+                      const coveredBlocks = runs.filter((run) => run.count > 0)
+                      const flanks = positionsInRanges(intronFlankRanges(coveredBlocks, TRANSCRIPT_TRACK_INTRON_FLANK_BP), drawFrom, drawTo)
+                      const letterY = 3 + (18 * 0.72)
+                      for (const run of runs) {
+                        const from = Math.max(drawFrom, run.start)
+                        const to = Math.min(drawTo, run.end)
+                        const textColour = run.count > 0 ? readableTextOn(heatColorFromFraction(run.fraction)) : null
+                        for (let pos = from; pos <= to; pos += 1) {
+                          if (!textColour && !flanks.has(pos)) continue
+                          const base = trackBaseAt(pos)
+                          if (!base) continue
+                          const bx1 = mapCoordToTrack(pos)
+                          const bx2 = mapCoordToTrack(pos + 1)
+                          const bx = Math.min(bx1, bx2)
+                          const bw = Math.max(0.72, Math.abs(bx2 - bx1) - 0.08)
+                          if (!textColour) {
+                            coverageLetters.push(
+                              <rect key={`coverage-flank-mask-${pos}`} x={bx} y={6} width={bw} height={12} fill={isLight ? '#ffffff' : '#1f2937'} />
+                            )
+                          }
+                          coverageLetters.push(
+                            <text
+                              key={`coverage-base-${pos}`}
+                              x={bx + (bw / 2)}
+                              y={letterY}
+                              fontSize={Math.max(8.4, Math.min(12.4, bw * 0.78))}
+                              fill={textColour || (isLight ? '#6b7280' : '#9ca3af')}
+                              textAnchor="middle"
+                              fontFamily={FONT_MONO}
+                              pointerEvents="none"
+                            >
+                              {textColour ? base : base.toLowerCase()}
+                            </text>
+                          )
+                        }
+                      }
+                    }
+                    return (
+                      <div
+                        data-feature-exon-coverage-row="true"
+                        className={`px-3 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
+                        style={{ height: `${transcriptRowHeightFor(EXON_COVERAGE_ROW_ID)}px` }}
+                      >
+                        <div className="h-full flex flex-col">
+                          <div className="h-[42px] flex items-center">
+                            <div className="flex-1 min-w-0" data-feature-transcript-track-surface="true">
+                              <svg className="w-full h-7" viewBox={`0 0 ${rulerViewBoxWidth} 24`} preserveAspectRatio="xMinYMid meet">
+                                <defs>
+                                  <clipPath id="tclip-exon-coverage">
+                                    <rect x={trackMarginLeft} y={0} width={trackInnerWidth} height={24} />
+                                  </clipPath>
+                                </defs>
+                                {(coverageDrawn && runs.length > 0) ? (
+                                  <g clipPath="url(#tclip-exon-coverage)">
+                                  <g data-transcript-zoom-layer="true">
+                                    <line
+                                      x1={mapCoordToTrack(stats.spanStart)}
+                                      y1="12"
+                                      x2={mapCoordToTrack(stats.spanEnd + 1)}
+                                      y2="12"
+                                      stroke={palette.intronLine}
+                                      strokeWidth={1.5}
+                                      strokeLinecap="round"
+                                    />
+                                    {runs.map((run) => {
+                                      if (run.count <= 0) return null
+                                      // Inclusive coordinates: a run covers its
+                                      // last base too, so it is drawn to end + 1.
+                                      const x1 = mapCoordToTrack(run.start)
+                                      const x2 = mapCoordToTrack(run.end + 1)
+                                      const colour = heatColorFromFraction(run.fraction)
+                                      return (
+                                        <rect
+                                          key={`coverage-${run.start}`}
+                                          x={Math.min(x1, x2)}
+                                          y={3}
+                                          width={Math.abs(x2 - x1)}
+                                          height={18}
+                                          fill={colour}
+                                          fillOpacity={0.92}
+                                          stroke={colour}
+                                          strokeWidth={0.6}
+                                        />
+                                      )
+                                    })}
+                                    <g data-transcript-base-letters="true">{coverageLetters}</g>
+                                  </g>
+                                  </g>
+                                ) : (
+                                  <line
+                                    x1={trackMarginLeft}
+                                    y1="12"
+                                    x2={rulerViewBoxWidth - trackMarginRight}
+                                    y2="12"
+                                    stroke={isLight ? '#cbd5e1' : '#334155'}
+                                    strokeWidth="1"
+                                    strokeDasharray="3 3"
+                                  />
+                                )}
+                              </svg>
+                            </div>
+                            <div className="shrink-0" style={{ width: `${SPLICE_LOCK_GUTTER_WIDTH}px` }} />
+                          </div>
+                          {expandedTranscriptIds.has(EXON_COVERAGE_ROW_ID) && (
+                            <div
+                              data-transcript-info-panel="true"
+                              className={`mx-1 mb-1 rounded border px-2 py-1 text-[11px] leading-5 ${isLight
+                                ? 'bg-gray-50 border-gray-200 text-gray-700'
+                                : 'bg-gray-900/45 border-gray-700 text-gray-300'
+                                }`}
+                            >
+                              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                                {exonCoverageInfo.flatMap((row) => row.map((cell) => (cell.type === 'chart' ? (
+                                  <ExonCoverageProfileChart
+                                    key={cell.key}
+                                    cell={cell}
+                                    stats={exonCoverage.stats}
+                                    strand={exonCoverageStrand}
+                                    chrom={resolved?.gene?.chrom}
+                                    isLight={isLight}
+                                  />
+                                ) : (
+                                  <div
+                                    key={cell.key}
+                                    className={`${row.length === 1 ? 'col-span-2' : ''} truncate`}
+                                    title={cell.hint || undefined}
+                                  >
+                                    {cell.swatch && (
+                                      <span
+                                        className="inline-block w-2.5 h-2.5 rounded-sm mr-1.5 align-[-1px]"
+                                        style={{ backgroundColor: cell.swatch }}
+                                      />
+                                    )}
+                                    {cell.label ? `${cell.label}: ` : ''}{cell.value}
+                                  </div>
+                                ))))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })()}
                   {visibleDisplayIds.map((id) => {
                     const tx = transcriptById.get(id)
                     if (!tx) return null
@@ -2698,7 +3366,7 @@ export default function FeatureExplorerView({
                     const tagInfo = transcriptTagInfoById[tx.id] || { labels: [], hasManeSelect: false, hasCanonical: false }
                     const codonStatus = codonStatusById[tx.id] || null
                     const txStart = mapCoordToTrack(tx.start)
-                    const txEnd = mapCoordToTrack(tx.end)
+                    const txEnd = mapCoordToTrack(Number(tx.end) + 1)
                     const segments = buildTranscriptSegments(tx)
                     const orderedExons = orderedExonsFivePrimeToThreePrime(tx)
                     const orderedExonKeys = orderedExons.map((exon) => {
@@ -2721,7 +3389,6 @@ export default function FeatureExplorerView({
                     const exonStrokeWidth = 1.2
                     const exonY = 3
                     const exonHeight = 18
-                    const strokeInset = exonStrokeWidth / 2
                     const showPerBaseBlocks = (
                       transcriptDetailMode === 'base' &&
                       transcriptPxPerBp >= TRANSCRIPT_TRACK_BASEBLOCK_MIN_PX_PER_BP &&
@@ -2732,6 +3399,11 @@ export default function FeatureExplorerView({
                     const visibleStart = Math.max(txMin, Math.floor(Math.min(transcriptViewStart, transcriptViewEnd)))
                     const visibleEnd = Math.min(txMax, Math.ceil(Math.max(transcriptViewStart, transcriptViewEnd)))
                     const visibleBaseCount = Math.max(0, (visibleEnd - visibleStart) + 1)
+                    // Bases are drawn a screen's width beyond each side of the view,
+                    // so a pan (previewed as a plain shift) has them to show.
+                    const renderStart = Math.max(txMin, visibleStart - transcriptBaseRenderMargin)
+                    const renderEnd = Math.min(txMax, visibleEnd + transcriptBaseRenderMargin)
+                    const renderBaseCount = Math.max(0, (renderEnd - renderStart) + 1)
                     const canRenderPerBaseBlocks = (
                       showPerBaseBlocks &&
                       visibleBaseCount > 0 &&
@@ -2752,27 +3424,52 @@ export default function FeatureExplorerView({
                     const codingPositions = new Set()
                     if (canRenderPerBaseBlocks) {
                       for (const segment of segments) {
-                        const segStart = Math.min(Number(segment?.start), Number(segment?.end))
-                        const segEnd = Math.max(Number(segment?.start), Number(segment?.end))
+                        const segStart = Math.max(renderStart, Math.min(Number(segment?.start), Number(segment?.end)))
+                        const segEnd = Math.min(renderEnd + 1, Math.max(Number(segment?.start), Number(segment?.end)))
                         for (let pos = segStart; pos < segEnd; pos++) {
                           exonicPositions.add(pos)
                           if (segment?.coding) codingPositions.add(pos)
                         }
                       }
                     }
+                    const intronFlankPositions = canRenderBaseLetters
+                      ? positionsInRanges(intronFlankRanges(tx.exons, TRANSCRIPT_TRACK_INTRON_FLANK_BP), renderStart, renderEnd)
+                      : new Set()
                     let baseExonPathD = ''
                     let baseCodingPathD = ''
+                    let baseFlankPathD = ''
                     const baseLabelElements = []
                     if (canRenderPerBaseBlocks) {
-                      for (let baseIndex = 0; baseIndex < visibleBaseCount; baseIndex++) {
-                        const basePos = visibleStart + baseIndex
+                      for (let baseIndex = 0; baseIndex < renderBaseCount; baseIndex++) {
+                        const basePos = renderStart + baseIndex
                         const isCoding = codingPositions.has(basePos)
                         const isExonic = exonicPositions.has(basePos)
-                        if (!isCoding && !isExonic) continue
                         const bx1 = mapCoordToTrack(basePos)
                         const bx2 = mapCoordToTrack(basePos + 1)
                         const bx = Math.min(bx1, bx2)
                         const bw = Math.max(0.72, Math.abs(bx2 - bx1) - 0.08)
+                        if (!isCoding && !isExonic) {
+                          if (!intronFlankPositions.has(basePos)) continue
+                          const flankBase = trackBaseAt(basePos)
+                          if (!flankBase) continue
+                          baseFlankPathD += `M${bx},${exonY + 3}h${bw}v${exonHeight - 6}h${-bw}Z `
+                          baseLabelElements.push(
+                            <text
+                              key={`flank-${tx.id}-${basePos}`}
+                              x={bx + (bw / 2)}
+                              y={exonY + (exonHeight * 0.72)}
+                              fontSize={Math.max(8.4, Math.min(12.4, bw * 0.78))}
+                              fill={isLight ? '#6b7280' : '#9ca3af'}
+                              fillOpacity={dimWholeTranscriptBySplice ? 0.3 : 1}
+                              textAnchor="middle"
+                              fontFamily={FONT_MONO}
+                              pointerEvents="none"
+                            >
+                              {flankBase.toLowerCase()}
+                            </text>
+                          )
+                          continue
+                        }
                         if (isCoding) {
                           baseCodingPathD += `M${bx},${exonY}h${bw}v${exonHeight}h${-bw}Z `
                         } else {
@@ -2830,6 +3527,7 @@ export default function FeatureExplorerView({
                               {(isActive || isPreviewTrack) ? (
                                 <>
                                 <g clipPath={`url(#tclip-${tx.id})`}>
+                                <g data-transcript-zoom-layer="true">
                                   <line
                                     x1={txStart}
                                     y1="12"
@@ -2840,6 +3538,9 @@ export default function FeatureExplorerView({
                                     strokeLinecap="round"
                                     strokeOpacity={dimWholeTranscriptBySplice ? 0.2 : 1}
                                   />
+                                {baseFlankPathD && (
+                                  <path d={baseFlankPathD} fill={exonMaskColor} />
+                                )}
                                 {baseExonPathD && (
                                   <path
                                     d={baseExonPathD}
@@ -2868,8 +3569,8 @@ export default function FeatureExplorerView({
                                   const nextBounds = orientedBoundaries(nextExon.start, nextExon.end, tx.strand)
                                   const key = intronKeyFromBounds(exonBounds.threePrime, nextBounds.fivePrime)
                                   if (!spliceTxSelection?.highlightedIntronKeys?.has(key)) return null
-                                  const x1 = mapCoordToTrack(exonBounds.threePrime)
-                                  const x2 = mapCoordToTrack(nextBounds.fivePrime)
+                                  const x1 = mapCoordToTrack(boundaryEdgeCoord(exonBounds.threePrime, false, tx.strand))
+                                  const x2 = mapCoordToTrack(boundaryEdgeCoord(nextBounds.fivePrime, true, tx.strand))
                                   return (
                                     <g key={`splice-intron-${tx.id}-${key}`}>
                                       <line
@@ -2914,11 +3615,7 @@ export default function FeatureExplorerView({
                                   const x1 = mapCoordToTrack(segment.start)
                                   const x2 = mapCoordToTrack(segment.end)
                                   const segX = Math.min(x1, x2)
-                                  const segW = Math.max(1, Math.abs(x2 - x1))
-                                  const drawX = segX + strokeInset
-                                  const drawY = exonY + strokeInset
-                                  const drawW = Math.max(0.5, segW - exonStrokeWidth)
-                                  const drawH = Math.max(0.5, exonHeight - exonStrokeWidth)
+                                  const segW = Math.abs(x2 - x1)
                                   const hovered = segmentBoundaryMatch(segment, tx.id, hoveredBoundaryFeature, tx.strand)
                                   const segmentBounds = orientedBoundaries(segment.exonStart, segment.exonEnd, tx.strand)
                                   const segmentExonKey = exonKeyFromBounds(segmentBounds.fivePrime, segmentBounds.threePrime)
@@ -2957,49 +3654,104 @@ export default function FeatureExplorerView({
                                   if (isSplicePathExon) {
                                     segmentFillOpacity = Math.max(segmentFillOpacity, 0.95)
                                   }
+                                  // One rectangle per piece: the fill (coding colour already
+                                  // blended over the mask, so the intron line is hidden) and
+                                  // the outline, with the handlers on the same element. The
+                                  // outline is centred on the piece's true edges and nothing
+                                  // is inset or padded by a fixed amount, so the rows can be
+                                  // moved by a transform mid-gesture without any of it
+                                  // drifting (see applyTranscriptViewPreview).
+                                  const baseFill = segment.coding
+                                    ? blendHexColor(exonCodingFillColor, exonMaskColor, segmentFillOpacity)
+                                    : exonMaskColor
+                                  const highlightAlpha = isSplicePathExon ? 0.2 : 0.14
+                                  const segmentFill = canRenderPerBaseBlocks
+                                    ? 'transparent'
+                                    : (showWholeFeatureHighlight ? blendHexColor(boundaryHighlightColor, baseFill, highlightAlpha) : baseFill)
+                                  // Most pieces are the one rect. A highlight overlay or hover
+                                  // edge lines, when there are any, share a group with it.
+                                  const hasPieceExtras = showBoundaryEdges || (showWholeFeatureHighlight && canRenderPerBaseBlocks)
+                                  const pieceRect = (
+                                    <rect
+                                      key={`segment-${tx.id}-${segment.key}`}
+                                      opacity={!hasPieceExtras && segmentOpacity < 1 ? segmentOpacity : undefined}
+                                      x={segX}
+                                      y={exonY}
+                                      width={segW}
+                                      height={exonHeight}
+                                      fill={segmentFill}
+                                      stroke={segmentStrokeColor}
+                                      strokeWidth={segmentStrokeWidth}
+                                      data-feature-exon-candidate="true"
+                                      data-splice-path-focus-candidate={isSplicePathExon ? 'true' : undefined}
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        const txHasCDS = Array.isArray(tx?.cds_list) && tx.cds_list.length > 0
+                                        const typeLabel = !segmentExonState ? 'Unknown'
+                                          : segmentExonState.stateClass === 'coding' ? 'Coding'
+                                          : segmentExonState.stateClass === 'partial_coding' ? 'Partial coding'
+                                          : txHasCDS ? 'UTR'
+                                          : 'Non-coding'
+                                        const targetRect = event.currentTarget?.getBoundingClientRect?.()
+                                        const arrowTargetX = targetRect ? (targetRect.left + (targetRect.width / 2)) : event.clientX
+                                        const arrowTargetY = targetRect ? (targetRect.top + (targetRect.height / 2)) : event.clientY
+                                        const isSameExon = clickedExonInfo?.exonState?.exonStateKey != null
+                                          && clickedExonInfo.exonState.exonStateKey === segmentExonState?.exonStateKey
+                                        setClickedExonInfo(isSameExon ? null : (segmentExonState
+                                          ? { exonState: segmentExonState, typeLabel, arrowTargetX, arrowTargetY }
+                                          : null))
+                                        if (hasSpliceSelection && transcriptOnSplicePath && isSplicePathExon) {
+                                          lockSpliceTranscript(tx.id)
+                                        } else {
+                                          clearLockedSpliceTranscript()
+                                        }
+                                      }}
+                                      onMouseEnter={(event) => {
+                                        const featureType = segment.coding ? 'cds' : 'exon'
+                                        const { featureStart, featureEnd } = getFeatureBoundaryCoords(segment, featureType)
+                                        const boundaries = orientedBoundaries(featureStart, featureEnd, tx.strand)
+                                        setHoveredBoundaryFeature({
+                                          transcriptId: tx.id,
+                                          type: featureType,
+                                          strand: tx.strand,
+                                          fivePrime: boundaries.fivePrime,
+                                          threePrime: boundaries.threePrime,
+                                        })
+                                        if (canHoverPreviewSplicePath && hasSpliceSelection && transcriptOnSplicePath && isSplicePathExon) {
+                                          if (!isWithinSpliceHoverPreviewZone(event)) return
+                                          setSpliceHoveredTranscriptId(tx.id)
+                                        } else if (canHoverPreviewSplicePath && hasSpliceSelection) {
+                                          setSpliceHoveredTranscriptId('')
+                                        }
+                                      }}
+                                      onMouseLeave={() => {
+                                        setHoveredBoundaryFeature(null)
+                                        if (canHoverPreviewSplicePath && isSplicePathExon) {
+                                          setSpliceHoveredTranscriptId((prev) => (prev === tx.id ? '' : prev))
+                                        }
+                                      }}
+                                    />
+                                  )
+                                  if (!hasPieceExtras) return pieceRect
                                   return (
-                                    <g key={`segment-${tx.id}-${segment.key}`} style={{ opacity: segmentOpacity }}>
-                                      <rect
-                                        x={segX}
-                                        y={exonY}
-                                        width={segW}
-                                        height={exonHeight}
-                                        fill={canRenderPerBaseBlocks ? 'none' : exonMaskColor}
-                                      />
-                                      {segment.coding && !canRenderPerBaseBlocks && (
+                                    <g key={`segment-${tx.id}-${segment.key}`} opacity={segmentOpacity < 1 ? segmentOpacity : undefined}>
+                                      {showWholeFeatureHighlight && canRenderPerBaseBlocks && (
                                         <rect
-                                          x={drawX}
-                                          y={drawY}
-                                          width={drawW}
-                                          height={drawH}
-                                          fill={exonCodingFillColor}
-                                          fillOpacity={segmentFillOpacity}
-                                        />
-                                      )}
-                                      {showWholeFeatureHighlight && (
-                                        <rect
-                                          x={drawX}
-                                          y={drawY}
-                                          width={drawW}
-                                          height={drawH}
+                                          x={segX}
+                                          y={exonY}
+                                          width={segW}
+                                          height={exonHeight}
                                           fill={boundaryHighlightColor}
-                                          fillOpacity={isSplicePathExon ? 0.2 : 0.14}
+                                          fillOpacity={highlightAlpha}
+                                          pointerEvents="none"
                                         />
                                       )}
-                                      <rect
-                                        x={drawX}
-                                        y={drawY}
-                                        width={drawW}
-                                        height={drawH}
-                                        fill="none"
-                                        stroke={segmentStrokeColor}
-                                        strokeWidth={segmentStrokeWidth}
-                                      />
+                                      {pieceRect}
                                       {showBoundaryEdges && hovered.matchFivePrime && (
                                         <line
-                                          x1={mapCoordToTrack(hovered.fivePrime)}
+                                          x1={mapCoordToTrack(boundaryEdgeCoord(hovered.fivePrime, true, tx.strand))}
                                           y1={exonY - 1}
-                                          x2={mapCoordToTrack(hovered.fivePrime)}
+                                          x2={mapCoordToTrack(boundaryEdgeCoord(hovered.fivePrime, true, tx.strand))}
                                           y2={exonY + exonHeight + 1}
                                           stroke={boundaryHighlightColor}
                                           strokeWidth="1.4"
@@ -3008,74 +3760,20 @@ export default function FeatureExplorerView({
                                       )}
                                       {showBoundaryEdges && hovered.matchThreePrime && (
                                         <line
-                                          x1={mapCoordToTrack(hovered.threePrime)}
+                                          x1={mapCoordToTrack(boundaryEdgeCoord(hovered.threePrime, false, tx.strand))}
                                           y1={exonY - 1}
-                                          x2={mapCoordToTrack(hovered.threePrime)}
+                                          x2={mapCoordToTrack(boundaryEdgeCoord(hovered.threePrime, false, tx.strand))}
                                           y2={exonY + exonHeight + 1}
                                           stroke={boundaryHighlightColor}
                                           strokeWidth="1.4"
                                           opacity="0.85"
                                         />
                                       )}
-                                      <rect
-                                        x={segX}
-                                        y={exonY}
-                                        width={segW}
-                                        height={exonHeight}
-                                        fill="transparent"
-                                        data-feature-exon-candidate="true"
-                                        data-splice-path-focus-candidate={isSplicePathExon ? 'true' : undefined}
-                                        onClick={(event) => {
-                                          event.stopPropagation()
-                                          const txHasCDS = Array.isArray(tx?.cds_list) && tx.cds_list.length > 0
-                                          const typeLabel = !segmentExonState ? 'Unknown'
-                                            : segmentExonState.stateClass === 'coding' ? 'Coding'
-                                            : segmentExonState.stateClass === 'partial_coding' ? 'Partial coding'
-                                            : txHasCDS ? 'UTR'
-                                            : 'Non-coding'
-                                          const targetRect = event.currentTarget?.getBoundingClientRect?.()
-                                          const arrowTargetX = targetRect ? (targetRect.left + (targetRect.width / 2)) : event.clientX
-                                          const arrowTargetY = targetRect ? (targetRect.top + (targetRect.height / 2)) : event.clientY
-                                          const isSameExon = clickedExonInfo?.exonState?.exonStateKey != null
-                                            && clickedExonInfo.exonState.exonStateKey === segmentExonState?.exonStateKey
-                                          setClickedExonInfo(isSameExon ? null : (segmentExonState
-                                            ? { exonState: segmentExonState, typeLabel, arrowTargetX, arrowTargetY }
-                                            : null))
-                                          if (hasSpliceSelection && transcriptOnSplicePath && isSplicePathExon) {
-                                            lockSpliceTranscript(tx.id)
-                                          } else {
-                                            clearLockedSpliceTranscript()
-                                          }
-                                        }}
-                                        onMouseEnter={(event) => {
-                                          const featureType = segment.coding ? 'cds' : 'exon'
-                                          const { featureStart, featureEnd } = getFeatureBoundaryCoords(segment, featureType)
-                                          const boundaries = orientedBoundaries(featureStart, featureEnd, tx.strand)
-                                          setHoveredBoundaryFeature({
-                                            transcriptId: tx.id,
-                                            type: featureType,
-                                            strand: tx.strand,
-                                            fivePrime: boundaries.fivePrime,
-                                            threePrime: boundaries.threePrime,
-                                          })
-                                          if (canHoverPreviewSplicePath && hasSpliceSelection && transcriptOnSplicePath && isSplicePathExon) {
-                                            if (!isWithinSpliceHoverPreviewZone(event)) return
-                                            setSpliceHoveredTranscriptId(tx.id)
-                                          } else if (canHoverPreviewSplicePath && hasSpliceSelection) {
-                                            setSpliceHoveredTranscriptId('')
-                                          }
-                                        }}
-                                        onMouseLeave={() => {
-                                          setHoveredBoundaryFeature(null)
-                                          if (canHoverPreviewSplicePath && isSplicePathExon) {
-                                            setSpliceHoveredTranscriptId((prev) => (prev === tx.id ? '' : prev))
-                                          }
-                                        }}
-                                      />
                                     </g>
                                   )
                                 })}
-                                {baseLabelElements}
+                                <g data-transcript-base-letters="true">{baseLabelElements}</g>
+                                </g>
                                 </g>
                                 </>
                               ) : (
@@ -3127,6 +3825,7 @@ export default function FeatureExplorerView({
                           </div>
                           {isExpanded && metadata && (
                             <div
+                              data-transcript-info-panel="true"
                               className={`mx-1 mb-1 rounded border px-2 py-1 text-[11px] leading-5 ${isLight
                                 ? 'bg-gray-50 border-gray-200 text-gray-700'
                                 : 'bg-gray-900/45 border-gray-700 text-gray-300'
@@ -3196,6 +3895,54 @@ export default function FeatureExplorerView({
                 </div>
 
                 <div className={isLight ? 'border-l border-gray-200' : 'border-l border-gray-700'}>
+                  {!transcriptListCollapsed && showExonCoverageRow && (() => {
+                    const expandedHeight = expandedInfoHeightFor(EXON_COVERAGE_ROW_ID)
+                    return (
+                      <div
+                        className={`px-2 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
+                        style={{ height: `${transcriptRowHeightFor(EXON_COVERAGE_ROW_ID)}px` }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setExonCoverageRowActive((prev) => !prev)}
+                          onMouseEnter={() => {
+                            if (!exonCoverageRowActive) setExonCoverageRowHovered(true)
+                          }}
+                          onMouseLeave={() => setExonCoverageRowHovered(false)}
+                          className={`w-full h-[34px] mt-1 rounded px-2 text-left text-xs border transition-colors ${exonCoverageRowActive
+                            ? (isLight
+                              ? 'bg-[#63acd8]/12 text-[#3f7696] border-[#559dc8] hover:bg-[#63acd8]/20'
+                              : 'bg-sky-400/14 text-sky-100 border-sky-300/60 hover:bg-sky-400/22')
+                            : (isLight
+                              ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
+                              : 'bg-gray-900/50 text-gray-300 border-gray-600 hover:bg-gray-700')
+                            }`}
+                          title={`${EXON_COVERAGE_ROW_LABEL}: how many of the active transcripts have each base in an exon. Click to turn ${exonCoverageRowActive ? 'off' : 'on'}.`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-semibold">{EXON_COVERAGE_ROW_LABEL}</span>
+                            <span className="shrink-0 inline-flex items-center gap-1 text-[9px] leading-none">
+                              <span>0</span>
+                              <span
+                                className="inline-block h-2 w-10 rounded-full"
+                                style={{ background: EXON_COVERAGE_LEGEND_GRADIENT }}
+                              />
+                              <span>{formatCoord(exonCoverage.stats.activeCount)}</span>
+                            </span>
+                          </div>
+                        </button>
+                        {expandedHeight > 0 && (
+                          <div
+                            className={`mt-1 w-full rounded border ${isLight
+                              ? 'bg-gray-50 border-gray-200'
+                              : 'bg-gray-900/45 border-gray-700'
+                              }`}
+                            style={{ height: `${Math.max(0, expandedHeight - 6)}px` }}
+                          />
+                        )}
+                      </div>
+                    )
+                  })()}
                   {!transcriptListCollapsed && visibleDisplayIds.map((id) => {
                     const tx = transcriptById.get(id)
                     if (!tx) return null
@@ -3294,7 +4041,7 @@ export default function FeatureExplorerView({
                   reverseOrientation={reverseOrientation}
                   theme={theme}
                   onSelectionChange={handleSpliceSelectionChange}
-                  onGraphPointerDown={() => resetTranscriptZoom(true)}
+                  onGraphPointerDown={handleSpliceGraphPointerDown}
                   clearSelectionSignal={spliceSelectionClearSignal}
                   focusedTranscriptId={effectiveSpliceFocusedTranscriptId}
                   layoutSessionKey={spliceLayoutSessionKey}
@@ -3317,11 +4064,11 @@ export default function FeatureExplorerView({
                   transcriptTagInfoById={transcriptTagInfoById}
                   allActive={allActive}
                   activeActionButtonClass={activeActionButtonClass}
-                  setAllVisible={setAllVisible}
+                  setAllVisible={setAllVisibleStable}
                   collapseInactiveRows={collapseInactiveRows}
                   setCollapseInactiveRows={setCollapseInactiveRows}
-                  restoreDefaultOrdering={restoreDefaultOrdering}
-                  toggleTranscript={toggleTranscript}
+                  restoreDefaultOrdering={restoreDefaultOrderingStable}
+                  toggleTranscript={toggleTranscriptStable}
                   dragSourceId={dragSourceId}
                   insertTargetId={insertTargetId}
                   insertPosition={insertPosition}
@@ -3369,11 +4116,11 @@ export default function FeatureExplorerView({
                   transcriptTagInfoById={transcriptTagInfoById}
                   allActive={allActive}
                   activeActionButtonClass={activeActionButtonClass}
-                  setAllVisible={setAllVisible}
+                  setAllVisible={setAllVisibleStable}
                   collapseInactiveRows={collapseInactiveRows}
                   setCollapseInactiveRows={setCollapseInactiveRows}
-                  restoreDefaultOrdering={restoreDefaultOrdering}
-                  toggleTranscript={toggleTranscript}
+                  restoreDefaultOrdering={restoreDefaultOrderingStable}
+                  toggleTranscript={toggleTranscriptStable}
                   dragSourceId={dragSourceId}
                   insertTargetId={insertTargetId}
                   insertPosition={insertPosition}
@@ -3397,7 +4144,8 @@ export default function FeatureExplorerView({
                   activeTranscriptIds={activeTranscriptIds}
                   transcriptById={transcriptById}
                   containerRef={structureScreenshotRef}
-                  onRegisterScreenshot={(builder) => { structureSnapshotRef.current = builder }}
+                  onRegisterScreenshot={registerStructureScreenshot}
+                  defaultOpen={structurePanelDefaultOpen}
                 />
               </div>
 
@@ -3410,7 +4158,7 @@ export default function FeatureExplorerView({
                   activeTranscriptIds={activeTranscriptIds}
                   config={config}
                   externalSeedSequence={exportSeedSequence}
-                  onClearExternalSeedSequence={() => setExportSeedSequence(null)}
+                  onClearExternalSeedSequence={clearExportSeedSequence}
                 />
               </div>
             </div>

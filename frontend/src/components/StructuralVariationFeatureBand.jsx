@@ -413,8 +413,9 @@ function drawTranscriptLane(ctx, opts) {
   for (const { entry, row } of laidOutEntries) {
     if (row >= maxDisplayedRows) continue
     const tx = entry.transcript || {}
+    // Coordinates are inclusive: the last base runs to the next position.
     const x1 = scaleX(tx.start)
-    const x2 = scaleX(tx.end)
+    const x2 = scaleX(Number(tx.end) + 1)
     const txLeft = Math.min(x1, x2)
     const txRight = Math.max(x1, x2)
     if (txRight < contentLeft || txLeft > plotRight) continue
@@ -443,8 +444,8 @@ function drawTranscriptLane(ctx, opts) {
       if (Array.isArray(tx.exons)) {
         exonMaskRects = []
         for (const exon of tx.exons) {
-          const ex1 = Math.min(scaleX(exon.start), scaleX(exon.end))
-          const ex2 = Math.max(scaleX(exon.start), scaleX(exon.end))
+          const ex1 = Math.min(scaleX(exon.start), scaleX(Number(exon.end) + 1))
+          const ex2 = Math.max(scaleX(exon.start), scaleX(Number(exon.end) + 1))
           if (ex2 < contentLeft || ex1 > plotRight) continue
           const exLeft = Math.max(contentLeft, ex1)
           const exW = Math.max(0, Math.min(ex2, plotRight) - exLeft)
