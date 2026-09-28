@@ -19,6 +19,7 @@ export const DATA_VIEW_BUTTON_IDS = [
   'configuration',
   'structural_variation',
   'homology',
+  'gene_trees',
   'achievements',
 ]
 
@@ -69,6 +70,7 @@ export const APP_BUTTON_META = {
   neighbourhood: { id: 'neighbourhood', label: 'Neighbourhood', shortLabel: 'Neighbour', kind: 'data_view', viewId: 'neighbourhood' },
   structural_variation: { id: 'structural_variation', label: 'Structural Variation', shortLabel: 'SV', kind: 'data_view', viewId: 'structural_variation' },
   homology: { id: 'homology', label: 'Homology', shortLabel: 'Homology', kind: 'data_view', viewId: 'homology' },
+  gene_trees: { id: 'gene_trees', label: 'Gene Trees', shortLabel: 'Trees', kind: 'data_view', viewId: 'gene_trees' },
   stats: { id: 'stats', label: 'Statistics', shortLabel: 'Statistics', kind: 'data_view', viewId: 'stats' },
   notes: { id: 'notes', label: 'Notes', shortLabel: 'Notes', kind: 'data_view', viewId: 'notes' },
   download: { id: 'download', label: 'Download', shortLabel: 'Download', kind: 'data_view', viewId: 'download' },

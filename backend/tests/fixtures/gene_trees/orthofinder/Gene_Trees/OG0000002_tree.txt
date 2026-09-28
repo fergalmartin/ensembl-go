@@ -1,0 +1,1 @@
+((Homo_sapiens_ENSP00000380152:0.1,Homo_sapiens_ENSP00000000233:0.1)n1:0.2,Mus_musculus_ENSMUSP00000000001:0.3)n0;

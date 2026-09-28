@@ -502,6 +502,14 @@ app.include_router(create_alignment_explorer_router(
     gene_provider=lambda *args, **kwargs: alignment_explorer_block_genes(*args, **kwargs),
     availability_provider=lambda *args, **kwargs: alignment_explorer_genome_availability(*args, **kwargs)))
 
+# Gene trees: the library lives beside the user's genomes, the protein maps it
+# builds from their GFFs are derived data and live in the cache.
+from gene_trees import create_router as create_gene_trees_router
+app.include_router(create_gene_trees_router(
+    library_path_provider=lambda: gene_trees_library_path(),
+    genomes_provider=lambda: gene_trees_local_genomes(),
+    cache_dir=CACHE_DIR / "gene_trees"))
+
 # The sequence view, wired the same way: a package that never imports this module
 # and is handed the functions it needs. Every provider is defined further down
 # this file, so each is passed as a lambda that looks it up when called rather
@@ -12790,6 +12798,75 @@ def alignment_explorer_genome_availability(assembly, region):
     except Exception:
         return 'no-region'
     return 'ready'
+
+
+def gene_trees_library_path() -> Path:
+    """``<output_dir>/local_data/gene_trees_index.sqlite``: a file, since every folder there is read as a species.
+
+    (``gene_trees.sqlite`` beside it is the first version's format; the view offers to
+    re-index it from its sources and remove it.)
+
+    ``ENSEMBL_GENE_TREES_LIBRARY`` points it elsewhere, so a test backend can load
+    trees without touching the user's library.
+    """
+    override = os.environ.get("ENSEMBL_GENE_TREES_LIBRARY", "").strip()
+    if override:
+        return Path(override).expanduser()
+    output_dir = str(load_config().get("output_dir") or "").strip()
+    if output_dir:
+        try:
+            return _resolve_local_data_root(output_dir) / "gene_trees_index.sqlite"
+        except Exception:
+            logger.warning("Gene trees: output_dir %s is unusable; using the cache", output_dir)
+    return CACHE_DIR / "gene_trees" / "gene_trees_index.sqlite"
+
+
+_GENE_TREE_GENOMES: Dict[str, Any] = {"key": None, "at": 0.0, "genomes": []}
+_GENE_TREE_GENOMES_TTL = 30.0
+
+
+def gene_trees_local_genomes() -> List[Dict[str, Any]]:
+    """Every genome a tree leaf could link to: the registered ones and those on disk.
+
+    One entry per assembly, preferring a record whose annotation index exists. The
+    disk scan is not cheap, so the answer is kept for a few seconds per configuration.
+    """
+    cfg = load_config()
+    output_dir = str(cfg.get("output_dir") or "").strip()
+    registered = _browsable_active_species(cfg)
+    key = (output_dir, tuple(_active_species_item_key(s) for s in registered))
+    now = time.time()
+    if _GENE_TREE_GENOMES["key"] == key and now - _GENE_TREE_GENOMES["at"] < _GENE_TREE_GENOMES_TTL:
+        return _GENE_TREE_GENOMES["genomes"]
+    records = list(registered)
+    if output_dir:
+        try:
+            records += list(list_local_assemblies(output_dir) or [])
+        except Exception:
+            logger.exception("Gene trees: could not scan local assemblies")
+    best: Dict[str, Dict[str, Any]] = {}
+    for record in records:
+        assembly = str(record.get("assembly") or record.get("gca") or "").strip()
+        if not assembly:
+            continue
+        files = record.get("files") or {}
+        index = str(files.get("index") or "").strip()
+        has_index = bool(index and os.path.exists(index))
+        if assembly in best and (best[assembly]["index_path"] or not has_index):
+            continue
+        best[assembly] = {
+            "assembly": assembly,
+            "species_key": record.get("species_key"),
+            "scientific_name": record.get("scientific_name"),
+            "common_name": record.get("common_name"),
+            "display_name": record.get("display_name") or record.get("common_name") or record.get("scientific_name"),
+            "provider": record.get("provider"),
+            "index_path": index if has_index else "",
+            "gff_path": str(files.get("gff3") or "").strip(),
+        }
+    genomes = list(best.values())
+    _GENE_TREE_GENOMES.update(key=key, at=now, genomes=genomes)
+    return genomes
 
 
 def alignment_explorer_annotation_features(genome, chrom, start, end, sequence, strand, transcript_id=None):

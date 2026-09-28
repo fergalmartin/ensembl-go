@@ -44,8 +44,8 @@ export const ACHIEVEMENT_CATEGORIES = [
   { id: 'achievements', label: 'Achievements', icon: 'achievements' },
 ]
 
-// The views with a "visited" achievement of their own, #54–#70. Achievements itself is
-// not here: finding it is #1.
+// The views with a "visited" achievement of their own, #54–#70 and #117 (Gene Trees,
+// added later). Achievements itself is not here: finding it is #1.
 const VIEW_VISITS = [
   ['visit_home', 54, 'home', "There's no place like home", 'Home'],
   ['visit_genome_selector', 55, 'genome_selector', 'Spoilt for choice', 'Genome Selector'],
@@ -64,6 +64,7 @@ const VIEW_VISITS = [
   ['visit_configuration', 68, 'configuration', 'Under the hood', 'Configuration'],
   ['visit_structural_variation', 69, 'structural_variation', 'Shake things up', 'Structural Variation'],
   ['visit_homology', 70, 'homology', 'Long lost relatives', 'Homology'],
+  ['visit_gene_trees', 117, 'gene_trees', 'Family tree', 'Gene Trees'],
 ]
 
 // Download-view clades. Each is a set of NCBI taxids; a genome whose lineage contains

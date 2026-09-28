@@ -115,6 +115,12 @@ function HomeView({ theme, onNavigate }) {
       icon: <AppButtonIcon buttonId="alignment_explorer" isLight={isLight} />,
     },
     {
+      id: 'gene_trees',
+      title: 'Gene Trees',
+      description: 'Load gene trees, explore them, and see which genes are in your local genomes',
+      icon: <AppButtonIcon buttonId="gene_trees" isLight={isLight} />,
+    },
+    {
       id: 'alignment',
       title: 'Feature Alignment',
       description: 'Align annotated gene regions from two or more genomes',

@@ -58,6 +58,7 @@ import MultiAlignmentSidebar from './components/MultiAlignmentSidebar'
 import MultiAlignmentPanel from './components/MultiAlignmentPanel'
 const AlignmentExplorerView = React.lazy(() => import('./components/alignment-explorer/AlignmentExplorerView'))
 const SequenceView = React.lazy(() => import('./components/sequence-view/SequenceView'))
+const GeneTreesView = React.lazy(() => import('./components/gene-trees/GeneTreesView'))
 import SaveAlignmentModal from './components/SaveAlignmentModal'
 import LoadAlignmentModal from './components/LoadAlignmentModal'
 import AppButtonIcon from './components/AppButtonIcon'
@@ -949,6 +950,8 @@ function App() {
   // new request -- the same contract as browserLocationFocusByGenome.
   const [sequenceViewEntry, setSequenceViewEntry] = useState(null)
   const [explorerIncoming, setExplorerIncoming] = useState(null)
+  // A gene another view wants shown in its gene trees: { geneId, assembly, label }.
+  const [geneTreesIncoming, setGeneTreesIncoming] = useState(null)
   const [gettingStartedOutputDirDismissed, setGettingStartedOutputDirDismissed] = useState(false)
   const [outputDirNotification, setOutputDirNotification] = useState('')
   const previousViewRef = useRef('home')
@@ -3402,6 +3405,7 @@ function App() {
     'alignment',
     'sequence',
     'alignment_explorer',
+    'gene_trees',
     'neighbourhood',
     'structural_variation',
     'homology',
@@ -3451,6 +3455,7 @@ function App() {
     alignment: 'Feature Alignment',
     sequence: 'Sequence',
     alignment_explorer: 'Alignment Explorer',
+    gene_trees: 'Gene Trees',
     neighbourhood: 'Neighbourhood',
     structural_variation: 'Structural Variation',
     homology: 'Homology',
@@ -3472,6 +3477,7 @@ function App() {
     alignment: 'Align annotated gene regions across two or more genomes',
     sequence: 'Read sequence base by base, from a whole region down to a single exon',
     alignment_explorer: 'Explore alignment blocks and connected sequence paths in named layers',
+    gene_trees: 'Load gene trees, explore them, and see which genes are in your local genomes',
     neighbourhood: 'Explore gene neighbourhood context',
     structural_variation: 'Inspect structural variation and chain-based syntenic mappings between two genomes',
     homology: 'Query homology TSV files for cross-species gene matches',
@@ -6975,6 +6981,8 @@ function App() {
             <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Sequence…</div>}><SequenceView theme={theme} config={config} genomes={config?.active_species || []} startingPoints={genomeStartingPoints} onGenomeChange={setSequenceGenomeKey} incoming={sequenceViewEntry} onIncomingConsumed={() => setSequenceViewEntry(null)} onFocusLocationSelect={handleGenomeFocusLocationSelect} onNavigateToBrowser={() => setCurrentView('genome_browser')} /></React.Suspense></ErrorBoundary>
           ) : currentView === 'alignment_explorer' ? (
             <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Alignment Explorer…</div>}><AlignmentExplorerView theme={theme} config={config} genomes={config?.active_species || []} topBarGenomes={topBarSpecies} onAddGenome={handleSpeciesPillToggle} incoming={explorerIncoming} onIncomingConsumed={() => setExplorerIncoming(null)} onOpenGenome={handleOpenAlignmentExplorerLoci} /></React.Suspense></ErrorBoundary>
+          ) : currentView === 'gene_trees' ? (
+            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Gene Trees…</div>}><GeneTreesView theme={theme} config={config} genomes={config?.active_species || []} topBarGenomes={topBarSpecies} onAddGenome={handleSpeciesPillToggle} incoming={geneTreesIncoming} onIncomingConsumed={() => setGeneTreesIncoming(null)} /></React.Suspense></ErrorBoundary>
           ) : currentView === 'neighbourhood' ? (
             /* ========== NEIGHBOURHOOD VIEW ========== */
             <div className="h-full">

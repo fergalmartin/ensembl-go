@@ -1,4 +1,4 @@
-import { FONT_MONO } from '../utils/typography'
+import { FONT_MONO, FONT_SANS } from '../utils/typography'
 import { DownloadMark, GenomeBrowserMark } from './appIconMarks'
 
 export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
@@ -23,6 +23,33 @@ export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
         <text x="1" y="7.6">ATG</text>
         <text x="1" y="15.6">CTC</text>
         <text x="1" y="23.6">TAG</text>
+      </g>
+    </svg>
+  )
+
+  // A four-leaf gene tree filling the tile: the curved branches of the view itself running
+  // out to leaves A–D. Like the sequence icon, the lettering is set as large as four rows
+  // allow (weight 800, so it survives the 18px compact size), and the root sits at the
+  // tile's edge so none of the width is spent on margin.
+  if (buttonId === 'gene_trees') return (
+    // Drawn larger than the nominal size, as the Genome Selector's mark is: the drawing
+    // already runs edge to edge, so the extra pixels all go to the tree and its letters.
+    <svg width={compact ? size + 5 : size + 10} height={compact ? size + 5 : size + 10} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <g stroke="currentColor" strokeWidth={compact ? 1.3 : 1.2} strokeLinecap="round">
+        <path d="M2.1 12C4.3 12 6.8 6 9 6M2.1 12C4.3 12 6.8 18 9 18" />
+        <path d="M9 6C10.2 4.9 12.8 3 14.6 3M9 6C10.2 7.1 12.8 9 14.6 9" />
+        <path d="M9 18C10.2 16.9 12.8 15 14.6 15M9 18C10.2 19.1 12.8 21 14.6 21" />
+      </g>
+      <g fill="currentColor">
+        <circle cx="2.1" cy="12" r="1.9" />
+        <circle cx="9" cy="6" r="1.8" />
+        <circle cx="9" cy="18" r="1.8" />
+      </g>
+      <g fill="currentColor" fontFamily={FONT_SANS} fontSize="7.4" fontWeight="800">
+        <text x="16" y="5.65">A</text>
+        <text x="16" y="11.65">B</text>
+        <text x="16" y="17.65">C</text>
+        <text x="16" y="23.65">D</text>
       </g>
     </svg>
   )
