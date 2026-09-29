@@ -83,12 +83,10 @@
 .gt-contexts-gene strong { font-size:14px; }
 .gt-contexts-gene span { opacity:.75; }
 .gt-contexts-label { opacity:.75; flex-shrink:0; }
-.gt-context-chips { display:flex; gap:6px; align-items:center; overflow-x:auto; min-width:0; scrollbar-width:thin; }
 .gt-chip { display:flex; flex-direction:column; align-items:flex-start; gap:0; padding:3px 11px !important; border-radius:8px !important; text-align:left; flex-shrink:0; }
 .gt-chip strong { font-size:13px; }
 .gt-chip span { font-size:11px; color:var(--gt-muted); }
 .gt-chip.selected { cursor:default !important; }
-.gt-contexts-hint { font-size:12px; white-space:nowrap; }
 .gt-contexts .gt-muted { color:inherit; opacity:.7; }
 
 .gt-notice { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 14px; color:var(--gt-accent); background:var(--gt-panel); border-bottom:1px solid var(--gt-border); }
@@ -187,12 +185,14 @@
 .gt-menu.gt-anchored { max-height:var(--gt-menu-max-height); overflow-y:auto; }
 .gt-menu.gt-anchored::before { content:''; position:absolute; left:var(--gt-menu-pointer); top:-6px; width:11px; height:11px; transform:translateX(-50%) rotate(45deg);
   background:var(--gt-panel); border-top:1px solid var(--gt-accent); border-left:1px solid var(--gt-accent); }
+.gt-menu.gt-anchored.above::before { top:auto; bottom:-6px; border-top:0; border-left:0;
+  border-bottom:1px solid var(--gt-accent); border-right:1px solid var(--gt-accent); }
 .gt-menu-heading { font-weight:700; padding:2px 6px 6px; border-bottom:1px solid var(--gt-border); margin-bottom:2px; }
 .gt-menu > button { text-align:left; border-color:transparent; }
 .gt-menu-option { display:flex; flex-direction:column; gap:1px; white-space:normal !important; }
 .gt-menu-option span { color:var(--gt-muted); font-size:12px; }
+.gt-menu .gt-menu-option:disabled { opacity:.4; cursor:default; }
 .gt-menu p { margin:4px 6px 2px; font-size:12px; line-height:1.5; }
-.gt-context { min-width:220px; }
 
 /* Dialogs */
 .gt-modal-shade { position:absolute; inset:0; z-index:50; background:#070e1bcc; display:flex; align-items:center; justify-content:center; padding:16px; }
@@ -227,3 +227,157 @@
 .gt-species-map { display:flex; flex-direction:column; gap:6px; max-height:220px; overflow:auto; }
 .gt-species-row { flex-direction:row !important; align-items:center; justify-content:space-between; gap:10px; font-weight:400 !important; }
 .gt-species-row select { max-width:60%; }
+
+/* ── Subtree layers ─────────────────────────────────────────────────────────
+   Tools, layer switcher, the Layers panel, selection bar and drag feedback. The
+   pick colour is the Alignment Explorer's gold (#edc263). */
+.gene-trees, .gt-menu, .gt-selection-ghost { --gt-picked:#edc263; }
+
+/* Tool split button, after the Alignment Explorer's CursorTool. */
+.gt-split { display:inline-flex; }
+.gt-split .gt-split-main { display:inline-flex; align-items:center; gap:6px; border-radius:6px 0 0 6px !important; }
+.gt-split .gt-split-arrow { border-radius:0 6px 6px 0 !important; margin-left:-1px; padding:6px 8px !important; }
+.gt-split .gt-split-main.selected { color:#1d2b3a !important; background:var(--gt-picked) !important; border-color:var(--gt-picked) !important; }
+.gt-tool-option, .gt-layer-option { gap:3px !important; }
+.gt-tool-option-head { display:flex; align-items:center; gap:7px; }
+.gt-tool-option-head i { width:11px; height:11px; border-radius:3px; flex-shrink:0; }
+.gt-tool-option kbd { margin-left:auto; font:11px/1 "IBM Plex Mono", monospace; padding:2px 5px; border:1px solid var(--gt-border); border-radius:4px; color:var(--gt-muted); }
+.gt-menu-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 6px 2px; margin-top:4px; border-top:1px solid var(--gt-border); font-size:12px; color:var(--gt-muted); }
+.gt-menu-foot button { padding:4px 9px !important; font-size:12px; }
+
+.gt-undo { display:inline-flex; }
+.gt-undo button { padding:6px 8px !important; display:flex; align-items:center; }
+.gt-undo button:first-child { border-radius:6px 0 0 6px !important; }
+.gt-undo button:last-child { border-radius:0 6px 6px 0 !important; margin-left:-1px; }
+
+.gt-layer-switcher { display:inline-flex; align-items:stretch; }
+.gt-layer-current { display:inline-flex; align-items:center; gap:7px; max-width:220px; }
+.gt-layer-current span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gt-layer-current i, .gt-layer-dot { display:inline-block; width:11px; height:11px; border-radius:3px; flex-shrink:0; }
+.gt-layer-dot { margin-right:7px; vertical-align:-1px; }
+
+/* The Layers panel, after the Alignment Explorer's sidebar layer list. */
+.gt-layer-targets { display:flex; flex-direction:column; gap:4px; }
+.gt-layer-row { display:flex; align-items:center; gap:4px; border:1px solid transparent; border-radius:7px; padding:2px; transition:background .12s, border-color .12s; }
+.gt-layer-row.selected { background:color-mix(in srgb, var(--gt-accent) 12%, transparent); border-color:color-mix(in srgb, var(--gt-accent) 45%, transparent); }
+.gt-layer-row.selection-drop-hover, .gt-new-layer.selection-drop-hover { border-color:var(--gt-picked) !important; background:color-mix(in srgb, var(--gt-picked) 18%, transparent) !important; }
+.gt-layer-targets.is-dragging .selection-drop-disabled, .gt-layer-targets.is-dragging .gt-original { opacity:.45; }
+.gt-layer-main { flex:1; min-width:0; display:flex; align-items:center; gap:9px; text-align:left; border:0 !important; background:transparent !important; padding:5px 6px !important; white-space:normal !important; }
+.gt-layer-main > i { width:13px; height:13px; border-radius:3px; flex-shrink:0; }
+.gt-layer-main input { flex:1; min-width:0; }
+.gt-layer-text { display:flex; flex-direction:column; min-width:0; }
+.gt-layer-text strong { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gt-layer-text small { font-size:11px; color:var(--gt-muted); }
+/* The row tools: the app's own marks, in the drawer's accent, as its arrows are. */
+.gt-layer-tools { display:flex; gap:1px; flex-shrink:0; opacity:.7; transition:opacity .12s; }
+.gt-layer-row:hover .gt-layer-tools, .gt-fragment-row:hover .gt-layer-tools { opacity:1; }
+.gt-layer-tools button { display:inline-flex; align-items:center; justify-content:center; border:0 !important; background:transparent !important;
+  padding:4px !important; border-radius:5px !important; color:var(--gt-drawer-accent) !important; }
+.gt-layer-tools button:hover { background:color-mix(in srgb, var(--gt-drawer-accent) 14%, transparent) !important; }
+.gt-new-layer { display:flex; flex-direction:column; align-items:flex-start; gap:1px; border-style:dashed !important; padding:7px 10px !important; }
+.gt-new-layer small { font-size:11px; color:var(--gt-muted); }
+.gt-fragments { display:flex; flex-direction:column; gap:3px; margin-top:8px; padding-top:8px; border-top:1px solid var(--gt-drawer-rule); }
+.gt-fragments-head { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 8px; font-size:11px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--gt-muted); }
+.gt-fragments-head span { white-space:nowrap; }
+.gt-fragments-head button { font-size:12px !important; text-transform:none; letter-spacing:0; padding:4px 9px !important; }
+.gt-fragment-row { display:flex; align-items:center; gap:4px; border-radius:6px; }
+.gt-fragment-row:hover { background:var(--gt-drawer-hover); }
+.gt-fragment-main { flex:1; min-width:0; display:flex; flex-direction:column; align-items:flex-start; text-align:left; border:0 !important; background:transparent !important; padding:4px 6px !important; white-space:normal !important; }
+.gt-fragment-main strong { font-size:12.5px; }
+.gt-fragment-main small { font-size:11px; color:var(--gt-muted); }
+.gt-graft-badge { font-style:normal; font-size:11px; padding:1px 7px; border-radius:999px; border:1px dashed var(--gt-warn); color:var(--gt-warn); flex-shrink:0; }
+
+/* The selection bar floats over the bottom of the canvas. */
+.gt-selection-bar { position:absolute; left:50%; bottom:16px; transform:translateX(-50%); z-index:20; display:flex; align-items:center; gap:8px;
+  padding:7px 10px; border-radius:10px; background:var(--gt-panel); border:1px solid var(--gt-picked); box-shadow:0 10px 30px #0006; max-width:calc(100% - 32px); flex-wrap:wrap; }
+.gt-selection-count { display:flex; align-items:center; gap:7px; font-weight:700; white-space:nowrap; }
+.gt-selection-count i { width:10px; height:10px; border-radius:50%; background:var(--gt-picked); }
+.gt-selection-bar button { padding:5px 10px !important; }
+.gt-selection-bar .gt-check { font-size:12px; }
+.gt-tool-hint { position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:15; padding:5px 12px; border-radius:999px;
+  background:var(--gt-panel); border:1px solid var(--gt-picked); font-size:12px; pointer-events:none; white-space:nowrap; }
+
+/* Dragging a selection out: shade the canvas, lift the drop targets above it. */
+.gt-selection-dim { position:absolute; inset:0; z-index:30; background:rgba(4,10,20,.38); pointer-events:none; }
+.gt-drawer.is-selection-dragging { position:relative; z-index:31; box-shadow:-8px 0 30px #0005; }
+.gt-selection-ghost { position:fixed; z-index:70; pointer-events:none; display:flex; flex-direction:column; gap:2px; padding:7px 11px; border-radius:8px;
+  background:#152032; color:#e3eaf4; border:1px solid var(--gt-picked); box-shadow:0 10px 30px #0006; font:13px/1.4 Lato, system-ui, sans-serif; }
+.gt-selection-ghost.light { background:#ffffff; color:#1d2b3a; }
+.gt-selection-ghost span { font-size:12px; opacity:.8; }
+
+/* The subtree being dragged: a picture of the picks, lifted off the tree. It eases from
+   full size to --gt-lift (fitting a large selection to a handy size) as it comes away,
+   and shrinks a little more over a layer it can be dropped into. */
+.gt-drag-subtree { position:fixed; z-index:69; pointer-events:none; opacity:.95; box-sizing:content-box;
+  margin:-7px 0 0 -7px; padding:6px; border-radius:10px; background:#152032; border:1px solid #edc263;
+  box-shadow:0 12px 30px rgba(0,0,0,.5); animation:gt-lift .18s ease-out forwards; transition:scale .16s ease-out, opacity .16s; }
+.gt-drag-subtree.light { background:#f6f8fb; box-shadow:0 12px 30px rgba(20,40,70,.25); }
+.gt-drag-subtree img { display:block; }
+.gt-drag-subtree.over-target { scale:.6; opacity:.8; }
+@keyframes gt-lift { from { transform:scale(1); } to { transform:scale(var(--gt-lift, 1)); } }
+
+/* The bar over a subtree layer: its tools, floating at the top of the canvas as the
+   sequence view's transcript bar floats over the sequence (SequenceReadingBar: same
+   panel, accent edge, radius and shadow; the tool in hand filled, as its reading is). */
+.gt-layerbar-track { position:absolute; top:10px; left:0; right:0; z-index:16; display:flex; justify-content:center; pointer-events:none; }
+.gt-layerbar { pointer-events:auto; display:inline-flex; flex-direction:column; max-width:calc(100% - 24px); box-sizing:border-box;
+  background:var(--gt-panel); border:1px solid var(--gt-accent); border-radius:7px; box-shadow:0 6px 18px #0006;
+  font:12px/1.3 Lato, system-ui, sans-serif; color:var(--gt-text); }
+.gt-layerbar.light { box-shadow:0 6px 18px #0000001f; }
+.gt-layerbar-row { display:flex; align-items:stretch; gap:2px; padding:3px; }
+.gt-layerbar-name { display:inline-flex; align-items:center; gap:7px; padding:0 8px 0 6px; font-weight:700; font-size:12.5px;
+  max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gt-layerbar-name i { width:10px; height:10px; border-radius:3px; flex-shrink:0; }
+.gt-layerbar-split { width:1px; margin:4px 3px; background:var(--gt-accent); opacity:.5; }
+.gt-layerbar .gt-layer-tool { display:inline-flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  min-width:62px; padding:4px 10px !important; background:transparent !important; border:1px solid transparent !important;
+  border-radius:5px !important; color:var(--gt-muted) !important; cursor:pointer; white-space:nowrap; font-size:11.5px; font-weight:600; }
+.gt-layerbar .gt-layer-tool:hover:not(:disabled):not(.on) { color:var(--gt-text) !important;
+  background:color-mix(in srgb, var(--gt-accent) 14%, transparent) !important; }
+.gt-layerbar .gt-layer-tool.on { color:#fff !important; background:var(--gt-primary) !important; border-color:var(--gt-primary) !important; }
+.gt-layerbar .gt-layer-tool.danger.on { background:#c2415b !important; border-color:#c2415b !important; }
+.gt-layerbar .gt-layer-tool:disabled { opacity:.38; cursor:default; }
+.gt-layerbar .gt-layerbar-act { display:inline-flex; align-items:center; justify-content:center; width:32px; padding:0 !important;
+  color:var(--gt-muted) !important; background:transparent !important; border:1px solid transparent !important; border-radius:5px !important; }
+.gt-layerbar .gt-layerbar-act:hover:not(:disabled) { color:var(--gt-text) !important; background:color-mix(in srgb, var(--gt-accent) 14%, transparent) !important; }
+.gt-layerbar .gt-layerbar-act:disabled { opacity:.35; cursor:default; }
+
+/* The focus bar's re-centre, as the genome browser's focus bar draws it: the reset mark in
+   the accent colour, first thing on the bar. */
+.gene-trees .gt-recentre { flex-shrink:0; display:inline-flex; align-items:center; justify-content:center; padding:3px !important;
+  margin:-3px 0 -3px -4px; border:0 !important; border-radius:6px !important; background:transparent !important; color:var(--gt-accent) !important; }
+.gene-trees .gt-recentre:hover { background:color-mix(in srgb, var(--gt-text) 10%, transparent) !important; }
+
+/* The focus bar's list of the trees the focus gene is in: one control, the tree showing on
+   its face, grouped in its menu (this layer, the original tree, other trees). */
+.gt-tree-picker { display:inline-flex; min-width:0; }
+.gt-tree-picker-button { display:inline-flex; align-items:center; gap:8px; min-width:0; padding:4px 10px !important;
+  border-radius:7px !important; font-size:12.5px; white-space:nowrap; }
+.gt-tree-picker-button strong { font-size:13px; overflow:hidden; text-overflow:ellipsis; max-width:220px; }
+.gt-tree-picker-button span { color:var(--gt-muted); overflow:hidden; text-overflow:ellipsis; max-width:180px; }
+.gt-tree-picker-button em { font-style:normal; color:var(--gt-muted); font-size:11.5px; padding-left:8px; border-left:1px solid var(--gt-border); }
+.gt-tree-picker-button svg { color:var(--gt-muted); flex-shrink:0; }
+.gt-tree-picker-group { display:flex; flex-direction:column; gap:2px; }
+.gt-tree-picker-group > button { text-align:left; border-color:transparent; align-items:flex-start; width:100%; }
+.gt-tree-picker-group + .gt-tree-picker-group { margin-top:4px; padding-top:4px; border-top:1px solid var(--gt-border); }
+.gt-tree-picker-heading { font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--gt-muted); padding:4px 8px 2px; }
+
+/* Renaming a subtree, in the drawer. */
+.gt-fragment-name-input { flex:1; min-width:0; margin:3px 4px; padding:4px 8px; font-size:12.5px; font-weight:700; border-radius:5px;
+  border:1px solid var(--gt-accent); background:var(--gt-bg); color:var(--gt-text); outline:none; }
+.gt-layerbar-rename { display:inline-flex; align-items:center; gap:2px; padding:0 2px; }
+.gt-layerbar-rename input { width:180px; padding:5px 8px; font-size:12.5px; font-weight:600; border-radius:5px;
+  border:1px solid var(--gt-accent); background:var(--gt-bg); color:var(--gt-text); outline:none; }
+.gt-clade-menu { display:inline-flex; }
+.gt-clade-menu > button { display:inline-flex; align-items:center; gap:6px; }
+
+/* Cycle: the Alignment Explorer's layer drum, beside the layer's name. */
+.gt-cycle { display:inline-flex; align-items:center; gap:6px; }
+.gt-cycle-mark { color:var(--gt-accent); font-size:13px; line-height:1; }
+.gt-wheel .genome-wheel-drum { transition:transform 80ms linear; }
+.gt-wheel .genome-wheel-status { bottom:35px; }
+
+/* The focus bar's ✕, at its far end as in the genome browser: faint until pointed at. */
+.gene-trees .gt-unfocus { margin-left:auto; flex-shrink:0; border:0 !important; background:transparent !important; padding:4px 6px !important;
+  color:var(--gt-text) !important; opacity:.5; font-size:13px; line-height:1; }
+.gene-trees .gt-unfocus:hover { opacity:1; }

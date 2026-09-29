@@ -56,6 +56,9 @@ CREATE INDEX IF NOT EXISTS idx_members_protein ON members (protein_id);
 CREATE INDEX IF NOT EXISTS idx_members_transcript ON members (transcript_id) WHERE transcript_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_members_symbol ON members (symbol COLLATE NOCASE) WHERE symbol IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_members_label ON members (label) WHERE label IS NOT NULL;
+-- The subtree-layer workspace: layers can mix trees from any collection, so it belongs
+-- to the library rather than to one tree.
+CREATE TABLE IF NOT EXISTS workspace (id TEXT PRIMARY KEY, json TEXT, updated REAL);
 '''
 
 COLLECTION_COLUMNS = ('id', 'name', 'source', 'format', 'created', 'tree_count', 'leaf_count', 'status', 'label_pattern',
@@ -252,6 +255,23 @@ class GeneTreeStore:
                                 'LEFT JOIN species s ON s.sid = m.sid WHERE t.cid = ? GROUP BY m.sid ORDER BY n DESC',
                                 (cid,)).fetchall()
         return [{'species': r['species'], 'leaves': r['n']} for r in rows]
+
+    # ── the subtree-layer workspace ──
+
+    def workspace(self, workspace_id: str = 'default') -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute('SELECT json, updated FROM workspace WHERE id = ?', (workspace_id,)).fetchone()
+        if not row:
+            return None
+        return {'workspace': json.loads(row['json']), 'updated': row['updated']}
+
+    def save_workspace(self, data: Dict[str, Any], workspace_id: str = 'default') -> float:
+        updated = time.time()
+        with self.connect() as conn:
+            conn.execute('INSERT INTO workspace (id, json, updated) VALUES (?, ?, ?) '
+                         'ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated = excluded.updated',
+                         (workspace_id, json.dumps(data, separators=(',', ':')), updated))
+        return updated
 
     # ── search ──
 

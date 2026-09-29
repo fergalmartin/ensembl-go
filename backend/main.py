@@ -508,7 +508,8 @@ from gene_trees import create_router as create_gene_trees_router
 app.include_router(create_gene_trees_router(
     library_path_provider=lambda: gene_trees_library_path(),
     genomes_provider=lambda: gene_trees_local_genomes(),
-    cache_dir=CACHE_DIR / "gene_trees"))
+    cache_dir=CACHE_DIR / "gene_trees",
+    neighbourhood_lookup=lambda db_path, gene_id, window: gene_trees_neighbourhood(db_path, gene_id, window)))
 
 # The sequence view, wired the same way: a package that never imports this module
 # and is handed the functions it needs. Every provider is defined further down
@@ -12823,6 +12824,12 @@ def gene_trees_library_path() -> Path:
 
 _GENE_TREE_GENOMES: Dict[str, Any] = {"key": None, "at": 0.0, "genomes": []}
 _GENE_TREE_GENOMES_TTL = 30.0
+
+
+def gene_trees_neighbourhood(db_path: str, gene_id: str, window: int):
+    """The Neighbourhood view's own index query, as plain dicts for the gene-trees package."""
+    genes, center = get_gene_neighbourhood_index_by_gene(db_path, gene_id, window)
+    return [g.model_dump() if hasattr(g, "model_dump") else dict(g) for g in genes], center
 
 
 def gene_trees_local_genomes() -> List[Dict[str, Any]]:

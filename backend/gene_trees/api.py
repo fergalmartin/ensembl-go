@@ -19,17 +19,21 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from . import model
 from .indexer import index_path, index_text, materialize, members_for_pattern
 from .linking import Linker
+from .neighbourhood import Neighbourhoods
 from .parsers import FORMAT_LABELS, TreeParseError
 from .store import GeneTreeStore
 
 MAX_INLINE_BYTES = 50 * 1024 * 1024
+MAX_NEIGHBOURHOOD_GENES = 500
+MAX_WORKSPACE_BYTES = 10 * 1024 * 1024
 LEGACY_FILENAME = 'gene_trees.sqlite'
 
 
@@ -110,9 +114,10 @@ def legacy_library(library_path: Path) -> Optional[Path]:
 
 
 def create_router(library_path_provider: Callable[[], Path], genomes_provider: Callable[[], List[Dict[str, Any]]],
-                  cache_dir: Path) -> APIRouter:
+                  cache_dir: Path, neighbourhood_lookup: Optional[Callable[..., Any]] = None) -> APIRouter:
     router = APIRouter(prefix='/api/gene-trees', tags=['Gene Trees'])
     linker = Linker(genomes_provider, Path(cache_dir))
+    neighbourhoods = Neighbourhoods(genomes_provider, neighbourhood_lookup) if neighbourhood_lookup else None
     pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='gene-tree-import')
     jobs: 'OrderedDict[str, Dict[str, Any]]' = OrderedDict()
     lock = threading.Lock()
@@ -393,6 +398,46 @@ def create_router(library_path_provider: Callable[[], Path], genomes_provider: C
                 raise HTTPException(400, 'No such node')
             nodes = model.subtree(nodes, node)
         return PlainTextResponse(model.to_newick(nodes, 0, nhx=format == 'nhx') + '\n', media_type='text/plain')
+
+    # ── the subtree-layer workspace ──
+
+    # ── data beside the leaves ──
+
+    @router.post('/neighbourhood')
+    async def neighbourhood(request: Request):
+        """The genes around each linked leaf's gene: `{genes: [{assembly, gene_id}], flank}`."""
+        if not neighbourhoods:
+            raise HTTPException(501, 'Neighbourhoods are not available')
+        try:
+            data = json.loads(await request.body() or b'{}')
+        except ValueError:
+            raise HTTPException(400, 'The request is not valid JSON')
+        genes = data.get('genes') if isinstance(data, dict) else None
+        if not isinstance(genes, list):
+            raise HTTPException(400, 'Send a list of genes')
+        if len(genes) > MAX_NEIGHBOURHOOD_GENES:
+            raise HTTPException(400, f'At most {MAX_NEIGHBOURHOOD_GENES} genes at a time')
+        flank = max(1, min(8, int(data.get('flank') or 4)))
+        pairs = [(str(g.get('assembly') or ''), str(g.get('gene_id') or '')) for g in genes if isinstance(g, dict)]
+        pairs = [(a, g) for a, g in pairs if a and g]
+        return {'results': await run_in_threadpool(neighbourhoods.get, pairs, flank)}
+
+    @router.get('/workspace')
+    def get_workspace():
+        return store().workspace() or {'workspace': None, 'updated': None}
+
+    @router.put('/workspace')
+    async def put_workspace(request: Request):
+        body = await request.body()
+        if len(body) > MAX_WORKSPACE_BYTES:
+            raise HTTPException(413, 'The layers are too large to save (over 10 MB)')
+        try:
+            data = json.loads(body or b'{}')
+        except ValueError:
+            raise HTTPException(400, 'The workspace is not valid JSON')
+        if not isinstance(data, dict) or not isinstance(data.get('layers'), list):
+            raise HTTPException(400, 'A workspace needs a list of layers')
+        return {'updated': store().save_workspace(data)}
 
     # ── a library written by an earlier version ──
 

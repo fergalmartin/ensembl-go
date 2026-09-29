@@ -264,3 +264,79 @@ test('radial: far out, folding and label thinning keep the focus gene and count 
   const counted = [...plan.labelled].reduce((sum, id) => sum + index.leafCount[id] + (plan.extra.get(id) || 0), 0)
   assert.equal(counted, 256)
 })
+
+test('curved phylogram branches bend within one level of the parent, then run straight', () => {
+  const index = indexTree(TREE)
+  const layout = layoutTree(index, emptyViewState(), { levelWidth: 20, phylogram: true })
+  // E (bl 3) is the longest branch: its bend ends where its sibling Primates' clade begins
+  // (closer than a level), and a straight run reaches E.
+  const long = layout.edges.find(e => e.to === 8)
+  const parent = layout.byId.get(4), leaf = layout.byId.get(8), sibling = layout.byId.get(5)
+  assert.ok(sibling.x - parent.x < 20)
+  assert.equal(long.points[1][0], 'C')
+  assert.ok(Math.abs(long.points[1][5] - sibling.x) < 1e-9)
+  assert.deepEqual(long.points[2], ['L', leaf.x, leaf.y])
+  // No bend is ever squeezed below a third of a level by a very short sibling.
+  const root = layout.byId.get(0)
+  for (const edge of layout.edges.filter(e => e.from === 0)) {
+    const to = layout.byId.get(edge.to)
+    assert.ok(Math.abs(edge.points[1][5] - root.x) >= Math.min(20 / 3, Math.abs(to.x - root.x)) - 1e-9)
+  }
+  // A branch shorter than a level is one curve, as before.
+  const short = layout.edges.find(e => e.to === 4)
+  assert.equal(short.points.length, 2)
+  assert.equal(short.points[1][5], layout.byId.get(4).x)
+  // Flipped, the bend goes the other way.
+  const flipped = layoutTree(index, emptyViewState(), { levelWidth: 20, phylogram: true, flipHorizontal: true })
+  const back = flipped.edges.find(e => e.to === 8)
+  assert.ok(Math.abs(back.points[1][5] - flipped.byId.get(5).x) < 1e-9)
+  assert.ok(back.points[1][5] < flipped.byId.get(4).x)
+  // Radial: the sweep reaches one level out, then a straight run along the spoke.
+  const radial = layoutTree(index, emptyViewState(), { shape: 'radial', phylogram: true, levelWidth: 20 })
+  const spoke = radial.edges.find(e => e.to === 8)
+  assert.equal(spoke.points[1][0], 'P')
+  assert.ok(spoke.points[1][3] < radial.byId.get(8).r)
+  assert.equal(spoke.points[2][0], 'L')
+})
+
+test('a subtree layer: moved fragments stay put, the rest stack below them, each in its own lane', async () => {
+  const { forestTree } = await import('../src/components/gene-trees/workspace.js')
+  const leafNode = (id, parent, label) => ({ id, parent, children: [], branch_length: 1, leaf: { label } })
+  const pair = (a, b) => [{ id: 0, parent: -1, children: [1, 2], branch_length: null, leaf: null }, leafNode(1, 0, a), leafNode(2, 0, b)]
+  const layer = { fragments: [
+    { id: 'F1', source: {}, nodes: pair('A', 'B') },
+    { id: 'F2', source: {}, nodes: pair('C', 'D'), pos: { x: 400, y: 10 } },
+    { id: 'F3', source: {}, nodes: pair('E', 'F') },
+  ] }
+  const index = indexTree(forestTree(layer))
+  const layout = layoutTree(index, emptyViewState(), { rowPitch: 20, levelWidth: 30 })
+  const rootOf = id => layout.items.find(i => i.node.fragRoot === id)
+  const members = id => { const r = rootOf(id); return layout.items.filter(i => i.lane === r.lane) }
+  // F2 sits where it was put: its root at x 400, its top row at y 10.
+  assert.equal(rootOf('F2').x, 400)
+  assert.equal(Math.min(...members('F2').map(i => i.y)), 10)
+  // F1 and F3 were never moved: they stack below everything that was, in order, a blank row apart.
+  const f2Bottom = Math.max(...members('F2').map(i => i.y))
+  const f1Top = Math.min(...members('F1').map(i => i.y))
+  const f3Top = Math.min(...members('F3').map(i => i.y))
+  assert.ok(f1Top > f2Bottom)
+  assert.equal(f3Top - Math.max(...members('F1').map(i => i.y)), 40)
+  // Three lanes, so labels in F1 and F2 never compete for the same rows.
+  assert.equal(new Set(layout.items.filter(i => !i.node.virtual).map(i => i.lane)).size, 3)
+  // With nothing moved, the layout is the plain stack.
+  const plain = layoutTree(indexTree(forestTree({ fragments: layer.fragments.map(f => ({ ...f, pos: undefined })) })), emptyViewState(), { rowPitch: 20, levelWidth: 30 })
+  assert.deepEqual(plain.items.filter(i => i.kind === 'leaf').map(i => i.y), [20, 40, 80, 100, 140, 160])
+})
+
+test('every copy of the focus gene keeps its label when zoomed out', () => {
+  const index = indexTree(TREE)
+  const layout = layoutTree(index, emptyViewState(), { rowPitch: 20, levelWidth: 20 })
+  // So far out that only a label or two fits: the focus (A) and its copy (E) both keep one.
+  const t = { k: 0.05, kx: 1, x: 0, y: 0 }
+  // As the view passes it: the paths to both copies, which never fold.
+  const plan = labelPlan(layout, index, t, {}, new Set(), 2, new Set([2, 1, 0, 8, 4]), new Set([8]))
+  assert.ok(!plan.full)
+  assert.ok(plan.labelled.has(2) && plan.labelled.has(8))
+  const without = labelPlan(layoutTree(index, emptyViewState(), { rowPitch: 20, levelWidth: 20 }), index, t, {}, new Set(), 2, new Set([2, 1, 0]), null)
+  assert.ok(!without.labelled.has(8))
+})

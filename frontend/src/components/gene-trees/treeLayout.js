@@ -43,10 +43,17 @@ export function layoutTree(index, view, options = {}) {
     for (let i = children.length - 1; i >= 0; i--) stack.push(children[i])
   }
 
-  // Rows: terminals in pre-order.
+  // Rows: terminals in pre-order. A subtree layer's forest hangs from an invisible root;
+  // a blank row between its fragments keeps them reading as separate trees.
   let row = 0
   const y = new Map()
+  const forest = Boolean(index.nodes[root]?.virtual)
+  const fragmentStart = forest ? new Set(visibleChildren.get(root)) : null
   for (const id of order) {
+    if (forest && fragmentStart.has(id)) {
+      // A blank row before every fragment: room for its name tag, and a gap between trees.
+      row += 1
+    }
     if (!visibleChildren.get(id).length) y.set(id, row++ * pitch)
   }
   // Internal nodes: midway between their first and last child, bottom-up.
@@ -66,7 +73,7 @@ export function layoutTree(index, view, options = {}) {
   for (const id of order) maxDist = Math.max(maxDist, index.dist[id] - rootDist)
   if (options.shape === 'radial') {
     return radialLayout(index, view, options, { order, visibleChildren, y, height, rows: row, root, rootDepth, rootDist,
-      maxHeight, maxDist, pitch, levelWidth, layout })
+      maxHeight, maxDist, pitch, levelWidth, layout, forest })
   }
   const cladogramWidth = Math.max(1, maxHeight) * levelWidth
   const phylogram = Boolean(options.phylogram) && maxDist > 0
@@ -93,6 +100,7 @@ export function layoutTree(index, view, options = {}) {
     items.push(item)
     byId.set(id, item)
   }
+  if (forest) placeFragments(byId, visibleChildren, root, pitch)
   // Each node's extent: the rows it spans (y0..y1) and the furthest x beneath it (reach),
   // which is what the painter needs to draw a clade as one wedge when zoomed far out.
   for (let i = order.length - 1; i >= 0; i--) {
@@ -111,34 +119,111 @@ export function layoutTree(index, view, options = {}) {
     item.lmid = (item.y0 + item.y1) / 2
   }
   const edges = []
+  const bends = bendWidths(order, visibleChildren, id => byId.get(id).x, levelWidth)
   for (const item of items) {
     if (item.parent < 0) continue
     const from = byId.get(item.parent)
-    edges.push({ from: item.parent, to: item.id, points: edgePoints(layout, from, item) })
+    edges.push({ from: item.parent, to: item.id, points: edgePoints(layout, from, item, bends.get(item.parent)) })
   }
   // Aligned leaves: every terminal's label sits in one column at the tips' edge. In a
   // cladogram the tips already end together; in a phylogram they end where their branch
   // lengths take them and a dotted leader runs out to the column.
   let alignX
-  if (options.alignLeaves) {
+  // A data column (the Neighbourhood view, say) starts where the furthest tip ends, as
+  // aligned labels do; the labels then sit after it, `labelOffset` screen pixels further.
+  if (options.alignLeaves || options.dataColumn) {
     const tips = items.filter(item => item.kind !== 'internal').map(item => item.x)
     alignX = options.flipHorizontal ? Math.min(...tips) : Math.max(...tips)
   }
-  return { items, byId, edges, width, height: totalHeight, rows, layout, pitch, levelWidth,
-    flipHorizontal: Boolean(options.flipHorizontal), alignX }
+  // Fragments put anywhere can reach past the stacked tree's own box.
+  let extentX = width, extentY = totalHeight
+  if (forest) for (const item of items) if (!item.node.virtual) { extentX = Math.max(extentX, item.x); extentY = Math.max(extentY, item.y) }
+  return { items, byId, edges, width: extentX, height: extentY, rows, layout, pitch, levelWidth,
+    flipHorizontal: Boolean(options.flipHorizontal), alignX, forest, labelOffset: options.dataColumn || 0 }
+}
+
+/**
+ * A subtree layer's fragments, placed. Each is stacked under the last (a blank row between)
+ * until the user moves one; a moved fragment keeps `fragPos`, the world position of its
+ * root's x and its top row, and the fragments never moved stack below everything that
+ * was, in their order. Every item also learns its `lane` (which fragment it is in), so
+ * label thinning only weighs labels in one fragment against each other: two fragments
+ * side by side share rows without sharing labels.
+ */
+function placeFragments(byId, visibleChildren, rootId, pitch) {
+  const fragments = visibleChildren.get(rootId).map((id, lane) => {
+    const members = []
+    const stack = [id]
+    while (stack.length) {
+      const next = stack.pop()
+      const item = byId.get(next)
+      item.lane = lane
+      members.push(item)
+      stack.push(...visibleChildren.get(next))
+    }
+    let top = Infinity, bottom = -Infinity
+    for (const item of members) { top = Math.min(top, item.y); bottom = Math.max(bottom, item.y) }
+    const rootItem = byId.get(id)
+    return { members, top, bottom, x: rootItem.x, pos: rootItem.node.fragPos }
+  })
+  const placed = fragments.filter(f => f.pos)
+  if (!placed.length) return
+  let cursor = Math.max(...placed.map(f => f.pos.y + f.bottom - f.top)) + pitch
+  for (const fragment of fragments) {
+    let dx = 0, dy
+    if (fragment.pos) {
+      dx = fragment.pos.x - fragment.x
+      dy = fragment.pos.y - fragment.top
+    } else {
+      const top = cursor + pitch
+      dy = top - fragment.top
+      cursor = top + fragment.bottom - fragment.top + pitch
+    }
+    for (const item of fragment.members) { item.x += dx; item.y += dy }
+  }
+}
+
+/**
+ * How far from each node its branches may bend: one level, but no further than its
+ * shortest child branch. Every clade under a node starts at least that far out, so a
+ * bend passing the rows of a sibling's clade is done before that clade begins, which is
+ * why a rectangular elbow never crosses anything either. A third of a level is kept
+ * regardless, so a very short sibling (Compara has zero-length branches) does not flatten
+ * every curve beside it into an elbow.
+ */
+function bendWidths(order, visibleChildren, position, level) {
+  const bends = new Map()
+  for (const id of order) {
+    const children = visibleChildren.get(id)
+    if (!children.length) continue
+    const at = position(id)
+    const shortest = Math.min(...children.map(c => Math.abs(position(c) - at)))
+    bends.set(id, Math.min(level, Math.max(shortest, level / 3)))
+  }
+  return bends
 }
 
 /**
  * A branch as drawing commands: `M` then `L`/`C` segments, in world units.
  * Curved branches leave the parent horizontally and arrive at the child
  * horizontally, which is what makes the XD's sweeping look.
+ *
+ * The bend is made within `bend` of the parent (one level), and a longer branch runs
+ * straight on from there. A phylogram's long branch bent over its whole length would
+ * sweep diagonally under every clade between its parent and child and cross them; bent
+ * next to the parent it stays where a rectangular elbow would, beside its siblings.
  */
-export function edgePoints(layout, from, to) {
+export function edgePoints(layout, from, to, bend = Infinity) {
   if (layout === 'rectangular') {
     return [['M', from.x, from.y], ['L', from.x, to.y], ['L', to.x, to.y]]
   }
-  const mid = from.x + (to.x - from.x) * 0.5
-  return [['M', from.x, from.y], ['C', mid, from.y, mid, to.y, to.x, to.y]]
+  const dx = to.x - from.x
+  const reach = Math.sign(dx) * Math.min(Math.abs(dx), bend)
+  const end = from.x + reach
+  const mid = from.x + reach * 0.5
+  const curve = [['M', from.x, from.y], ['C', mid, from.y, mid, to.y, end, to.y]]
+  if (end !== to.x) curve.push(['L', to.x, to.y])
+  return curve
 }
 
 /**
@@ -154,7 +239,7 @@ export function edgePoints(layout, from, to) {
  * `a1`) and the furthest radius beneath it (`reach`). Flips mirror the angles.
  */
 function radialLayout(index, view, options, t) {
-  const { order, visibleChildren, y, height, rows, root, rootDepth, rootDist, maxHeight, maxDist, pitch, levelWidth, layout } = t
+  const { order, visibleChildren, y, height, rows, root, rootDepth, rootDist, maxHeight, maxDist, pitch, levelWidth, layout, forest } = t
   const sweep = Math.PI * 2 - RADIAL_GAP
   const start = -Math.PI / 2 + RADIAL_GAP / 2
   // Row index -> angle; internal nodes sit between their first and last child, as in rows.
@@ -206,13 +291,14 @@ function radialLayout(index, view, options, t) {
     item.a1 = flip(item.t1)
   }
   const edges = []
+  const bends = bendWidths(order, visibleChildren, id => byId.get(id).r, outer / levels)
   for (const item of items) {
     if (item.parent < 0) continue
     const from = byId.get(item.parent)
-    edges.push({ from: item.parent, to: item.id, points: radialEdgePoints(layout, from, item) })
+    edges.push({ from: item.parent, to: item.id, points: radialEdgePoints(layout, from, item, bends.get(item.parent)) })
   }
   return { items, byId, edges, width: outer * 2, height: outer * 2, rows, layout, pitch, levelWidth, radial: true, outer,
-    reversed, flipHorizontal: false, alignR: options.alignLeaves ? outer : undefined, alignX: undefined }
+    reversed, flipHorizontal: false, alignR: options.alignLeaves ? outer : undefined, alignX: undefined, forest }
 }
 
 const polar = (r, a) => [r * Math.cos(a), r * Math.sin(a)]
@@ -225,14 +311,21 @@ const polar = (r, a) => [r * Math.cos(a), r * Math.sin(a)]
  * between. It is a polar sweep (`P`), drawn as a polyline: a Bézier between the two
  * ends would cut a chord across the circle whenever they are far apart in angle, as
  * they are all along a Compara tree's caterpillar spine.
+ *
+ * As in the linear tree, the sweep is made within `bend` of the parent (one level) and a
+ * longer branch carries on straight out along its spoke, so it cannot cut across the
+ * clades between parent and child.
  */
-export function radialEdgePoints(layout, from, to) {
+export function radialEdgePoints(layout, from, to, bend = Infinity) {
   if (layout === 'rectangular') {
     return [['M', ...polar(from.r, from.angle)], ['A', from.r, from.angle, to.angle], ['L', ...polar(to.r, to.angle)]]
   }
   // One polar sweep, tessellated by the painter at a density set by its size on screen:
   // precomputing points here would draw a 10px branch in 48 segments when zoomed out.
-  return [['M', from.x, from.y], ['P', from.r, from.angle, to.r, to.angle]]
+  const end = from.r + Math.min(to.r - from.r, bend)
+  const sweep = [['M', from.x, from.y], ['P', from.r, from.angle, end, to.angle]]
+  if (end !== to.r) sweep.push(['L', to.x, to.y])
+  return sweep
 }
 
 /** Where a terminal's label starts: the aligned column when there is one, else the tip. */

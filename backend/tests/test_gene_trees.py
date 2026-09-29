@@ -380,6 +380,19 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/gene-trees/datasets').json()['collections'], [])
         self.assertEqual(self.client.get('/api/gene-trees/search', params={'q': 'ENSG00000139618'}).json()['results'], [])
 
+    def test_workspace_round_trip(self):
+        self.assertEqual(self.client.get('/api/gene-trees/workspace').json(), {'workspace': None, 'updated': None})
+        workspace = {'version': 1, 'active': 'L1', 'original': False, 'layers': [
+            {'id': 'L1', 'name': 'Primates', 'color': '#e64980', 'fragments': [
+                {'id': 'F1', 'source': {'collectionId': 'c', 'treeId': 't'}, 'nodes': [
+                    {'id': 0, 'parent': -1, 'children': [1], 'src': 4}, {'id': 1, 'parent': 0, 'children': [], 'src': 5, 'leaf': {'label': 'A'}}]}]}]}
+        saved = self.client.put('/api/gene-trees/workspace', json=workspace).json()
+        self.assertIn('updated', saved)
+        back = self.client.get('/api/gene-trees/workspace').json()
+        self.assertEqual(back['workspace'], workspace)
+        self.assertEqual(self.client.put('/api/gene-trees/workspace', json={'layers': 'nope'}).status_code, 400)
+        self.assertEqual(self.client.put('/api/gene-trees/workspace', content=b'{bad').status_code, 400)
+
     def test_bad_input_is_reported_not_stored(self):
         status = self.import_and_wait(content='((A,B);', name='broken')
         self.assertEqual(status['status'], 'failed')
@@ -479,3 +492,54 @@ class IndexTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NeighbourhoodTests(unittest.TestCase):
+    """The genes around a leaf's gene, for the tree's Neighbourhood column."""
+
+    ROWS = [
+        {'id': 'g1', 'name': 'A', 'chrom': '1', 'start': 100, 'end': 200, 'strand': '+', 'biotype': 'protein_coding'},
+        {'id': 'p1', 'name': '', 'chrom': '1', 'start': 250, 'end': 260, 'strand': '+', 'biotype': 'processed_pseudogene'},
+        {'id': 'g2', 'name': 'B', 'chrom': '1', 'start': 300, 'end': 400, 'strand': '-', 'biotype': 'protein_coding'},
+        {'id': 'c', 'name': 'C', 'chrom': '1', 'start': 500, 'end': 600, 'strand': '-', 'biotype': 'protein_coding'},
+        {'id': 'm1', 'name': 'MIR1', 'chrom': '1', 'start': 650, 'end': 660, 'strand': '+', 'biotype': 'miRNA'},
+        {'id': 'g3', 'name': 'D', 'chrom': '1', 'start': 700, 'end': 800, 'strand': '+', 'biotype': 'protein_coding'},
+        {'id': 'g4', 'name': 'E', 'chrom': '1', 'start': 900, 'end': 950, 'strand': '+', 'biotype': 'protein_coding'},
+    ]
+
+    def test_window_keeps_protein_coding_flanks_and_turns_minus_strand_rows(self):
+        from gene_trees.neighbourhood import window
+        result = window(self.ROWS, 'c', 1)
+        # C is on the minus strand: the row is reversed so it points right, and strands swap.
+        self.assertTrue(result['flipped'])
+        self.assertEqual([g['id'] for g in result['genes']], ['g3', 'c', 'g2'])
+        self.assertEqual([g['strand'] for g in result['genes']], ['-', '+', '+'])
+        both = window(self.ROWS, 'c', 4)
+        self.assertEqual({g['id'] for g in both['genes']}, {'g1', 'g2', 'c', 'g3', 'g4'})  # no pseudogene, no miRNA
+        forward = window(self.ROWS, 'g3', 2)
+        self.assertFalse(forward['flipped'])
+        self.assertEqual([g['id'] for g in forward['genes']], ['g2', 'c', 'g3', 'g4'])
+        self.assertIsNone(window(self.ROWS, 'missing', 2))
+
+    def test_route_batches_genes_and_says_why_one_is_missing(self):
+        calls = []
+
+        def lookup(index, gene_id, size):
+            calls.append((index, gene_id))
+            return [dict(r) for r in self.ROWS], gene_id
+
+        genomes = [{'assembly': 'GCA_1', 'index_path': '/idx/one.sqlite'}, {'assembly': 'GCA_2', 'index_path': ''}]
+        with tempfile.TemporaryDirectory() as temp:
+            app = FastAPI()
+            app.include_router(create_router(lambda: Path(temp) / 'lib.sqlite', lambda: genomes, Path(temp) / 'cache',
+                                             neighbourhood_lookup=lookup))
+            client = TestClient(app)
+            body = {'genes': [{'assembly': 'GCA_1', 'gene_id': 'c'}, {'assembly': 'GCA_2', 'gene_id': 'x'},
+                              {'assembly': 'GCA_9', 'gene_id': 'y'}], 'flank': 1}
+            results = client.post('/api/gene-trees/neighbourhood', json=body).json()['results']
+            self.assertEqual([g['id'] for g in results['GCA_1:c']['genes']], ['g3', 'c', 'g2'])
+            self.assertEqual(results['GCA_2:x'], {'error': 'not indexed'})
+            self.assertEqual(results['GCA_9:y'], {'error': 'not local'})
+            client.post('/api/gene-trees/neighbourhood', json=body)
+            self.assertEqual(calls, [('/idx/one.sqlite', 'c')])  # the second ask came from the cache
+            self.assertEqual(client.post('/api/gene-trees/neighbourhood', json={'genes': 'no'}).status_code, 400)
