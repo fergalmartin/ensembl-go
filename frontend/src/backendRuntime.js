@@ -144,6 +144,7 @@ export function normalizeBackendRuntime(raw) {
     apiBase: raw?.apiBase || fallbackApiBase,
     apiToken: String(raw?.apiToken || getApiToken() || ''),
     lastError: String(raw?.lastError || ''),
+    setupProgress: String(raw?.setupProgress || ''),
     diagnostics: raw?.diagnostics || null,
     setupCommands: raw?.setupCommands || {},
     timestamp: Number(raw?.timestamp || Date.now()),

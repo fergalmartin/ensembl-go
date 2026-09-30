@@ -17,7 +17,7 @@ const {
 
 function shouldCopyBackendPath(sourcePath) {
   const base = path.basename(sourcePath);
-  if (base === '__pycache__' || base === '.pytest_cache' || base === 'cache') {
+  if (base === '__pycache__' || base === '.pytest_cache' || base === 'cache' || base === '.venv') {
     return false;
   }
   if (/\.(pyc|pyo)$/i.test(base)) {

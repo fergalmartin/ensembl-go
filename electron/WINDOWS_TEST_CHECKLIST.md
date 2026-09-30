@@ -3,13 +3,13 @@
 Use this on a real Windows machine. The supported Windows path is:
 
 - native Electron app on Windows
-- backend running inside Ubuntu or Debian WSL
+- backend running in a virtual environment inside Ubuntu or Debian WSL 2
 - frontend and backend talking over `http://127.0.0.1:8000`
 
 ## 1) Build machine setup
 
 - Install Node.js and npm on Windows.
-- Install a WSL distro such as Ubuntu or Debian.
+- Install a WSL 2 distro such as Ubuntu or Debian; verify its version with `wsl -l -v`.
 - Open a fresh PowerShell in the repo.
 - Ensure frontend and Electron dependencies are installed:
 
@@ -60,28 +60,36 @@ Launch either:
 Verify:
 
 - The app opens to the Windows backend setup screen if the backend is not already running.
-- The setup screen shows status rows for:
-  - backend health
+- If `uv` is available in WSL and the new backend has no environment, the app shows automatic setup progress, installs requirements into `backend/.venv`, and then launches the backend.
+- The setup banner shows backend connection status. The setup cards follow this order:
   - WSL
-  - default distro
-  - backend source bundle
-  - Python in WSL
-  - Python modules in WSL
+  - WSL 2 distro
+  - backend files copied to the native WSL filesystem
+  - backend virtual environment
+  - Python dependencies
   - optional MAFFT in WSL
-- The setup screen shows copyable commands for package install, Python dependency install, and manual backend launch.
+- The backend files and `.venv` are under `~/.local/share/ensembl-go/backend/<source-hash>/backend/` in WSL, not under `/mnt/c`.
+- If automatic setup fails, the screen keeps the error and offers selectable `uv` (when detected) and Python venv commands. The system Python package command appears only with the Python venv option.
 
 ## 5) WSL dependency setup
 
-Inside Ubuntu or Debian WSL, use the commands shown in the app.
+If automatic setup fails, open Ubuntu or Debian WSL 2, select one setup method,
+and use its commands.
+The `uv` method uses Python 3.12, downloading a user-managed interpreter if
+needed. The Python venv method needs `python3` and `python3-venv` in WSL. No
+global Python packages are needed.
 
-At minimum, confirm these steps succeed:
+For the Python venv method, confirm these steps succeed:
 
 ```bash
-sudo apt update && sudo apt install -y python3 python3-pip python3-venv
-python3 -m venv '<path shown by the app>/.venv'
-'<path shown by the app>/.venv/bin/python' -m pip install --upgrade pip
-'<path shown by the app>/.venv/bin/python' -m pip install -r '<path shown by the app>/backend/requirements.txt'
+sudo apt update && sudo apt install -y python3 python3-venv # only if Python is missing
+python3 -m venv '<path shown by the app>/backend/.venv'
+'<path shown by the app>/backend/.venv/bin/python' -m pip install -r '<path shown by the app>/backend/requirements.txt'
 ```
+
+When `uv` is installed in WSL, its selected option instead shows `uv venv
+--python 3.12` and `uv pip install --python` commands targeting the same
+`backend/.venv`. The first system package command is not shown in this mode.
 
 To enable multiple alignments of genic regions with annotation overlays:
 
@@ -89,7 +97,7 @@ To enable multiple alignments of genic regions with annotation overlays:
 sudo apt install -y mafft
 ```
 
-The exact backend path should come from the app's setup screen, because it depends on whether you are using `win-unpacked` or the installed app.
+The exact backend path should come from the app's setup screen. It is based on the bundled source contents and remains in the distro's native filesystem.
 If you already manage your own WSL virtual environment, you can keep doing that by setting `ENSEMBL_LOCAL_WSL_PYTHON` before launching the app.
 
 ## 6) Retry flow
@@ -109,6 +117,7 @@ Verify:
 
 After the backend is connected, verify:
 
+- **Help → Backend setup…** reopens setup while the backend is running, shows its installation directory with **Copy path**, and **Return to app** restores the app view.
 - The home screen renders correctly.
 - The genome/file browser works using WSL-visible paths.
 - Windows-hosted files can be reached through `/mnt/c/...`.
