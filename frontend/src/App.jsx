@@ -865,6 +865,7 @@ function FpsCounter() {
 
 function App() {
   const [backendRuntime, setBackendRuntime] = useState(() => getInitialBackendRuntime())
+  const [backendSetupOpen, setBackendSetupOpen] = useState(false)
   const [alignment, setAlignment] = useState(null)
   const [alignmentOverlay, setAlignmentOverlay] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -1076,7 +1077,7 @@ function App() {
   const shouldShowWindowsBackendSetup = backendRuntime.isElectron &&
     backendRuntime.platform === 'win32' &&
     backendRuntime.mode === 'wsl' &&
-    !backendRuntime.ready
+    (!backendRuntime.ready || backendSetupOpen)
   const shouldGateStartupFetch = backendRuntime.isElectron &&
     backendRuntime.platform === 'win32' &&
     backendRuntime.mode === 'wsl'
@@ -1165,6 +1166,10 @@ function App() {
     }
 
   }, [svActiveSpecies, svAnchorSpeciesKey, svSecondSpeciesKey, svThirdSpeciesKey])
+
+  useEffect(() => {
+    return window.electronAPI?.onBackendSetupRequested?.(() => setBackendSetupOpen(true))
+  }, [])
 
   useEffect(() => {
     const unsubscribe = subscribeToBackendRuntime((nextRuntime) => {
@@ -6860,6 +6865,7 @@ function App() {
             {shouldShowWindowsBackendSetup ? (
             <WindowsBackendSetupView
               backendRuntime={backendRuntime}
+              onClose={() => setBackendSetupOpen(false)}
               onRetryCheck={handleRetryBackendCheck}
               onRetryLaunch={handleRetryBackendLaunch}
             />

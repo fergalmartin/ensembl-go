@@ -5,16 +5,33 @@ currently tested desktop platform. Linux installation and packaging are an
 initial implementation awaiting tests on Linux desktops. A Linux AppImage or
 `.deb`, once built, contains the frontend and backend; its users do not need
 Node.js or Python. The same is true of the packaged macOS application. The
-packaged Windows application uses a native Electron shell and a Python backend
-inside WSL; see
-[the Windows checklist](./electron/WINDOWS_TEST_CHECKLIST.md).
+packaged Windows application runs its UI in Windows and its backend inside
+WSL 2; see [Windows installation](#windows-installation).
 
 If you are using a packaged build, skip the source-development sections below.
 On macOS, install the application package. On Linux, run the AppImage or install
 the `.deb` supplied by the builder, then follow the [Linux first-test
 checks](./electron/RELEASE.md#validate-artifacts-before-sharing). On Windows,
-the first-run setup screen checks WSL and provides the commands needed to
-prepare its backend.
+follow the steps below.
+
+## Windows installation
+
+Prerequisites:
+
+- Windows with WSL 2 and an Ubuntu or Debian distro. See Microsoft's [WSL
+  installation guide](https://learn.microsoft.com/en-us/windows/wsl/install).
+- The Ensembl Go Windows installer. Windows Python and MAFFT are not required.
+
+There is no published installer download yet. To build one from a cloned repo,
+follow [Build a Windows installer](#build-a-windows-installer).
+
+Install and launch Ensembl Go in Windows. It prepares its backend and virtual
+environment inside the distro's default Linux user's home directory. For
+first-run help, optional MAFFT setup, and troubleshooting, see the [Windows
+checklist](./electron/WINDOWS_TEST_CHECKLIST.md).
+
+For best performance, keep large genome data in the WSL filesystem. Windows
+drive files can be opened through WSL paths such as `/mnt/c/Users/...`.
 
 ## Source-development prerequisites
 
@@ -210,6 +227,29 @@ cleanup work. `TZ=UTC` avoids two screenshot filename tests that currently
 assume UTC even though the application formats timestamps in local time.
 
 ## Packaging
+
+### Build a Windows installer
+
+On Windows, install [Node.js](https://nodejs.org/en/download) 20.19 or newer
+(including npm). Open PowerShell in the cloned repo's root and run:
+
+```powershell
+npm --prefix frontend ci
+npm --prefix electron ci
+npm --prefix electron run dist:win:dir
+cd electron
+node ./node_modules/electron-builder/cli.js --win nsis
+```
+
+The installer is `electron/dist/Ensembl Go-<version>-win-x64.exe`, relative to
+the repo root. Run it, then launch Ensembl Go from the Start Menu. Follow the
+[Windows prerequisites](#windows-installation) before launching; Windows Python
+and MAFFT are not needed to build this installer. Downloads require internet access.
+
+This local build uses the species classification data already in the repo. For
+release builds that refresh it, see [Windows packaging](./electron/RELEASE.md#windows-packaging).
+
+### macOS and Linux packages
 
 For an unsigned local macOS package:
 

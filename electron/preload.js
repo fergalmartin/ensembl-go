@@ -23,6 +23,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDesktopPath: () => ipcRenderer.invoke('app:getDesktopPath'),
   captureHtmlSnapshot: (payload) => ipcRenderer.invoke('screenshot:captureHtmlSnapshot', payload),
   getBackendRuntimeSnapshot: () => backendRuntimeSnapshot,
+  onBackendSetupRequested: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = () => callback();
+    ipcRenderer.on('backend:open-setup', listener);
+    return () => ipcRenderer.removeListener('backend:open-setup', listener);
+  },
   getBackendRuntimeStatus: async () => {
     const nextSnapshot = await ipcRenderer.invoke('backend:getRuntimeStatus');
     backendRuntimeSnapshot = nextSnapshot;

@@ -218,9 +218,9 @@ npm run dist:mac:unsigned
 The supported Windows target is now:
 
 - native Electron shell on Windows
-- Python backend running inside Ubuntu or Debian WSL over `http://127.0.0.1:8000`
+- Python backend running in a virtual environment inside Ubuntu or Debian WSL 2 over localhost HTTP
 
-This means the Windows package no longer builds or ships a native backend executable. Instead it bundles the backend source tree into the app and launches it through `wsl.exe` at runtime.
+This means the Windows package no longer builds or ships a native backend executable. Instead it bundles the backend source tree, copies it into the distro's native filesystem under `~/.local/share/ensembl-go/backend/<source-hash>/`, and launches it through `wsl.exe` at runtime. A new source hash gets a new directory when the bundled backend changes.
 
 From a Windows build machine:
 
@@ -242,9 +242,9 @@ Notes:
 - MAFFT is optional and is not bundled into the Windows package. Install it
   inside WSL only for multiple genic-region alignments with annotation
   overlays.
-- The packaged Windows app will show a setup screen with exact copyable WSL commands if the backend is not ready yet.
-- By default the setup flow now creates a local WSL virtualenv under the bundled backend root and installs Python requirements there.
-- Windows data paths inside the app must be WSL-visible Linux paths such as `/mnt/c/...`.
+- The packaged Windows app automatically creates or refreshes `backend/.venv` in the native WSL backend directory when `uv` is detected and the environment is missing or incomplete. It shows setup progress before launching the backend.
+- If automatic setup fails, the setup screen offers copyable `uv` and Python venv commands. The `uv` command can use or download Python 3.12 without a system Python installation; the fallback needs `python3` and `python3-venv` in WSL. No Python packages are installed into the Windows host or the WSL system Python.
+- Windows data paths inside the app must be WSL-visible Linux paths such as `/mnt/c/...`. Keep large genome datasets in the native WSL filesystem for best performance.
 - A practical validation checklist lives in `WINDOWS_TEST_CHECKLIST.md`.
 
 ## Linux packaging
