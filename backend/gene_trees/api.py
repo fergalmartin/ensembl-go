@@ -25,14 +25,16 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from . import model
+from .alignment import TreeAlignments
 from .indexer import index_path, index_text, materialize, members_for_pattern
 from .linking import Linker
-from .neighbourhood import Neighbourhoods
+from .neighbourhood import Neighbourhoods, annotate_families
 from .parsers import FORMAT_LABELS, TreeParseError
 from .store import GeneTreeStore
 
 MAX_INLINE_BYTES = 50 * 1024 * 1024
 MAX_NEIGHBOURHOOD_GENES = 500
+MAX_ALIGNMENT_GENES = 1000
 MAX_WORKSPACE_BYTES = 10 * 1024 * 1024
 LEGACY_FILENAME = 'gene_trees.sqlite'
 
@@ -114,11 +116,18 @@ def legacy_library(library_path: Path) -> Optional[Path]:
 
 
 def create_router(library_path_provider: Callable[[], Path], genomes_provider: Callable[[], List[Dict[str, Any]]],
-                  cache_dir: Path, neighbourhood_lookup: Optional[Callable[..., Any]] = None) -> APIRouter:
+                  cache_dir: Path, neighbourhood_lookup: Optional[Callable[..., Any]] = None,
+                  alignment_hooks: Optional[Dict[str, Callable[..., Any]]] = None) -> APIRouter:
+    """``alignment_hooks``: ``store_root``, ``transcript_lookup``, ``fetcher_for`` and ``align_fn``
+    (see ``alignment.py``); without them the alignment columns are unavailable."""
     router = APIRouter(prefix='/api/gene-trees', tags=['Gene Trees'])
     linker = Linker(genomes_provider, Path(cache_dir))
     neighbourhoods = Neighbourhoods(genomes_provider, neighbourhood_lookup) if neighbourhood_lookup else None
+    alignments = TreeAlignments(genomes_provider, **alignment_hooks) if alignment_hooks else None
     pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='gene-tree-import')
+    # MAFFT runs one at a time, beside imports rather than behind them.
+    align_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='gene-tree-align')
+    align_jobs: 'OrderedDict[str, Dict[str, Any]]' = OrderedDict()
     jobs: 'OrderedDict[str, Dict[str, Any]]' = OrderedDict()
     lock = threading.Lock()
     stores: Dict[str, GeneTreeStore] = {}
@@ -405,7 +414,11 @@ def create_router(library_path_provider: Callable[[], Path], genomes_provider: C
 
     @router.post('/neighbourhood')
     async def neighbourhood(request: Request):
-        """The genes around each linked leaf's gene: `{genes: [{assembly, gene_id}], flank}`."""
+        """The genes around each linked leaf's gene: `{genes: [{assembly, gene_id}], flank, families}`.
+
+        With `families`, each gene also says which library trees (gene families) hold it, and
+        the reply names them: what the column links rows by.
+        """
         if not neighbourhoods:
             raise HTTPException(501, 'Neighbourhoods are not available')
         try:
@@ -420,7 +433,111 @@ def create_router(library_path_provider: Callable[[], Path], genomes_provider: C
         flank = max(1, min(8, int(data.get('flank') or 4)))
         pairs = [(str(g.get('assembly') or ''), str(g.get('gene_id') or '')) for g in genes if isinstance(g, dict)]
         pairs = [(a, g) for a, g in pairs if a and g]
-        return {'results': await run_in_threadpool(neighbourhoods.get, pairs, flank)}
+        results = await run_in_threadpool(neighbourhoods.get, pairs, flank)
+        if not data.get('families'):
+            return {'results': results}
+        return await run_in_threadpool(annotate_families, results, store(), linker.genomes(),
+                                       lambda genome: linker.proteins.get(genome, build=False))
+
+    # ── aligned transcripts beside the leaves ──
+
+    async def alignment_request(request: Request) -> Dict[str, Any]:
+        if not alignments:
+            raise HTTPException(501, 'Alignments are not available')
+        try:
+            data = json.loads(await request.body() or b'{}')
+        except ValueError:
+            raise HTTPException(400, 'The request is not valid JSON')
+        if not isinstance(data, dict):
+            raise HTTPException(400, 'Send an object')
+        return data
+
+    def alignment_genes(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        genes = data.get('genes')
+        if not isinstance(genes, list):
+            raise HTTPException(400, 'Send a list of genes')
+        if len(genes) > MAX_ALIGNMENT_GENES:
+            raise HTTPException(400, f'At most {MAX_ALIGNMENT_GENES} genes at a time')
+        out = []
+        for gene in genes:
+            if not isinstance(gene, dict) or not gene.get('assembly') or not gene.get('gene_id'):
+                continue
+            out.append({'assembly': str(gene['assembly']), 'gene_id': str(gene['gene_id']),
+                        'transcript_id': str(gene['transcript_id']) if gene.get('transcript_id') else None})
+        return out
+
+    @router.post('/alignments/plan')
+    async def plan_alignment(request: Request):
+        """What aligning these genes' transcripts involves: `{genes: [{assembly, gene_id, transcript_id?}], settings}`.
+
+        Says which stored alignment already covers them (`covered`), or how big a run would be.
+        """
+        data = await alignment_request(request)
+        genes = alignment_genes(data)
+        settings = data.get('settings') if isinstance(data.get('settings'), dict) else {}
+        return await run_in_threadpool(alignments.plan, genes, settings)
+
+    @router.post('/alignments/run')
+    async def run_alignment(request: Request):
+        """Start aligning: `{genes, settings, name}`. Follow it at `/alignments/jobs/{id}`."""
+        data = await alignment_request(request)
+        genes = alignment_genes(data)
+        settings = data.get('settings') if isinstance(data.get('settings'), dict) else {}
+        name = str(data.get('name') or 'gene tree')[:80]
+        job_id = uuid.uuid4().hex
+        with lock:
+            finished = [k for k, v in align_jobs.items() if v['status'] in ('ready', 'failed', 'cancelled')]
+            for key in finished[:-20]:
+                align_jobs.pop(key, None)
+            align_jobs[job_id] = {'id': job_id, 'kind': 'alignment', 'status': 'queued', 'phase': 'queued', 'name': name,
+                                  'genes': len(genes), 'fraction': 0, 'created': time.time(), 'cancel': False}
+
+        def report(**values: Any) -> None:
+            with lock:
+                align_jobs[job_id].update(values)
+
+        def work() -> None:
+            if align_jobs[job_id]['cancel']:
+                report(status='cancelled', phase='done')
+                return
+            report(status='running', phase='starting', started=time.time())
+            try:
+                result = alignments.run(genes, settings, name, report, lambda: align_jobs[job_id]['cancel'])
+                report(status='ready', phase='ready', fraction=1.0, **result)
+            except InterruptedError:
+                report(status='cancelled', phase='done')
+            except Exception as exc:  # surfaced to the user
+                report(status='failed', phase='done', error=str(exc) or exc.__class__.__name__)
+
+        align_pool.submit(work)
+        return {'job': job_id, 'status': 'queued'}
+
+    @router.get('/alignments/jobs/{job_id}')
+    def alignment_job(job_id: str):
+        with lock:
+            job = align_jobs.get(job_id)
+            if not job:
+                raise HTTPException(404, 'Job not found')
+            return public(job)
+
+    @router.post('/alignments/jobs/{job_id}/cancel')
+    def cancel_alignment(job_id: str):
+        with lock:
+            if job_id in align_jobs:
+                align_jobs[job_id]['cancel'] = True
+        return {'ok': True}
+
+    @router.post('/alignments/{alignment_id}/rows')
+    async def alignment_rows(alignment_id: str, request: Request):
+        """A stored alignment cut down to some of its rows: `{rows: [row_key…]}`."""
+        data = await alignment_request(request)
+        keys = [str(k) for k in data.get('rows') or [] if k]
+        try:
+            return await run_in_threadpool(alignments.rows, alignment_id, keys)
+        except FileNotFoundError:
+            raise HTTPException(404, 'That alignment is no longer stored')
+        except LookupError as exc:
+            raise HTTPException(400, str(exc))
 
     @router.get('/workspace')
     def get_workspace():
@@ -489,4 +606,5 @@ def create_router(library_path_provider: Callable[[], Path], genomes_provider: C
         return {'removed': True}
 
     router.linker = linker
+    router.alignments = alignments
     return router

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { clamp, fitCamera } from './layers'
-import { cycleRailGeometry, cycleRailPosition, cyclePointerDragged } from '../../utils/genomeWheel'
+import { cycleRailGeometry, cycleRailPosition, cyclePointerDragged, detentPosition } from '../../utils/genomeWheel'
 import { paintLayer } from './paintLayer'
 import useLayerData from './useLayerData'
 import '../GenomeWheel.css'
@@ -75,16 +75,17 @@ export default function LayerCycle({layers,active,onChoose,dataset,inventory,lig
     onPointerDown={open}><span className="al-control-chevron" aria-hidden="true">◈</span>Cycle</button>
     {session&&createPortal(<div className={`genome-wheel-overlay al-wheel ${light?'light':''} ${session.sticky?'sticky':''}`}
       onWheel={e=>{const s=sessionRef.current;update({...s,position:clamp(s.position+e.deltaY/160,0,layers.length-1)})}}>
-      <div className="genome-wheel-scene"><div className="genome-wheel-drum" style={{'--face-height':'322px','--radius':`${radius}px`,'--face-step':`${step}deg`,'--wheel-position':session.position}}>
+      <div className="genome-wheel-scene"><div className="genome-wheel-drum" style={{'--face-height':'322px','--radius':`${radius}px`,'--face-step':`${step}deg`,'--wheel-position':detentPosition(session.position)}}>
         {layers.map((l,i)=><div key={l.id} className="genome-wheel-face" style={{'--face-index':i}}>
           {Math.min(Math.abs(i-selected),layers.length-Math.abs(i-selected))<=1?<LayerPreview layer={l} dataset={dataset} inventory={inventory} light={light} revision={revision}/>:<div className="genome-wheel-preview">{l.name}</div>}</div>)}
       </div></div>
       <div className="genome-wheel-rail" role="slider" tabIndex={0} aria-label="Layer preview" aria-valuemin={1}
         aria-valuemax={layers.length} aria-valuenow={selected+1} aria-valuetext={layers[selected].name}
         style={{left:session.rail.center-26,top:session.rail.top,height:session.rail.height}}>
-        <div className="genome-wheel-line"/>
-        {layers.map((l,i)=><i key={l.id} className="genome-wheel-dot" style={{top:session.rail.padding+i*session.rail.spacing,background:l.color}} title={l.name}/>)}
-        <span className="genome-wheel-indicator" style={{top:session.rail.padding+session.position*session.rail.spacing}}/>
+        <div className="genome-wheel-line" style={{top:session.rail.padding,bottom:session.rail.padding}}/>
+        {layers.map((l,i)=><i key={l.id} className="genome-wheel-dot" style={{top:session.rail.padding+i*session.rail.spacing,'--dot':l.color}} title={l.name}/>)}
+        {/* As the genome browser's: the ring sits on the layer that would be chosen, jumping dot to dot. */}
+        <span className="genome-wheel-indicator" style={{top:session.rail.padding+selected*session.rail.spacing}}/>
       </div>
       <button className="genome-cycle-cancel" style={{left:session.rail.center,top:session.rail.cancelTop,height:session.rail.cancelHeight}}
         onPointerDown={e=>{e.stopPropagation();close()}}>Cancel</button>

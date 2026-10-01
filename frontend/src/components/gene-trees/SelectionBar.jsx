@@ -3,11 +3,12 @@ import AnchoredMenu from './menus.jsx'
 import { menuPlacement } from './menuPlacement.js'
 
 /**
- * What is picked, and what can be done with it: copy into a layer (or a new one), widen
- * a marquee to whole clades, and — inside a layer — remove it or re-root on it.
+ * What is picked, and what can be done with it: copy into a layer (or a new one) and,
+ * inside a layer, duplicate it there. The Original is never edited — anything that would
+ * change a tree is offered only in a layer (`inLayer`); the Original's picks can only be
+ * copied out.
  */
-export default function SelectionBar({ genes, pieces, layers, activeId, inLayer, wholeClades, onWholeClades,
-  onCopy, onRemove, onClear, singleNode, onReroot, onSplit, isLight }) {
+export default function SelectionBar({ genes, pieces, layers, activeId, inLayer, onCopy, onDuplicate, onClear, isLight }) {
   const anchor = useRef(null)
   const [menu, setMenu] = useState(null)
   const targets = layers.filter(l => l.id !== 'original' && l.id !== activeId)
@@ -26,11 +27,10 @@ export default function SelectionBar({ genes, pieces, layers, activeId, inLayer,
         ))}
         <button type="button" className="gt-menu-option" onClick={() => { onCopy('new'); setMenu(null) }}><strong>＋ A new layer</strong></button>
       </AnchoredMenu>
-      <label className="gt-check" title="A box that touches a node brings everything beneath it"><input type="checkbox" checked={wholeClades} onChange={e => onWholeClades(e.target.checked)} />Whole clades</label>
-      {inLayer ? <button type="button" onClick={onRemove} title="Remove the picked nodes and everything beneath them (Delete)">Remove</button> : null}
-      {inLayer && singleNode ? <button type="button" onClick={onSplit} title="Cut this clade off as a subtree of its own">Split here</button> : null}
-      {inLayer && singleNode ? <button type="button" onClick={onReroot} title="Root the subtree on the branch above this node">Re-root here</button> : null}
-      <button type="button" onClick={onClear} title="Clear (Esc)">Clear</button>
+      {inLayer ? <button type="button" onClick={onDuplicate} title="Copy the picked subtrees into this layer, beside the originals">Duplicate</button> : null}
+      <button type="button" className="gt-selection-close" onClick={onClear} title="Clear the selection (Esc)" aria-label="Clear the selection">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
     </div>
   )
 }

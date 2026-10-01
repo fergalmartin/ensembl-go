@@ -77,11 +77,27 @@ export function layoutTree(index, view, options = {}) {
   }
   const cladogramWidth = Math.max(1, maxHeight) * levelWidth
   const phylogram = Boolean(options.phylogram) && maxDist > 0
+  // Aligned in a layer, each fragment's tips line up with each other, not with every
+  // other fragment's: a fragment is measured from its own root, by its own height.
+  const alignHeight = new Map()
+  if (forest) {
+    for (const fragmentRoot of visibleChildren.get(root)) {
+      const stack = [fragmentRoot]
+      while (stack.length) {
+        const id = stack.pop()
+        alignHeight.set(id, fragmentRoot)
+        stack.push(...visibleChildren.get(id))
+      }
+    }
+  }
   const x = new Map()
   for (const id of order) {
     let value
     if (phylogram) value = ((index.dist[id] - rootDist) / maxDist) * cladogramWidth
-    else if (options.alignLeaves) value = (maxHeight - height.get(id)) * levelWidth
+    else if (options.alignLeaves && alignHeight.has(id)) {
+      const fragmentRoot = alignHeight.get(id)
+      value = (index.depth[fragmentRoot] - rootDepth + height.get(fragmentRoot) - height.get(id)) * levelWidth
+    } else if (options.alignLeaves && !forest) value = (maxHeight - height.get(id)) * levelWidth
     else value = (index.depth[id] - rootDepth) * levelWidth
     x.set(id, value)
   }
@@ -100,7 +116,12 @@ export function layoutTree(index, view, options = {}) {
     items.push(item)
     byId.set(id, item)
   }
-  if (forest) placeFragments(byId, visibleChildren, root, pitch)
+  const fragmentBoxes = forest
+    ? placeFragments(byId, visibleChildren, root, pitch, { flip: Boolean(options.flipHorizontal), extraOf: options.fragmentExtra,
+      mirror: options.mirrorFragments })
+    : undefined
+  // Which way a node's tips point: the layout's way, or the other way in a mirrored fragment.
+  const flipOf = item => Boolean(options.flipHorizontal) !== Boolean(item.mirror)
   // Each node's extent: the rows it spans (y0..y1) and the furthest x beneath it (reach),
   // which is what the painter needs to draw a clade as one wedge when zoomed far out.
   for (let i = order.length - 1; i >= 0; i--) {
@@ -110,7 +131,7 @@ export function layoutTree(index, view, options = {}) {
     item.y0 = Math.min(...children.map(c => c.y0))
     item.y1 = Math.max(...children.map(c => c.y1))
     const reaches = children.map(c => c.reach)
-    item.reach = options.flipHorizontal ? Math.min(...reaches) : Math.max(...reaches)
+    item.reach = flipOf(item) ? Math.min(...reaches) : Math.max(...reaches)
   }
 
   for (const item of items) {
@@ -128,19 +149,32 @@ export function layoutTree(index, view, options = {}) {
   // Aligned leaves: every terminal's label sits in one column at the tips' edge. In a
   // cladogram the tips already end together; in a phylogram they end where their branch
   // lengths take them and a dotted leader runs out to the column.
-  let alignX
+  let alignX, laneAlign
   // A data column (the Neighbourhood view, say) starts where the furthest tip ends, as
   // aligned labels do; the labels then sit after it, `labelOffset` screen pixels further.
-  if (options.alignLeaves || options.dataColumn) {
-    const tips = items.filter(item => item.kind !== 'internal').map(item => item.x)
-    alignX = options.flipHorizontal ? Math.min(...tips) : Math.max(...tips)
+  // In a layer each fragment has its own column (`laneAlign`, by lane), at its own tips.
+  if ((options.alignLeaves || options.dataColumn) && items.some(item => item.kind !== 'internal')) {
+    const furthest = (a, b, flip = options.flipHorizontal) => (flip ? Math.min(a, b) : Math.max(a, b))
+    const tips = items.filter(item => item.kind !== 'internal')
+    alignX = tips.map(item => item.x).reduce((a, b) => furthest(a, b))
+    if (forest) {
+      laneAlign = []
+      for (const item of tips) laneAlign[item.lane] = laneAlign[item.lane] === undefined ? item.x : furthest(laneAlign[item.lane], item.x, flipOf(item))
+    }
   }
   // Fragments put anywhere can reach past the stacked tree's own box.
   let extentX = width, extentY = totalHeight
   if (forest) for (const item of items) if (!item.node.virtual) { extentX = Math.max(extentX, item.x); extentY = Math.max(extentY, item.y) }
-  return { items, byId, edges, width: extentX, height: extentY, rows, layout, pitch, levelWidth,
-    flipHorizontal: Boolean(options.flipHorizontal), alignX, forest, labelOffset: options.dataColumn || 0 }
+  const result = { items, byId, edges, width: extentX, height: extentY, rows, layout, pitch, levelWidth,
+    flipHorizontal: Boolean(options.flipHorizontal), alignX, laneAlign, forest, fragmentBoxes, labelOffset: options.dataColumn || 0 }
+  // A mirrored fragment is drawn as if the whole layout were flipped the other way: the
+  // painter and the data columns read `sideOf(layout, item)` rather than the layout itself.
+  if (items.some(item => item.mirror)) result.mirrorView = { ...result, flipHorizontal: !result.flipHorizontal }
+  return result
 }
+
+/** The layout as one of its items is drawn: the same, or flipped for a mirrored fragment (see `mirrorView`). */
+export const sideOf = (layout, item) => (item?.mirror && layout.mirrorView ? layout.mirrorView : layout)
 
 /**
  * A subtree layer's fragments, placed. Each is stacked under the last (a blank row between)
@@ -149,31 +183,58 @@ export function layoutTree(index, view, options = {}) {
  * was, in their order. Every item also learns its `lane` (which fragment it is in), so
  * label thinning only weighs labels in one fragment against each other: two fragments
  * side by side share rows without sharing labels.
+ *
+ * A placed fragment also keeps the size it had when it was put there (`w`, its reach from
+ * the root out past its tips and any data column; `h`, its top row to its bottom row). When
+ * it is bigger or smaller now — a data view's roomier rows or column, a clade unfolded — the
+ * fragments beyond it move by the difference, so every gap the user left between two of
+ * them is kept: close ones stay close, and nothing grows into its neighbour.
+ *
+ * Returns each fragment's box as drawn, by fragment id: `{x, y, w, h}` (root x, top row, and
+ * the sizes above), which is what a move records.
  */
-function placeFragments(byId, visibleChildren, rootId, pitch) {
+function placeFragments(byId, visibleChildren, rootId, pitch, { flip = false, extraOf = null, mirror = null } = {}) {
+  const dir = flip ? -1 : 1
   const fragments = visibleChildren.get(rootId).map((id, lane) => {
     const members = []
     const stack = [id]
+    const rootItem = byId.get(id)
+    const fragmentId = rootItem.node.fragRoot
+    // Mirrored (the right-hand tree of a comparison): its tips point back the other way,
+    // its root on the right.
+    const mirrored = Boolean(mirror?.has(fragmentId))
     while (stack.length) {
       const next = stack.pop()
       const item = byId.get(next)
       item.lane = lane
+      if (mirrored) { item.x = rootItem.x - (item.x - rootItem.x); item.mirror = true }
       members.push(item)
       stack.push(...visibleChildren.get(next))
     }
-    let top = Infinity, bottom = -Infinity
-    for (const item of members) { top = Math.min(top, item.y); bottom = Math.max(bottom, item.y) }
-    const rootItem = byId.get(id)
-    return { members, top, bottom, x: rootItem.x, pos: rootItem.node.fragPos }
+    let top = Infinity, bottom = -Infinity, reach = 0
+    const own = mirrored ? -dir : dir
+    for (const item of members) {
+      top = Math.min(top, item.y)
+      bottom = Math.max(bottom, item.y)
+      reach = Math.max(reach, (item.x - rootItem.x) * own)
+    }
+    return { id: fragmentId, members, top, bottom, x: rootItem.x, pos: rootItem.node.fragPos, mirrored,
+      w: reach + (extraOf?.(fragmentId) || 0), h: bottom - top }
   })
+  const boxes = () => new Map(fragments.map(f => {
+    let top = Infinity
+    for (const item of f.members) top = Math.min(top, item.y)
+    return [f.id, { x: f.members[0].x, y: top, w: f.w, h: f.h }]
+  }))
   const placed = fragments.filter(f => f.pos)
-  if (!placed.length) return
-  let cursor = Math.max(...placed.map(f => f.pos.y + f.bottom - f.top)) + pitch
+  if (!placed.length) return boxes()
+  keepGaps(placed, dir, pitch)
+  let cursor = Math.max(...placed.map(f => f.pos.y + f.dy + f.h)) + pitch
   for (const fragment of fragments) {
     let dx = 0, dy
     if (fragment.pos) {
-      dx = fragment.pos.x - fragment.x
-      dy = fragment.pos.y - fragment.top
+      dx = fragment.pos.x + fragment.du * dir - fragment.x
+      dy = fragment.pos.y + fragment.dy - fragment.top
     } else {
       const top = cursor + pitch
       dy = top - fragment.top
@@ -181,6 +242,41 @@ function placeFragments(byId, visibleChildren, rootId, pitch) {
     }
     for (const item of fragment.members) { item.x += dx; item.y += dy }
   }
+  return boxes()
+}
+
+/**
+ * How far each placed fragment moves (`dy` down the page, `du` out towards the tips) for
+ * the fragments before it having grown or shrunk since they were put down. A fragment that
+ * was wholly above another, overlapping it across, keeps at least the gap it had to it;
+ * likewise one wholly before another along the tips' direction, overlapping it down the
+ * page. One with no recorded size has not changed. Fragments put overlapping are left so.
+ */
+function keepGaps(placed, dir, pitch) {
+  const boxes = placed.map(f => {
+    const w0 = f.pos.w ?? f.w, h0 = f.pos.h ?? f.h
+    // A mirrored fragment reaches back from its root: its box starts its width before it.
+    const u = f.pos.x * dir - (f.mirrored ? w0 : 0)
+    // Across and down, as far as it reaches either as it was put or as it is now.
+    return { f, u, y: f.pos.y, w0, h0, u1: u + Math.max(w0, f.w), y1: f.pos.y + Math.max(h0, f.h), dy: 0, du: 0 }
+  })
+  const overlapping = (a0, a1, b0, b1) => a0 < b1 && b0 < a1
+  const push = (key, start, size, grown, across, slack) => {
+    const order = [...boxes].sort((a, b) => a[start] - b[start])
+    order.forEach((b, i) => {
+      let shift = null
+      for (const a of order.slice(0, i)) {
+        if (a[start] + a[size] > b[start] + slack || !across(a, b)) continue
+        const moved = a[key] + grown(a) - a[size]
+        shift = shift === null ? moved : Math.max(shift, moved)
+      }
+      b[key] = shift ?? 0
+    })
+  }
+  push('dy', 'y', 'h0', a => a.f.h, (a, b) => overlapping(a.u, a.u1, b.u, b.u1), pitch / 2)
+  // A mirrored fragment grows back towards its own side, so it never pushes those beyond it.
+  push('du', 'u', 'w0', a => (a.f.mirrored ? a.w0 : a.f.w), (a, b) => overlapping(a.y, a.y1, b.y, b.y1), 10)
+  for (const box of boxes) { box.f.dy = box.dy; box.f.du = box.du }
 }
 
 /**
@@ -329,9 +425,50 @@ export function radialEdgePoints(layout, from, to, bend = Infinity) {
 }
 
 /** Where a terminal's label starts: the aligned column when there is one, else the tip. */
-export const labelAnchorX = (layout, item) => (layout.alignX ?? item.x)
+/** The aligned column an item's row reads to: its fragment's in a layer, else the tree's. */
+export const alignXOf = (layout, item) => (layout.laneAlign?.[item.lane] ?? layout.alignX)
+export const labelAnchorX = (layout, item) => (alignXOf(layout, item) ?? item.x)
 
 /** Terminal rows in drawing order, with their y — the rows a data track lines up with. */
 export function terminalRows(layoutResult) {
   return layoutResult.items.filter(item => item.kind !== 'internal').sort((a, b) => a.y - b.y)
+}
+
+// Moving a subtree with aligned leaves: within this many screen pixels of another nearby
+// subtree's tip column, it snaps level with it. "Nearby" is within this many rows.
+const SNAP_PX = 12
+const SNAP_NEAR_ROWS = 6
+
+/**
+ * Where a carried subtree (lane `lane`, offset `dx`, `dy` on screen) should snap so its
+ * tips line up with another subtree's: `{dx, worldDx, column, top, bottom}` (screen dx,
+ * the same in world units, the shared column and the rows the guide spans, in world
+ * units), or null. The closest column wins, then the closest subtree.
+ */
+export function alignSnap(lay, t, lane, dx, dy) {
+  if (!lay?.laneAlign || lay.radial) return null
+  const kx = t.kx ?? t.k
+  const extents = new Map()
+  for (const item of lay.items) {
+    if (item.lane === undefined || item.node.virtual) continue
+    const e = extents.get(item.lane)
+    if (e) { e.top = Math.min(e.top, item.y); e.bottom = Math.max(e.bottom, item.y) } else extents.set(item.lane, { top: item.y, bottom: item.y })
+  }
+  const own = extents.get(lane)
+  const ownColumn = lay.laneAlign[lane]
+  if (!own || ownColumn === undefined) return null
+  const top = own.top + dy / t.k, bottom = own.bottom + dy / t.k
+  let best = null
+  for (const [other, e] of extents) {
+    const column = lay.laneAlign[other]
+    if (other === lane || column === undefined) continue
+    const worldDx = column - ownColumn
+    const off = Math.abs(worldDx * kx - dx)
+    const gap = Math.max(0, e.top - bottom, top - e.bottom)
+    if (off > SNAP_PX || gap > SNAP_NEAR_ROWS * lay.pitch) continue
+    if (!best || off < best.off || (off === best.off && gap < best.gap)) {
+      best = { off, gap, dx: worldDx * kx, worldDx, column, top: Math.min(top, e.top), bottom: Math.max(bottom, e.bottom) }
+    }
+  }
+  return best
 }

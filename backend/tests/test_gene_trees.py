@@ -254,6 +254,20 @@ class LinkingTests(unittest.TestCase):
         unknown = result['links'][str(by_label(tree.nodes, 'Unknownia_fakeus_XYZ0001')['id'])]
         self.assertEqual(unknown['status'], 'unresolved')
 
+    def test_a_local_species_without_an_index_says_so(self):
+        # Mouse's annotation downloaded but never indexed: its genes could not be looked for.
+        self.fixture.genomes[1] = {**self.fixture.genomes[1], 'index_path': '', 'gff_path': '/somewhere/mouse.gff3'}
+        tree = parse_newick('(Hsap_BRCA2,Mmus_Brca2);')[0]
+        model.interpret_leaves(tree.nodes, r'(?P<species>[^_]+)_(?P<id>.+)')
+        result = self.linker.link_tree(tree.nodes, species_map={'Hsap': 'GCA_000001405.29', 'Mmus': 'GCA_000001635.9'})
+        mouse = result['links'][str(by_label(tree.nodes, 'Mmus_Brca2')['id'])]
+        self.assertEqual((mouse['status'], mouse['assembly'], mouse['annotation']), ('no_index', 'GCA_000001635.9', True))
+        self.assertEqual(result['summary']['no_index'], 1)
+        # With no annotation at all, it says that instead.
+        self.fixture.genomes[1] = {**self.fixture.genomes[1], 'gff_path': ''}
+        again = self.linker.link_tree(tree.nodes, species_map={'Hsap': 'GCA_000001405.29', 'Mmus': 'GCA_000001635.9'})
+        self.assertFalse(again['links'][str(by_label(tree.nodes, 'Mmus_Brca2')['id'])]['annotation'])
+
     def test_species_map_and_manual_links_override(self):
         tree = parse_newick('(Hsap_BRCA2,Other_leaf);')[0]
         model.interpret_leaves(tree.nodes, r'(?P<species>[^_]+)_(?P<id>.+)')
@@ -543,3 +557,142 @@ class NeighbourhoodTests(unittest.TestCase):
             client.post('/api/gene-trees/neighbourhood', json=body)
             self.assertEqual(calls, [('/idx/one.sqlite', 'c')])  # the second ask came from the cache
             self.assertEqual(client.post('/api/gene-trees/neighbourhood', json={'genes': 'no'}).status_code, 400)
+
+
+class NeighbourhoodFamilyTests(unittest.TestCase):
+    """The column's rows are linked by gene family: which library trees each neighbour is in."""
+
+    def test_route_names_each_genes_families_by_gene_or_protein(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fixture = GenomeFixture(root)
+            human = fixture.genomes[0]
+            rows = [
+                {'id': 'ENSG00000139618', 'name': 'BRCA2', 'chrom': '1', 'start': 100, 'end': 200, 'strand': '+', 'biotype': 'protein_coding'},
+                {'id': 'ENSG00000000233', 'name': 'ARF5', 'chrom': '1', 'start': 300, 'end': 400, 'strand': '+', 'biotype': 'protein_coding'},
+                {'id': 'ENSG00000187634', 'name': 'SAMD11', 'chrom': '1', 'start': 500, 'end': 600, 'strand': '+', 'biotype': 'protein_coding'},
+            ]
+            app = FastAPI()
+            router = create_router(lambda: root / 'lib.sqlite', lambda: fixture.genomes, root / 'cache',
+                                   neighbourhood_lookup=lambda index, gene_id, size: ([dict(r) for r in rows], gene_id))
+            app.include_router(router)
+            client = TestClient(app)
+            # One tree whose leaves are genes (as Compara's are), one whose leaves are proteins only.
+            for name, text in (('genes', '(Hsap_ENSG00000139618,Mmus_ENSMUSG00000041147);'),
+                               ('proteins', '(Hsap_ENSP00000000233.4,Mmus_ENSMUSP00000001);')):
+                job = client.post('/api/gene-trees/datasets', json={
+                    'content': text, 'name': name, 'format': 'newick', 'label_pattern': r'(?P<species>[^_]+)_(?P<id>.+)'}).json()
+                for _ in range(200):
+                    if client.get(f"/api/gene-trees/jobs/{job['job']}").json()['status'] not in ('queued', 'running'):
+                        break
+                    time.sleep(0.02)
+            body = {'genes': [{'assembly': human['assembly'], 'gene_id': 'ENSG00000000233'}], 'flank': 1, 'families': True}
+            # Without its protein map, ARF5 is only matched by symbol later; BRCA2 is found by gene ID.
+            reply = client.post('/api/gene-trees/neighbourhood', json=body).json()
+            genes = {g['id']: g['families'] for g in reply['results'][f"{human['assembly']}:ENSG00000000233"]['genes']}
+            self.assertEqual(len(genes['ENSG00000139618']), 1)
+            self.assertEqual((genes['ENSG00000000233'], genes['ENSG00000187634']), ([], []))
+            self.assertEqual(reply['families'][str(genes['ENSG00000139618'][0])]['collection'], 'genes')
+            # Once the map exists (the linker builds it when a tree needs it), the protein tree counts.
+            router.linker.proteins.get(human)
+            router.linker.proteins.wait()
+            again = client.post('/api/gene-trees/neighbourhood', json=body).json()
+            genes = {g['id']: g['families'] for g in again['results'][f"{human['assembly']}:ENSG00000000233"]['genes']}
+            self.assertEqual(again['families'][str(genes['ENSG00000000233'][0])]['collection'], 'proteins')
+            # Without the flag the reply is as before.
+            plain = client.post('/api/gene-trees/neighbourhood', json={**body, 'families': False}).json()
+            self.assertNotIn('families', plain)
+            self.assertNotIn('families', plain['results'][f"{human['assembly']}:ENSG00000000233"]['genes'][0])
+
+
+class AlignmentRouteTests(unittest.TestCase):
+    """plan → run → rows for the Structure/Sequence columns, with stand-ins for the app's lookups."""
+
+    def setUp(self):
+        import random
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        rng = random.Random(3)
+        self.chromosomes = {a: ''.join(rng.choice('ACGT') for _ in range(3000)) for a in ('GCA_1', 'GCA_2')}
+        self.genomes = [{'assembly': a, 'index_path': str(root / f'{a}.db'), 'fasta_path': str(root / f'{a}.fa')}
+                        for a in self.chromosomes]
+        self.release = None
+
+        def transcript_lookup(index_path, gene_id, transcript_id=None):
+            if gene_id == 'nogene':
+                return None
+            shift = sum(map(ord, gene_id)) % 50
+            exons = [(500 + shift, 600 + shift), (900 + shift, 1000 + shift), (1500 + shift, 1650 + shift)]
+            return {'id': f'T-{gene_id}', 'chrom': '1', 'strand': '-' if gene_id.endswith('m') else '+',
+                    'start': exons[0][0], 'end': exons[-1][1], 'exons': exons, 'cds_list': [(550 + shift, 1600 + shift)],
+                    'utrs': [], 'gene_name': gene_id.upper()}
+
+        def fetcher_for(genome):
+            chrom = self.chromosomes[genome['assembly']]
+
+            def fetch(name, start, end):
+                lo, hi = max(1, start), min(len(chrom), end)
+                return chrom[lo - 1:hi], lo, hi
+            return fetch
+
+        def align_fn(ordered, on_progress, cancelled):
+            on_progress({'stage': 'progressive', 'done': 1, 'total': 2, 'fraction': 0.5})
+            if self.release is not None:
+                while not cancelled():
+                    time.sleep(0.01)
+            width = max(len(s) for _, s in ordered)
+            return {k: s + '-' * (width - len(s)) for k, s in ordered}, 'stub'
+
+        app = FastAPI()
+        app.include_router(create_router(lambda: root / 'lib.sqlite', lambda: self.genomes, root / 'cache', alignment_hooks={
+            'store_root': lambda: root / 'alignments', 'transcript_lookup': transcript_lookup,
+            'fetcher_for': fetcher_for, 'align_fn': align_fn}))
+        self.client = TestClient(app)
+        self.genes = [{'assembly': 'GCA_1', 'gene_id': 'g1'}, {'assembly': 'GCA_1', 'gene_id': 'g2m'},
+                      {'assembly': 'GCA_2', 'gene_id': 'g3'}, {'assembly': 'GCA_9', 'gene_id': 'g4'},
+                      {'assembly': 'GCA_2', 'gene_id': 'nogene'}]
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def wait(self, job):
+        deadline = time.time() + 10
+        while True:
+            state = self.client.get(f'/api/gene-trees/alignments/jobs/{job}').json()
+            if state['status'] not in ('queued', 'running') or time.time() > deadline:
+                return state
+            time.sleep(0.02)
+
+    def test_plan_run_then_reuse_and_project(self):
+        settings = {'region': 'exons', 'flank': 50, 'intron_edge': 10}
+        plan = self.client.post('/api/gene-trees/alignments/plan', json={'genes': self.genes, 'settings': settings}).json()
+        self.assertIsNone(plan['covered'])
+        self.assertEqual(sorted(r['gene'] for r in plan['rows']), ['GCA_1:g1', 'GCA_1:g2m', 'GCA_2:g3'])
+        self.assertEqual(sorted(f['gene'] for f in plan['failed']), ['GCA_2:nogene', 'GCA_9:g4'])
+        self.assertEqual(plan['estimate']['level'], 'ok')
+
+        job = self.client.post('/api/gene-trees/alignments/run', json={'genes': self.genes, 'settings': settings, 'name': 'BRCA2'}).json()['job']
+        state = self.wait(job)
+        self.assertEqual(state['status'], 'ready', state)
+        self.assertTrue(state['alignment'].startswith('BRCA2_'))
+
+        again = self.client.post('/api/gene-trees/alignments/plan', json={'genes': self.genes[:2], 'settings': settings}).json()
+        self.assertEqual(again['covered'], state['alignment'])
+        keys = [r['row_key'] for r in again['rows']]
+        rows = self.client.post(f"/api/gene-trees/alignments/{state['alignment']}/rows", json={'rows': keys}).json()
+        self.assertEqual([r['row_key'] for r in rows['rows']], keys)
+        self.assertTrue(any(f['type'] == 'intron_cut' for f in rows['rows'][0]['features']))
+        self.assertEqual(len(rows['rows'][0]['aligned']), rows['alignment_length'])
+
+        other = self.client.post('/api/gene-trees/alignments/plan', json={'genes': self.genes, 'settings': {'region': 'genomic'}}).json()
+        self.assertIsNone(other['covered'])
+        self.assertEqual(self.client.post('/api/gene-trees/alignments/nope/rows', json={'rows': keys}).status_code, 404)
+
+    def test_cancel_stops_a_run(self):
+        self.release = False
+        job = self.client.post('/api/gene-trees/alignments/run', json={'genes': self.genes, 'settings': {}}).json()['job']
+        deadline = time.time() + 5
+        while self.client.get(f'/api/gene-trees/alignments/jobs/{job}').json().get('phase') != 'aligning' and time.time() < deadline:
+            time.sleep(0.01)
+        self.client.post(f'/api/gene-trees/alignments/jobs/{job}/cancel')
+        self.assertEqual(self.wait(job)['status'], 'cancelled')

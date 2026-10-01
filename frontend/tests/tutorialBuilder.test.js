@@ -281,7 +281,7 @@ test('the empty-strip message never appears over a tutorial', () => {
   // tutorial wants: its sandbox starts with no pills on purpose and has its own way to
   // add one. The reservation above must stay blank, so the message is gated on there
   // being no tutorial at all rather than merely on the strip being empty.
-  assert.match(app, /const showNoGenomesMessage = topBarSpecies\.length === 0 && !tutorialConfig/)
+  assert.match(app, /const showNoGenomesMessage = configLoaded && topBarSpecies\.length === 0 && !tutorialConfig/)
   assert.match(app, /emptyState=\{showNoGenomesMessage \? \(/)
 })
 

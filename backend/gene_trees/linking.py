@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 STATUS_LINKED = 'linked'
 STATUS_GENOME = 'genome'          # the species is local but the gene is not in its annotation
 STATUS_PENDING = 'pending'        # waiting on a protein map
+STATUS_NO_INDEX = 'no_index'      # the species is local, but no genome of it has an indexed annotation to look in
 STATUS_UNRESOLVED = 'unresolved'
 
 _ACCESSION = re.compile(r'(GC[AF]_\d{9}\.\d+)')
@@ -102,6 +103,22 @@ class ProteinMap:
             return [r[0] for r in conn.execute('SELECT protein FROM proteins WHERE map = ? AND gene = ?', (self.key, gene_id))]
         finally:
             conn.close()
+
+    def proteins_for_genes(self, gene_ids: Iterable[str]) -> Dict[str, List[str]]:
+        """gene ID -> its proteins, for many genes at once. Empty when the map was never built."""
+        out: Dict[str, List[str]] = {}
+        if self.key is None:
+            return out
+        conn = self._connect()
+        try:
+            for chunk in _chunks([g for g in dict.fromkeys(gene_ids) if g]):
+                marks = ','.join('?' * len(chunk))
+                for protein, gene in conn.execute(
+                        f'SELECT protein, gene FROM proteins WHERE map = ? AND gene IN ({marks})', (self.key, *chunk)):
+                    out.setdefault(gene, []).append(protein)
+        finally:
+            conn.close()
+        return out
 
 
 class ProteinMaps:
@@ -359,7 +376,7 @@ class Linker:
         found, pending_assemblies = self._lookup(requests, by_assembly)
 
         links: Dict[str, Dict[str, Any]] = {}
-        summary = {STATUS_LINKED: 0, STATUS_GENOME: 0, STATUS_PENDING: 0, STATUS_UNRESOLVED: 0}
+        summary = {STATUS_LINKED: 0, STATUS_GENOME: 0, STATUS_NO_INDEX: 0, STATUS_PENDING: 0, STATUS_UNRESOLVED: 0}
         for node_id, plan in plans.items():
             ids = plan['ids']
             matches = []
@@ -409,9 +426,15 @@ class Linker:
                 link = {'status': status, 'via': plan['via'],
                         'candidates': [_genome_ref(g) for g in plan['candidates'] if not plan['probe']]}
             elif plan['candidates'] and not plan['probe']:
-                status = STATUS_GENOME
-                link = {'status': status, **_genome_ref(plan['candidates'][0]), 'via': plan['via'],
+                # Not found: in an annotation that was searched, or only because none of the
+                # species' genomes has an index to search. The second is a job to do, not an answer.
+                indexed = [g for g in plan['candidates'] if g.get('index_path')]
+                status = STATUS_GENOME if indexed else STATUS_NO_INDEX
+                first = (indexed or plan['candidates'])[0]
+                link = {'status': status, **_genome_ref(first), 'via': plan['via'],
                         'candidates': [_genome_ref(g) for g in plan['candidates']]}
+                if not indexed:
+                    link['annotation'] = bool(first.get('gff_path'))
             else:
                 status = STATUS_UNRESOLVED
                 link = {'status': status, 'via': plan['via']}

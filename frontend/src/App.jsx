@@ -1186,9 +1186,23 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (shouldGateStartupFetch && !backendRuntime.ready) return
-    fetchRecent()
-    fetchConfig()
+    if (shouldGateStartupFetch && !backendRuntime.ready) return undefined
+    // The backend is started alongside the window (run_ensembl_go.sh, or a backend
+    // restarting after an edit) and may not be answering yet when the window first asks.
+    // One failed request used to leave the app on its empty defaults for good — no
+    // working directory, no genomes — until the next reload, which looks exactly like
+    // lost settings. So keep asking until it answers; nothing is saved meanwhile, since
+    // every write waits on `configLoaded`.
+    let cancelled = false
+    let timer = 0
+    const attempt = async (tries) => {
+      const loaded = await fetchConfig()
+      if (cancelled) return
+      if (loaded || isTutorialSandboxActive()) { fetchRecent(); return }
+      timer = setTimeout(() => attempt(tries + 1), Math.min(2000, 250 + tries * 250))
+    }
+    attempt(0)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [backendRuntime.ready, shouldGateStartupFetch])
 
   // Coming out of a tutorial, re-read the configuration and let the app derive itself
@@ -3424,7 +3438,7 @@ function App() {
   const usingFallbackScreenshot = screenshotMode && !explicitScreenshotAvailable && fallbackScreenshotAvailable
   const screenshotSupported = explicitScreenshotViews.has(currentView) || fallbackScreenshotViews.has(currentView)
   const screenshotAvailable = explicitScreenshotAvailable || fallbackScreenshotAvailable
-  const shouldRenderFallbackContentWrapper = shouldShowWindowsBackendSetup || currentView !== 'genome_browser'
+  const shouldRenderFallbackContentWrapper = shouldShowWindowsBackendSetup || !configLoaded || currentView !== 'genome_browser'
   const themeStyles = {
     bg: isLight ? 'bg-gray-100' : 'bg-gray-900',
     header: isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700',
@@ -5763,7 +5777,7 @@ function App() {
   // saying nothing about how to fill it, and made the header jump the moment a first
   // genome arrived. Not during a tutorial: its sandbox has its own way in, and telling a
   // reader to go and download something is the opposite of what the tutorial is doing.
-  const showNoGenomesMessage = topBarSpecies.length === 0 && !tutorialConfig
+  const showNoGenomesMessage = configLoaded && topBarSpecies.length === 0 && !tutorialConfig
   const showsPillsStrip = Boolean(
     !headerCollapsed
     && !shouldShowWindowsBackendSetup
@@ -6869,6 +6883,10 @@ function App() {
               onRetryCheck={handleRetryBackendCheck}
               onRetryLaunch={handleRetryBackendLaunch}
             />
+          ) : !configLoaded ? (
+            <div className={`flex h-full items-center justify-center text-center ${isLight ? 'text-gray-600' : 'text-gray-300'}`} role="status" aria-live="polite">
+              Loading saved configuration…
+            </div>
           ) : currentView === 'home' ? (
             /* ========== HOME VIEW ========== */
             <div className="h-full">
@@ -6958,7 +6976,6 @@ function App() {
 
                 {multiAlignmentResult && !alignmentViewLoading && (
                   <>
-                    <button type="button" className="self-end mb-2 px-3 py-2 rounded border border-teal-600 text-teal-400" onClick={() => { setExplorerIncoming(multiAlignmentResult); setCurrentView('alignment_explorer') }}>Open in Alignment Explorer</button>
                     <MultiAlignmentPanel
                       key={alignmentViewerDisplayKey}
                       result={multiAlignmentResult ? { ...multiAlignmentResult, rows: alignmentDisplayRows } : multiAlignmentResult}

@@ -25,11 +25,9 @@ const FRAGMENT_MIME = 'application/x-gene-tree-fragment'
  */
 export default function LayerPanel({
   layers, activeId, dropTarget, dragging, fragments = [],
-  onSwitch, onNew, onRename, onDelete, onDuplicate, onExport, onMergeLayers, onMoveFragment,
+  onSwitch, onNew, onEdit, onDelete, onDuplicate, onExport, onMergeLayers, onMoveFragment,
   onFragmentRename, onFragmentDelete, onFragmentExport, onFragmentFocus,
 }) {
-  const [editing, setEditing] = useState(null)
-  const [draft, setDraft] = useState('')
   const [htmlOver, setHtmlOver] = useState(null)
   // A subtree being renamed in place: its id and the draft. An empty name goes back to the
   // automatic one (the clade's name, or its genes and species).
@@ -37,12 +35,6 @@ export default function LayerPanel({
   const finishNaming = () => {
     if (naming) onFragmentRename(naming.id, naming.draft.trim())
     setNaming(null)
-  }
-
-  const startEdit = (id, name) => { setEditing(id); setDraft(name) }
-  const finishEdit = () => {
-    if (editing && draft.trim()) onRename(editing, draft.trim())
-    setEditing(null)
   }
 
   const dropProps = id => ({
@@ -74,22 +66,17 @@ export default function LayerPanel({
           disabled ? 'selection-drop-disabled' : '', original ? 'gt-original' : ''].filter(Boolean).join(' ')
         return (
           <div key={layer.id} className={classes} data-selection-drop={original ? undefined : layer.id}
-            draggable={!original && editing !== layer.id}
+            draggable={!original}
             onDragStart={event => { event.dataTransfer.setData(LAYER_MIME, layer.id); event.dataTransfer.effectAllowed = 'move' }}
             {...(original ? {} : dropProps(layer.id))}>
             <button type="button" className="gt-layer-main" onClick={() => onSwitch(layer.id)}
               title={original ? 'The tree as loaded: never changed' : 'Show this layer · drag onto another layer to merge'}>
               <i style={{ background: layer.color }} />
-              {editing === layer.id ? (
-                <input autoFocus value={draft} onChange={e => setDraft(e.target.value)} onBlur={finishEdit}
-                  onKeyDown={e => { if (e.key === 'Enter') finishEdit(); if (e.key === 'Escape') setEditing(null) }} onClick={e => e.stopPropagation()} />
-              ) : (
-                <span className="gt-layer-text"><strong>{layer.name}</strong><small>{layer.summary}</small></span>
-              )}
+              <span className="gt-layer-text"><strong>{layer.name}</strong><small>{layer.summary}</small></span>
             </button>
             {!original ? (
               <span className="gt-layer-tools">
-                <button type="button" title="Rename" aria-label="Rename" onClick={() => startEdit(layer.id, layer.name)}><PencilGlyph /></button>
+                <button type="button" title="Edit colour and name" aria-label={`Edit ${layer.name}`} onClick={() => onEdit(layer.id)}><PencilGlyph /></button>
                 <button type="button" title="Duplicate" aria-label="Duplicate" onClick={() => onDuplicate(layer.id)}><CopyGlyph size={16} /></button>
                 <button type="button" title="Export as NHX" aria-label="Export as NHX" onClick={() => onExport(layer.id)}><DownloadGlyph size={14} /></button>
                 <button type="button" title="Delete layer" aria-label="Delete layer" onClick={() => onDelete(layer.id)}><CloseGlyph size={16} /></button>

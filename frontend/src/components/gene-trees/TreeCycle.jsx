@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { cycleRailGeometry, cycleRailPosition, cyclePointerDragged } from '../../utils/genomeWheel'
+import { cycleRailGeometry, cycleRailPosition, cyclePointerDragged, detentPosition } from '../../utils/genomeWheel'
 import '../GenomeWheel.css'
 
 const PREVIEW = { width: 1100, height: 280 }
@@ -108,7 +108,7 @@ export default function TreeCycle({ entries, active, onChoose, paint, isLight })
         <div className={`genome-wheel-overlay gt-wheel${isLight ? ' light' : ''}${session.sticky ? ' sticky' : ''}`}
           onWheel={event => { const s = sessionRef.current; update({ ...s, position: clamp(s.position + event.deltaY / 160, 0, entries.length - 1) }) }}>
           <div className="genome-wheel-scene">
-            <div className="genome-wheel-drum" style={{ '--face-height': '322px', '--radius': `${radius}px`, '--face-step': `${step}deg`, '--wheel-position': session.position }}>
+            <div className="genome-wheel-drum" style={{ '--face-height': '322px', '--radius': `${radius}px`, '--face-step': `${step}deg`, '--wheel-position': detentPosition(session.position) }}>
               {entries.map((entry, i) => (
                 <div key={entry.id} className="genome-wheel-face" style={{ '--face-index': i }}>
                   {Math.min(Math.abs(i - selected), entries.length - Math.abs(i - selected)) <= 1
@@ -121,9 +121,10 @@ export default function TreeCycle({ entries, active, onChoose, paint, isLight })
           <div className="genome-wheel-rail" role="slider" tabIndex={0} aria-label="Layer preview" aria-valuemin={1}
             aria-valuemax={entries.length} aria-valuenow={selected + 1} aria-valuetext={entries[selected].name}
             style={{ left: session.rail.center - 26, top: session.rail.top, height: session.rail.height }}>
-            <div className="genome-wheel-line" />
-            {entries.map((entry, i) => <i key={entry.id} className="genome-wheel-dot" style={{ top: session.rail.padding + i * session.rail.spacing, background: entry.color }} title={entry.name} />)}
-            <span className="genome-wheel-indicator" style={{ top: session.rail.padding + session.position * session.rail.spacing }} />
+            <div className="genome-wheel-line" style={{ top: session.rail.padding, bottom: session.rail.padding }} />
+            {entries.map((entry, i) => <i key={entry.id} className="genome-wheel-dot" style={{ top: session.rail.padding + i * session.rail.spacing, '--dot': entry.color }} title={entry.name} />)}
+            {/* As the genome browser's: the ring sits on the layer that would be chosen, jumping dot to dot. */}
+            <span className="genome-wheel-indicator" style={{ top: session.rail.padding + selected * session.rail.spacing }} />
           </div>
           <button type="button" className="genome-cycle-cancel" style={{ left: session.rail.center, top: session.rail.cancelTop, height: session.rail.cancelHeight }}
             onPointerDown={event => { event.stopPropagation(); close() }}>Cancel</button>

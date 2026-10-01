@@ -23,7 +23,7 @@ import time
 import threading
 import uuid
 import queue
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from urllib.parse import urlparse, quote, unquote, urlencode, urlunparse
@@ -32,7 +32,7 @@ import urllib.error
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, IO, Set
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -505,11 +505,19 @@ app.include_router(create_alignment_explorer_router(
 # Gene trees: the library lives beside the user's genomes, the protein maps it
 # builds from their GFFs are derived data and live in the cache.
 from gene_trees import create_router as create_gene_trees_router
+import transcript_msa
+from transcript_msa.regions import params_of as _tmsa_params_of, structure_hash as _tmsa_structure_hash, window_region as _tmsa_window_region
 app.include_router(create_gene_trees_router(
     library_path_provider=lambda: gene_trees_library_path(),
     genomes_provider=lambda: gene_trees_local_genomes(),
     cache_dir=CACHE_DIR / "gene_trees",
-    neighbourhood_lookup=lambda db_path, gene_id, window: gene_trees_neighbourhood(db_path, gene_id, window)))
+    neighbourhood_lookup=lambda db_path, gene_id, window: gene_trees_neighbourhood(db_path, gene_id, window),
+    alignment_hooks={
+        "store_root": lambda: gene_trees_alignments_root(),
+        "transcript_lookup": lambda *args: gene_trees_transcript(*args),
+        "fetcher_for": lambda genome: gene_trees_fetcher(genome),
+        "align_fn": lambda *args: gene_trees_align(*args),
+    }))
 
 # The sequence view, wired the same way: a package that never imports this module
 # and is handed the functions it needs. Every provider is defined further down
@@ -2309,6 +2317,132 @@ def run_mafft_alignment_multi(
             pass
 
 
+_MAFFT_COUNT = re.compile(r"(\d+)\s*/\s*(\d+)")
+_MAFFT_PASS = re.compile(r"Progressive alignment\s+(\d+)\s*/\s*(\d+)", re.I)
+# Where each MAFFT stage falls within one pass of its progressive alignment.
+_MAFFT_STAGES = {"distances": (0.0, 0.3), "tree": (0.3, 0.4), "progressive": (0.4, 0.95), "refining": (0.95, 1.0)}
+
+
+def run_mafft_alignment_multi_progress(
+    ordered_sequences: List[Tuple[str, str]],
+    mafft_args: List[str],
+    timeout_sec: int,
+    on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    cancelled: Optional[Callable[[], bool]] = None,
+) -> Dict[str, str]:
+    """:func:`run_mafft_alignment_multi`, reporting MAFFT's own progress and stoppable.
+
+    MAFFT (without ``--quiet``) counts through each stage on stderr: ``Making a distance
+    matrix ..  37 / 120``, ``STEP  54 / 119`` in each progressive pass. Those counts become
+    ``{stage, pass, passes, done, total, fraction}``; ``cancelled()`` kills the run.
+    """
+    if len(ordered_sequences) < 2:
+        raise RuntimeError("Need at least two sequences for MSA.")
+    args = [a for a in mafft_args if a != "--quiet"]
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".fa", delete=False) as f:
+        input_file = f.name
+        for seq_id, seq in ordered_sequences:
+            f.write(f">{seq_id}\n{seq}\n")
+    state = {"stage": "starting", "pass": 1, "passes": 1, "done": 0, "total": 0, "fraction": 0.0}
+    last_report = [0.0]
+
+    def publish(force: bool = False) -> None:
+        low, high = _MAFFT_STAGES.get(state["stage"], (0.0, 0.0))
+        within = low + (high - low) * (state["done"] / state["total"] if state["total"] else 0.0)
+        # Never backwards: a second pass starts again at its distance matrix.
+        state["fraction"] = max(state["fraction"], min(1.0, ((state["pass"] - 1) + within) / max(1, state["passes"])))
+        now = time.time()
+        if on_progress and (force or now - last_report[0] > 0.25):
+            last_report[0] = now
+            on_progress(dict(state))
+
+    def read_progress(stream) -> None:
+        buffer = b""
+        while True:
+            chunk = stream.read1(4096) if hasattr(stream, "read1") else stream.read(4096)
+            if not chunk:
+                break
+            buffer += chunk
+            *lines, buffer = re.split(rb"[\r\n]", buffer)
+            for raw in lines:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                tail.append(line)
+                passed = _MAFFT_PASS.search(line)
+                lower = line.lower()
+                if passed:
+                    state.update(stage="progressive", done=0, total=0,
+                                 **{"pass": int(passed.group(1)), "passes": max(int(passed.group(2)), state["passes"])})
+                elif lower.startswith("progressive alignment"):
+                    state.update(stage="progressive", done=0, total=0)
+                elif "distance matrix" in lower or "all-to-all" in lower:
+                    state.update(stage="distances", done=0, total=0)
+                elif "constructing" in lower and "tree" in lower:
+                    state.update(stage="tree", done=0, total=0)
+                elif lower.startswith("iterative refinement") or lower.startswith("segment"):
+                    state.update(stage="refining", done=0, total=0)
+                count = _MAFFT_COUNT.search(line)
+                if count and not passed:
+                    state.update(done=int(count.group(1)), total=max(1, int(count.group(2))))
+                publish()
+
+    tail: "deque[str]" = deque(maxlen=40)
+    output: List[bytes] = []
+    try:
+        try:
+            proc = subprocess.Popen([MAFFT_PATH, *args, input_file], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    env={**os.environ, **MAFFT_ENV})
+        except FileNotFoundError as exc:
+            raise _mafft_missing_error() from exc
+        readers = [threading.Thread(target=lambda: output.append(proc.stdout.read()), daemon=True),
+                   threading.Thread(target=read_progress, args=(proc.stderr,), daemon=True)]
+        for reader in readers:
+            reader.start()
+        deadline = time.time() + max(30, int(timeout_sec))
+        while proc.poll() is None:
+            if cancelled and cancelled():
+                proc.kill()
+                proc.wait()
+                raise InterruptedError("cancelled")
+            if time.time() > deadline:
+                proc.kill()
+                proc.wait()
+                raise RuntimeError(f"MAFFT took longer than {int(timeout_sec)} seconds and was stopped.")
+            time.sleep(0.2)
+        for reader in readers:
+            reader.join(timeout=10)
+        if proc.returncode != 0:
+            raise RuntimeError(f"MAFFT failed: {' / '.join(list(tail)[-5:])}")
+        state.update(stage="refining", done=1, total=1, **{"pass": state["passes"]})
+        publish(force=True)
+
+        aligned: Dict[str, str] = {}
+        current_id: Optional[str] = None
+        current_seq: List[str] = []
+        for line in b"".join(output).decode("utf-8", "replace").splitlines():
+            token = line.strip()
+            if not token:
+                continue
+            if token.startswith(">"):
+                if current_id is not None:
+                    aligned[current_id] = "".join(current_seq)
+                current_id = token[1:].strip()
+                current_seq = []
+            else:
+                current_seq.append(token)
+        if current_id is not None:
+            aligned[current_id] = "".join(current_seq)
+        if len(aligned) != len(ordered_sequences):
+            raise RuntimeError("MAFFT output is missing one or more aligned sequences.")
+        return aligned
+    finally:
+        try:
+            os.unlink(input_file)
+        except Exception:
+            pass
+
+
 def _multi_alignment_cache_dir(output_dir: Optional[str]) -> Optional[Path]:
     root = str(output_dir or "").strip()
     if not root:
@@ -3411,6 +3545,163 @@ def align_transcripts(request: AlignmentRequest):
     return result
 
 
+_SHARED_ALIGNMENT_STORES: Dict[str, "transcript_msa.AlignmentStore"] = {}
+
+
+def _shared_alignment_store(output_dir: Optional[str]) -> Optional["transcript_msa.AlignmentStore"]:
+    """The alignments folder the Gene Trees view shares: ``local_data/alignments``."""
+    root = str(output_dir or "").strip()
+    if not root or not os.path.isdir(root):
+        return None
+    folder = _alignments_dir(root)
+    if str(folder) not in _SHARED_ALIGNMENT_STORES:
+        _SHARED_ALIGNMENT_STORES[str(folder)] = transcript_msa.AlignmentStore(folder)
+    return _SHARED_ALIGNMENT_STORES[str(folder)]
+
+
+def _msa_shared_rows(prepared_rows: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    """Each MSA row as the shared store knows rows: key, region, signature. None if one has no assembly."""
+    out = []
+    for item in prepared_rows:
+        try:
+            species = _resolve_browse_genome_context(item["genome"]).get("species") or {}
+        except Exception:
+            return None
+        assembly = str(species.get("assembly") or species.get("gca") or "").strip()
+        if not assembly:
+            return None
+        tx = item["tx"]
+        region = _tmsa_window_region(asdict(tx), int(item["window_start"]), int(item["window_end"]),
+                                     int(item["flank_5_bp"]), int(item["flank_3_bp"]))
+        region["chrom"] = str(item.get("fetched_chrom") or tx.seq_region or "")
+        row_key = f"{assembly}:{item['transcript_id']}"
+        input_hash = transcript_msa.sequence_hash(str(item["raw_seq"] or ""))
+        structure = _tmsa_structure_hash(asdict(tx))
+        out.append({"row_key": row_key, "assembly": assembly, "region": region, "input_hash": input_hash, "structure": structure,
+                    "signature": transcript_msa.row_signature(row_key, _tmsa_params_of(region), input_hash, structure)})
+    return out
+
+
+def _msa_result_from_store(store, stem: str, prepared_rows, shared, requested_rows, excluded_rows, warnings, profile):
+    """A stored alignment (the Gene Trees', say) holding every row asked for, cut down to them."""
+    alignment = transcript_msa.project(store.load(stem), [r["row_key"] for r in shared])
+    by_key = {r["row_key"]: r for r in alignment["rows"]}
+    rows: List[MultiAlignedRow] = []
+    for item, row_id in zip(prepared_rows, shared):
+        row = by_key.get(row_id["row_key"])
+        if not row:
+            return None
+        features = [Feature(**{k: f[k] for k in ("type", "start", "end", "original_start", "original_end")})
+                    for f in row.get("features") or [] if f.get("type") != "intron_cut"] if item["overlay_annotation"] else []
+        rows.append(MultiAlignedRow(
+            genome=str(item["genome"] or ""), genome_key=str(item["genome_key"] or ""), tag=str(item["tag"] or ""),
+            query=str(item["query"] or ""), transcript_id=str(item["transcript_id"] or ""),
+            chrom=str(item.get("fetched_chrom") or item["tx"].seq_region or ""),
+            genomic_start=int(item["window_start"]), genomic_end=int(item["window_end"]), strand=str(item["tx"].strand or "+"),
+            aligned_sequence=row["aligned"], raw_length=len(str(item["raw_seq"] or "")),
+            flank_5_bp=int(item["flank_5_bp"]), flank_3_bp=int(item["flank_3_bp"]),
+            overlay_annotation=bool(item["overlay_annotation"]), use_gene_boundaries=bool(item.get("use_gene_boundaries", True)),
+            features=features, identity_to_consensus=float(row.get("identity") or 0), gap_fraction=float(row.get("gap_fraction") or 0)))
+    return MultiAlignmentResult(
+        timestamp=datetime.now().isoformat(), alignment_length=int(alignment["alignment_length"]),
+        requested_count=len(requested_rows), included_count=len(rows), profile=profile,
+        strategy=str(alignment.get("strategy") or "stored"), consensus=alignment["consensus"],
+        average_identity=float(alignment.get("average_identity") or 0),
+        warnings=[*warnings, f"Reused a stored alignment ({alignment.get('name') or stem})."],
+        rows=rows, excluded_rows=excluded_rows, cache_hit=True)
+
+
+def _msa_save_shared(store, prepared_rows, shared, ordered_aligned_rows, strategy: str, consensus: str) -> None:
+    """Keep an MSA run in the shared folder, so the Gene Trees view can reuse it (and this view, later)."""
+    shared_by_item = {id(item): row_id for item, row_id in zip(prepared_rows, shared)}
+    rows = []
+    for item, aligned_seq in ordered_aligned_rows:
+        row_id = shared_by_item.get(id(item))
+        if row_id is None:
+            return
+        aligned = str(aligned_seq).upper()
+        raw = str(item["raw_seq"] or "").upper()
+        rows.append({**row_id, "genome_key": str(item["genome_key"] or ""), "tag": str(item["tag"] or ""),
+                     "gene_id": str(item["query"] or ""), "gene_symbol": str(item["tag"] or ""),
+                     "transcript_id": str(item["transcript_id"] or ""), "chrom": row_id["region"]["chrom"],
+                     "strand": str(item["tx"].strand or "+"), "genomic_start": int(item["window_start"]),
+                     "genomic_end": int(item["window_end"]), "flank_5_bp": int(item["flank_5_bp"]),
+                     "flank_3_bp": int(item["flank_3_bp"]), "raw_length": len(raw),
+                     "features": transcript_msa.map_features(asdict(item["tx"]), row_id["region"], aligned, raw),
+                     "aligned": aligned})
+    if len(rows) < 2:
+        return
+    summary = transcript_msa.project({"rows": rows, "alignment_length": len(rows[0]["aligned"])}, [r["row_key"] for r in rows])
+    store.save({**summary, "params": _tmsa_params_of(rows[0]["region"]), "strategy": strategy},
+               "msa " + " ".join(r["tag"] for r in rows)[:60], source="multi_alignment", auto=True)
+
+
+def _trim_multi_to_transcripts(result: "MultiAlignmentResult", prepared_rows: List[Dict[str, Any]]) -> "MultiAlignmentResult":
+    """Cut an alignment down to the selected transcripts, each with its row's flanks.
+
+    With gene boundaries on, a row's window is its whole gene, which can run far past the
+    transcript chosen (a longer transcript of the same gene, say) and stretch the alignment
+    with sequence no selected transcript has. The columns kept run from the first to the last
+    that any row's transcript (plus its flanks) reaches; each row's coordinates, features,
+    identity and the consensus are worked out again for what is left.
+    """
+    rows = list(result.rows or [])
+    length = int(result.alignment_length or 0)
+    if not rows or length <= 0:
+        return result
+    items = {(str(i["genome_key"] or ""), str(i["transcript_id"] or "")): i for i in prepared_rows}
+    first_col, last_col = None, None
+    for row in rows:
+        item = items.get((row.genome_key, row.transcript_id))
+        if item is None:
+            return result  # which transcript a row is cannot be told: leave the alignment whole
+        tx = item["tx"]
+        lo, hi = _interval_window_with_oriented_flanks(int(tx.start), int(tx.end), row.strand, row.flank_5_bp, row.flank_3_bp)
+        lo, hi = max(lo, int(row.genomic_start)), min(hi, int(row.genomic_end))
+        if hi < lo:
+            continue
+        if row.strand == "-":
+            i0, i1 = int(row.genomic_end) - hi, int(row.genomic_end) - lo
+        else:
+            i0, i1 = lo - int(row.genomic_start), hi - int(row.genomic_start)
+        columns = [c for c, ch in enumerate(row.aligned_sequence) if ch != "-"]
+        if not columns:
+            continue
+        i0, i1 = max(0, i0), min(len(columns) - 1, i1)
+        if i0 > i1:
+            continue
+        first_col = columns[i0] if first_col is None else min(first_col, columns[i0])
+        last_col = columns[i1] if last_col is None else max(last_col, columns[i1])
+    if first_col is None or (first_col == 0 and last_col == length - 1):
+        return result
+
+    trimmed_seqs = [row.aligned_sequence[first_col:last_col + 1] for row in rows]
+    consensus = _build_consensus_from_aligned_rows(trimmed_seqs)
+    new_rows = []
+    for row, seq in zip(rows, trimmed_seqs):
+        before = sum(1 for ch in row.aligned_sequence[:first_col] if ch != "-")
+        kept = sum(1 for ch in seq if ch != "-")
+        if row.strand == "-":
+            end = int(row.genomic_end) - before
+            start = end - kept + 1
+        else:
+            start = int(row.genomic_start) + before
+            end = start + kept - 1
+        features = []
+        for f in row.features or []:
+            fs, fe = max(int(f.start), first_col), min(int(f.end), last_col)
+            if fs <= fe:
+                features.append(f.model_copy(update={"start": fs - first_col, "end": fe - first_col}))
+        new_rows.append(row.model_copy(update={
+            "aligned_sequence": seq, "genomic_start": start, "genomic_end": end, "raw_length": kept, "features": features,
+            "identity_to_consensus": _identity_to_consensus(seq, consensus), "gap_fraction": _gap_fraction(seq)}))
+    left_out = length - (last_col - first_col + 1)
+    return result.model_copy(update={
+        "alignment_length": len(consensus), "consensus": consensus, "rows": new_rows,
+        "average_identity": float(sum(r.identity_to_consensus for r in new_rows) / max(1, len(new_rows))),
+        "warnings": [*(result.warnings or []), f"Trimmed to the selected transcripts and their flanks: {left_out:,} columns of gene sequence beyond them left out."]})
+
+
 @app.post("/api/align/multi", response_model=MultiAlignmentResult)
 def align_multi(request: MultiAlignmentRequest):
     """Align several genomes at once.
@@ -3644,6 +3935,9 @@ def align_multi(request: MultiAlignmentRequest):
     cache_payload = {
         "profile": profile,
         "strategy": strategy,
+        # Results are cut down to the selected transcripts (see _trim_multi_to_transcripts):
+        # untrimmed ones cached before that are not reused.
+        "trim": "selected_transcripts",
         "settings": {
             "soft_warn_sequences": soft_warn,
             "hard_cap_sequences": hard_cap,
@@ -3678,6 +3972,20 @@ def align_multi(request: MultiAlignmentRequest):
                 return cached.model_copy(update={"cache_hit": True})
             except Exception:
                 cache_hit = False
+
+    # An alignment another view (the Gene Trees') already made of exactly these rows.
+    shared_store = _shared_alignment_store(config.get("output_dir"))
+    shared_rows = None
+    if shared_store is not None:
+        try:
+            shared_rows = _msa_shared_rows(prepared_rows)
+            stem = shared_store.find_covering([r["signature"] for r in shared_rows]) if shared_rows else None
+            reused = _msa_result_from_store(shared_store, stem, prepared_rows, shared_rows, requested_rows,
+                                            excluded_rows, warnings, profile) if stem else None
+            if reused is not None:
+                return _trim_multi_to_transcripts(reused, prepared_rows)
+        except Exception:
+            logger.warning("Could not look in the shared alignments folder", exc_info=True)
 
     ordered_sequences: List[Tuple[str, str]] = []
     seq_id_to_row: Dict[str, Dict[str, Any]] = {}
@@ -3765,6 +4073,7 @@ def align_multi(request: MultiAlignmentRequest):
         excluded_rows=excluded_rows,
         cache_hit=cache_hit,
     )
+    result = _trim_multi_to_transcripts(result, prepared_rows)
 
     if cache_path:
         try:
@@ -3772,6 +4081,11 @@ def align_multi(request: MultiAlignmentRequest):
                 json.dump(result.model_dump(), f)
         except Exception:
             pass
+    if shared_store is not None and shared_rows:
+        try:
+            _msa_save_shared(shared_store, prepared_rows, shared_rows, ordered_aligned_rows, strategy, consensus)
+        except Exception:
+            logger.warning("Could not keep the alignment in the shared folder", exc_info=True)
 
     return result
 
@@ -3918,6 +4232,8 @@ def list_alignments(output_dir: str = ""):
         try:
             with open(meta_file) as fh:
                 meta = json.load(fh)
+            if meta.get("auto"):
+                continue  # kept by the views as a cache, not saved by the user
             # Return all fields except the per-genome features arrays (too large)
             slim_genomes = []
             for g in meta.get("genomes", []):
@@ -5754,19 +6070,24 @@ def _catalog_genome_metadata(species_key: Any, assembly: Any, provider: Any = DE
     assembly_info = assemblies.get(assembly_token) or {}
     if not isinstance(assembly_info, dict):
         assembly_info = {}
+    display = {}
     try:
-        if getattr(download_manager, "_species_cache", None) is None:
-            download_manager._build_cache()
         summary = next((item for item in (download_manager._species_cache or []) if item.key == key), None)
+        # Configuration needs labels for its saved genomes, not summaries and
+        # taxonomy diagnostics for every species in the download catalogue.
+        display = download_manager.species_display_name(key) if summary is None else {
+            "display_name": summary.display_name,
+            "display_name_reason": summary.display_name_reason,
+        }
     except Exception:
-        summary = None
+        pass
     return {
         "species_key": key,
         "assembly": assembly_token,
         "scientific_name": str(info.get("scientific_name") or "").strip(),
         "common_name": str(info.get("common_name") or "").strip(),
-        "display_name": str(getattr(summary, "display_name", "") or info.get("display_name") or "").strip(),
-        "display_name_reason": str(getattr(summary, "display_name_reason", "") or info.get("display_name_reason") or "").strip(),
+        "display_name": str(display.get("display_name") or info.get("display_name") or "").strip(),
+        "display_name_reason": str(display.get("display_name_reason") or info.get("display_name_reason") or "").strip(),
         "assembly_name": str(assembly_info.get("name") or "").strip(),
     }
 
@@ -12860,6 +13181,8 @@ def gene_trees_local_genomes() -> List[Dict[str, Any]]:
         index = str(files.get("index") or "").strip()
         has_index = bool(index and os.path.exists(index))
         if assembly in best and (best[assembly]["index_path"] or not has_index):
+            if not best[assembly].get("fasta_path") and str(files.get("fasta") or "").strip():
+                best[assembly]["fasta_path"] = str(files.get("fasta") or "").strip()
             continue
         best[assembly] = {
             "assembly": assembly,
@@ -12870,10 +13193,92 @@ def gene_trees_local_genomes() -> List[Dict[str, Any]]:
             "provider": record.get("provider"),
             "index_path": index if has_index else "",
             "gff_path": str(files.get("gff3") or "").strip(),
+            "fasta_path": str(files.get("fasta") or "").strip(),
         }
     genomes = list(best.values())
     _GENE_TREE_GENOMES.update(key=key, at=now, genomes=genomes)
     return genomes
+
+
+def gene_trees_transcript(index_path: str, gene_id: str, transcript_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """A gene's transcript to align: ``transcript_id`` when it is one of the gene's, else its canonical one."""
+    if not index_path or not os.path.exists(index_path):
+        return None
+    conn = sqlite3.connect(index_path)
+    try:
+        genes = list(dict.fromkeys(g for g in (gene_id, re.sub(r"\.\d+$", "", gene_id or "")) if g))
+        marks = ",".join("?" * len(genes))
+        chosen = None
+        if transcript_id:
+            wanted = list(dict.fromkeys(t for t in (transcript_id, re.sub(r"\.\d+$", "", transcript_id)) if t))
+            row = conn.execute(f"SELECT id FROM transcripts WHERE id IN ({','.join('?' * len(wanted))}) "
+                               f"AND parent_gene_id IN ({marks}) LIMIT 1", (*wanted, *genes)).fetchone()
+            chosen = row[0] if row else None
+        if not chosen:
+            row = conn.execute(f"SELECT id FROM transcripts WHERE parent_gene_id IN ({marks}) "
+                               "ORDER BY is_canonical DESC, start ASC LIMIT 1", genes).fetchone()
+            chosen = row[0] if row else None
+        name_row = conn.execute(f"SELECT name, start, end FROM genes WHERE id IN ({marks}) LIMIT 1", genes).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    tx = find_transcript_in_index(index_path, chosen) if chosen else None
+    if tx is None:
+        return None
+    return {**asdict(tx), "id": chosen, "gene_id": gene_id, "gene_name": (name_row[0] if name_row else "") or "",
+            "gene_start": int(name_row[1]) if name_row and name_row[1] else None,
+            "gene_end": int(name_row[2]) if name_row and name_row[2] else None}
+
+
+def gene_trees_fetcher(genome: Dict[str, Any]):
+    """``fetch(chrom, start, end) -> (forward sequence, start, end)`` from a local genome's FASTA."""
+    fasta_path = str(genome.get("fasta_path") or "")
+    if not fasta_path or not os.path.exists(fasta_path):
+        raise LookupError("Its genome has no sequence (FASTA) downloaded")
+    cache_key = f"path:{fasta_path}"
+    cached = _fasta_cache.get(cache_key)
+    fasta = cached[1] if cached and cached[0] == fasta_path else None
+    if fasta is None:
+        fasta = open_indexed_fasta(fasta_path)
+        _fasta_cache[cache_key] = (fasta_path, fasta)
+    known = set(fasta.references or [])
+
+    def fetch(chrom: str, start: int, end: int):
+        name = chrom if chrom in known else next((v for v in chrom_token_variants(chrom) if v in known), None)
+        if name is None:
+            try:
+                name = _resolve_browse_chrom_name(str(genome.get("assembly") or ""), chrom, list(known)) or None
+            except Exception:
+                name = None
+        if name is None or name not in known:
+            raise LookupError(f"{chrom} is not in its genome's FASTA")
+        length = int(fasta.get_reference_length(name))
+        lo, hi = max(1, int(start)), min(length, int(end))
+        if lo > hi:
+            return "", lo, lo - 1
+        return fasta.fetch(name, lo - 1, hi), lo, hi
+    return fetch
+
+
+def gene_trees_align(ordered: List[Tuple[str, str]], on_progress, cancelled):
+    """MAFFT for a tree's transcripts: ``--auto`` for a handful, FFT-NS-2 beyond."""
+    lengths = [len(seq) for _, seq in ordered]
+    if len(ordered) <= 30 and sum(lengths) <= 300_000 and max(lengths) <= 20_000:
+        args, strategy = ["--auto"], "auto"
+    else:
+        args, strategy = ["--retree", "2", "--maxiterate", "0"], "FFT-NS-2"
+    aligned = run_mafft_alignment_multi_progress(ordered, args, timeout_sec=4 * 3600,
+                                                 on_progress=on_progress, cancelled=cancelled)
+    return aligned, strategy
+
+
+def gene_trees_alignments_root() -> Optional[Path]:
+    """The alignments folder the MSA view saves to: where the tree's alignments go too."""
+    output_dir = str(load_config().get("output_dir") or "").strip()
+    if not output_dir or not os.path.isdir(output_dir):
+        return None
+    return _alignments_dir(output_dir)
 
 
 def alignment_explorer_annotation_features(genome, chrom, start, end, sequence, strand, transcript_id=None):

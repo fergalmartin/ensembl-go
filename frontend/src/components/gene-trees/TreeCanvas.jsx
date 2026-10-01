@@ -1,9 +1,11 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import {
   DRAG_AXIS_THRESHOLD_PX, beginWheelGesture, clamp, isTextEntryTarget, readKeyEvent, readWheelEvent,
   resolveKeyAction, resolveWheelAction,
 } from '../../utils/browsingControls.js'
-import { branchAt, branchMid, contentBounds, fragmentTagAt, hitTest, LABEL_GAP, neighbourHit, paintTree, selectionHit, toScreen } from './paintTree.js'
+import { branchAt, branchMid, contentBounds, fragmentTagAt, fragmentTagBox, hitTest, LABEL_GAP, labelOffsetOf, paintTree, readableOn, selectionHit, toScreen } from './paintTree.js'
+import { alignSnap, alignXOf, sideOf } from './treeLayout.js'
+import { lockWheelAxis, newWheelAxis } from './wheelAxis.js'
 
 const MAX_ZOOM = 4
 const PAD = 28
@@ -16,9 +18,23 @@ const svgCursor = (paths, colour, hotspot) => {
   return `url("data:image/svg+xml;utf8,${svg}") ${hotspot}, crosshair`
 }
 // A subtree layer's tools, and those of them that take hold of a whole fragment.
-const LAYER_TOOLS = new Set(['move', 'merge', 'graft', 'cut', 'remove'])
+const LAYER_TOOLS = new Set(['move', 'merge', 'graft', 'cut', 'remove', 'rename', 'compare'])
 const LIFT_TOOLS = new Set(['move', 'merge', 'graft'])
 const SCISSORS_CURSOR = svgCursor("<circle cx='6' cy='6' r='3'/><circle cx='6' cy='18' r='3'/><path d='M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12'/>", '%23edc263', '12 12')
+const RENAME_CURSOR = svgCursor("<path d='M4 20h4L19 9l-4-4L4 16v4z'/><path d='M13.5 6.5l4 4'/>", '%2360a5fa', '4 20')
+// Compare: picking the first subtree, then the second — the cursor carries which.
+const compareCursor = step => {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'>`
+    + `<path d='M2 4v16M2 8h5M2 16h5M26 4v16M26 8h-5M26 16h-5' fill='none' stroke='%23101826' stroke-width='4' stroke-linecap='round'/>`
+    + `<path d='M2 4v16M2 8h5M2 16h5M26 4v16M26 8h-5M26 16h-5' fill='none' stroke='%2360a5fa' stroke-width='2' stroke-linecap='round'/>`
+    + `<circle cx='14' cy='12' r='7' fill='%2360a5fa' stroke='%23101826' stroke-width='1.5'/>`
+    + `<text x='14' y='16' text-anchor='middle' font-family='sans-serif' font-size='11' font-weight='700' fill='%23101826'>${step}</text></svg>`
+  return `url("data:image/svg+xml;utf8,${svg}") 14 12, pointer`
+}
+const COMPARE_CURSORS = { 1: compareCursor(1), 2: compareCursor(2) }
+// The horizontal scale for row scale k: held at `kxFixed` while two subtrees face each other,
+// otherwise k, but never below `kxFloor`.
+const scaleAcross = (limits, k) => limits.kxFixed ?? Math.max(k, limits.kxFloor)
 const REMOVE_CURSOR = svgCursor("<circle cx='12' cy='12' r='8'/><path d='M8.5 8.5l7 7M15.5 8.5l-7 7'/>", '%23fb7185', '12 12')
 
 /**
@@ -29,9 +45,46 @@ const REMOVE_CURSOR = svgCursor("<circle cx='12' cy='12' r='8'/><path d='M8.5 8.
  * settings as the Genome Browser; since this surface is not a page, the scheme's
  * "scroll the page" is read as moving up and down the tree.
  */
+/**
+ * A subtree's name tag as a text box, for the Rename tool, with Apply and Cancel beside it.
+ * Apply, Enter or leaving it keeps the name (an empty one goes back to the automatic name);
+ * Cancel or Escape keeps the old one.
+ */
+function TagNameInput({ boxRef, initial, placeholder, color, onDone }) {
+  const [draft, setDraft] = useState(initial)
+  const done = useRef(false)
+  const finish = save => {
+    if (done.current) return
+    done.current = true
+    onDone(save ? draft.trim() : null)
+  }
+  // The buttons take the press without taking focus, so the box is not left (and the name
+  // kept) before Cancel has had its say.
+  const button = save => ({ type: 'button', onPointerDown: event => { event.preventDefault(); event.stopPropagation() },
+    onMouseDown: event => event.preventDefault(), onClick: () => finish(save) })
+  return (
+    <span ref={boxRef} className="gt-tag-edit" onPointerDown={event => event.stopPropagation()}>
+      <input className="gt-tag-input" autoFocus value={draft} placeholder={placeholder} aria-label="Subtree name"
+        size={Math.max(8, (draft || placeholder).length + 1)} style={{ background: color, color: readableOn(color) }}
+        onChange={event => setDraft(event.target.value)} onBlur={() => finish(true)}
+        onKeyDown={event => {
+          event.stopPropagation()
+          if (event.key === 'Enter') finish(true)
+          else if (event.key === 'Escape') finish(false)
+        }} />
+      <button {...button(true)} className="gt-tag-act apply" title="Apply the name (Enter)" aria-label="Apply the name">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+      </button>
+      <button {...button(false)} className="gt-tag-act" title="Cancel (Esc)" aria-label="Cancel">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+    </span>
+  )
+}
+
 const TreeCanvas = forwardRef(function TreeCanvas({
-  index, layout, links, focusId, focusIds = null, focusPath, selected, palette, topbarAssemblies, genomeColors, controls, fitKey, focusRowId,
-  onNodeClick, onHover, ariaLabel,
+  index, layout, links, focusId, focusIds = null, focusPath, selected, palette, topbarAssemblies, genomeColors, lit = null, controls, fitKey, focusRowId,
+  onNodeClick, onHover, onColumnClick, ariaLabel,
   // Subtree layers: the active tool, what is picked, fragment name tags, a subtree lifted
   // by the Connect tool, and the callbacks the tools report through.
   tool = 'explore', picked = null, fragmentTags = null, onMarquee, onToolClick, onDragOut, onUnpick,
@@ -45,8 +98,18 @@ const TreeCanvas = forwardRef(function TreeCanvas({
   viewKey = '', layoutSig = '', cameras = null,
   // Pixels at the top of the canvas a fit keeps clear (something floats over them).
   insetTop = 0,
-  // A data column's contents: `{byLeafId, pending, colours}` (the Neighbourhood view).
-  neighbours = null,
+  // A data column beside the leaves: `{paint, leaderEnd, hit}` (see `neighbourhoodColumn` in
+  // paintTree.js), and optionally `wheel(env, event)` / `press(env, sx, sy)` for gestures of
+  // its own. `columnKey` changes whenever what it draws does.
+  column = null, columnKey = '',
+  // The Rename tool's text box: `{fragmentId, initial, placeholder, color}` while a subtree's
+  // name is being typed, laid over its tag; `onNamed(fragmentId, name)` ends it (name null:
+  // cancelled).
+  naming = null, onNamed,
+  // Two subtrees being compared (compareTrees.js): the lines between them and what is in
+  // conflict, for the painter, and `partnersOf(id)` → the ids to light while one is hovered.
+  // `comparePick`: picking them, which one is next (1 or 2).
+  compare = null, comparePick = 0,
 }, ref) {
   const wrap = useRef(null)
   const canvas = useRef(null)
@@ -55,11 +118,14 @@ const TreeCanvas = forwardRef(function TreeCanvas({
   const limits = useRef({ min: 0.05, kxFloor: 1 })
   // A transform for row scale k: the horizontal scale follows it down only as far as
   // fitting the tree's width, then holds.
-  const withScale = (k, x, y) => ({ k, kx: Math.max(k, limits.current.kxFloor), x, y })
+  const withScale = (k, x, y) => ({ k, kx: scaleAcross(limits.current, k), x, y })
   const labelCache = useRef(new Map())
   const frame = useRef(0)
   const drag = useRef(null)
   const gesture = useRef(null)
+  // Which way a wheel gesture goes (wheelAxis.js): a swipe that wanders a little off its
+  // line still only pans sideways, or only zooms.
+  const wheelAxis = useRef(newWheelAxis())
   const anchor = useRef(null)
   const hover = useRef(-1)
   const props = useRef({})
@@ -77,9 +143,24 @@ const TreeCanvas = forwardRef(function TreeCanvas({
   // Mirrored for the painter and the gesture handlers, which run outside render.
   // Declared first so every later layout effect sees this render's values.
   useLayoutEffect(() => {
-    props.current = { index, layout, links, focusId, focusIds, focusPath, selected, palette, topbarAssemblies, genomeColors,
-      picked, fragmentTags, tool, marks, cameras, canMerge, insetTop, neighbours }
+    props.current = { index, layout, links, focusId, focusIds, focusPath, selected, palette, topbarAssemblies, genomeColors, lit,
+      picked, fragmentTags, tool, marks, cameras, canMerge, insetTop, column, naming, compare, comparePick }
   })
+  const namingInput = useRef(null)
+  // Keep the Rename tool's text box on its tag wherever the view has moved to.
+  const placeNaming = () => {
+    const input = namingInput.current
+    const { layout: lay, naming: now } = props.current
+    if (!input || !now) return
+    const item = lay?.items?.find(i => i.node.fragRoot === now.fragmentId)
+    if (!item) { input.style.visibility = 'hidden'; return }
+    const { x, y } = fragmentTagBox(lay, t.current, item)
+    input.style.visibility = ''
+    // A mirrored subtree's tag ends at its root, on its right.
+    input.style.transform = item.mirror
+      ? `translate(${Math.round(x + 8)}px, ${Math.round(y)}px) translateX(-100%)`
+      : `translate(${Math.round(x)}px, ${Math.round(y)}px)`
+  }
 
   // A subtree layer's tools: the fragment being dragged (`lift`: its root, node ids, how
   // far it has moved on screen and what it is over), and the highlight of what a tool is
@@ -88,7 +169,14 @@ const TreeCanvas = forwardRef(function TreeCanvas({
   const liftCanvas = useRef(null)
   const fx = useRef(null)
   const fxKey = useRef('')
-  const neighbourHover = useRef('') // the symbol of the data-column gene under the pointer
+  const columnHover = useRef('') // what the data column lights for the pointer (a gene family, say)
+
+  // A tool's highlight is kept as what it is about (a subtree's box, a branch's junction) and
+  // placed on screen at each paint, so it stays on its subtree while the view pans or zooms.
+  const placeFx = current => (current && (typeof current.box === 'function' || typeof current.junction === 'function')
+    ? { ...current, box: typeof current.box === 'function' ? current.box() : current.box,
+      junction: typeof current.junction === 'function' ? current.junction() : current.junction }
+    : current)
 
   const paint = useCallback(() => {
     frame.current = 0
@@ -97,9 +185,11 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     const ctx = node.getContext('2d')
     const dpr = window.devicePixelRatio || 1
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    placeNaming()
     const base = { ...props.current, t: t.current, width: size.current.width, height: size.current.height,
-      hoverId: hover.current, labelCache: labelCache.current, planOut: plan, marquee: marquee.current, emphasis: fx.current,
-      neighbourHover: neighbourHover.current }
+      hoverId: hover.current, labelCache: labelCache.current, planOut: plan, marquee: marquee.current, emphasis: placeFx(fx.current),
+      columnHover: columnHover.current,
+      compare: props.current.compare && { ...props.current.compare, lit: hover.current >= 0 ? props.current.compare.partnersOf(hover.current) : null } }
     const held = lift.current
     if (held?.moved) {
       // The fragment in hand is drawn apart from the rest, where the pointer has taken it.
@@ -118,9 +208,26 @@ const TreeCanvas = forwardRef(function TreeCanvas({
       ctx.globalAlpha = props.current.tool === 'move' ? 0.94 : 0.5
       ctx.drawImage(off, 0, 0)
       ctx.restore()
+      if (held.snap) {
+        // The column the two subtrees' tips now share, down both of them.
+        const [gx, gy0] = toScreen(t.current, held.snap.column, held.snap.top)
+        const gy1 = toScreen(t.current, held.snap.column, held.snap.bottom)[1]
+        ctx.save()
+        ctx.strokeStyle = props.current.palette?.isLight ? '#0099ff' : '#60a5fa'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([5, 4])
+        ctx.beginPath(); ctx.moveTo(gx, gy0 - 14); ctx.lineTo(gx, gy1 + 14); ctx.stroke()
+        ctx.restore()
+      }
       return
     }
     paintTree(ctx, base)
+    // A data column that wants the plane moved (to keep its place across a switch).
+    const pan = props.current.column?.takePan?.() || 0
+    if (pan) {
+      t.current = { ...t.current, x: t.current.x + pan }
+      if (!frame.current) frame.current = requestAnimationFrame(paint)
+    }
   }, [])
   const schedule = useCallback(() => { if (!frame.current) frame.current = requestAnimationFrame(paint) }, [paint])
 
@@ -138,6 +245,10 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     // Room for the widest labels a zoomed-out view keeps (a clade name and its count).
     // A radial tree zooms uniformly: squeezing one axis of a circle only distorts it.
     limits.current.kxFloor = lay.radial ? 0 : Math.min(1, Math.max(0.02, (width - PAD * 2 - 300) / Math.max(1, lay.width)))
+    // Two subtrees facing each other: the room between them was laid out for labels at one
+    // horizontal scale (labels never shrink), and the pair fills the view's width at it, so
+    // across it stays at that scale; zooming changes only the rows.
+    limits.current.kxFixed = props.current.compare?.facing && !lay.radial ? props.current.compare.scaleX || 1 : null
   }, [])
 
   const fit = useCallback((centreId = -1) => {
@@ -164,8 +275,10 @@ const TreeCanvas = forwardRef(function TreeCanvas({
       schedule()
       return
     }
-    const k = clamp(Math.min(2, fitWidth, Math.max(fitAll, readable)), 1e-4, MAX_ZOOM)
-    const kx = Math.max(k, limits.current.kxFloor)
+    // Facing subtrees keep their own horizontal scale: rows fit the height alone.
+    const fixed = limits.current.kxFixed
+    const k = clamp(fixed ? Math.min(2, Math.max(room / bh, readable)) : Math.min(2, fitWidth, Math.max(fitAll, readable)), 1e-4, MAX_ZOOM)
+    const kx = scaleAcross(limits.current, k)
     const x = PAD - b.minX * kx + Math.max(0, (width - PAD * 2 - bw * kx) / 2)
     let y
     if (bh * k <= room) y = top - b.minY * k + (room - bh * k) / 2
@@ -252,7 +365,7 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     const x0 = Math.min(item.x, item.reach)
     // Enough that the clade's rows are readable, but never past what fits the view.
     const k = clamp(Math.min((height - PAD * 4) / span, 1.25), t.current.k * 1.5, MAX_ZOOM)
-    const kx = Math.max(k, limits.current.kxFloor)
+    const kx = scaleAcross(limits.current, k)
     animateTo({ k, x: Math.min(width * 0.2 - x0 * kx, PAD - Math.min(item.x, item.reach) * kx + width * 0.1), y: height / 2 - ((item.y0 + item.y1) / 2) * k })
   }, [animateTo])
 
@@ -281,14 +394,28 @@ const TreeCanvas = forwardRef(function TreeCanvas({
       animateTo({ k, x: width / 2 - item.x * k, y: midY - item.y * k })
       return true
     }
-    const kx = Math.max(k, limits.current.kxFloor)
-    const label = LABEL_GAP + (lay.labelOffset || 0) + (labelCache.current.get(id)?.width ?? 220) + 40
-    const sx = lay.flipHorizontal ? Math.max(width * 0.45, label) : Math.min(width * 0.55, width - label)
+    const kx = scaleAcross(limits.current, k)
+    // The label sits past any aligned column, which starts at the furthest tip, not this one.
+    const column = alignXOf(lay, item)
+    const aligned = column !== undefined ? Math.abs(column - item.x) * kx : 0
+    const label = aligned + LABEL_GAP + labelOffsetOf(lay, item) + (labelCache.current.get(id)?.width ?? 220) + 40
+    const sx = sideOf(lay, item).flipHorizontal ? Math.max(width * 0.45, label) : Math.min(width * 0.55, width - label)
     animateTo({ k, x: sx - item.x * kx, y: midY - item.y * k })
     return true
   }, [animateTo, updateLimits])
 
-  useImperativeHandle(ref, () => ({ fit, centreOn, recentre, zoomInto, canvas: () => canvas.current, repaint: schedule }), [fit, centreOn, recentre, zoomInto, schedule])
+  // Keep a node clear of whatever floats over the top `top` px of the view: glide it down
+  // just far enough when it is under there, and leave the view alone when it is not.
+  const reveal = useCallback((id, top) => {
+    const item = props.current.layout?.byId?.get(id)
+    if (!item) return
+    const sy = toScreen(t.current, item.x, item.y)[1]
+    const clear = top + Math.max(12, (props.current.layout.pitch * t.current.k) / 2 + 6)
+    if (sy >= clear) return
+    animateTo({ ...t.current, y: t.current.y + clear - sy })
+  }, [animateTo])
+
+  useImperativeHandle(ref, () => ({ fit, centreOn, recentre, reveal, zoomInto, canvas: () => canvas.current, repaint: schedule }), [fit, centreOn, recentre, reveal, zoomInto, schedule])
 
   // Size and DPR.
   useLayoutEffect(() => {
@@ -351,7 +478,7 @@ const TreeCanvas = forwardRef(function TreeCanvas({
       return
     }
     updateLimits()
-    t.current = { ...t.current, kx: Math.max(t.current.k, limits.current.kxFloor) }
+    t.current = { ...t.current, kx: scaleAcross(limits.current, t.current.k) }
     const held = anchor.current
     anchor.current = null
     if (held && layout?.byId?.has(held.id)) {
@@ -362,8 +489,8 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     schedule()
   }, [layout, fitKey, focusRowId, fit, schedule, updateLimits, viewKey, layoutSig, cameras, saveCamera])
 
-  useEffect(() => { schedule() }, [links, focusId, focusIds, focusPath, selected, palette, topbarAssemblies, genomeColors, picked,
-    fragmentTags, marks, neighbours, schedule])
+  useEffect(() => { schedule() }, [links, focusId, focusIds, focusPath, selected, palette, topbarAssemblies, genomeColors, lit, picked,
+    fragmentTags, marks, column, columnKey, compare, schedule])
   useEffect(() => () => {
     cancelAnimationFrame(frame.current)
     cancelAnimationFrame(animation.current)
@@ -379,12 +506,19 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     anchor.current = { id: item.id, sx, sy }
   }
 
+  // What a data column's gestures need: where the tree is and what the painter last planned.
+  const columnEnv = useCallback(() => ({ layout: props.current.layout, t: t.current, plan: plan.current,
+    width: size.current.width, height: size.current.height, insetTop: props.current.insetTop || 0 }), [])
+
   // Wheel: non-passive, so it can stop the page (and Chromium's page zoom) from reacting.
   useEffect(() => {
     const element = canvas.current
     if (!element) return undefined
     const onWheel = event => {
-      const wheel = readWheelEvent(event)
+      const wheel = lockWheelAxis(wheelAxis.current, readWheelEvent(event))
+      // Held back while the lock turns to a new gesture: still ours, so the page (or a
+      // sideways swipe's back-navigation) never sees it.
+      if (!wheel.dx && !wheel.dy) { event.preventDefault(); return }
       gesture.current = beginWheelGesture(gesture.current, wheel, wheel.ts)
       const intent = resolveWheelAction(wheel, controls, {
         // Never "at max zoom": the scheme would hand an outward zoom over to page scrolling,
@@ -392,9 +526,20 @@ const TreeCanvas = forwardRef(function TreeCanvas({
         atMaxZoom: false, canScrollPage: true, gesture: gesture.current,
       })
       gesture.current.mode = intent.nextGestureMode || gesture.current.mode
+      const [sx, sy] = point(event)
+      // Inside a data column with a view of its own (an alignment's), the same gesture acts
+      // on that: the scheme's zoom zooms along the alignment, a sideways pan moves along it.
+      const own = props.current.column
+      const taken = own?.wheel && intent.type !== 'none' ? own.wheel(columnEnv(), intent, wheel, sx, sy) : null
+      if (taken) {
+        event.preventDefault()
+        markAdjusting()
+        if (taken.panX) panBy(taken.panX, 0)
+        else schedule()
+        return
+      }
       if (intent.type === 'none') { if (intent.preventDefault) event.preventDefault(); return }
       event.preventDefault()
-      const [sx, sy] = point(event)
       if (intent.type === 'zoom') {
         const cx = intent.anchor === 'center' ? size.current.width / 2 : sx
         const cy = intent.anchor === 'center' ? size.current.height / 2 : sy
@@ -408,7 +553,7 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     }
     element.addEventListener('wheel', onWheel, { passive: false })
     return () => element.removeEventListener('wheel', onWheel)
-  }, [controls, panBy, zoomAt])
+  }, [controls, panBy, zoomAt, columnEnv, schedule, markAdjusting])
 
   const hitAt = (sx, sy) => hitTest(props.current.layout, t.current, sx, sy, labelCache.current, plan.current)
   // The picked node under a point, or -1: its glyph, its label or pill, or the gold branch
@@ -457,13 +602,20 @@ const TreeCanvas = forwardRef(function TreeCanvas({
   }
   const screenOf = item => toScreen(t.current, item.x, item.y)
   // A fragment's outline on screen: its nodes, their labels, and its name tag above.
+  // A fragment's box, as a highlight to place at paint time (see `placeFx`); none once the
+  // fragment is gone from the layout.
+  const boxFx = (rootId, color, dash = null) => () => {
+    const lay = props.current.layout
+    return lay?.byId?.has(rootId) ? { ...fragmentBox(lay, rootId), color, dash } : null
+  }
   const fragmentBox = (lay, rootId) => {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
     for (const id of subtreeOf(lay, rootId)) {
       const item = lay.byId.get(id)
       const [sx, sy] = screenOf(item)
-      const label = item.kind !== 'internal' ? LABEL_GAP + (lay.labelOffset || 0) + (labelCache.current.get(id)?.width ?? 0) : 0
-      x0 = Math.min(x0, lay.flipHorizontal ? sx - label : sx); x1 = Math.max(x1, lay.flipHorizontal ? sx : sx + label)
+      const label = item.kind !== 'internal' ? LABEL_GAP + labelOffsetOf(lay, item) + (labelCache.current.get(id)?.width ?? 0) : 0
+      const flip = sideOf(lay, item).flipHorizontal
+      x0 = Math.min(x0, flip ? sx - label : sx); x1 = Math.max(x1, flip ? sx : sx + label)
       y0 = Math.min(y0, sy); y1 = Math.max(y1, sy)
     }
     return { x0: x0 - 14, y0: y0 - 36, x1: x1 + 10, y1: y1 + 14 }
@@ -509,14 +661,20 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     for (const id of subtreeOf(lay, rootId)) if (!removed.has(id) && lay.byId.get(id).kind !== 'internal') top = Math.min(top, lay.byId.get(id).y)
     return Number.isFinite(top) ? { x: lay.byId.get(newRoot).x, y: top } : null
   }
-  // Where every fragment is now (root x, top row), so the first move can pin them all:
-  // arranging one fragment should never send the others elsewhere.
+  // Where every fragment is now (root x, top row) and how big it is drawn (see
+  // placeFragments), so an edit can pin them all: arranging one fragment should never send
+  // the others elsewhere.
+  const sizeOf = (lay, fragmentId) => {
+    const box = lay.fragmentBoxes?.get(fragmentId)
+    return box ? { w: box.w, h: box.h } : {}
+  }
   const places = lay => {
     const out = {}
     for (const rootId of childMap(lay).get(lay.items[0].id) || []) {
       let top = Infinity
       for (const id of subtreeOf(lay, rootId)) top = Math.min(top, lay.byId.get(id).y)
-      out[lay.byId.get(rootId).node.fragRoot] = { x: lay.byId.get(rootId).x, y: top }
+      const fragmentId = lay.byId.get(rootId).node.fragRoot
+      out[fragmentId] = { x: lay.byId.get(rootId).x, y: top, ...sizeOf(lay, fragmentId) }
     }
     return out
   }
@@ -541,20 +699,24 @@ const TreeCanvas = forwardRef(function TreeCanvas({
         const verdict = p.canMerge?.(held.fragmentId, fragmentId) || { ok: true }
         held.target = { rootId, fragmentId, ok: verdict.ok, why: verdict.why || '' }
         const colour = verdict.ok ? gold : p.palette.focus
-        return setFx({ box: { ...fragmentBox(lay, rootId), color: colour, dash: verdict.ok ? null : [5, 4] },
+        return setFx({ box: boxFx(rootId, colour, verdict.ok ? null : [5, 4]),
           edges: [{ ids: subtreeOf(lay, rootId), color: colour, width: 2.5 }] }, `m${rootId}${verdict.ok}`)
       }
     } else if (p.tool === 'graft') {
       const id = layerNodeAt(sx, sy, skip)
       if (id >= 0) {
         const root = fragmentRootOf(lay, id) === id
-        const item = lay.byId.get(id)
-        const [ix, iy] = screenOf(item)
         // Onto a root: the graft makes a new root, just outside the old one.
-        const at = root ? [ix + (lay.flipHorizontal ? 18 : -18), iy] : branchMid(lay, t.current, id)
         held.target = { nodeId: id, root }
+        const junction = () => {
+          const now = props.current.layout
+          if (!now?.byId?.has(id)) return null
+          const [ix, iy] = screenOf(now.byId.get(id))
+          const at = root ? [ix + (sideOf(now, now.byId.get(id)).flipHorizontal ? 18 : -18), iy] : branchMid(now, t.current, id)
+          return at ? { at, color: gold } : null
+        }
         return setFx({ edges: root ? [] : [{ ids: new Set([id]), color: gold, width: 4.5 }], rings: root ? [{ id, color: gold }] : [],
-          junction: at ? { at, color: gold } : null }, `g${id}`)
+          junction }, `g${id}`)
       }
     }
     setFx(null, '')
@@ -569,14 +731,20 @@ const TreeCanvas = forwardRef(function TreeCanvas({
       if (tool === 'move' && lay.radial) { setFx(null, ''); return null }
       const rootId = layerFragmentAt(sx, sy)
       if (rootId < 0) { setFx(null, ''); return null }
-      setFx({ box: { ...fragmentBox(lay, rootId), color: p.palette.muted, dash: [4, 4] } }, `h${rootId}`)
+      setFx({ box: boxFx(rootId, p.palette.muted, [4, 4]) }, `h${rootId}`)
       return 'grab'
+    }
+    if (tool === 'rename' || tool === 'compare') {
+      const rootId = layerFragmentAt(sx, sy)
+      if (rootId < 0) { setFx(null, ''); return tool === 'compare' ? COMPARE_CURSORS[p.comparePick || 1] : null }
+      setFx({ box: boxFx(rootId, tool === 'compare' ? p.palette.edgeFocus : p.palette.muted, [4, 4]) }, `n${rootId}`)
+      return tool === 'compare' ? COMPARE_CURSORS[p.comparePick || 1] : RENAME_CURSOR
     }
     if (tool === 'cut') {
       const id = layerNodeAt(sx, sy)
       if (id < 0 || fragmentRootOf(lay, id) === id) { setFx(null, ''); return null }
       setFx({ edges: [{ ids: new Set([id]), color: '#edc263', width: 4.5, dash: [5, 4] }],
-        junction: { at: branchMid(lay, t.current, id), color: '#edc263' } }, `c${id}`)
+        junction: () => (props.current.layout?.byId?.has(id) ? { at: branchMid(props.current.layout, t.current, id), color: '#edc263' } : null) }, `c${id}`)
       return SCISSORS_CURSOR
     }
     if (tool === 'remove') {
@@ -585,7 +753,7 @@ const TreeCanvas = forwardRef(function TreeCanvas({
       const root = fragmentRootOf(lay, id)
       const red = p.palette.focus
       setFx({ edges: [{ ids: subtreeOf(lay, id), color: red, width: 3 }], rings: [{ id, color: red }],
-        box: id === root ? { ...fragmentBox(lay, root), color: red, dash: [5, 4] } : null }, `r${id}`)
+        box: id === root ? boxFx(root, red, [5, 4]) : null }, `r${id}`)
       return REMOVE_CURSOR
     }
     setFx(null, '')
@@ -634,6 +802,13 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     if (event.button !== 0) return
     canvas.current.focus({ preventScroll: true })
     const [sx, sy] = point(event)
+    const columnDrag = props.current.column?.press?.(columnEnv(), sx, sy)
+    if (columnDrag) {
+      drag.current = { kind: 'column', handler: columnDrag, startX: sx, startY: sy, lastX: sx, lastY: sy, moved: true, id: event.pointerId }
+      canvas.current.setPointerCapture?.(event.pointerId)
+      schedule()
+      return
+    }
     const hit = hitAt(sx, sy)
     // Which gesture this press starts: a drag of the selection out to a layer (pressing on
     // anything picked, whatever the tool — the selection is what is under the pointer), a
@@ -662,6 +837,14 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     const [sx, sy] = point(event)
     pointer.current = { sx, sy, clientX: event.clientX, clientY: event.clientY }
     const current = drag.current
+    if (current?.kind === 'column') {
+      // Along the column moves the alignment; up and down still moves the tree.
+      const out = current.handler.move?.(sx, sy)
+      if (out?.dy) panBy(0, out.dy)
+      else schedule()
+      onHover?.(null)
+      return
+    }
     if (current) {
       const threshold = current.kind === 'transfer' || current.kind === 'lift' ? 2 : DRAG_AXIS_THRESHOLD_PX
       if (!current.moved && Math.hypot(sx - current.startX, sy - current.startY) > threshold) {
@@ -678,9 +861,14 @@ const TreeCanvas = forwardRef(function TreeCanvas({
           if (!lift.current) lift.current = { ...current.held, moved: true, dx: 0, dy: 0, target: null }
           lift.current.dx = sx - current.startX
           lift.current.dy = sy - current.startY
+          // Moving with aligned leaves, it snaps level with a nearby subtree's tips (⌥: freely).
+          const lay = props.current.layout
+          lift.current.snap = props.current.tool === 'move' && !event.altKey
+            ? alignSnap(lay, t.current, lay.byId.get(lift.current.rootId)?.lane, lift.current.dx, lift.current.dy) : null
+          if (lift.current.snap) lift.current.dx = lift.current.snap.dx
           liftTarget(sx, sy)
           onLayerDrag?.({ phase: 'move', clientX: event.clientX, clientY: event.clientY, tool: props.current.tool,
-            fragmentId: lift.current.fragmentId, target: lift.current.target })
+            fragmentId: lift.current.fragmentId, target: lift.current.target, snapped: Boolean(lift.current.snap) })
           canvas.current.style.cursor = 'grabbing'
           schedule()
         } else if (current.kind === 'transfer') {
@@ -706,16 +894,19 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     // Mid-zoom (a trackpad fling, say) the pointer is only noted; the settle picks it up.
     if (adjusting.current) return
     let hit = hitAt(sx, sy)
-    // Over a gene in the data column: its card, and every copy of it down the column lit.
-    const neighbour = hit ? null : neighbourHit(props.current.layout, t.current, sx, sy, props.current.neighbours, plan.current)
-    const symbol = neighbour ? String(neighbour.gene.name || '').trim().toLowerCase() : ''
-    if (symbol !== neighbourHover.current) { neighbourHover.current = symbol; schedule() }
-    if (neighbour) hit = { item: neighbour.item, part: 'neighbour', gene: neighbour.gene, entry: neighbour.entry }
-    const id = hit && hit.part !== 'neighbour' ? hit.item.id : -1
+    // Over something in the data column: its card, and whatever the column lights for it
+    // (every copy of a gene down the Neighbourhood column, say).
+    const columnHit = hit ? null : props.current.column?.hit?.(props.current.layout, t.current, sx, sy, plan.current) || null
+    const lit = columnHit?.hoverKey ?? ''
+    if (lit !== columnHover.current) { columnHover.current = lit; schedule() }
+    if (columnHit) hit = { ...columnHit, fromColumn: true }
+    const id = hit && !hit.fromColumn ? hit.item.id : -1
     const tool = props.current.tool
     const layerCursor = LAYER_TOOLS.has(tool) ? layerHover(sx, sy) : null
     canvas.current.style.cursor = pickedAt(sx, sy, hit) >= 0 ? 'grab'
       : layerCursor || (tool === 'select' ? 'crosshair'
+        // Flip only acts on a node with branches to reverse.
+        : tool === 'flip' ? (hit?.item.kind === 'internal' || fragmentTagAt(props.current.fragmentTags, sx, sy) ? 'pointer' : 'grab')
         : hit || fragmentTagAt(props.current.fragmentTags, sx, sy) ? 'pointer' : 'grab')
     if (id !== hover.current) {
       hover.current = id
@@ -730,6 +921,11 @@ const TreeCanvas = forwardRef(function TreeCanvas({
     canvas.current.style.cursor = props.current.tool === 'select' ? 'crosshair' : 'grab'
     if (!current) return
     const [sx, sy] = point(event)
+    if (current.kind === 'column') {
+      current.handler.end?.(sx, sy)
+      schedule()
+      return
+    }
     if (current.kind === 'lift') {
       const held = lift.current
       lift.current = null
@@ -745,12 +941,19 @@ const TreeCanvas = forwardRef(function TreeCanvas({
         for (const id of held.ids) top = Math.min(top, lay.byId.get(id).y)
         const root = lay.byId.get(held.rootId)
         onLayerAction?.({ type: 'move', fragmentId: held.fragmentId, places: places(lay),
-          pos: { x: root.x + held.dx / (t.current.kx ?? t.current.k), y: top + held.dy / t.current.k } })
+          pos: { x: root.x + (held.snap ? held.snap.worldDx : held.dx / (t.current.kx ?? t.current.k)), y: top + held.dy / t.current.k, ...sizeOf(lay, held.fragmentId) } })
       } else if (tool === 'merge' && held.target) {
         onLayerAction?.({ type: 'merge', places: places(lay), fragmentId: held.fragmentId, into: held.target.fragmentId, ok: held.target.ok, why: held.target.why })
       } else if (tool === 'graft' && held.target) {
         onLayerAction?.({ type: 'graft', places: places(lay), fragmentId: held.fragmentId, nodeId: held.target.nodeId, root: held.target.root })
       }
+      return
+    }
+    if (!current.moved && (props.current.tool === 'rename' || props.current.tool === 'compare') && props.current.layout?.forest) {
+      const rootId = layerFragmentAt(sx, sy)
+      if (rootId < 0) return
+      setFx(null, '')
+      onLayerAction?.({ type: props.current.tool === 'rename' ? 'rename' : 'compare-pick', fragmentId: props.current.layout.byId.get(rootId).node.fragRoot })
       return
     }
     if (!current.moved && (props.current.tool === 'cut' || props.current.tool === 'remove') && props.current.layout?.forest) {
@@ -768,7 +971,7 @@ const TreeCanvas = forwardRef(function TreeCanvas({
         // left in place, it would sit on top of the rest as that closes up.
         const box = fragmentBox(lay, rootId)
         const kx = t.current.kx ?? t.current.k
-        const clear = lay.flipHorizontal ? (box.x0 - 40 - t.current.x) / kx : (box.x1 + 40 - t.current.x) / kx
+        const clear = sideOf(lay, lay.byId.get(rootId)).flipHorizontal ? (box.x0 - 40 - t.current.x) / kx : (box.x1 + 40 - t.current.x) / kx
         onLayerAction?.({ type: 'cut', nodeId: id, places: places(lay), cladePos: { x: clear, y: top }, restPos: restPlace(lay, rootId, clade) })
       } else {
         onLayerAction?.({ type: 'remove', nodeId: id, whole: id === rootId, places: places(lay), restPos: id === rootId ? null : restPlace(lay, rootId, subtreeOf(lay, id)) })
@@ -803,7 +1006,10 @@ const TreeCanvas = forwardRef(function TreeCanvas({
       return
     }
     if (!hit) {
-      if (tagged) onToolClick?.({ kind: 'fragment', fragmentId: tagged }, mods)
+      if (tagged) { onToolClick?.({ kind: 'fragment', fragmentId: tagged }, mods); return }
+      // A click on the data column: what is there (the alignment's card shows only for one).
+      const columnHit = props.current.column?.hit?.(props.current.layout, t.current, sx, sy, plan.current)
+      if (columnHit) onColumnClick?.({ ...columnHit, fromColumn: true }, event.clientX, event.clientY)
       return
     }
     if (hit.part === 'folded' && !event.altKey && !event.shiftKey) {
@@ -830,7 +1036,7 @@ const TreeCanvas = forwardRef(function TreeCanvas({
   }
   const onPointerLeave = () => {
     pointer.current = null
-    if (neighbourHover.current) { neighbourHover.current = ''; schedule() }
+    if (columnHover.current !== '') { columnHover.current = ''; schedule() }
     if (!drag.current) setFx(null, '')
     if (hover.current !== -1) { hover.current = -1; schedule() }
     onHover?.(null)
@@ -865,6 +1071,11 @@ const TreeCanvas = forwardRef(function TreeCanvas({
         onPointerLeave={onPointerLeave}
         onKeyDown={onKeyDown}
       />
+      {naming ? (
+        <TagNameInput key={naming.fragmentId} boxRef={node => { namingInput.current = node; if (node) placeNaming() }}
+          initial={naming.initial} placeholder={naming.placeholder} color={naming.color}
+          onDone={name => onNamed?.(naming.fragmentId, name)} />
+      ) : null}
     </div>
   )
 })

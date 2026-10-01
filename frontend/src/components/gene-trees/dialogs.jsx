@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import FileBrowserModal from '../FileBrowserModal'
+import GenomeColorPicker from '../GenomeColorPicker'
 import { api, query } from './data.js'
 
 const TREE_EXTENSIONS = ['.nwk', '.newick', '.nh', '.nhx', '.tree', '.tre', '.treefile', '.txt', '.emf', '.json', '.gz']
@@ -111,6 +112,44 @@ export function LoadTreeDialog({ theme, config, onClose, onStarted }) {
   )
 }
 
+/**
+ * A layer's colour and name, as the Alignment Explorer's Edit layer dialog: the colour
+ * changes as soon as the picker applies it (`onColor`); the name on Save (`onRename`).
+ */
+export function LayerEditDialog({ layer, theme, palette, onColor, onRename, onClose }) {
+  const [name, setName] = useState(layer.name)
+  const [picking, setPicking] = useState(false)
+  const save = () => { if (name.trim()) { onRename(name.trim()); onClose() } }
+  return (
+    <>
+      <Modal title="Edit layer" onClose={() => { if (!picking) onClose() }} footer={<>
+        <button type="button" onClick={onClose}>Cancel</button>
+        <button type="button" className="primary" disabled={!name.trim()} onClick={save}>Save name</button>
+      </>}>
+        <div className="gt-field">
+          <span>Colour</span>
+          <span className="gt-layer-colour">
+            <i style={{ background: layer.color }} />
+            <button type="button" onClick={() => setPicking(true)}>Change colour…</button>
+          </span>
+        </div>
+        <label>Name
+          <input autoFocus value={name} maxLength={120} onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') save() }} />
+        </label>
+      </Modal>
+      <GenomeColorPicker isOpen={picking} theme={theme} title="Layer colour" subtitle={layer.name}
+        palette={palette} currentColor={layer.color}
+        renderPreview={color => (
+          <div className="gt-colour-preview">
+            {[42, 26, 64, 18].map((width, i) => <span key={i} style={{ background: color, width: `${width}%` }} />)}
+          </div>
+        )}
+        onApply={onColor} onClose={() => setPicking(false)} />
+    </>
+  )
+}
+
 export function CollectionDetailsDialog({ collection, onClose, onSaved }) {
   const [meta, setMeta] = useState({ name: collection.name || '', method: collection.method || '',
     description: collection.description || '', tags: (collection.tags || []).join(', ') })
@@ -153,7 +192,7 @@ export function LibraryDialog({ collections, current, onClose, onOpenTree, onEdi
   return (
     <Modal title="Tree library" onClose={onClose} wide footer={<>
       <span className="gt-muted">{collections.length} collection{collections.length === 1 ? '' : 's'}</span>
-      <button type="button" onClick={onLoad}>Load trees…</button>
+      <button type="button" onClick={onLoad}>Load trees</button>
       <button type="button" onClick={onClose}>Close</button>
     </>}>
       {collections.length ? (

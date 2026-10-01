@@ -1061,6 +1061,7 @@ class DownloadManager:
         self._download_slots: Optional[asyncio.Semaphore] = None
         self._download_slots_loop: Optional[asyncio.AbstractEventLoop] = None
         self._species_cache: Optional[List[SpeciesSummary]] = None
+        self._species_cache_lock = threading.Lock()
         self._metadata_url_cache: Dict[str, Dict[str, Any]] = {}
         self._pairwise_alignment_rows_cache: List[Dict[str, str]] = []
         self._pairwise_alignment_rows_mtime: float = -1.0
@@ -1507,6 +1508,23 @@ class DownloadManager:
             )
         return out
 
+    def species_display_name(self, species_key: str) -> Dict[str, str]:
+        """Resolve one saved genome's label without building the download catalogue."""
+        info = self.species_data.get(species_key) or {}
+        if not info:
+            return {}
+        classification = self._classify_species_for_download(
+            info.get("scientific_name", ""), info.get("common_name", ""),
+            info.get("taxid", 0), info.get("species_taxonomy_id", 0),
+        )
+        return preferred_species_display_name({
+            **info,
+            "key": species_key,
+            "provider": DEFAULT_PROVIDER,
+            "group": classification.group,
+            "sub_group": classification.sub_group,
+        }, self.species_name_policy)
+
     def _empty_taxonomy_classification_diagnostics(self) -> Dict[str, Any]:
         return {
             "artifact": self.taxonomy_classifier.artifact_status(),
@@ -1589,6 +1607,7 @@ class DownloadManager:
         self,
         diagnostics: Dict[str, Any],
         result: Any,
+        missing_taxids: set[int],
     ) -> None:
         diagnostics["total_species"] = int(diagnostics.get("total_species") or 0) + 1
         source = str(getattr(result, "source", "") or "unknown")
@@ -1610,16 +1629,13 @@ class DownloadManager:
         if group == "Other":
             diagnostics["other_count"] = int(diagnostics.get("other_count") or 0) + 1
 
-        missing = set(int(value) for value in diagnostics.get("missing_taxids") or [] if int(value or 0))
         for taxid_value in getattr(result, "missing_taxids", ()) or ():
             try:
                 taxid_int = int(taxid_value or 0)
             except Exception:
                 continue
             if taxid_int:
-                missing.add(taxid_int)
-        diagnostics["missing_taxids"] = sorted(missing)
-        diagnostics["missing_taxid_count"] = len(missing)
+                missing_taxids.add(taxid_int)
 
     def _policy_matches_current_catalog(self, policy: Optional[Dict[str, Any]] = None) -> bool:
         payload = policy if isinstance(policy, dict) else self.species_name_policy
@@ -2299,6 +2315,7 @@ class DownloadManager:
     def _build_app_species_summaries(self) -> List[SpeciesSummary]:
         summaries = []
         diagnostics = self._empty_taxonomy_classification_diagnostics()
+        missing_taxids: set[int] = set()
         for key, info in self.species_data.items():
             assemblies_raw = info.get("assemblies", {})
             assemblies = [
@@ -2319,7 +2336,7 @@ class DownloadManager:
                 info.get("taxid", 0),
                 info.get("species_taxonomy_id", 0),
             )
-            self._record_taxonomy_classification(diagnostics, classification)
+            self._record_taxonomy_classification(diagnostics, classification, missing_taxids)
             summaries.append(SpeciesSummary(
                 key=key,
                 scientific_name=info.get("scientific_name", key),
@@ -2332,14 +2349,23 @@ class DownloadManager:
                 provider=DEFAULT_PROVIDER,
             ))
         summaries.sort(key=lambda s: (s.scientific_name.lower()))
+        # Accumulate once, then sort once. Rebuilding this growing set for every
+        # species made catalogue construction quadratic in the species count.
+        diagnostics["missing_taxids"] = sorted(missing_taxids)
+        diagnostics["missing_taxid_count"] = len(missing_taxids)
         self.taxonomy_classification_diagnostics = diagnostics
         return summaries
 
     def _build_cache(self):
-        summaries = self._build_app_species_summaries()
-        if not self._policy_matches_current_catalog(self.species_name_policy):
-            self.refresh_species_name_policy(include_ncbi=False, force=True, app_summaries=summaries)
-        self._species_cache = self._apply_species_display_names(summaries)
+        # Startup requests arrive together. Only the first should build this;
+        # the others reuse its result instead of competing for the Python GIL.
+        with self._species_cache_lock:
+            if self._species_cache is not None:
+                return
+            summaries = self._build_app_species_summaries()
+            if not self._policy_matches_current_catalog(self.species_name_policy):
+                self.refresh_species_name_policy(include_ncbi=False, force=True, app_summaries=summaries)
+            self._species_cache = self._apply_species_display_names(summaries)
 
     # ------------------------------------------------------------------
     # RefSeq group browsing

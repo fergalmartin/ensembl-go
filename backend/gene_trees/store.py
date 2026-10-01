@@ -354,6 +354,40 @@ class GeneTreeStore:
                                     r['collection_name'] or '', r['tree_name'] or ''))
         return results[:limit]
 
+    # ── gene families ──
+
+    def families(self, column: str, identifiers: Iterable[str]) -> Dict[str, List[int]]:
+        """The trees (by ``tid``) whose leaves carry each identifier in ``column`` (gene_id or protein_id).
+
+        A tree is a gene family: two genes in one tree are related, whichever genomes they
+        are in. Only ready collections count. One indexed lookup per few hundred identifiers.
+        """
+        if column not in ('gene_id', 'protein_id'):
+            raise ValueError(column)
+        wanted = list(dict.fromkeys(i for i in identifiers if i))
+        out: Dict[str, List[int]] = {}
+        with self.connect() as conn:
+            for chunk in _chunks(wanted):
+                marks = ','.join('?' * len(chunk))
+                for identifier, tid in conn.execute(
+                        f'SELECT DISTINCT m.{column}, m.tid FROM members m JOIN trees t ON t.tid = m.tid '
+                        f"JOIN collections c ON c.cid = t.cid WHERE m.{column} IN ({marks}) AND c.status = 'ready'", chunk):
+                    out.setdefault(identifier, []).append(tid)
+        return out
+
+    def family_names(self, tids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
+        """What to call each tree when it stands for a family: its name, id and collection."""
+        out: Dict[int, Dict[str, Any]] = {}
+        with self.connect() as conn:
+            for chunk in _chunks(list(dict.fromkeys(tids))):
+                marks = ','.join('?' * len(chunk))
+                for row in conn.execute(
+                        f'SELECT t.tid, t.tree_id, t.name, t.leaf_count, c.id AS collection_id, c.name AS collection_name '
+                        f'FROM trees t JOIN collections c ON c.cid = t.cid WHERE t.tid IN ({marks})', chunk):
+                    out[row['tid']] = {'name': row['name'] or row['tree_id'], 'tree_id': row['tree_id'], 'leaf_count': row['leaf_count'],
+                                       'collection_id': row['collection_id'], 'collection': row['collection_name']}
+        return out
+
 
 def _member_row(conn: sqlite3.Connection, tid: int, member: Dict[str, Any], species_ids: Dict[str, int]) -> tuple:
     species = member.get('species')

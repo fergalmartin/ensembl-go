@@ -7,10 +7,12 @@
  * copied out of any tree in the library (see subtreeOps.js) — so one layer can hold a
  * SAMD11 clade beside a BRCA2 clade.
  *
- * Only the layers and which one is showing are saved. Picks, the current tool and any
- * drag in progress are view state, kept elsewhere, and never saved or undone.
+ * Only the layers and which one is showing are saved, with the data view each fragment
+ * shows (`dataView`, see dataColumns.js). Picks, the current tool and any drag in progress
+ * are view state, kept elsewhere, and never saved or undone.
  */
 import { BUILTIN_GENOME_COLOR_PALETTE } from '../../genomeColorSchemes.js'
+import { isDataView } from './dataColumns.js'
 
 export const WORKSPACE_VERSION = 1
 export const MAX_LAYERS = 100
@@ -87,8 +89,14 @@ export function mergeLayers(ws, from, to) {
 export function duplicateLayer(ws, id) {
   const source = ws.layers.find(l => l.id === id)
   if (!source) return ws
+  const ids = new Map(source.fragments.map(f => [f.id, newId('F')]))
   const copy = createLayer(`${source.name} copy`, ws.layers.length,
-    source.fragments.map(f => ({ ...f, id: newId('F'), nodes: f.nodes.map(n => ({ ...n, children: [...n.children] })) })))
+    source.fragments.map(f => ({ ...f, id: ids.get(f.id), nodes: f.nodes.map(n => ({ ...n, children: [...n.children] })) })))
+  // A comparison comes along, between the copies.
+  if (source.compare && ids.has(source.compare.a) && ids.has(source.compare.b)) {
+    copy.compare = { ...source.compare, a: ids.get(source.compare.a), b: ids.get(source.compare.b),
+      saved: Object.fromEntries(Object.entries(source.compare.saved || {}).filter(([id]) => ids.has(id)).map(([id, pos]) => [ids.get(id), pos])) }
+  }
   return { ...ws, layers: [...ws.layers, copy], active: copy.id, original: false }
 }
 
@@ -122,6 +130,29 @@ function validFragment(fragment) {
   return true
 }
 
+const COMPARE_BY = ['species', 'symbol', 'id']
+const validPos = pos => pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)
+
+/**
+ * Two of a layer's subtrees being compared (see compareTrees.js): `a` on the left, `b` on
+ * the right; what joins their genes (`by`); whether they are set facing each other
+ * (`facing`, `b` mirrored) and, while they are, where every subtree was before (`saved`,
+ * fragment id → pos or null) to put them back; whether disagreement is shown. Kept only
+ * while both subtrees are still in the layer.
+ */
+export function validCompare(compare, fragments) {
+  if (!compare || typeof compare !== 'object') return null
+  const ids = new Set(fragments.map(f => f.id))
+  if (!ids.has(compare.a) || !ids.has(compare.b) || compare.a === compare.b) return null
+  const saved = {}
+  for (const [id, pos] of Object.entries(compare.saved || {})) {
+    if (ids.has(id)) saved[id] = validPos(pos) ? { x: pos.x, y: pos.y, ...(Number.isFinite(pos.w) ? { w: pos.w } : {}), ...(Number.isFinite(pos.h) ? { h: pos.h } : {}) } : null
+  }
+  return { a: compare.a, b: compare.b, by: COMPARE_BY.includes(compare.by) ? compare.by : 'species',
+    facing: Boolean(compare.facing), scaleX: Number.isFinite(compare.scaleX) ? Math.min(1, Math.max(0.05, compare.scaleX)) : 1,
+    disagreement: compare.disagreement !== false, saved }
+}
+
 /** A saved workspace, checked: bad layers or fragments are dropped rather than trusted. */
 export function validateWorkspace(saved) {
   if (!saved || typeof saved !== 'object' || !Array.isArray(saved.layers)) return emptyWorkspace()
@@ -138,10 +169,16 @@ export function validateWorkspace(saved) {
         const pos = fragment.pos
         const rest = { ...fragment }
         delete rest.pos
+        // The data view it shows (dataColumns.js), if it is one this version knows.
+        if (!isDataView(rest.dataView)) delete rest.dataView
         return pos && Number.isFinite(pos.x) && Number.isFinite(pos.y) ? { ...rest, pos: { x: pos.x, y: pos.y } } : rest
       }),
       ...(layer.overlay === false ? { overlay: false } : {}),
     }))
+    .map(layer => {
+      const compare = validCompare(saved.layers.find(l => l?.id === layer.id)?.compare, layer.fragments)
+      return compare ? { ...layer, compare } : layer
+    })
   const active = layers.some(l => l.id === saved.active) ? saved.active : (layers[0]?.id || '')
   return { version: WORKSPACE_VERSION, layers, active, original: !layers.length || saved.original !== false }
 }
@@ -175,6 +212,29 @@ export function forestTree(layer) {
     nodes[0].children.push(base)
   })
   return { nodes, links, fragmentOf, rooted: true, virtual: true }
+}
+
+/**
+ * Picks made in a layer's forest as it was (`fromFragments`), renumbered for the forest it
+ * is now (`toFragments`). A pick survives only while its subtree's nodes are the very same
+ * (a move, rename or data view leaves them be; a removal, cut, merge or graft does not), so
+ * a pick never lands on a node it was not made on, and nothing picked outlives its node.
+ */
+export function carryPicks(ids, fromFragments, toFragments) {
+  if (fromFragments === toFragments) return ids
+  const now = new Map()
+  let base = 1
+  for (const fragment of toFragments || []) { now.set(fragment.id, { base, nodes: fragment.nodes }); base += fragment.nodes.length }
+  const was = []
+  base = 1
+  for (const fragment of fromFragments || []) { was.push({ start: base, end: base + fragment.nodes.length, fragment }); base += fragment.nodes.length }
+  const out = new Set()
+  for (const id of ids) {
+    const from = was.find(w => id >= w.start && id < w.end)
+    const to = from && now.get(from.fragment.id)
+    if (to && to.nodes === from.fragment.nodes) out.add(to.base + id - from.start)
+  }
+  return out
 }
 
 /** Counts for a layer's forest, in the shape the drawer shows for a tree. */

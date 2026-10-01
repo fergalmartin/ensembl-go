@@ -11,6 +11,8 @@ import time
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from . import model
+
 WINDOW = 30          # genes fetched each side before filtering to protein-coding
 CACHE_TTL = 600      # seconds
 CACHE_LIMIT = 4000
@@ -94,3 +96,59 @@ class Neighbourhoods:
                 self.cache.popitem(last=False)
             out[key] = result
         return out
+
+
+def annotate_families(results: Dict[str, Dict[str, Any]], store: Any, genomes: List[Dict[str, Any]],
+                      protein_map: Callable[[Dict[str, Any]], Any]) -> Dict[str, Any]:
+    """Each window's genes with the gene families (library trees) they are in, for linking rows.
+
+    A gene is looked for by its ID (Compara leaves carry gene IDs) and, failing that, by the
+    proteins its genome's protein map knows for it (trees built on proteins: RefSeq,
+    OrthoFinder). Maps are only read, never built here: a genome without one is matched on
+    symbols by the view instead. Returns ``{results, families: {tid: name…}}`` with fresh
+    dicts, so the windows cached by ``Neighbourhoods`` are never changed.
+    """
+    by_assembly: Dict[str, set] = {}
+    for key, entry in results.items():
+        if entry.get('genes'):
+            by_assembly.setdefault(key.split(':', 1)[0], set()).update(g['id'] for g in entry['genes'] if g.get('id'))
+
+    # gene ID (as the window has it) -> tids, per assembly
+    found: Dict[str, Dict[str, List[int]]] = {}
+    variants = lambda gene: list(dict.fromkeys(v for v in (gene, model.strip_version(gene)) if v))  # noqa: E731
+    all_ids = {v for ids in by_assembly.values() for gene in ids for v in variants(gene)}
+    hits = store.families('gene_id', all_ids) if all_ids else {}
+    genomes_by_assembly = {g.get('assembly'): g for g in genomes}
+    for assembly, ids in by_assembly.items():
+        mine = found.setdefault(assembly, {})
+        for gene in ids:
+            tids = sorted({t for v in variants(gene) for t in hits.get(v, ())})
+            if tids:
+                mine[gene] = tids
+        missing = [g for g in ids if g not in mine]
+        genome = genomes_by_assembly.get(assembly)
+        if not missing or not genome:
+            continue
+        pmap = protein_map(genome)
+        proteins = pmap.proteins_for_genes(missing) if pmap is not None else {}
+        protein_hits = store.families('protein_id', [p for ps in proteins.values() for p in ps]) if proteins else {}
+        for gene, ps in proteins.items():
+            tids = sorted({t for p in ps for t in protein_hits.get(p, ())})
+            if tids:
+                mine[gene] = tids
+
+    out: Dict[str, Dict[str, Any]] = {}
+    used: set = set()
+    for key, entry in results.items():
+        if not entry.get('genes'):
+            out[key] = entry
+            continue
+        mine = found.get(key.split(':', 1)[0], {})
+        genes = []
+        for gene in entry['genes']:
+            tids = mine.get(gene.get('id'), [])
+            used.update(tids)
+            genes.append({**gene, 'families': tids})
+        out[key] = {**entry, 'genes': genes}
+    names = store.family_names(used) if used else {}
+    return {'results': out, 'families': {str(tid): info for tid, info in names.items()}}

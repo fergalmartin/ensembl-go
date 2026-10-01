@@ -128,8 +128,76 @@ export function focusOn(index, view, id) {
   return { ...view, collapsed }
 }
 
+/**
+ * Fold the tree down to one node: the path from the root to it open, every clade off that
+ * path folded, and the node's own clade fully open. On a leaf, that is `focusOn`.
+ */
+export function foldTo(index, view, id) {
+  const collapsed = new Set(view.collapsed)
+  const path = pathToRoot(index, id)
+  const onPath = new Set(path)
+  for (const node of path) collapsed.delete(node)
+  for (const node of path) {
+    if (node === id) continue
+    for (const child of index.nodes[node].children) {
+      if (!onPath.has(child) && !isLeaf(index, child)) collapsed.add(child)
+    }
+  }
+  for (const node of descendants(index, id)) collapsed.delete(node)
+  return { ...view, collapsed }
+}
+
 export function expandAll(view) {
   return { ...view, collapsed: new Set() }
+}
+
+/** `ids` and every node above them: the branching that leads to them from the root. */
+export function pathsTo(index, ids) {
+  const out = new Set()
+  for (const id of ids) {
+    for (let at = id; at >= 0 && !out.has(at); at = index.parent[at]) out.add(at)
+  }
+  return out
+}
+
+/**
+ * Every clade in the part of the tree being shown folded, except those in `keepOpen`. Each
+ * folds on its own, so opening a clade shows its clades folded in turn (⌥-click opens it all).
+ * A subtree layer's invisible root is never folded, and folds outside the shown clade stay.
+ */
+function foldAllBut(index, view, keepOpen = null) {
+  const root = view.root ?? 0
+  const below = new Set(descendants(index, root))
+  const collapsed = new Set([...view.collapsed].filter(id => !below.has(id)))
+  for (const id of below) {
+    if (!isLeaf(index, id) && !index.nodes[id].virtual && !keepOpen?.has(id)) collapsed.add(id)
+  }
+  return { ...view, collapsed }
+}
+
+export function collapseAll(index, view) {
+  return foldAllBut(index, view)
+}
+
+/** Opens whatever folds hide the genes on `paths` (see `pathsTo`); every other fold stays. */
+export function expandTo(view, paths) {
+  return { ...view, collapsed: new Set([...view.collapsed].filter(id => !paths.has(id))) }
+}
+
+/** Folds everything but the branching on `paths`: those genes shown, the rest as folded clades. */
+export function collapseTo(index, view, paths) {
+  return foldAllBut(index, view, paths)
+}
+
+/**
+ * A Nodes state (tools.js NODE_MODES) applied to a view. The local states need `paths` (see
+ * `pathsTo`); with none — no gene in a local genome — they leave the view as it is.
+ */
+export function applyNodeMode(index, view, mode, paths) {
+  if (mode === 'expand-all') return expandAll(view)
+  if (mode === 'collapse-all') return collapseAll(index, view)
+  if (!paths) return view
+  return mode === 'collapse-local' ? collapseTo(index, view, paths) : expandTo(view, paths)
 }
 
 export function toggleFlipped(index, view, id) {
@@ -140,21 +208,24 @@ export function toggleFlipped(index, view, id) {
   return { ...view, flipped }
 }
 
+/**
+ * Mirror the clade under `id`: every node in it, `id` included, has its branches reversed,
+ * so the whole clade reads upside down, down to its leaves. Mirroring again restores it.
+ */
+export function mirrorClade(index, view, id) {
+  if (isLeaf(index, id)) return view
+  const flipped = new Set(view.flipped)
+  for (const node of [id, ...descendants(index, id)]) {
+    if (isLeaf(index, node)) continue
+    if (flipped.has(node)) flipped.delete(node)
+    else flipped.add(node)
+  }
+  return { ...view, flipped }
+}
+
 /** Show only the subtree under `id` ("make a tree from this node"); -1 or the root restores it. */
 export function showSubtree(view, id) {
   return { ...view, root: id >= 0 ? id : 0 }
-}
-
-/** Open every node carrying one of `events` (and the path to it). */
-export function expandEvents(index, view, events = ['duplication']) {
-  const wanted = new Set(events)
-  const collapsed = new Set(view.collapsed)
-  for (const node of index.nodes) {
-    if (node.children.length && wanted.has(node.event)) {
-      for (const up of pathToRoot(index, node.id)) collapsed.delete(up)
-    }
-  }
-  return { ...view, collapsed }
 }
 
 /**

@@ -9,7 +9,7 @@
  */
 import { sansFont } from '../../utils/typography.js'
 import { genomePillColors } from '../../utils/genomePillColors.js'
-import { labelAnchorX } from './treeLayout.js'
+import { alignXOf, labelAnchorX, sideOf } from './treeLayout.js'
 import { cladeTitle, leafGeneLabel, leafSpeciesLabel } from './treeModel.js'
 
 export const LABEL_SIZE = 13
@@ -20,6 +20,11 @@ export const LABEL_SIZE = 13
 const PICKED = '#edc263'
 const MARQUEE_WASH = 'rgba(237,194,99,0.13)'
 const DIM_ALPHA = 0.36
+// Highlight local: what is off the branching to the user's genomes fades further than an
+// unpicked node, so the lit paths read as the tree.
+const UNLIT_ALPHA = 0.22
+// Comparing two subtrees: a leaf with no partner in the other tree.
+const UNMATCHED_ALPHA = 0.5
 const SPECIES_PILL_PAD = 7
 export const SMALL_LABEL_SIZE = 12
 export const NODE_RADIUS = 5
@@ -51,10 +56,21 @@ export const PALETTES = {
 export const toScreen = (t, x, y) => [x * (t.kx ?? t.k) + t.x, y * t.k + t.y]
 export const toWorld = (t, sx, sy) => [(sx - t.x) / (t.kx ?? t.k), (sy - t.y) / t.k]
 
-/** How far a data column pushes the labels along, on screen (towards the labels' side). */
-export const labelShift = layout => (layout.labelOffset ? (layout.flipHorizontal ? -layout.labelOffset : layout.labelOffset) : 0)
+/**
+ * How wide the data column before a terminal's label is, on screen. In a subtree layer each
+ * subtree can show its own data view (or none), so it is by lane (`laneOffsets`); otherwise
+ * one width for the whole tree (`labelOffset`, which in a layer is the widest lane's).
+ */
+export const labelOffsetOf = (layout, item) => (layout.laneOffsets && item?.lane !== undefined
+  ? layout.laneOffsets[item.lane] || 0
+  : layout.labelOffset || 0)
+/** How far a data column pushes a terminal's label along, on screen (towards the labels' side). */
+export const labelShift = (layout, item) => {
+  const offset = labelOffsetOf(layout, item)
+  return offset ? (sideOf(layout, item).flipHorizontal ? -offset : offset) : 0
+}
 /** Where a terminal's label is anchored on screen: its tip, or the aligned column, then past any data column. */
-export const labelScreenX = (layout, t, item) => toScreen(t, labelAnchorX(layout, item), item.y)[0] + labelShift(layout)
+export const labelScreenX = (layout, t, item) => toScreen(t, labelAnchorX(layout, item), item.y)[0] + labelShift(layout, item)
 
 /** The text drawn beside a terminal: [primary, secondary]. */
 export function terminalText(index, item) {
@@ -96,6 +112,64 @@ export function linkStatus(link, topbarAssemblies) {
   return link.status
 }
 
+const NO_GENOMES = []
+
+/**
+ * The top-bar and local genomes a clade holds, and how many of its genes are in each:
+ * `[{ assembly, status, count, link }]`, top-bar genomes first, then the most genes. So a
+ * folded clade can say which of the user's genomes are inside it, as a leaf does. Worked
+ * out for every node in one pass up the tree, and kept on the index until the links change.
+ */
+export function cladeGenomes(index, id, links, topbarAssemblies) {
+  let memo = index.cladeGenomes
+  if (!memo || memo.links !== links || memo.topbar !== topbarAssemblies) {
+    const byNode = new Array(index.nodes.length)
+    for (let i = index.preorder.length - 1; i >= 0; i--) {
+      const node = index.preorder[i]
+      const children = index.nodes[node].children
+      if (!children.length) {
+        const link = links?.[node]
+        const status = linkStatus(link, topbarAssemblies)
+        const assembly = link?.assembly || link?.candidates?.[0]?.assembly
+        if ((status === 'topbar' || status === 'local') && assembly) byNode[node] = new Map([[assembly, { assembly, status, count: 1, link }]])
+        continue
+      }
+      // A chain of single-child-with-genomes nodes shares one map; merge only where two meet.
+      let merged = null, shared = true
+      for (const child of children) {
+        const own = byNode[child]
+        if (!own) continue
+        if (!merged) { merged = own; continue }
+        if (shared) { merged = new Map([...merged].map(([k, v]) => [k, { ...v }])); shared = false }
+        for (const [assembly, entry] of own) {
+          const into = merged.get(assembly)
+          if (into) into.count += entry.count
+          else merged.set(assembly, { ...entry })
+        }
+      }
+      if (merged) byNode[node] = merged
+    }
+    memo = index.cladeGenomes = { links, topbar: topbarAssemblies, byNode, lists: new Map() }
+  }
+  let list = memo.lists.get(id)
+  if (!list) {
+    list = memo.byNode[id]
+      ? [...memo.byNode[id].values()].sort((a, b) => (a.status === 'topbar' ? 0 : 1) - (b.status === 'topbar' ? 0 : 1) || b.count - a.count)
+      : NO_GENOMES
+    memo.lists.set(id, list)
+  }
+  return list
+}
+
+/**
+ * The ring a folded clade takes: blue if it holds a gene in a top-bar genome, else amber if
+ * it holds one in another local genome, else none.
+ */
+function cladeRing(index, id, links, topbarAssemblies, palette) {
+  const first = cladeGenomes(index, id, links, topbarAssemblies)[0]
+  return !first ? '' : first.status === 'topbar' ? palette.linked : palette.genome
+}
+
 /** World-space bounds including labels, for fitting the tree to the view. */
 export function contentBounds(ctx, index, layout, cache) {
   if (layout.radial) {
@@ -123,8 +197,8 @@ export function contentBounds(ctx, index, layout, cache) {
     if (item.kind === 'internal') continue
     const { width } = measureTerminal(ctx, index, item, cache)
     const anchor = labelAnchorX(layout, item)
-    const column = layout.labelOffset || 0
-    if (layout.flipHorizontal) minX = Math.min(minX, anchor - column - LABEL_GAP - width)
+    const column = labelOffsetOf(layout, item)
+    if (sideOf(layout, item).flipHorizontal) minX = Math.min(minX, anchor - column - LABEL_GAP - width)
     else maxX = Math.max(maxX, anchor + column + LABEL_GAP + width)
   }
   // A layer's fragments carry a name tag above them.
@@ -214,7 +288,9 @@ export function labelPlan(layout, index, t, links, topbarAssemblies, focusId, fo
       if (status === 'local') return 2
       return 4
     }
-    return 3
+    // A folded clade holding the user's genomes, ahead of one that holds none.
+    const genomes = cladeGenomes(index, item.id, links, topbarAssemblies)
+    return genomes.length ? (genomes[0].status === 'topbar' ? 2.5 : 2.75) : 3
   }
   const order = rows.map((item, i) => ({ item, i, p: priority(item), size: index.leafCount[item.id] }))
     .sort((a, b) => a.p - b.p || b.size - a.size || a.i - b.i)
@@ -259,7 +335,7 @@ export function labelPlan(layout, index, t, links, topbarAssemblies, focusId, fo
 export function paintTree(ctx, state) {
   const { layout, index, t, width, height, palette, links = {}, focusId = -1, focusPath, hoverId = -1,
     selected = new Set(), labelCache, topbarAssemblies, genomeColors, picked = null, marquee = null,
-    fragmentTags = null, neighbours = null } = state
+    fragmentTags = null, column = null } = state
   // `onlyPicked`: the picks alone, on a clear background — the picture a drag carries.
   // `only` / `except`: draw just these nodes (and the branches into them), or all but
   // them — how a subtree being dragged round a layer is drawn apart from the rest.
@@ -269,6 +345,10 @@ export function paintTree(ctx, state) {
   const shown = id => (!only || only.has(id)) && (!except || !except.has(id))
   if (!state.noClear) ctx.clearRect(0, 0, width, height)
   if (!layout?.items?.length) return
+  // A data column that stretches as it is zoomed (an alignment's) says how far the labels
+  // now sit past the tips — subtree by subtree, when the subtrees show different views.
+  if (column?.placeLabels && layout.labelOffset) column.placeLabels(layout)
+  else if (column?.labelOffset && layout.labelOffset) layout.labelOffset = column.labelOffset()
   const pitch = layout.pitch * t.k
   const focusIds = state.focusIds || null
   const isFocus = id => id === focusId || Boolean(focusIds?.has(id))
@@ -329,22 +409,38 @@ export function paintTree(ctx, state) {
   const virtualId = layout.forest ? layout.items[0].id : -1
   const anyPicked = Boolean(picked?.size)
   const isPicked = id => anyPicked && picked.has(id)
+  // `lit`: the nodes to keep at full strength (Highlight local); everything else is faded.
+  // A pick takes over from it: the picks are what is being worked on.
+  const lit = !anyPicked && state.lit?.size ? state.lit : null
+  // Comparing two subtrees: leaves joined to nothing in the other tree are faded a little.
+  const unmatched = state.compare?.faded || null
+  const alphaOf = id => (anyPicked ? (isPicked(id) ? 1 : DIM_ALPHA) : lit && !lit.has(id) ? UNLIT_ALPHA : unmatched?.has(id) ? UNMATCHED_ALPHA : 1)
   const onFocusPath = edge => focusPath?.has(edge.to)
   const grafted = edge => Boolean(layout.byId.get(edge.to)?.node?.graft)
   const drawable = edge => edge.from !== virtualId && !hidden?.has(edge.to) && shown(edge.to)
   // Picked content is gold and everything else is dimmed, as the Alignment Explorer does.
-  {
-    ctx.globalAlpha = anyPicked ? DIM_ALPHA : 1
-    drawEdges(edge => drawable(edge) && !onFocusPath(edge) && !grafted(edge) && !isPicked(edge.to), palette.edge, pitch < 4 ? 1.25 : 1.75)
-    if (focusPath?.size) drawEdges(edge => drawable(edge) && onFocusPath(edge) && !isPicked(edge.to), palette.edgeFocus, 3)
+  // Lit, the faded branches go down first and the lit ones over them.
+  const passes = lit ? [[edge => !lit.has(edge.to), UNLIT_ALPHA], [edge => lit.has(edge.to), 1]] : [[() => true, anyPicked ? DIM_ALPHA : 1]]
+  for (const [pass, alpha] of passes) {
+    const inPass = edge => drawable(edge) && pass(edge) && !isPicked(edge.to)
+    ctx.globalAlpha = alpha
+    drawEdges(edge => inPass(edge) && !onFocusPath(edge) && !grafted(edge), palette.edge, pitch < 4 ? 1.25 : 1.75)
+    if (focusPath?.size) drawEdges(edge => inPass(edge) && onFocusPath(edge), palette.edgeFocus, 3)
     // Grafted stems are dashed: the join is the user's, not the source tree's.
     ctx.save()
     ctx.setLineDash([6, 4])
-    drawEdges(edge => drawable(edge) && grafted(edge) && !isPicked(edge.to), palette.graft, 2)
+    drawEdges(edge => inPass(edge) && grafted(edge), palette.graft, 2)
     ctx.restore()
     ctx.globalAlpha = 1
   }
   if (anyPicked) drawEdges(edge => drawable(edge) && isPicked(edge.to), PICKED, 2.75)
+  // Comparing two subtrees: the branches into clades the other tree does not have, dashed.
+  if (state.compare?.conflict?.size && !onlyPicked) {
+    ctx.save()
+    ctx.setLineDash([6, 4])
+    drawEdges(edge => drawable(edge) && state.compare.conflict.has(edge.to), state.compare.conflictColor, 2.5)
+    ctx.restore()
+  }
   // What a layer tool is about to act on, over the branches (see `emphasis` below).
   const emphasis = state.emphasis || null
   for (const mark of emphasis?.edges || []) {
@@ -354,35 +450,46 @@ export function paintTree(ctx, state) {
     ctx.restore()
   }
 
-  // Hover and selection washes under terminals.
+  const labelled = id => plan.full || plan.labelled.has(id)
+  // Hover and selection washes under terminals: a circle round a node, and round a folded
+  // clade's count pill a pill of the same proportions.
   for (const item of layout.items) {
     if (onlyPicked || !shown(item.id) || (item.id !== hoverId && !selected.has(item.id)) || hidden?.has(item.id)) continue
     const [sx, sy] = toScreen(t, item.x, item.y)
     ctx.fillStyle = item.id === hoverId ? palette.hover : palette.selection
+    if (item.kind === 'collapsed' && !folded?.has(item.id) && labelled(item.id)) {
+      washCollapsed(ctx, index, item, t, layout, labelCache, sx, sy)
+      continue
+    }
     ctx.beginPath()
     ctx.arc(sx, sy, HIT_RADIUS + 3, 0, Math.PI * 2)
     ctx.fill()
   }
 
-  const labelled = id => plan.full || plan.labelled.has(id)
   // Labels last, so no glyph is drawn over one.
   const labels = []
   for (const item of layout.items) {
     if (hidden?.has(item.id) || item.id === virtualId || !shown(item.id)) continue
     const [sx, sy] = toScreen(t, item.x, item.y)
     const focus = isFocus(item.id)
-    ctx.globalAlpha = anyPicked && !isPicked(item.id) ? DIM_ALPHA : 1
+    ctx.globalAlpha = alphaOf(item.id)
     if (folded?.has(item.id)) {
-      if (layout.radial) drawRadialWedge(ctx, item, t, palette, isPicked(item.id))
+      // A wedge holding the user's genomes is edged as a folded clade's pill is ringed.
+      const edge = cladeRing(index, item.id, links, topbarAssemblies, palette)
+      if (layout.radial) drawRadialWedge(ctx, item, t, palette, isPicked(item.id), edge)
       else {
         const top = toScreen(t, item.reach, item.y0)[1], bottom = toScreen(t, item.reach, item.y1)[1]
         if (bottom < -margin || top > height + margin) continue
-        drawWedge(ctx, item, t, palette, isPicked(item.id))
+        drawWedge(ctx, item, t, palette, isPicked(item.id), edge)
       }
       if (labelled(item.id)) labels.push([item, sx, sy])
       continue
     }
-    if (!visible(sx, sy)) continue
+    // A terminal's label can be on screen when its tip is not: far along a stretched data
+    // column, the tip is off to the left while the label is in view. Culled by the tip alone,
+    // labels vanished mid-screen as the plane was panned.
+    if (!visible(sx, sy) && !(item.kind !== 'internal' && layout.alignX !== undefined && !layout.radial
+      && labelled(item.id) && visible(labelScreenX(layout, t, item), sy))) continue
     // A picked node: a thin gold ring, as the Alignment Explorer rings a picked sequence.
     // (A folded pill gets its gold edge where it is drawn, with its label.)
     if (isPicked(item.id) && item.kind !== 'collapsed') {
@@ -393,16 +500,27 @@ export function paintTree(ctx, state) {
     if (item.kind === 'internal') drawInternal(ctx, item, sx, sy, palette, focusPath, scale)
     else if (item.kind === 'collapsed') {
       if (labelled(item.id)) labels.push([item, sx, sy])
-      else drawDot(ctx, sx, sy, palette.pill, 3 * scale + 1)
+      else {
+        drawDot(ctx, sx, sy, palette.pill, 3 * scale + 1)
+        const color = cladeRing(index, item.id, links, topbarAssemblies, palette)
+        if (color) { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, sy, 3 * scale + 3.5, 0, Math.PI * 2); ctx.stroke() }
+      }
     } else {
       const status = linkStatus(links[item.id], topbarAssemblies)
       drawLeafGlyph(ctx, sx, sy, palette, status, focus, focus ? 1 : scale, genomeColor(links[item.id], genomeColors))
       if (labelled(item.id)) labels.push([item, sx, sy])
     }
   }
-  if (neighbours && layout.labelOffset && !layout.radial) {
-    drawNeighbourhoods(ctx, layout, t, { neighbours, hidden, folded, palette, height, anyPicked, isPicked, isFocus,
-      hoverSymbol: state.neighbourHover || '' })
+  // A data column beside the leaves (see `neighbourhoodColumn`, alignmentColumn.js).
+  if (column && layout.labelOffset && !layout.radial) {
+    // `shown`: the rows of this pass only — a subtree being dragged is painted apart from the
+    // rest (`only` / `except`), and its data goes with it, not the others'. `lifted`: this is
+    // that picture of it, not the view itself.
+    column.paint(ctx, { layout, t, hidden, folded, palette, width, height, anyPicked, isPicked, isFocus, shown,
+      lifted: Boolean(only), hover: state.columnHover ?? '', insetTop: state.insetTop || 0 })
+  }
+  if (state.compare?.links?.length && !onlyPicked && !layout.radial) {
+    drawCompareLinks(ctx, { layout, index, t, height, hidden, labelled, labelCache, compare: state.compare, shown, palette })
   }
   // Aligned leaves: a dotted leader from each labelled tip out to the label column (or,
   // radial, out along its spoke to the outer circle).
@@ -427,9 +545,9 @@ export function paintTree(ctx, state) {
     ctx.beginPath()
     for (const [item, sx, sy] of labels) {
       if (folded?.has(item.id)) continue
-      const hasStrip = neighbours?.byLeafId?.get(item.id)?.genes || neighbours?.pending?.has(item.id)
-      const ax = toScreen(t, layout.alignX, item.y)[0] + (hasStrip ? 0 : labelShift(layout))
-      const start = sx + (layout.flipHorizontal ? -7 : 7)
+      // To where the data column's row starts, else on to the label.
+      const ax = column?.leaderEnd?.(layout, t, item) ?? toScreen(t, alignXOf(layout, item), item.y)[0] + labelShift(layout, item)
+      const start = sx + (sideOf(layout, item).flipHorizontal ? -7 : 7)
       if (Math.abs(ax - sx) < 10) continue
       ctx.moveTo(start, sy)
       ctx.lineTo(ax, sy)
@@ -440,15 +558,16 @@ export function paintTree(ctx, state) {
   for (const [item, sx, sy] of labels) {
     const more = plan.full ? 0 : plan.extra.get(item.id) || 0
     const pickedLabel = isPicked(item.id)
-    ctx.globalAlpha = anyPicked && !pickedLabel ? DIM_ALPHA : 1
+    ctx.globalAlpha = alphaOf(item.id)
+    const ring = item.kind === 'collapsed' ? cladeRing(index, item.id, links, topbarAssemblies, palette) : ''
     if (layout.radial) {
       drawRadialLabel(ctx, index, item, t, palette, layout, labelCache, { more, folded: folded?.has(item.id), focus: isFocus(item.id),
-        pill: labelPill(links[item.id], topbarAssemblies, genomeColors, palette), picked: pickedLabel })
+        pill: labelPill(links[item.id], topbarAssemblies, genomeColors, palette), picked: pickedLabel, ring })
       continue
     }
     const ax = layout.alignX !== undefined ? labelScreenX(layout, t, item) : sx
     if (folded?.has(item.id)) drawWedgeLabel(ctx, index, item, t, palette, layout, more, pickedLabel)
-    else if (item.kind === 'collapsed') drawCollapsed(ctx, index, item, ax, sy, palette, layout, labelCache, more, pickedLabel)
+    else if (item.kind === 'collapsed') drawCollapsed(ctx, index, item, ax, sy, palette, layout, labelCache, more, pickedLabel, ring)
     else {
       drawLeafLabel(ctx, index, item, ax, sy, palette, layout, labelCache, isFocus(item.id), more,
         labelPill(links[item.id], topbarAssemblies, genomeColors, palette), pickedLabel)
@@ -503,11 +622,78 @@ export function paintTree(ctx, state) {
 }
 
 /**
+ * The lines between two subtrees being compared (compareTrees.js), from the end of each
+ * label to the start of its partner's. A leaf inside a fold is joined at the fold, and
+ * lines that end up joining the same two folds are drawn once, thicker for each. A line
+ * whose leaf has more than one partner (paralogues, matched by species) is thin and dashed.
+ * While a node is hovered (`compare.lit`), its lines are drawn bold and the rest faded.
+ *
+ * `compare.links`: `{a, b, oneToOne, color}`.
+ */
+function drawCompareLinks(ctx, { layout, index, t, height, hidden, labelled, labelCache, compare, shown }) {
+  // Where a leaf shows: itself, or the fold (or folded wedge) it is hidden in.
+  const anchors = new Map()
+  const anchorOf = id => {
+    if (anchors.has(id)) return anchors.get(id)
+    let at = id
+    while (at >= 0 && (!layout.byId.has(at) || hidden?.has(at))) at = index.parent[at]
+    const item = at >= 0 ? layout.byId.get(at) : null
+    const found = item && !item.node.virtual && shown(item.id) ? item : null
+    anchors.set(id, found)
+    return found
+  }
+  // The label's two ends on screen (just the tip for a terminal without a label at this zoom).
+  const ends = item => {
+    const sy = toScreen(t, 0, item.y)[1]
+    if (item.kind === 'internal') {
+      const sx = toScreen(t, item.reach ?? item.x, item.y)[0]
+      return { from: sx, to: sx, sy }
+    }
+    const ax = layout.alignX !== undefined || layout.laneAlign ? labelScreenX(layout, t, item) : toScreen(t, item.x, item.y)[0]
+    const width = labelled(item.id) ? LABEL_GAP + (labelCache?.get(item.id)?.width ?? 0) + 4 : 6
+    return sideOf(layout, item).flipHorizontal ? { from: ax - width, to: ax, sy } : { from: ax, to: ax + width, sy }
+  }
+  const lit = compare.lit?.size ? compare.lit : null
+  const merged = new Map()
+  for (const link of compare.links) {
+    const a = anchorOf(link.a), b = anchorOf(link.b)
+    if (!a || !b) continue
+    const key = `${a.id}:${b.id}`
+    const entry = merged.get(key)
+    if (entry) {
+      entry.count += 1
+      entry.lit ||= Boolean(lit && (lit.has(link.a) || lit.has(link.b)))
+      continue
+    }
+    merged.set(key, { a, b, link, count: 1, lit: Boolean(lit && (lit.has(link.a) || lit.has(link.b))) })
+  }
+  ctx.save()
+  ctx.lineCap = 'round'
+  for (const { a, b, link, count, lit: on } of merged.values()) {
+    const ea = ends(a), eb = ends(b)
+    if ((ea.sy < -20 && eb.sy < -20) || (ea.sy > height + 20 && eb.sy > height + 20)) continue
+    // From the end of each label that faces the other.
+    const leftFirst = (ea.from + ea.to) / 2 <= (eb.from + eb.to) / 2
+    const x0 = leftFirst ? ea.to : ea.from, x1 = leftFirst ? eb.from : eb.to
+    const bend = Math.max(24, Math.abs(x1 - x0) * 0.45) * (leftFirst ? 1 : -1)
+    ctx.globalAlpha = lit ? (on ? 1 : 0.18) : link.oneToOne ? 0.85 : 0.55
+    ctx.strokeStyle = link.oneToOne ? link.color : compare.ambiguousColor
+    ctx.lineWidth = (link.oneToOne ? 1.6 : 1) + Math.min(3, Math.log2(count)) + (on ? 1 : 0)
+    ctx.setLineDash(link.oneToOne ? [] : [4, 4])
+    ctx.beginPath()
+    ctx.moveTo(x0, ea.sy)
+    ctx.bezierCurveTo(x0 + bend, ea.sy, x1 - bend, eb.sy, x1, eb.sy)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+/**
  * Each fragment of a subtree layer gets a name tag in the layer's colour, in the blank
  * row the layout leaves above it (linear) or beside its root (radial). The Connect tool
  * picks a fragment up by its tag.
  */
-function fragmentTagBox(layout, t, item) {
+export function fragmentTagBox(layout, t, item) {
   const [sx, sy] = toScreen(t, item.x, item.y)
   if (layout.radial) return { x: sx + 8, y: sy - 11 }
   const top = toScreen(t, item.x, item.y0 - layout.pitch)[1]
@@ -518,10 +704,22 @@ function drawFragmentTags(ctx, layout, t, index, tags, shown = () => true) {
   for (const item of layout.items) {
     const tag = item.node.fragRoot && tags.get(item.node.fragRoot)
     if (!tag || !shown(item.id)) continue
-    const { x, y } = fragmentTagBox(layout, t, item)
+    // Being renamed: the canvas lays a text box over where the tag would be instead.
+    if (tag.editing) { tag.box = null; continue }
+    const at = fragmentTagBox(layout, t, item)
+    const y = at.y
     if (y < -30 || y > 5000) continue
     ctx.font = sansFont(SMALL_LABEL_SIZE, 700)
     const width = ctx.measureText(tag.label).width + 16
+    // A mirrored fragment's root is on its right: its tag ends there rather than starts.
+    const x = item.mirror ? at.x + 8 - width : at.x
+    if (tag.picked && !tag.lifted) {
+      // The whole subtree is picked: a ring in the picked colour just outside the tag.
+      roundRect(ctx, x - 3, y - 3, width + 6, 28, 14)
+      ctx.strokeStyle = PICKED
+      ctx.lineWidth = 2.5
+      ctx.stroke()
+    }
     roundRect(ctx, x, y, width, 22, 11)
     ctx.fillStyle = tag.color
     ctx.fill()
@@ -538,7 +736,7 @@ function drawFragmentTags(ctx, layout, t, index, tags, shown = () => true) {
   }
 }
 
-function readableOn(hex) {
+export function readableOn(hex) {
   const value = String(hex || '').replace('#', '')
   if (value.length !== 6) return '#ffffff'
   const [r, g, b] = [0, 2, 4].map(i => parseInt(value.slice(i, i + 2), 16) / 255)
@@ -689,7 +887,7 @@ export function selectionHit(layout, t, rect, labelCache, plan = null) {
         }
       } else {
         const ax = labelScreenX(layout, t, item)
-        const left = layout.flipHorizontal ? ax - width : ax, right = layout.flipHorizontal ? ax : ax + width
+        const left = sideOf(layout, item).flipHorizontal ? ax - width : ax, right = sideOf(layout, item).flipHorizontal ? ax : ax + width
         touched = right >= r.x0 && left <= r.x1 && sy + 9 >= r.y0 && sy - 9 <= r.y1
       }
     }
@@ -739,7 +937,7 @@ function radialLabelStart(layout, item, folded) {
  * reads left to right. Everything else — pills, halos, "+N genes" — is the linear
  * label drawn in the rotated frame.
  */
-function drawRadialLabel(ctx, index, item, t, palette, layout, cache, { more, folded, focus, pill, picked = false }) {
+function drawRadialLabel(ctx, index, item, t, palette, layout, cache, { more, folded, focus, pill, picked = false, ring = '' }) {
   const { r, a } = radialLabelStart(layout, item, folded)
   const [sx, sy] = toScreen(t, ...polarXY(r, a))
   const left = Math.cos(a) < 0
@@ -752,7 +950,7 @@ function drawRadialLabel(ctx, index, item, t, palette, layout, cache, { more, fo
     drawParts(ctx, [[cladeTitle(index, item.id), `italic ${sansFont(LABEL_SIZE, 600)}`, picked ? palette.pickedText : palette.text],
       [`${genes.toLocaleString()} gene${genes === 1 ? '' : 's'}`, sansFont(SMALL_LABEL_SIZE, 400), palette.muted]], 0, 0, left, palette)
   } else if (item.kind === 'collapsed') {
-    drawCollapsed(ctx, index, item, 0, 0, palette, frame, cache, more, picked)
+    drawCollapsed(ctx, index, item, 0, 0, palette, frame, cache, more, picked, ring)
   } else {
     drawLeafLabel(ctx, index, item, 0, 0, palette, frame, cache, focus, more, pill, picked)
   }
@@ -760,7 +958,7 @@ function drawRadialLabel(ctx, index, item, t, palette, layout, cache, { more, fo
 }
 
 /** A folded radial clade: a slice from its node out to the arc its leaves span. */
-function drawRadialWedge(ctx, item, t, palette, picked = false) {
+function drawRadialWedge(ctx, item, t, palette, picked = false, edge = '') {
   const [cx, cy] = toScreen(t, 0, 0)
   const [sx, sy] = toScreen(t, item.x, item.y)
   const minArc = 1.5 / Math.max(1e-6, item.reach * t.k)
@@ -772,12 +970,12 @@ function drawRadialWedge(ctx, item, t, palette, picked = false) {
   ctx.closePath()
   ctx.fillStyle = palette.wedge
   ctx.fill()
-  ctx.strokeStyle = picked ? PICKED : palette.edge
-  ctx.lineWidth = picked ? 1.5 : 1
+  ctx.strokeStyle = picked ? PICKED : edge || palette.edge
+  ctx.lineWidth = picked || edge ? 1.5 : 1
   ctx.stroke()
 }
 
-function drawWedge(ctx, item, t, palette, picked = false) {
+function drawWedge(ctx, item, t, palette, picked = false, edge = '') {
   const [sx, sy] = toScreen(t, item.x, item.y)
   const [ex, top] = toScreen(t, item.reach, item.y0)
   const bottom = toScreen(t, item.reach, item.y1)[1]
@@ -790,8 +988,8 @@ function drawWedge(ctx, item, t, palette, picked = false) {
   ctx.closePath()
   ctx.fillStyle = palette.wedge
   ctx.fill()
-  ctx.strokeStyle = picked ? PICKED : palette.edge
-  ctx.lineWidth = picked ? 1.5 : 1
+  ctx.strokeStyle = picked ? PICKED : edge || palette.edge
+  ctx.lineWidth = picked || edge ? 1.5 : 1
   ctx.stroke()
 }
 
@@ -903,13 +1101,13 @@ function drawParts(ctx, parts, anchor, y, flip, palette) {
 }
 
 function drawWedgeLabel(ctx, index, item, t, palette, layout, more = 0, picked = false) {
-  const [wx, top] = toScreen(t, layout.alignX ?? item.reach, item.y0)
-  const ex = wx + labelShift(layout)
+  const [wx, top] = toScreen(t, alignXOf(layout, item) ?? item.reach, item.y0)
+  const ex = wx + labelShift(layout, item)
   const bottom = toScreen(t, item.reach, item.y1)[1]
   const genes = index.leafCount[item.id] + more
   drawParts(ctx, [[cladeTitle(index, item.id), `italic ${sansFont(LABEL_SIZE, 600)}`, picked ? palette.pickedText : palette.text],
     [`${genes.toLocaleString()} gene${genes === 1 ? '' : 's'}`, sansFont(SMALL_LABEL_SIZE, 400), palette.muted]],
-  ex, (top + bottom) / 2, layout.flipHorizontal, palette)
+  ex, (top + bottom) / 2, sideOf(layout, item).flipHorizontal, palette)
 }
 
 function drawDot(ctx, sx, sy, color, r) {
@@ -945,16 +1143,45 @@ function moreText(more) {
   return more ? `+${more.toLocaleString()} gene${more === 1 ? '' : 's'}` : ''
 }
 
-function drawCollapsed(ctx, index, item, sx, sy, palette, layout, cache, more = 0, picked = false) {
+/** The hover or selection wash round a folded clade's count pill, wherever `drawCollapsed` puts it. */
+function washCollapsed(ctx, index, item, t, layout, cache, sx, sy) {
+  const pill = measureTerminal(ctx, index, item, cache).pill - 8
+  const pad = 5
+  ctx.save()
+  let anchor = sx, y = sy, flip = sideOf(layout, item).flipHorizontal
+  if (layout.radial) {
+    const { r, a } = radialLabelStart(layout, item, false)
+    flip = Math.cos(a) < 0
+    ctx.translate(...toScreen(t, ...polarXY(r, a)))
+    ctx.rotate(flip ? a + Math.PI : a)
+    anchor = 0; y = 0
+  } else if (layout.alignX !== undefined) anchor = labelScreenX(layout, t, item)
+  const left = flip ? anchor - pill : anchor
+  roundRect(ctx, left - pad, y - PILL_HEIGHT / 2 - pad, pill + pad * 2, PILL_HEIGHT + pad * 2, PILL_HEIGHT / 2 + pad)
+  ctx.fill()
+  ctx.restore()
+}
+
+function drawCollapsed(ctx, index, item, sx, sy, palette, layout, cache, more = 0, picked = false, ring = '') {
   const measured = measureTerminal(ctx, index, item, cache)
   const pill = measured.pill - 8
-  const left = layout.flipHorizontal ? sx - pill : sx
+  const left = sideOf(layout, item).flipHorizontal ? sx - pill : sx
   ctx.fillStyle = palette.pill
   roundRect(ctx, left, sy - PILL_HEIGHT / 2, pill, PILL_HEIGHT, PILL_HEIGHT / 2)
   ctx.fill()
-  if (picked) {
-    // A picked clade's pill gets the gold edge, as a picked pill does in the Alignment Explorer.
+  if (ring) {
+    // The clade holds genes in the user's genomes: blue for a top-bar genome, amber for a
+    // local one only, as a leaf's glyph says it.
     roundRect(ctx, left - 2, sy - PILL_HEIGHT / 2 - 2, pill + 4, PILL_HEIGHT + 4, PILL_HEIGHT / 2 + 2)
+    ctx.strokeStyle = ring
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+  if (picked) {
+    // A picked clade's pill gets the gold edge, as a picked pill does in the Alignment Explorer
+    // (outside the genome ring, when it has one).
+    const out = ring ? 4.5 : 2
+    roundRect(ctx, left - out, sy - PILL_HEIGHT / 2 - out, pill + out * 2, PILL_HEIGHT + out * 2, PILL_HEIGHT / 2 + out)
     ctx.strokeStyle = PICKED
     ctx.lineWidth = 1.5
     ctx.stroke()
@@ -967,7 +1194,7 @@ function drawCollapsed(ctx, index, item, sx, sy, palette, layout, cache, more = 
   const [label] = terminalText(index, item)
   const parts = [[label, `italic ${sansFont(LABEL_SIZE, 400)}`, picked ? palette.pickedText : palette.muted]]
   if (more) parts.push([moreText(more), sansFont(SMALL_LABEL_SIZE, 400), palette.muted])
-  drawParts(ctx, parts, layout.flipHorizontal ? left - 8 + LABEL_GAP : left + pill + 8 - LABEL_GAP, sy, layout.flipHorizontal, palette)
+  drawParts(ctx, parts, sideOf(layout, item).flipHorizontal ? left - 8 + LABEL_GAP : left + pill + 8 - LABEL_GAP, sy, sideOf(layout, item).flipHorizontal, palette)
 }
 
 function drawLeafGlyph(ctx, sx, sy, palette, status, focus, scale = 1, color = '') {
@@ -984,9 +1211,12 @@ function drawLeafGlyph(ctx, sx, sy, palette, status, focus, scale = 1, color = '
     else if (status === 'genome') drawDot(ctx, sx, sy, palette.genome, Math.max(1.8, r))
   } else {
     ctx.fillStyle = palette.halo
-    ctx.strokeStyle = status === 'local' ? own : status === 'genome' ? palette.genome : palette.unresolved
-    ctx.lineWidth = status === 'local' || status === 'genome' ? 2.5 : 1.5
+    ctx.strokeStyle = status === 'local' ? own : status === 'genome' || status === 'no_index' ? palette.genome : palette.unresolved
+    ctx.lineWidth = status === 'local' || status === 'genome' ? 2.5 : status === 'no_index' ? 2 : 1.5
+    // Local species, annotation not indexed: the same amber, broken — nothing was looked for yet.
+    if (status === 'no_index') ctx.setLineDash([2.2, 2.2])
     ctx.beginPath(); ctx.arc(sx, sy, r - 0.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+    ctx.setLineDash([])
     if (status === 'local') drawDot(ctx, sx, sy, own, 2)
   }
 }
@@ -999,12 +1229,12 @@ function drawLeafLabel(ctx, index, item, sx, sy, palette, layout, cache, focus, 
   const parts = [[primary, sansFont(LABEL_SIZE, pill ? 700 : 600), nameColor, ownPill]]
   if (secondary) parts.push([secondary, sansFont(SMALL_LABEL_SIZE, pill ? 600 : 400), palette.gene])
   if (more) parts.push([moreText(more), sansFont(SMALL_LABEL_SIZE, 400), palette.muted])
-  drawParts(ctx, parts, sx, sy, layout.flipHorizontal, palette)
+  drawParts(ctx, parts, sx, sy, sideOf(layout, item).flipHorizontal, palette)
   if (focus && pill) {
     // The focus gene keeps its genome's pill; a red underline says it is the focus.
     ctx.font = parts[0][1]
     const w = ctx.measureText(primary).width + SPECIES_PILL_PAD * 2
-    const x = layout.flipHorizontal ? sx - LABEL_GAP - w : sx + LABEL_GAP
+    const x = sideOf(layout, item).flipHorizontal ? sx - LABEL_GAP - w : sx + LABEL_GAP
     ctx.fillStyle = palette.focus
     ctx.fillRect(x + 4, sy + 11, w - 8, 2.5)
   }
@@ -1061,7 +1291,7 @@ export function hitTest(layout, t, sx, sy, labelCache, plan = null) {
     const iy = toScreen(t, 0, item.y)[1]
     if (Math.abs(iy - sy) > half) continue
     const width = labelCache?.get(item.id)?.width ?? 120
-    const inside = layout.flipHorizontal ? sx <= ix && sx >= ix - LABEL_GAP - width : sx >= ix && sx <= ix + LABEL_GAP + width
+    const inside = sideOf(layout, item).flipHorizontal ? sx <= ix && sx >= ix - LABEL_GAP - width : sx >= ix && sx <= ix + LABEL_GAP + width
     if (inside) return { item, part: 'label' }
   }
   return null
@@ -1102,29 +1332,44 @@ function hitRadial(layout, t, sx, sy, labelCache, plan) {
 
 // ── the Neighbourhood data column ──
 
-// Nine slots (four genes, the gene, four genes), each a fixed width on screen as labels are.
-export const NEIGHBOUR_SLOTS = 9
-const NEIGHBOUR_SLOT = 42
-const NEIGHBOUR_PAD = 10
-/** The column's width on screen: what a layout's `dataColumn` is set to for this view. */
-export const NEIGHBOUR_COLUMN_PX = NEIGHBOUR_SLOTS * NEIGHBOUR_SLOT + NEIGHBOUR_PAD * 2
-const NEIGHBOUR_FULL_PX = 22   // row pitch on screen from which arrows carry their names
-const NEIGHBOUR_ARROW_PX = 8   // …and from which they are arrows at all; below, bars
+// A slot per gene (the flank, the gene, the flank), each a fixed width on screen as labels
+// are, wide enough for a ten-letter symbol inside its arrow.
+const NEIGHBOUR_SLOT = 76
+const NEIGHBOUR_PAD = 12
+const NEIGHBOUR_GENE_H = 16   // an arrow's height with room to spare, as the Neighbourhood view's
+const NEIGHBOUR_FULL_PX = 26   // row pitch on screen from which arrows carry their names
+const NEIGHBOUR_ARROW_PX = 9   // …and from which they are arrows at all; below, bars
+const NEIGHBOUR_LINK_GAP = 4   // the least room between rows' arrows worth drawing links in
+/** Row pitch (world units) while the column is on: roomier than the tree's own, for the links. */
+export const NEIGHBOUR_ROW_PITCH = 38
+/** The column's width on screen for `flank` genes each side: a layout's `dataColumn`. */
+export const neighbourColumnPx = flank => (flank * 2 + 1) * NEIGHBOUR_SLOT + NEIGHBOUR_PAD * 2
+// The Neighbourhood view's own colours: genes blue, the tree gene orange, outlined.
 const CENTRE_FILL = { light: '#f97316', dark: '#fb923c' }
-const PLAIN_FILL = { light: '#a9c8e8', dark: '#46648c' }
+const PLAIN_FILL = { light: '#0099ff', dark: '#3b82f6' }
+const GENE_STROKE = { light: '#1f2937', dark: '#e5e7eb' }
+const LINK_STROKE = { light: '#374151', dark: '#d1d5db' }
 
-/** Where a row's strip sits on screen, and each gene's slot in it (the gene in the middle). */
-function stripGeometry(layout, t, item, entry) {
-  const column = toScreen(t, layout.alignX, item.y)[0]
-  const left = layout.flipHorizontal ? column - NEIGHBOUR_PAD - NEIGHBOUR_SLOTS * NEIGHBOUR_SLOT : column + NEIGHBOUR_PAD
+const slotsOf = neighbours => (neighbours?.flank ?? 4) * 2 + 1
+
+/** Where a row's strip starts on screen, and how wide it is. */
+function stripBox(layout, t, item, neighbours) {
+  const column = toScreen(t, alignXOf(layout, item), item.y)[0]
+  const width = slotsOf(neighbours) * NEIGHBOUR_SLOT
+  return { left: sideOf(layout, item).flipHorizontal ? column - NEIGHBOUR_PAD - width : column + NEIGHBOUR_PAD, width }
+}
+
+/** Each gene's slot in a row's strip (the gene in the middle): `[{gene, index, x}]`. */
+function stripGeometry(layout, t, item, entry, neighbours) {
+  const { left, width } = stripBox(layout, t, item, neighbours)
   const centre = Math.max(0, entry.genes.findIndex(g => g.id === entry.center))
-  const middle = (NEIGHBOUR_SLOTS - 1) / 2
-  return entry.genes.map((gene, i) => ({ gene, x: left + (middle + i - centre) * NEIGHBOUR_SLOT }))
-    .filter(slot => slot.x >= left - 0.5 && slot.x < left + NEIGHBOUR_SLOTS * NEIGHBOUR_SLOT - 0.5)
+  const middle = (slotsOf(neighbours) - 1) / 2
+  return entry.genes.map((gene, index) => ({ gene, index, x: left + (middle + index - centre) * NEIGHBOUR_SLOT }))
+    .filter(slot => slot.x >= left - 0.5 && slot.x < left + width - 0.5)
 }
 
 function arrowPath(ctx, x, y, width, height, strand) {
-  const point = Math.min(width * 0.4, 9, height)
+  const point = Math.min(width * 0.4, 10, height)
   ctx.beginPath()
   if (strand === '-') {
     ctx.moveTo(x + point, y); ctx.lineTo(x + width, y); ctx.lineTo(x + width, y + height); ctx.lineTo(x + point, y + height); ctx.lineTo(x, y + height / 2)
@@ -1134,56 +1379,165 @@ function arrowPath(ctx, x, y, width, height, strand) {
   ctx.closePath()
 }
 
+// Names cut to fit their arrow, by measurement: `font|room|name` → shown text.
+const fitted = new Map()
+function fitName(ctx, name, room) {
+  const key = `${ctx.font}|${room}|${name}`
+  let out = fitted.get(key)
+  if (out === undefined) {
+    out = name
+    if (ctx.measureText(out).width > room) {
+      let n = name.length - 1
+      while (n > 1 && ctx.measureText(`${name.slice(0, n)}…`).width > room) n--
+      out = `${name.slice(0, n)}…`
+    }
+    if (fitted.size > 5000) fitted.clear()
+    fitted.set(key, out)
+  }
+  return out
+}
+
 /**
- * Each linked leaf's neighbourhood, beside it: the Neighbourhood view's strand arrows, the
- * gene itself orange in the middle, shared neighbours in their colour. Names show when rows
- * are roomy; arrows alone at medium zoom; far out, a thin bar per gene.
+ * Each linked leaf's neighbourhood, beside it, drawn as the Neighbourhood view draws a
+ * row: a dashed baseline, outlined strand arrows in blue, the tree gene orange, names in
+ * the arrows. Optionally the most shared families (or every shared one) in colour, and
+ * links between each row and the next row down that has one: solid for the same gene
+ * family, dashed for the same symbol. Names show when rows are roomy; arrows alone at
+ * medium zoom; far out, a thin bar per gene.
  */
-function drawNeighbourhoods(ctx, layout, t, { neighbours, hidden, folded, palette, height, anyPicked, isPicked, isFocus, hoverSymbol }) {
+/**
+ * Which neighbourhood rows are linked: each row with genes to the next one down with genes
+ * in the same tree — in a subtree layer, the same fragment (`item.lane`), since rows of two
+ * trees are not neighbours in either. `rows` are sorted top to bottom (`sy`); pairs wholly
+ * above or below a view `height` tall are left out, one running across it is kept.
+ */
+export function neighbourRowPairs(rows, height, margin = 20) {
+  const above = new Map() // lane → the last row with genes seen in it
+  const out = []
+  for (const row of rows) {
+    if (!row.entry?.genes) continue
+    const upper = above.get(row.item.lane)
+    above.set(row.item.lane, row)
+    if (upper && row.sy >= -margin && upper.sy <= height + margin) out.push([upper, row])
+  }
+  return out
+}
+
+function drawNeighbourhoods(ctx, layout, t, { neighbours, hidden, folded, shown: inPass = null, palette, height, anyPicked, isPicked, isFocus, hoverGroup }) {
   const pitch = layout.pitch * t.k
   const theme = palette.isLight ? 'light' : 'dark'
   const colours = neighbours.colours || new Map()
-  const width = NEIGHBOUR_SLOT - 6
+  const matcher = neighbours.matcher
+  const width = NEIGHBOUR_SLOT - 8
   const full = pitch >= NEIGHBOUR_FULL_PX
   const arrows = pitch >= NEIGHBOUR_ARROW_PX
-  const h = full ? 12 : arrows ? Math.max(5, Math.min(12, pitch * 0.5)) : Math.max(1.5, Math.min(4, pitch * 0.6))
+  const h = full ? NEIGHBOUR_GENE_H : arrows ? Math.max(5, Math.min(NEIGHBOUR_GENE_H, pitch * 0.5)) : Math.max(1.5, Math.min(4, pitch * 0.6))
+  const dim = id => anyPicked && !isPicked(id) && !isFocus(id)
+  const inGroup = gene => Boolean(hoverGroup) && matcher?.keys(gene).includes(hoverGroup)
+  const fillOf = (gene, entry) => (gene.id === entry.center ? CENTRE_FILL[theme] : colours.get(matcher?.group(gene)) || PLAIN_FILL[theme])
+
+  // The rows on show, top to bottom, with one past each edge so links run in from off screen.
+  const rows = []
+  for (const item of layout.items) {
+    if (item.kind !== 'leaf' || hidden?.has(item.id) || folded?.has(item.id) || (inPass && !inPass(item.id))) continue
+    rows.push({ item, sy: toScreen(t, 0, item.y)[1], entry: neighbours.byLeafId.get(item.id) })
+  }
+  rows.sort((a, b) => a.sy - b.sy)
+  let first = rows.findIndex(r => r.sy >= -20)
+  if (first < 0) first = rows.length
+  let last = rows.findIndex(r => r.sy > height + 20)
+  if (last < 0) last = rows.length
+  const shown = rows.slice(first, last)
+  const strips = new Map()
+  const stripOf = row => {
+    let s = strips.get(row.item.id)
+    if (!s) { s = stripGeometry(layout, t, row.item, row.entry, neighbours); strips.set(row.item.id, s) }
+    return s
+  }
+
   ctx.save()
-  ctx.font = sansFont(9.5, 700)
+  // Links first, under the genes: each row that has genes to the next one down that has, in
+  // the same tree. In a subtree layer that is the same fragment (`lane`): once a tree is cut
+  // in two, or two are set side by side, rows of different trees are not neighbours in any
+  // tree, so nothing links them.
+  if (neighbours.links && matcher && arrows && pitch - h >= NEIGHBOUR_LINK_GAP) {
+    const lit = []
+    ctx.lineWidth = 1.5
+    for (const [upper, lower] of neighbourRowPairs(rows, height)) {
+      const pairs = neighbours.pairsFor(upper.item.id, lower.item.id, upper.entry, lower.entry)
+      if (!pairs.length) continue
+      const us = stripOf(upper), ls = stripOf(lower)
+      const at = (strip, index) => strip.find(s => s.index === index)
+      ctx.globalAlpha = dim(upper.item.id) && dim(lower.item.id) ? DIM_ALPHA * 0.6 : 0.6
+      const alpha = ctx.globalAlpha
+      for (const { a, b, via } of pairs) {
+        const sa = at(us, a), sb = at(ls, b)
+        if (!sa || !sb) continue
+        const x1 = sa.x + 4 + width / 2, y1 = upper.sy + h / 2
+        const x2 = sb.x + 4 + width / 2, y2 = lower.sy - h / 2
+        const ga = upper.entry.genes[a]
+        if (inGroup(ga)) { lit.push([x1, y1, x2, y2, via]); continue }
+        const colour = ga.id === upper.entry.center ? null : colours.get(matcher.group(ga))
+        ctx.strokeStyle = colour || LINK_STROKE[theme]
+        ctx.globalAlpha = colour ? Math.min(1, alpha + 0.2) : alpha
+        ctx.setLineDash(via === 'symbol' ? [4, 3] : [])
+        linkPath(ctx, x1, y1, x2, y2)
+        ctx.stroke()
+      }
+    }
+    // The hovered family's links on top, lit.
+    ctx.globalAlpha = 1
+    ctx.strokeStyle = PICKED
+    ctx.lineWidth = 2
+    for (const [x1, y1, x2, y2, via] of lit) {
+      ctx.setLineDash(via === 'symbol' ? [4, 3] : [])
+      linkPath(ctx, x1, y1, x2, y2)
+      ctx.stroke()
+    }
+    ctx.setLineDash([])
+  }
+
+  ctx.font = sansFont(10, 600)
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'center'
-  for (const item of layout.items) {
-    if (item.kind !== 'leaf' || hidden?.has(item.id) || folded?.has(item.id)) continue
-    const sy = toScreen(t, 0, item.y)[1]
-    if (sy < -20 || sy > height + 20) continue
-    const entry = neighbours.byLeafId.get(item.id)
-    ctx.globalAlpha = anyPicked && !isPicked(item.id) && !isFocus(item.id) ? DIM_ALPHA : 1
+  for (const row of shown) {
+    const { item, sy, entry } = row
+    ctx.globalAlpha = dim(item.id) ? DIM_ALPHA : 1
     if (!entry) {
       if (neighbours.pending?.has(item.id) && arrows) {
         // Still coming: a faint dashed placeholder where the strip will be.
-        const column = toScreen(t, layout.alignX, item.y)[0]
-        const left = layout.flipHorizontal ? column - NEIGHBOUR_PAD - NEIGHBOUR_SLOTS * NEIGHBOUR_SLOT : column + NEIGHBOUR_PAD
+        const { left, width: w } = stripBox(layout, t, item, neighbours)
         ctx.save()
         ctx.setLineDash([3, 4])
         ctx.strokeStyle = palette.muted
         ctx.globalAlpha *= 0.5
-        ctx.beginPath(); ctx.moveTo(left, sy); ctx.lineTo(left + NEIGHBOUR_SLOTS * NEIGHBOUR_SLOT, sy); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(left, sy); ctx.lineTo(left + w, sy); ctx.stroke()
         ctx.restore()
       }
       continue
     }
     if (!entry.genes) {
       if (full) {
-        const column = toScreen(t, layout.alignX, item.y)[0]
+        const column = toScreen(t, alignXOf(layout, item), item.y)[0]
         ctx.fillStyle = palette.muted
-        ctx.fillText('—', column + (layout.flipHorizontal ? -NEIGHBOUR_PAD - 8 : NEIGHBOUR_PAD + 8), sy)
+        ctx.fillText('—', column + (sideOf(layout, item).flipHorizontal ? -NEIGHBOUR_PAD - 8 : NEIGHBOUR_PAD + 8), sy)
       }
       continue
     }
-    for (const { gene, x } of stripGeometry(layout, t, item, entry)) {
-      const symbol = symbolKey(gene)
-      const centre = gene.id === entry.center
-      const fill = centre ? CENTRE_FILL[theme] : colours.get(symbol) || PLAIN_FILL[theme]
-      const gx = x + 3
+    const strip = stripOf(row)
+    if (arrows && strip.length) {
+      // The row's baseline, as in the Neighbourhood view: dashed, from its first gene to its last.
+      ctx.save()
+      ctx.setLineDash([3, 3])
+      ctx.strokeStyle = palette.muted
+      ctx.globalAlpha *= 0.55
+      ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(strip[0].x + 4, sy); ctx.lineTo(strip[strip.length - 1].x + 4 + width, sy); ctx.stroke()
+      ctx.restore()
+    }
+    for (const { gene, x } of strip) {
+      const fill = fillOf(gene, entry)
+      const gx = x + 4
       if (!arrows) {
         ctx.fillStyle = fill
         ctx.fillRect(gx, sy - h / 2, width, h)
@@ -1192,40 +1546,78 @@ function drawNeighbourhoods(ctx, layout, t, { neighbours, hidden, folded, palett
       arrowPath(ctx, gx, sy - h / 2, width, h, gene.strand)
       ctx.fillStyle = fill
       ctx.fill()
-      if (hoverSymbol && symbol === hoverSymbol) {
+      if (inGroup(gene)) {
         ctx.strokeStyle = PICKED
-        ctx.lineWidth = 2
+        ctx.lineWidth = 2.5
+        ctx.stroke()
+      } else if (full) {
+        ctx.strokeStyle = GENE_STROKE[theme]
+        ctx.lineWidth = 1
         ctx.stroke()
       }
       if (full) {
-        const name = gene.name || gene.id
-        const room = Math.max(1, Math.floor((width - 6) / 5.6))
+        const point = Math.min(width * 0.4, 10, h)
         ctx.fillStyle = readableOn(fill)
-        ctx.fillText(name.length > room ? `${name.slice(0, Math.max(1, room - 1))}…` : name, gx + width / 2 + (gene.strand === '-' ? 2 : -2), sy + 0.5)
+        ctx.fillText(fitName(ctx, gene.name || gene.id, width - point - 6), gx + width / 2 + (gene.strand === '-' ? point / 2 : -point / 2), sy + 0.5)
       }
     }
   }
   ctx.restore()
 }
 
-const symbolKey = gene => String(gene?.name || '').trim().toLowerCase()
+function linkPath(ctx, x1, y1, x2, y2) {
+  const mid = (y1 + y2) / 2
+  ctx.beginPath()
+  ctx.moveTo(x1, y1)
+  if (Math.abs(x1 - x2) <= 0.5) ctx.lineTo(x2, y2)
+  else ctx.bezierCurveTo(x1, mid, x2, mid, x2, y2)
+}
+
+/**
+ * The Neighbourhood data column, as the painter and canvas take any data column:
+ * `paint(ctx, env)`, `leaderEnd(layout, t, item)` (where a leaf's dotted leader stops, or
+ * null for the label) and `hit(layout, t, sx, sy, plan)` → `{item, part, hoverKey, …}`.
+ * `hoverKey` is what the column lights while the pointer is on it (here, a gene family).
+ */
+export function neighbourhoodColumn(neighbours) {
+  return {
+    kind: 'neighbourhood',
+    paint(ctx, env) {
+      drawNeighbourhoods(ctx, env.layout, env.t, { neighbours, hidden: env.hidden, folded: env.folded, shown: env.shown, palette: env.palette,
+        height: env.height, anyPicked: env.anyPicked, isPicked: env.isPicked, isFocus: env.isFocus, hoverGroup: env.hover || '' })
+    },
+    leaderEnd(layout, t, item) {
+      // To the first gene of the row's strip (a gene near a chromosome end leaves slots
+      // empty), to the column's start while it loads, else on to the label.
+      const entry = neighbours.byLeafId?.get(item.id)
+      const slots = entry?.genes ? stripGeometry(layout, t, item, entry, neighbours) : null
+      if (slots?.length) return sideOf(layout, item).flipHorizontal ? slots[slots.length - 1].x + NEIGHBOUR_SLOT - 4 : slots[0].x + 4
+      return neighbours.pending?.has(item.id) ? toScreen(t, alignXOf(layout, item), item.y)[0] : null
+    },
+    hit(layout, t, sx, sy, plan, inPass = null) {
+      const found = neighbourHit(layout, t, sx, sy, neighbours, plan, inPass)
+      return found ? { item: found.item, part: 'neighbour', gene: found.gene, entry: found.entry,
+        hoverKey: neighbours.matcher?.group(found.gene) || '' } : null
+    },
+  }
+}
 
 /** The neighbour gene under a screen point: `{item, gene, entry}` or null. */
-export function neighbourHit(layout, t, sx, sy, neighbours, plan = null) {
+export function neighbourHit(layout, t, sx, sy, neighbours, plan = null, inPass = null) {
   if (!neighbours || !layout?.labelOffset || layout.radial || layout.alignX === undefined) return null
   const pitch = layout.pitch * t.k
   if (pitch < NEIGHBOUR_ARROW_PX) return null
-  const half = Math.min(pitch / 2, 9)
+  const half = Math.min(pitch / 2, NEIGHBOUR_GENE_H / 2 + 2)
   const hidden = plan?.folds?.hidden
   const folded = plan?.folds?.folded
   for (const item of layout.items) {
-    if (item.kind !== 'leaf' || hidden?.has(item.id) || folded?.has(item.id)) continue
+    if (item.kind !== 'leaf' || hidden?.has(item.id) || folded?.has(item.id) || (inPass && !inPass(item.id))) continue
     const iy = toScreen(t, 0, item.y)[1]
     if (Math.abs(iy - sy) > half) continue
     const entry = neighbours.byLeafId.get(item.id)
     if (!entry?.genes) continue
-    for (const { gene, x } of stripGeometry(layout, t, item, entry)) {
-      if (sx >= x + 3 && sx <= x + NEIGHBOUR_SLOT - 3) return { item, gene, entry }
+    for (const { gene, x } of stripGeometry(layout, t, item, entry, neighbours)) {
+      if (sx >= x + 4 && sx <= x + NEIGHBOUR_SLOT - 4) return { item, gene, entry }
     }
   }
   return null

@@ -3,11 +3,11 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
 import {
-  cladeLabel, cladeTitle, defaultView, emptyViewState, expandAll, expandEvents, expandSubtree, findLeaves, focusOn,
-  indexTree, lca, leavesUnder, showSubtree, toggleCollapsed, toggleFlipped, visibleRows,
+  applyNodeMode, cladeLabel, cladeTitle, collapseAll, collapseTo, defaultView, emptyViewState, expandAll, expandSubtree, expandTo, findLeaves, focusOn,
+  indexTree, lca, leavesUnder, pathsTo, showSubtree, toggleCollapsed, toggleFlipped, visibleRows,
 } from '../src/components/gene-trees/treeModel.js'
 import { labelAnchorX, layoutTree, terminalRows } from '../src/components/gene-trees/treeLayout.js'
-import { FOLD_PX, foldPlan, labelPlan } from '../src/components/gene-trees/paintTree.js'
+import { FOLD_PX, cladeGenomes, foldPlan, labelPlan, neighbourRowPairs } from '../src/components/gene-trees/paintTree.js'
 
 // ((A:1,B:2)AB:1,((C:1,D:1)CD:1,E:3)CDE:0.5)root — ids in pre-order.
 function node(id, parent, children, extra = {}) {
@@ -36,6 +36,76 @@ test('index counts leaves, depth and distance', () => {
   assert.equal(lca(index, [2, 7]), 0)
 })
 
+test('a clade knows which top-bar and local genomes it holds, and how many genes in each', () => {
+  const index = indexTree(TREE)
+  const links = {
+    2: { status: 'linked', assembly: 'GCA_LOCAL' },
+    6: { status: 'linked', assembly: 'GCA_TOP' },
+    7: { status: 'linked', assembly: 'GCA_TOP' },
+    8: { status: 'no_index', assembly: 'GCA_OTHER' },
+  }
+  const topbar = new Set(['GCA_TOP'])
+  const summary = id => cladeGenomes(index, id, links, topbar).map(g => [g.assembly, g.status, g.count])
+  // Top-bar genomes first, then local ones; a leaf not linked to a local gene counts for nothing.
+  assert.deepEqual(summary(0), [['GCA_TOP', 'topbar', 2], ['GCA_LOCAL', 'local', 1]])
+  assert.deepEqual(summary(4), [['GCA_TOP', 'topbar', 2]])
+  assert.deepEqual(summary(1), [['GCA_LOCAL', 'local', 1]])
+  assert.deepEqual(summary(8), [])
+  // Merging children never changes a child's own counts.
+  assert.deepEqual(summary(5), [['GCA_TOP', 'topbar', 2]])
+  // New links (or a new top bar) are worked out afresh.
+  assert.deepEqual(cladeGenomes(index, 4, links, new Set()).map(g => g.status), ['local'])
+})
+
+test('folding the whole tree, and folding or opening around the local genes', () => {
+  const index = indexTree(TREE)
+  const view = emptyViewState()
+  const rows = v => visibleRows(index, v).map(r => r.id ?? r)
+  // Collapse all folds every clade, each on its own, so opening one shows the next level.
+  const all = collapseAll(index, view)
+  assert.deepEqual([...all.collapsed].sort(), [1, 4, 5])
+  assert.deepEqual([...collapseAll(index, showSubtree(view, 4)).collapsed].sort(), [5])
+  assert.equal(expandAll(all).collapsed.size, 0)
+  // D (7) is local: its way from the root is 7, 5, 4, 0.
+  const paths = pathsTo(index, [7])
+  assert.deepEqual([...paths].sort(), [0, 4, 5, 7])
+  // Collapse to local folds everything off that way; Expand to local opens only what hides it.
+  assert.deepEqual([...collapseTo(index, view, paths).collapsed], [1])
+  assert.deepEqual([...expandTo(all, paths).collapsed], [1])
+  assert.equal(expandTo(toggleCollapsed(index, view, 1), paths).collapsed.has(1), true)
+  assert.ok(rows(collapseTo(index, view, paths)).length > 0)
+  // A subtree layer's invisible root is never folded.
+  const forest = indexTree({ nodes: TREE.nodes.map(n => (n.id === 4 ? { ...n, virtual: true } : n)) })
+  assert.equal(collapseAll(forest, view).collapsed.has(4), false)
+})
+
+test('each Nodes state folds the view its own way; the local ones need local genes', () => {
+  const index = indexTree(TREE)
+  const folded = toggleCollapsed(index, toggleCollapsed(index, emptyViewState(), 5), 1)
+  const paths = pathsTo(index, [7])
+  const collapsed = mode => [...applyNodeMode(index, folded, mode, paths).collapsed].sort()
+  assert.deepEqual(collapsed('expand-all'), [])
+  assert.deepEqual(collapsed('collapse-all'), [1, 4, 5])
+  assert.deepEqual(collapsed('expand-local'), [1])
+  assert.deepEqual(collapsed('highlight-local'), [1])
+  assert.deepEqual(collapsed('select-local'), [1])
+  assert.deepEqual(collapsed('collapse-local'), [1])
+  assert.equal(applyNodeMode(index, folded, 'collapse-local', null), folded)
+})
+
+test('neighbourhood links join rows of the same tree only, never across subtrees', () => {
+  const row = (id, lane, sy, genes = true) => ({ item: { id, lane }, sy, entry: genes ? { genes: [] } : {} })
+  const ids = pairs => pairs.map(([a, b]) => [a.item.id, b.item.id])
+  // One tree: each row with genes to the next with genes, skipping a row without.
+  assert.deepEqual(ids(neighbourRowPairs([row(1, undefined, 0), row(2, undefined, 20, false), row(3, undefined, 40)], 500)), [[1, 3]])
+  // A tree cut in two, stacked: no link over the cut.
+  assert.deepEqual(ids(neighbourRowPairs([row(1, 0, 0), row(2, 0, 20), row(3, 1, 60), row(4, 1, 80)], 500)), [[1, 2], [3, 4]])
+  // Two subtrees moved side by side, rows interleaved on screen: each still links within itself.
+  assert.deepEqual(ids(neighbourRowPairs([row(1, 0, 0), row(2, 1, 10), row(3, 0, 20), row(4, 1, 30)], 500)), [[1, 3], [2, 4]])
+  // Wholly off screen is skipped; running across the view is kept.
+  assert.deepEqual(ids(neighbourRowPairs([row(1, 0, -300), row(2, 0, -200), row(3, 0, 900)], 500)), [[2, 3]])
+})
+
 test('collapse, expand subtree and focus are pure transitions', () => {
   const index = indexTree(TREE)
   const start = emptyViewState()
@@ -55,19 +125,36 @@ test('flip reverses children, subtree view restricts rows', () => {
   assert.deepEqual(visibleRows(index, showSubtree(emptyViewState(), 5)), [6, 7])
 })
 
+test('folding to a node keeps the way to it open, folds what is off it, and opens its clade', async () => {
+  const { foldTo } = await import('../src/components/gene-trees/treeModel.js')
+  const index = indexTree(TREE)
+  // Folding to Primates (5): the root and Mammals (4) open, AB (1) folded, Primates' own leaves showing.
+  const view = foldTo(index, { ...emptyViewState(), collapsed: new Set([5]) }, 5)
+  assert.deepEqual(visibleRows(index, view), [1, 6, 7, 8])
+  // Folding to a gene is folding to the focus: only its path open.
+  assert.deepEqual(visibleRows(index, foldTo(index, emptyViewState(), 2)), [2, 3, 4])
+})
+
+test('flipping a clade mirrors everything below it, and flipping again restores it', async () => {
+  const { mirrorClade } = await import('../src/components/gene-trees/treeModel.js')
+  const index = indexTree(TREE)
+  const start = emptyViewState()
+  const before = visibleRows(index, start)
+  const mirrored = mirrorClade(index, start, 0)
+  // The whole tree read bottom to top, not just its first split swapped.
+  assert.deepEqual(visibleRows(index, mirrored), [...before].reverse())
+  assert.deepEqual(visibleRows(index, mirrorClade(index, mirrored, 0)), before)
+  // A clade inside the tree mirrors on its own; a leaf has nothing to flip.
+  const inner = mirrorClade(index, start, 5)
+  assert.deepEqual(visibleRows(index, inner), before.map(id => (id === 6 ? 7 : id === 7 ? 6 : id)))
+  assert.equal(mirrorClade(index, start, 2), start)
+})
+
 test('default view keeps the focus path open and folds its neighbours', () => {
   const index = indexTree(TREE)
   assert.deepEqual(visibleRows(index, defaultView(index, 2)), [2, 3, 4])
   assert.deepEqual(visibleRows(index, defaultView(index, -1, 3)), [2, 3, 4])
   assert.deepEqual(visibleRows(index, defaultView(index, -1, 10)), [2, 3, 6, 7, 8])
-})
-
-test('expanding events opens the path to every duplication', () => {
-  const index = indexTree(TREE)
-  const all = { ...emptyViewState(), collapsed: new Set([0, 1, 4, 5]) }
-  const opened = expandEvents(index, all)
-  assert.ok(!opened.collapsed.has(0) && !opened.collapsed.has(1))
-  assert.ok(opened.collapsed.has(4))
 })
 
 test('clade labels mark a repeated taxon under a duplication', () => {
@@ -328,6 +415,90 @@ test('a subtree layer: moved fragments stay put, the rest stack below them, each
   assert.deepEqual(plain.items.filter(i => i.kind === 'leaf').map(i => i.y), [20, 40, 80, 100, 140, 160])
 })
 
+test('a subtree layer: an arranged subtree that grows keeps the gaps to its neighbours', async () => {
+  const { forestTree } = await import('../src/components/gene-trees/workspace.js')
+  const leafNode = (id, parent, label) => ({ id, parent, children: [], branch_length: 1, leaf: { label } })
+  const pair = (a, b) => [{ id: 0, parent: -1, children: [1, 2], branch_length: null, leaf: null }, leafNode(1, 0, a), leafNode(2, 0, b)]
+  // Put down at row pitch 20 with no data column: each is 20 tall and reaches 30 past its root.
+  // F2 sits 40 below F1; F3 sits beside F1, 70 clear of its tips.
+  const layer = { fragments: [
+    { id: 'F1', source: {}, nodes: pair('A', 'B'), pos: { x: 0, y: 0, w: 30, h: 20 } },
+    { id: 'F2', source: {}, nodes: pair('C', 'D'), pos: { x: 0, y: 60, w: 30, h: 20 } },
+    { id: 'F3', source: {}, nodes: pair('E', 'F'), pos: { x: 100, y: 0, w: 30, h: 20 } },
+  ] }
+  const index = indexTree(forestTree(layer))
+  const place = options => {
+    const layout = layoutTree(index, emptyViewState(), { levelWidth: 30, ...options })
+    const at = id => {
+      const root = layout.items.find(i => i.node.fragRoot === id)
+      return { x: root.x, top: Math.min(...layout.items.filter(i => i.lane === root.lane).map(i => i.y)) }
+    }
+    return { F1: at('F1'), F2: at('F2'), F3: at('F3'), boxes: layout.fragmentBoxes }
+  }
+  // As put down: nothing moves, and each box is what was recorded.
+  const same = place({ rowPitch: 20 })
+  assert.deepEqual([same.F2.top, same.F3.x], [60, 100])
+  assert.deepEqual(same.boxes.get('F1'), { x: 0, y: 0, w: 30, h: 20 })
+  // Roomier rows make every subtree taller: F2 moves down by what F1 grew, keeping its gap;
+  // F3, beside F1 and not below it, stays level.
+  const tall = place({ rowPitch: 40 })
+  assert.deepEqual([tall.F2.top, tall.F3.top, tall.F3.x], [80, 0, 100])
+  // A column past F1's tips pushes F3, beside it, along by its width; F2, below, stays put.
+  const wide = place({ rowPitch: 20, fragmentExtra: id => (id === 'F1' ? 50 : 0) })
+  assert.deepEqual([wide.F3.x, wide.F2.x, wide.F2.top], [150, 0, 60])
+  // A subtree with no size recorded is taken as unchanged.
+  const unsized = indexTree(forestTree({ fragments: layer.fragments.map(f => ({ ...f, pos: { x: f.pos.x, y: f.pos.y } })) }))
+  const plain = layoutTree(unsized, emptyViewState(), { levelWidth: 30, rowPitch: 40 })
+  assert.equal(Math.min(...plain.items.filter(i => i.lane === 1).map(i => i.y)), 60)
+})
+
+test('picks in a layer follow its edits, and go with the nodes an edit changed', async () => {
+  const { carryPicks } = await import('../src/components/gene-trees/workspace.js')
+  const nodes = () => [{ id: 0, parent: -1, children: [1, 2] }, { id: 1, parent: 0, children: [] }, { id: 2, parent: 0, children: [] }]
+  const a = { id: 'A', nodes: nodes() }, b = { id: 'B', nodes: nodes() }
+  const before = [a, b]
+  // In the forest, A is drawn as 1–3 and B as 4–6.
+  const picks = new Set([2, 4, 5])
+  assert.equal(carryPicks(picks, before, before), picks)
+  // A moved or renamed keeps its nodes, and its picks.
+  assert.deepEqual([...carryPicks(picks, before, [{ ...a, name: 'x' }, b])], [2, 4, 5])
+  // A removed: B's picks are renumbered to where B is drawn now; A's are gone.
+  assert.deepEqual([...carryPicks(picks, before, [b])], [1, 2])
+  // B edited (a removal inside it): its picks go with it.
+  assert.deepEqual([...carryPicks(picks, before, [a, { ...b, nodes: nodes() }])], [2])
+  assert.equal(carryPicks(new Set([4]), before, [a]).size, 0)
+})
+
+test('a subtree layer: aligned leaves line up within each subtree, and a carried subtree snaps level with a nearby one', async () => {
+  const { forestTree } = await import('../src/components/gene-trees/workspace.js')
+  const { alignSnap, alignXOf } = await import('../src/components/gene-trees/treeLayout.js')
+  const leafNode = (id, parent, label) => ({ id, parent, children: [], branch_length: 1, leaf: { label } })
+  const inner = (id, parent, children) => ({ id, parent, children, branch_length: 1, leaf: null })
+  // F1 is two levels deep, F2 one: aligned across the layer, F2's tips used to be pushed out to F1's.
+  const deep = [inner(0, -1, [1, 2]), leafNode(1, 0, 'A'), inner(2, 0, [3, 4]), leafNode(3, 2, 'B'), leafNode(4, 2, 'C')]
+  const shallow = [inner(0, -1, [1, 2]), leafNode(1, 0, 'D'), leafNode(2, 0, 'E')]
+  const layer = { fragments: [{ id: 'F1', source: {}, nodes: deep }, { id: 'F2', source: {}, nodes: shallow }] }
+  const layout = layoutTree(indexTree(forestTree(layer)), emptyViewState(), { rowPitch: 20, levelWidth: 30, alignLeaves: true })
+  const leavesOf = id => { const lane = layout.items.find(i => i.node.fragRoot === id).lane; return layout.items.filter(i => i.lane === lane && i.kind === 'leaf') }
+  // Each subtree's tips share one x, its own: F1's two levels out, F2's one.
+  assert.deepEqual([...new Set(leavesOf('F1').map(i => i.x))], [90])
+  assert.deepEqual([...new Set(leavesOf('F2').map(i => i.x))], [60])
+  assert.deepEqual([...new Set(leavesOf('F2').map(i => alignXOf(layout, i)))], [60])
+  const f2Lane = leavesOf('F2')[0].lane
+  const t = { k: 1, kx: 2, x: 0, y: 0 }
+  // Carried 55px right on screen (27.5 world units at kx 2): 5px short of F1's column (30 world = 60px), so it snaps.
+  const snap = alignSnap(layout, t, f2Lane, 55, 0)
+  assert.equal(snap.worldDx, 30)
+  assert.equal(snap.dx, 60)
+  assert.equal(snap.column, 90)
+  // Too far off the column, or too far away down the page: no snap.
+  assert.equal(alignSnap(layout, t, f2Lane, 30, 0), null)
+  assert.equal(alignSnap(layout, t, f2Lane, 60, 20 * 10), null)
+  // Without aligned leaves there is nothing to line up.
+  const unaligned = layoutTree(indexTree(forestTree(layer)), emptyViewState(), { rowPitch: 20, levelWidth: 30 })
+  assert.equal(alignSnap(unaligned, t, f2Lane, 60, 0), null)
+})
+
 test('every copy of the focus gene keeps its label when zoomed out', () => {
   const index = indexTree(TREE)
   const layout = layoutTree(index, emptyViewState(), { rowPitch: 20, levelWidth: 20 })
@@ -339,4 +510,67 @@ test('every copy of the focus gene keeps its label when zoomed out', () => {
   assert.ok(plan.labelled.has(2) && plan.labelled.has(8))
   const without = labelPlan(layoutTree(index, emptyViewState(), { rowPitch: 20, levelWidth: 20 }), index, t, {}, new Set(), 2, new Set([2, 1, 0]), null)
   assert.ok(!without.labelled.has(8))
+})
+
+test('neighbourhood: genes match by family, borrow a family through their symbol, else match by symbol', async () => {
+  const { buildMatcher, sharedGroups, groupColours, linkedLeaves, FAMILY_PALETTE } = await import('../src/components/gene-trees/neighbourhoodMatch.js')
+  const g = (id, name, families) => ({ id, name, families })
+  const rows = new Map([
+    // Ensembl rows: every gene in a library tree.
+    [1, { center: 'h2', genes: [g('h1', 'NOC2L', [7]), g('h2', 'SAMD11', [1]), g('h3', 'KLHL17', [9]), g('h4', 'OR4F16', [30])] }],
+    [2, { center: 'm2', genes: [g('m1', 'Noc2l', [7]), g('m2', 'Samd11', [1]), g('m3', 'Klhl17', [9]), g('m4', 'Vmn2r129', [31])] }],
+    // A RefSeq row: in no tree, so its genes join their namesakes' families.
+    [3, { center: 'r2', genes: [g('r1', 'NOC2L', []), g('r2', 'SAMD11', []), g('r3', 'PLEKHN1', [])] }],
+    [4, { error: 'not indexed' }],
+  ])
+  const byFamily = buildMatcher(rows, 'family')
+  assert.equal(byFamily.group(rows.get(3).genes[0]), 'f:7')
+  assert.equal(byFamily.related(rows.get(1).genes[0], rows.get(2).genes[0]), 'family')
+  assert.equal(byFamily.related(rows.get(1).genes[0], rows.get(3).genes[0]), 'symbol')
+  assert.equal(byFamily.related(rows.get(1).genes[3], rows.get(2).genes[3]), null)
+  const { rows: counts, order } = sharedGroups(rows, byFamily)
+  // NOC2L's family is beside the gene in three rows, KLHL17's in two; the rows' own gene
+  // (SAMD11) and one-offs are not shared.
+  assert.deepEqual(order, ['f:7', 'f:9'])
+  assert.equal(counts.get('f:7'), 3)
+  // 'Most shared' colours the first few only, from the family palette, never cycling.
+  const top = groupColours(order, 'top', true)
+  assert.deepEqual([...top], [['f:7', FAMILY_PALETTE.light[0]], ['f:9', FAMILY_PALETTE.light[1]]])
+  assert.equal(groupColours(order, 'plain').size, 0)
+  // By symbol alone, families are ignored.
+  const bySymbol = buildMatcher(rows, 'symbol')
+  assert.equal(bySymbol.group(rows.get(1).genes[0]), 's:noc2l')
+  assert.equal(bySymbol.related(rows.get(1).genes[0], rows.get(2).genes[0]), 'symbol')
+  // Only linked leaves are asked about.
+  const nodes = [{ id: 0 }, { id: 1, leaf: {} }, { id: 2, leaf: {} }]
+  const links = { 1: { status: 'linked', assembly: 'GCA_1', gene: { id: 'G1' } }, 2: { status: 'no_index', assembly: 'GCA_2' } }
+  assert.deepEqual([...linkedLeaves(nodes, links)], [[1, 'GCA_1:G1']])
+})
+
+test('neighbourhood: rows link each gene once, tandem copies to the copy in the same place', async () => {
+  const { buildMatcher, pairRows } = await import('../src/components/gene-trees/neighbourhoodMatch.js')
+  const g = (id, name, families = [5]) => ({ id, name, families })
+  // Upper: A A' C  (two copies of family 5 before the tree gene); lower: X C A (one copy, after it).
+  const upper = { center: 'u3', genes: [g('u1', 'A'), g('u2', 'A'), g('u3', 'C', [1])] }
+  const lower = { center: 'l2', genes: [g('l1', 'X', [8]), g('l2', 'C', [1]), g('l3', 'A')] }
+  const matcher = buildMatcher(new Map([[1, upper], [2, lower]]), 'family')
+  const pairs = pairRows(upper, lower, matcher)
+  // C to C; lower's single A to the upper copy nearest its place (one before the gene, not two).
+  assert.deepEqual(pairs.map(({ a, b, via }) => [a, b, via]), [[2, 1, 'family'], [1, 2, 'family']])
+})
+
+test('neighbourhood: a data column aligns the column at the tips and pushes every label past it', async () => {
+  const { labelScreenX } = await import('../src/components/gene-trees/paintTree.js')
+  const index = indexTree(TREE)
+  const plain = layoutTree(index, emptyViewState(), { levelWidth: 20 })
+  const withData = layoutTree(index, emptyViewState(), { levelWidth: 20, dataColumn: 300 })
+  assert.equal(plain.alignX, undefined)
+  const tips = withData.items.filter(i => i.kind === 'leaf')
+  assert.equal(withData.alignX, Math.max(...tips.map(i => i.x)))
+  const t = { k: 1, kx: 1, x: 0, y: 0 }
+  // Every label starts at one x, the column's width past the furthest tip.
+  const starts = new Set(tips.map(i => labelScreenX(withData, t, i)))
+  assert.deepEqual([...starts], [withData.alignX + 300])
+  const flipped = layoutTree(index, emptyViewState(), { levelWidth: 20, dataColumn: 300, flipHorizontal: true })
+  assert.deepEqual([...new Set(flipped.items.filter(i => i.kind === 'leaf').map(i => labelScreenX(flipped, t, i)))], [flipped.alignX - 300])
 })

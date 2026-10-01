@@ -6,40 +6,115 @@ import SelectionBar from './SelectionBar.jsx'
 import LayerBar from './LayerBar.jsx'
 import TreePicker from './TreePicker.jsx'
 import TreeCycle from './TreeCycle.jsx'
-import { CladeMenu, DataViewMenu, LayerSwitcher, ToolButton, UndoRedo } from './ToolGroup.jsx'
-import { NEIGHBOURHOOD_FLANK, sharedColours, useNeighbourhoods } from './neighbourhoodData.js'
+import { DataViewMenu, NodesButton, ToolButton } from './ToolGroup.jsx'
+import { FAMILY_PALETTE, FLANK_CHOICES, NEIGHBOUR_PALETTE, NEIGHBOURHOOD_FLANK, buildMatcher, groupColours, pairRows, sharedGroups, useNeighbourhoods } from './neighbourhoodData.js'
 import { LAYER_TOOLS, TOOLS } from './tools.js'
 import useWorkspace from './useWorkspace.js'
 import {
-  activeLayer, addFragments, addLayer, createFragment, duplicateLayer, forestStats, forestTree, layerStats, mergeLayers,
+  activeLayer, addFragments, addLayer, carryPicks, createFragment, duplicateLayer, forestStats, forestTree, layerStats, mergeLayers,
   removeLayer, replaceFragment, updateLayer,
 } from './workspace.js'
-import { extract, fragmentGrafts, graft, mergeWithGrafts, prune, reroot, splitAt, toNewick } from './subtreeOps.js'
+import { extract, fragmentGrafts, graft, mergeWithGrafts, prune, splitAt, toNewick } from './subtreeOps.js'
 import { API_BASE } from '../../backendRuntime'
 import { resolveBrowsingControls } from '../../utils/browsingControls.js'
 import { getAssemblyAccession, normalizeGenomeRecord } from '../../utils/genomeIdentity'
 import { genomeForAssembly } from '../alignment-explorer/associations.js'
-import { genomeColorResolver } from '../../genomeColorSchemes'
+import { genomeColorPalette, genomeColorResolver } from '../../genomeColorSchemes'
 import { genomePillColors } from '../../utils/genomePillColors'
 import DrawerChevron from '../DrawerChevron'
 import iconResetRaw from '../../assets/icons/icon_reset.svg?raw'
 import TreeCanvas from './TreeCanvas.jsx'
-import { CollectionDetailsDialog, LibraryDialog, LinkGenomesDialog, LoadTreeDialog } from './dialogs.jsx'
+import { CollectionDetailsDialog, LayerEditDialog, LibraryDialog, LinkGenomesDialog, LoadTreeDialog } from './dialogs.jsx'
 import { api, downloadText, formatBytes, loadPreference, loadViewState, query, savePreference, saveViewState } from './data.js'
-import { NEIGHBOUR_COLUMN_PX, PALETTES, contentBounds, linkStatus, paintTree } from './paintTree.js'
+import { LABEL_GAP, NEIGHBOUR_ROW_PITCH, PALETTES, cladeGenomes, contentBounds, linkStatus, measureTerminal, neighbourColumnPx, neighbourhoodColumn, paintTree } from './paintTree.js'
+import { MATCH_BY, agreement, compareLinks, currentCrossings, untangle } from './compareTrees.js'
+import { ALIGNMENT_ROW_PITCH, ALIGNMENT_WIDTHS, INTRON_CAP_BP, alignmentColumn, conservationRamp, featuresAt, genomicAt } from './alignmentColumn.js'
+import { ALIGNMENT_DEFAULTS, FLANK_CHOICES_BP, INTRON_EDGE_CHOICES, useTreeAlignment } from './alignmentData.js'
 import { layoutTree } from './treeLayout.js'
+import { arrivingView, carryView, composeColumns, isAlignmentView, isDataView, laneViews, scopeView, viewScope, withFragmentViews } from './dataColumns.js'
 import {
-  cladeLabel, cladeTitle, defaultView, descendants, emptyViewState, expandAll, expandEvents, expandSubtree, findLeaves, focusOn, indexTree,
-  leafGeneLabel, leafSpeciesLabel, pathToRoot, showSubtree, speciesCount, toggleCollapsed, toggleFlipped,
+  applyNodeMode, cladeLabel, cladeTitle, defaultView, descendants, emptyViewState, expandSubtree, findLeaves,
+  focusOn, indexTree, leafGeneLabel, leafSpeciesLabel, pathsTo, pathToRoot, foldTo, mirrorClade, showSubtree, speciesCount, toggleCollapsed, toggleFlipped,
 } from './treeModel.js'
 import './geneTrees.css'
 
 const HOVER_CARD_DELAY_MS = 2000
+// A card opened by a click on the alignment stays until the pointer strays this far from it.
+const CLICKED_CARD_STAY_PX = 40
+// What floats over the top of the tree, for the canvas to keep clear: a layer's tool bar,
+// and the gene of focus bar (as tall as the drawer's band, --gt-band-h).
+const LAYER_BAR_INSET = 52
+const FOCUS_BAR_H = 58
+// The layer bar's second row, while two subtrees are compared.
+const COMPARE_ROW_H = 40
 const EVENT_LABELS = { speciation: 'Speciation', duplication: 'Gene duplication', dubious: 'Ambiguous', gene_split: 'Gene split' }
+// The Neighbourhood data view's settings, as first shown: the Neighbourhood view's plain
+// look, with links between rows by gene family.
+const NEIGHBOUR_DEFAULTS = Object.freeze({ flank: NEIGHBOURHOOD_FLANK, colour: 'plain', links: 'on', match: 'family' })
+// What an alignment run is doing, in words.
+const ALIGN_PHASES = { queued: 'Waiting for another alignment to finish', starting: 'Starting', extracting: 'Reading sequences',
+  aligning: 'Aligning with MAFFT', mapping: 'Placing exons on the alignment', saving: 'Saving' }
+const MAFFT_STAGES = { distances: 'distances', tree: 'guide tree', progressive: 'progressive alignment', refining: 'refining' }
+const FEATURE_WORDS = { cds: 'CDS', utr5: '5′ UTR', utr3: '3′ UTR', exon: 'Exon', intron: 'Intron', donor: 'Splice donor',
+  acceptor: 'Splice acceptor', start_codon: 'Start codon', stop_codon: 'Stop codon' }
+const kb = bp => (bp >= 1e6 ? `${(bp / 1e6).toFixed(1)} Mb` : bp >= 1000 ? `${Math.round(bp / 1000).toLocaleString()} kb` : `${bp} bp`)
+const aboutSeconds = s => (s >= 90 ? `about ${Math.round(s / 60)} min` : `about ${Math.max(1, Math.round(s))} s`)
+
 const STATUS_LABELS = {
   topbar: 'In a genome in the top bar', local: 'In a local genome not in the top bar',
   genome: 'Species is local, gene not found in its annotation', pending: 'Checking local proteins…',
+  no_index: 'Species is local, but its annotation is not indexed',
   unresolved: 'Not in a local genome', none: 'Not in a local genome',
+}
+
+/** What a leaf's link says, for the hover card and the drawer: which genome, and why no gene. */
+function statusText(link, status, leaf = null) {
+  const genome = link?.genome_name || link?.assembly || 'Its genome'
+  if (status === 'no_index') {
+    return link?.annotation === false
+      ? `${genome} is local, but its annotation is not downloaded`
+      : `${genome} is local, but its annotation is not indexed, so its genes could not be looked up`
+  }
+  if (status === 'genome') {
+    // Looked for and not there: usually the tree was built on another annotation of the
+    // species (an older assembly, or another provider), whose gene IDs the local one lacks.
+    const id = leaf?.gene_id || leaf?.protein_id
+    return `${genome} is local, but ${id ? `${id} is` : 'this gene is'} not in its annotation — the tree may use another annotation of this species`
+  }
+  return STATUS_LABELS[status]
+}
+
+/** A shared group's name for the key: its family's tree name, else the name of a gene in it. */
+function groupName(group, neighbours) {
+  const family = group.startsWith('f:') ? neighbours.families?.get(group.slice(2)) : null
+  if (family) return family.name
+  for (const entry of neighbours.byLeafId.values()) {
+    const gene = entry?.genes?.find(g => g.name && neighbours.matcher.group(g) === group)
+    if (gene) return gene.name
+  }
+  return group.startsWith('f:') ? 'A gene family' : group.slice(2)
+}
+
+/**
+ * The nodes of the subtrees showing one of `views` (a layer), or every node (the Original):
+ * what a data view fetches its data for.
+ */
+function nodesShowing(display, layer, fragmentViews, views) {
+  if (!layer || !display?.fragmentOf) return display?.nodes
+  return display.nodes.filter(node => {
+    const at = display.fragmentOf.get(node.id)
+    return at && views.includes(fragmentViews.get(layer.fragments[at[0]]?.id))
+  })
+}
+
+/** The branching down to every gene in a local genome, in the top bar or not (null if none). */
+function localPathsOf(index, links, topbarAssemblies) {
+  if (!index) return null
+  const leaves = Object.keys(links).map(Number).filter(id => {
+    const status = linkStatus(links[id], topbarAssemblies)
+    return (status === 'topbar' || status === 'local') && id < index.nodes.length
+  })
+  return leaves.length ? pathsTo(index, leaves) : null
 }
 
 function Glyph({ kind }) {
@@ -50,9 +125,14 @@ function Glyph({ kind }) {
   if (kind === 'topbar') return <svg {...common}><circle cx="9" cy="9" r="5" className="gt-g-linked-fill" /></svg>
   if (kind === 'local') return <svg {...common}><circle cx="9" cy="9" r="4.5" className="gt-g-local" /><circle cx="9" cy="9" r="1.8" className="gt-g-linked-fill" /></svg>
   if (kind === 'genome') return <svg {...common}><circle cx="9" cy="9" r="4.5" className="gt-g-genome" /></svg>
+  if (kind === 'no_index') return <svg {...common}><circle cx="9" cy="9" r="4.5" className="gt-g-genome gt-g-noindex" /></svg>
   if (kind === 'unresolved') return <svg {...common}><circle cx="9" cy="9" r="4.5" className="gt-g-none" /></svg>
   if (kind === 'focus') return <svg {...common}><circle cx="9" cy="9" r="6" className="gt-g-focus" /></svg>
   if (kind === 'collapsed') return <svg {...common}><rect x="1" y="4" width="16" height="10" rx="5" className="gt-g-pill" /></svg>
+  if (kind === 'collapsed_topbar' || kind === 'collapsed_local') {
+    return <svg {...common}><rect x="3" y="5.5" width="12" height="7" rx="3.5" className="gt-g-pill" />
+      <rect x="1.25" y="3.75" width="15.5" height="10.5" rx="5.25" className={kind === 'collapsed_topbar' ? 'gt-g-ring-topbar' : 'gt-g-ring-local'} /></svg>
+  }
   return <svg {...common}><circle cx="9" cy="9" r="4" className="gt-g-speciation" /></svg>
 }
 
@@ -97,6 +177,12 @@ function Stat({ value, label }) {
 // The genome browser's re-centre mark, from the same file its focus bar draws it from.
 const RESET_ICON_PATH_D = (String(iconResetRaw).match(/<path[^>]*\sd=(['"])(.*?)\1/i) || [])[2] || ''
 
+// The data view shown, for this session only. A relaunch opens on the Original tree, fitted,
+// where a data view is mostly a gap (most leaves unlinked) with the names pushed past it; so
+// a new session starts with none, and switching to another view and back keeps it.
+let sessionDataView = 'off'
+try { localStorage.removeItem('gene-trees:dataView') } catch { /* it was only ever a preference */ }
+
 const sameSource = (a, b) => a?.collectionId === b?.collectionId && a?.treeId === b?.treeId
 
 /** A fragment's name: the user's, else a lone leaf's species, else the clade's name (or its species count). */
@@ -127,11 +213,15 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   // and the tools that cut and join them.
   const { ws, commit, patch, undo, canUndo, canRedo } = useWorkspace()
   const [tool, setToolState] = useState('explore')
-  const [lastTool, setLastTool] = useState('select')
   const [picks, setPicks] = useState({ key: '', ids: new Set() })
-  const [wholeClades, setWholeClades] = useState(false)
   const [selectionDrag, setSelectionDrag] = useState(null)
   const [layerDrag, setLayerDrag] = useState(null) // a fragment being dragged by Move, Merge or Graft
+  // The subtree whose name is being typed over its tag (the Rename tool), by fragment id.
+  const [naming, setNaming] = useState(null)
+  // Compare: the first subtree picked, while the second is being chosen.
+  const [comparePick, setComparePick] = useState(null)
+  // Each layer's flips from before its comparison untangled them, to put back when it ends.
+  const flipsBeforeCompare = useRef({})
   const drawerBody = useRef(null)
   const lastFocusGenes = useRef([])
   const [fitKey, setFitKey] = useState(0)
@@ -141,13 +231,29 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   const [layoutName, setLayoutName] = useState(() => loadPreference('layout', 'curved'))
   const [phylogram, setPhylogram] = useState(() => loadPreference('phylogram', false))
   const [flipH, setFlipH] = useState(false)
-  const [flipV, setFlipV] = useState(false)
   const [alignLeaves, setAlignLeaves] = useState(() => loadPreference('alignLeaves', false))
   const [shape, setShape] = useState(() => loadPreference('shape', 'linear'))
   // A data view beside the leaves (the Neighbourhood view's synteny), or 'off'.
-  const [dataView, setDataView] = useState(() => loadPreference('dataView', 'off'))
+  const [dataView, setDataView] = useState(() => sessionDataView)
+  // The Nodes button's state (tools.js NODE_MODES): what pressing it applies. Only pressing it
+  // or choosing a state applies one — a tree opens as it always does. `highlighted`: the tree
+  // (display key) Highlight local was applied to, the only one it fades.
+  const [nodeMode, setNodeMode] = useState(() => loadPreference('nodeMode', 'expand-all'))
+  const [highlighted, setHighlighted] = useState('')
+  // The Neighbourhood view's own settings: genes each side, colouring, links, and how
+  // genes in different rows are matched.
+  const [neighbourOpts, setNeighbourOpts] = useState(() => ({ ...NEIGHBOUR_DEFAULTS, ...loadPreference('neighbourhood', {}) }))
+  const setNeighbourOpt = useCallback((key, value) => setNeighbourOpts(opts => ({ ...opts, [key]: value })), [])
+  // The aligned-transcript columns' settings: the region aligned, which transcript, the width.
+  const [alignOpts, setAlignOpts] = useState(() => ({ ...ALIGNMENT_DEFAULTS, ...loadPreference('alignment', {}) }))
+  const setAlignOpt = useCallback((key, value) => setAlignOpts(opts => ({ ...opts, [key]: value })), [])
+  // Where along the alignment the column is looking, shared by the alignment columns and
+  // moved by the column's own gestures (so a pan repaints, not re-renders).
+  const alignView = useRef({ c0: 0, c1: 0 })
+  const alignViewSequence = useRef({ c0: 0, c1: 0 }) // Sequence's own, while Structure shows beside it
   const [copied, setCopied] = useState(false)
   const hoverTimer = useRef(null)
+  const clickedCard = useRef(null) // where an alignment card was opened by a click
   const hoverPending = useRef(null)
   const [dialog, setDialog] = useState(null) // {kind, collection?}
   const [hover, setHover] = useState(null)
@@ -169,7 +275,9 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   useEffect(() => savePreference('drawer', drawerOpen), [drawerOpen])
   useEffect(() => savePreference('alignLeaves', alignLeaves), [alignLeaves])
   useEffect(() => savePreference('shape', shape), [shape])
-  useEffect(() => savePreference('dataView', dataView), [dataView])
+  useEffect(() => { sessionDataView = dataView }, [dataView])
+  useEffect(() => savePreference('neighbourhood', neighbourOpts), [neighbourOpts])
+  useEffect(() => savePreference('alignment', alignOpts), [alignOpts])
   useEffect(() => () => clearTimeout(hoverTimer.current), [])
 
   // The details card waits for the pointer to rest on something for a couple of seconds,
@@ -177,6 +285,21 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   // hovers while the view is being zoomed or panned, so the wait only starts once the
   // view is still.
   const onCanvasHover = useCallback((hit, x, y) => {
+    // A card opened by a click stays put while the pointer stays near it. It goes when the
+    // pointer strays, the view moves (a hover of null, no position) or the pointer leaves.
+    const clicked = clickedCard.current
+    if (clicked) {
+      if (x !== undefined && Math.hypot(x - clicked.x, y - clicked.y) <= CLICKED_CARD_STAY_PX) return
+      clickedCard.current = null
+      setHover(null)
+    }
+    // Over an alignment the card waits for a click (onColumnClick): crossing the bases on the
+    // way somewhere, or resting there between pans, it kept popping up.
+    if (hit?.fromColumn && hit.part === 'alignment') {
+      clearTimeout(hoverTimer.current)
+      hoverPending.current = null
+      return
+    }
     if (!hit) {
       clearTimeout(hoverTimer.current)
       hoverPending.current = null
@@ -193,6 +316,14 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
         if (pending) setHover({ hit: pending.hit, x: pending.x, y: pending.y })
       }, HOVER_CARD_DELAY_MS)
     }
+  }, [])
+
+  const onColumnClick = useCallback((hit, x, y) => {
+    if (hit.part !== 'alignment') return
+    clearTimeout(hoverTimer.current)
+    hoverPending.current = null
+    clickedCard.current = { x, y }
+    setHover({ hit, x, y })
   }, [])
 
   const refreshCollections = useCallback(async () => {
@@ -213,6 +344,9 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   // A layer tool only means something in a layer: anywhere else the canvas explores.
   const activeTool = !layer && LAYER_TOOLS.some(t => t.id === tool) ? 'explore' : tool
   const displayKey = layer ? `l:${layer.id}` : current ? `o:${current.collectionId}:${current.treeId}` : ''
+  // A name half-typed is let go when what is shown changes (its text box goes with the view).
+  const [namingKey, setNamingKey] = useState(displayKey)
+  if (namingKey !== displayKey) { setNamingKey(displayKey); setNaming(null) }
   const index = useMemo(() => (display ? indexTree(display) : null), [display])
   const links = useMemo(() => display?.links || {}, [display])
   const view = layer ? (layerViews[layer.id] || emptyViewState()) : origView
@@ -221,11 +355,25 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     else setOrigView(next)
   }, [layer])
   const focusLeaf = focus.key === displayKey && index && focus.id < index.nodes.length ? focus.id : -1
+  // Two subtrees of this layer being compared, while both are still in it.
+  const comparing = layer?.compare && layer.fragments.some(f => f.id === layer.compare.a) && layer.fragments.some(f => f.id === layer.compare.b)
+    ? layer.compare : null
+  const comparePicking = tool === 'compare' && layer ? comparePick : null
   const setFocusLeaf = useCallback(id => setFocus({ key: displayKey, id }), [displayKey])
-  const picked = picks.key === displayKey && picks.ids.size ? picks.ids : null
-  const setPicked = useCallback(ids => setPicks({ key: displayKey, ids: new Set(ids) }), [displayKey])
+  // In a layer, picks follow its edits: those whose subtree an edit changed are dropped, so
+  // removing what was picked leaves nothing picked (and the selection bar goes).
+  const picked = useMemo(() => {
+    if (picks.key !== displayKey || !picks.ids.size) return null
+    const ids = layer ? carryPicks(picks.ids, picks.fragments, layer.fragments) : picks.ids
+    return ids.size ? ids : null
+  }, [picks, displayKey, layer])
+  const layerFragments = layer?.fragments
+  const setPicked = useCallback(ids => setPicks({ key: displayKey, ids: new Set(ids), fragments: layerFragments }), [displayKey, layerFragments])
   const preferAssemblies = useMemo(() => [...new Set((topBarGenomes || []).map(g => getAssemblyAccession(g)).filter(Boolean))], [topBarGenomes])
   const topbarAssemblies = useMemo(() => new Set(preferAssemblies), [preferAssemblies])
+  // The branching down to every gene in a local genome (in the top bar or not): what
+  // Expand to local opens, Collapse to local keeps open, and Highlight local lights.
+  const localPaths = useMemo(() => localPathsOf(index, links, topbarAssemblies), [index, links, topbarAssemblies])
   const prefer = preferAssemblies.join(',')
 
   const chooseFocus = useCallback((idx, data, geneIds) => {
@@ -245,8 +393,13 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
       const data = await api(`/datasets/${collectionId}/trees/${encodeURIComponent(treeId)}`)
       const idx = indexTree(data)
       const stored = loadViewState(collectionId, treeId)
-      let focus = target?.geneIds?.length ? chooseFocus(idx, data, target.geneIds) : (stored?.focus ?? -1)
+      // A gene of focus only when one is asked for (a gene carried from another view or tree),
+      // or, coming back to the view, the one the user left. A tree opened from a search or
+      // the library opens with none.
+      let focus = target?.geneIds?.length ? chooseFocus(idx, data, target.geneIds) : restore ? (stored?.focus ?? -1) : -1
       if (focus >= idx.nodes.length) focus = -1
+      // With none, the gene focused before is let go too, so a layer does not bring it back.
+      if (focus < 0) lastFocusGenes.current = []
       const nextView = target?.geneIds?.length || !stored
         ? defaultView(idx, focus)
         : { collapsed: stored.collapsed, flipped: stored.flipped, root: stored.root < idx.nodes.length ? stored.root : 0 }
@@ -317,15 +470,145 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
 
 
   const displayStats = useMemo(() => (layer ? forestStats(forest.nodes) : treeData?.stats || {}), [layer, forest, treeData])
-  // The Neighbourhood column: shown in the linear layout, for the leaves linked to local genes.
-  const showNeighbourhoods = dataView === 'neighbourhood' && shape === 'linear'
-  const neighbourData = useNeighbourhoods(display?.nodes, links, showNeighbourhoods)
-  const neighbours = useMemo(() => (showNeighbourhoods
-    ? { ...neighbourData, ...sharedColours(neighbourData.byLeafId) } : null), [showNeighbourhoods, neighbourData])
-  const layout = useMemo(() => (index && view ? layoutTree(index, view, {
-    layout: layoutName, phylogram: phylogram && displayStats.has_branch_lengths, flipHorizontal: flipH, flipVertical: flipV,
-    alignLeaves, shape, dataColumn: showNeighbourhoods ? NEIGHBOUR_COLUMN_PX : 0,
-  }) : null), [index, view, layoutName, phylogram, flipH, flipV, alignLeaves, shape, displayStats, showNeighbourhoods])
+  // The data views on show (linear layout only). The Original shows one, or none; in a layer
+  // each subtree shows its own (`fragment.dataView`, see dataColumns.js).
+  const fragmentViews = useMemo(() => new Map((layer?.fragments || []).map(f => [f.id, isDataView(f.dataView) ? f.dataView : 'off'])), [layer])
+  const shownViews = useMemo(() => {
+    if (shape !== 'linear') return new Set()
+    if (!layer) return new Set(isDataView(dataView) ? [dataView] : [])
+    return new Set([...fragmentViews.values()].filter(isDataView))
+  }, [shape, layer, dataView, fragmentViews])
+  const viewsKey = [...shownViews].sort().join(',')
+  // A details card belongs to what was under the pointer: gone when the tree, layer or views change.
+  useEffect(() => { clearTimeout(hoverTimer.current); hoverPending.current = null; clickedCard.current = null; setHover(null) }, [displayKey, viewsKey])
+  // The nodes each kind of view covers: in a layer, only the subtrees showing it.
+  const neighbourNodes = useMemo(() => nodesShowing(display, layer, fragmentViews, ['neighbourhood']), [display, layer, fragmentViews])
+  const alignNodes = useMemo(() => nodesShowing(display, layer, fragmentViews, ['structure', 'sequence']), [display, layer, fragmentViews])
+  // The Neighbourhood column: for the leaves linked to local genes.
+  const showNeighbourhoods = shownViews.has('neighbourhood')
+  const flank = FLANK_CHOICES.includes(neighbourOpts.flank) ? neighbourOpts.flank : NEIGHBOURHOOD_FLANK
+  const neighbourData = useNeighbourhoods(neighbourNodes, links, showNeighbourhoods, flank)
+  const neighbours = useMemo(() => {
+    if (!showNeighbourhoods) return null
+    const matcher = buildMatcher(neighbourData.byLeafId, neighbourOpts.match)
+    const { rows, order } = sharedGroups(neighbourData.byLeafId, matcher)
+    // Which genes link between two rows, worked out once per pair of rows on show.
+    const pairs = new Map()
+    const pairsFor = (upperId, lowerId, upper, lower) => {
+      const key = `${upperId}|${lowerId}`
+      if (!pairs.has(key)) pairs.set(key, pairRows(upper, lower, matcher))
+      return pairs.get(key)
+    }
+    return { ...neighbourData, flank, matcher, rows, order, colours: groupColours(order, neighbourOpts.colour, isLight),
+      colourMode: neighbourOpts.colour, links: neighbourOpts.links === 'on', pairsFor }
+  }, [showNeighbourhoods, neighbourData, flank, neighbourOpts, isLight])
+  // Plain words throughout: say what a choice does, not how it works.
+  const plainBlue = isLight ? '#0099ff' : '#3b82f6', plainOrange = isLight ? '#f97316' : '#fb923c'
+  const neighbourOptions = [
+    { id: 'flank', label: 'Genes on each side', value: flank, onChange: v => setNeighbourOpt('flank', v),
+      choices: FLANK_CHOICES.map(n => ({ id: n, label: String(n) })) },
+    { id: 'match', label: 'Treat genes as related when they share', value: neighbourOpts.match, onChange: v => setNeighbourOpt('match', v),
+      choices: [
+        { id: 'family', label: 'A gene family', hint: 'They are in the same gene tree' },
+        { id: 'symbol', label: 'A name', hint: 'They have the same gene symbol' },
+      ],
+      note: neighbourOpts.match === 'family' ? 'Genes that aren’t in any of your trees are matched by name instead.' : null },
+    { id: 'links', kind: 'check', label: 'Link related genes', checked: neighbourOpts.links === 'on',
+      onChange: on => setNeighbourOpt('links', on ? 'on' : 'off'),
+      hint: neighbourOpts.match === 'family' ? 'A solid line means same family, a dashed line same name.' : 'A dashed line joins genes with the same name.' },
+    { id: 'colour', label: 'Colour', value: neighbourOpts.colour, onChange: v => setNeighbourOpt('colour', v),
+      choices: [
+        { id: 'plain', label: 'Plain', hint: 'As in the Neighbourhood view', swatch: [plainBlue, plainOrange, plainBlue] },
+        { id: 'top', label: 'Most common', hint: `The ${FAMILY_PALETTE.dark.length} most common ${neighbourOpts.match === 'family' ? 'families' : 'genes'} stand out`,
+          swatch: FAMILY_PALETTE[isLight ? 'light' : 'dark'] },
+        { id: 'all', label: 'All repeated', hint: 'Anything found in more than one row', swatch: NEIGHBOUR_PALETTE.slice(0, 5) },
+      ] },
+  ]
+  // The Structure and Sequence columns: each linked leaf's transcript in the columns of one
+  // alignment, drawn as a gene model or as its bases. Both share the alignment (in a layer, of
+  // every subtree showing either) and, one at a time, the view along it.
+  const showStructure = shownViews.has('structure') || shownViews.has('sequence')
+  const showStructureModel = shownViews.has('structure'), showSequence = shownViews.has('sequence')
+  const alignWidth = ALIGNMENT_WIDTHS[alignOpts.width] || ALIGNMENT_WIDTHS.m
+  const alignment = useTreeAlignment(alignNodes, links, alignOpts, showStructure, layer ? layer.name : treeData?.name || 'gene tree')
+  const alignOptions = [
+    { id: 'region', label: 'Align', value: alignOpts.region, onChange: v => setAlignOpt('region', v),
+      choices: [
+        { id: 'exons', label: 'Exons', hint: `With ${alignOpts.intron_edge} bases of each intron's ends` },
+        { id: 'genomic', label: 'Whole gene', hint: 'Introns and all: slower, and much longer' },
+      ] },
+    { id: 'flank', label: 'Bases beyond the transcript', value: alignOpts.flank, onChange: v => setAlignOpt('flank', v),
+      choices: FLANK_CHOICES_BP.map(n => ({ id: n, label: String(n) })) },
+    ...(alignOpts.region === 'exons' ? [{ id: 'edge', label: 'Intron bases kept at each end', value: alignOpts.intron_edge,
+      onChange: v => setAlignOpt('intron_edge', v), choices: INTRON_EDGE_CHOICES.map(n => ({ id: n, label: String(n) })) }] : []),
+    { id: 'transcript', label: 'Transcript', value: alignOpts.transcript, onChange: v => setAlignOpt('transcript', v),
+      choices: [
+        { id: 'canonical', label: 'Canonical', hint: 'Each gene’s canonical transcript' },
+        { id: 'tree', label: 'The tree’s', hint: 'The one the tree was built from, where it says' },
+      ] },
+    { id: 'colour', label: 'Colour', value: alignOpts.colour || 'features', onChange: v => setAlignOpt('colour', v),
+      choices: [
+        { id: 'features', label: 'Features', hint: 'Coding, UTR, introns and splice sites, as the genome browser colours them' },
+        { id: 'conservation', label: 'Conservation', hint: 'Each base by how many of the genes share it, blue for few to red for all',
+          swatch: conservationRamp().filter((_, i) => i % 6 === 0).concat(conservationRamp().slice(-1)) },
+      ] },
+    { id: 'width', label: 'Column width', value: alignOpts.width, onChange: v => setAlignOpt('width', v),
+      choices: [{ id: 's', label: 'Narrow' }, { id: 'm', label: 'Medium' }, { id: 'l', label: 'Wide' }] },
+  ]
+  const structureOptions = [
+    { id: 'boundaries', kind: 'check', label: 'Mark shared exon boundaries', checked: alignOpts.boundaries !== false,
+      onChange: on => setAlignOpt('boundaries', on), hint: 'A splice boundary other genes have at the same aligned position gets a white edge, bolder the more genes share it.' },
+    ...alignOptions,
+  ]
+  const sequenceOptions = [
+    { id: 'differences', kind: 'check', label: 'Show differences only', checked: Boolean(alignOpts.differences),
+      onChange: on => setAlignOpt('differences', on), hint: 'Bases that agree with the consensus fade, so changes stand out.' },
+    ...alignOptions,
+  ]
+  const widthOf = useCallback(v => (v === 'neighbourhood' ? neighbourColumnPx(flank) : isAlignmentView(v) ? alignWidth : 0), [flank, alignWidth])
+  const layout = useMemo(() => {
+    if (!index || !view) return null
+    const views = [...shownViews]
+    const lay = layoutTree(index, view, {
+      layout: layoutName, phylogram: phylogram && displayStats.has_branch_lengths, flipHorizontal: flipH,
+      alignLeaves, shape, dataColumn: Math.max(0, ...views.map(widthOf)),
+      // Rows a little further apart while a column shows, so links between them have room
+      // (in a layer, as far apart as the roomiest view on show needs, so rows still line up).
+      rowPitch: views.length ? Math.max(...views.map(v => (v === 'neighbourhood' ? NEIGHBOUR_ROW_PITCH : ALIGNMENT_ROW_PITCH))) : undefined,
+      // How far past its tips each subtree's own column reaches (at zoom 1), so an arranged
+      // subtree that gains one pushes its neighbours along rather than growing into them.
+      fragmentExtra: layer && views.length ? id => widthOf(fragmentViews.get(id)) : undefined,
+      // Comparing, facing: the second subtree points back at the first, its root on the right.
+      mirrorFragments: comparing?.facing && shape !== 'radial' ? new Set([comparing.b]) : undefined,
+    })
+    // A layer's subtrees each push their labels past their own view's column, or none.
+    if (layer && lay.forest && views.length) {
+      lay.laneViews = laneViews(lay, id => fragmentViews.get(id))
+      lay.laneOffsets = lay.laneViews.map(widthOf)
+    }
+    return lay
+  }, [index, view, layoutName, phylogram, flipH, alignLeaves, shape, displayStats, shownViews, widthOf, layer, fragmentViews, comparing?.facing, comparing?.b])
+
+  const column = useMemo(() => {
+    const neighbourCol = showNeighbourhoods && neighbours ? neighbourhoodColumn(neighbours) : null
+    const alignCol = (mode, viewState) => alignmentColumn({ data: alignment.data, pending: alignment.pending, failed: alignment.failed,
+      view: viewState, widthPx: alignWidth, isLight, mode, differences: Boolean(alignOpts.differences),
+      boundaries: alignOpts.boundaries !== false, colour: alignOpts.colour || 'features' })
+    if (!layer) {
+      if (neighbourCol) return neighbourCol
+      if (showStructure) return alignCol(dataView, alignView.current)
+      return null
+    }
+    if (!layout?.laneViews) return null
+    const lanesOf = v => new Set(layout.laneViews.flatMap((lv, lane) => (lv === v ? [lane] : [])))
+    // Structure and Sequence side by side each keep their own place along the alignment.
+    return composeColumns([
+      { column: neighbourCol, lanes: lanesOf('neighbourhood') },
+      { column: showStructureModel ? alignCol('structure', alignView.current) : null, lanes: lanesOf('structure') },
+      { column: showSequence ? alignCol('sequence', showStructureModel ? alignViewSequence.current : alignView.current) : null, lanes: lanesOf('sequence') },
+    ])
+  }, [layer, layout, showNeighbourhoods, neighbours, showStructure, showStructureModel, showSequence, alignment.data, alignment.pending,
+    alignment.failed, alignWidth, isLight, dataView, alignOpts.differences, alignOpts.boundaries, alignOpts.colour])
 
   // Each local genome's own colour, the one its top-bar pill is drawn in, so a local
   // gene in the tree is recognisably "that genome".
@@ -393,12 +676,10 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   }, [searchOpen])
 
   const openSearchResult = result => {
-    const text = searchResults?.text || search.trim()
     setSearchOpen(false)
     setSearch('')
-    // Local copies of the gene first, so the tree opens on the user's own gene.
-    const ids = [...result.matches.map(m => m.gene_id || m.protein_id || m.label), text]
-    openTree(result.collection_id, result.tree_id, { geneIds: ids })
+    // Opening a tree from a search picks no gene of focus: the user chooses one by clicking.
+    openTree(result.collection_id, result.tree_id)
   }
   const onSearchKey = event => {
     if (event.key === 'Escape') { setSearch(''); setSearchOpen(false); return }
@@ -485,7 +766,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
         if (!created) continue
         if (created.tree_count === 1 && !current) {
           const trees = await api(`/datasets/${created.id}/trees${query({ limit: 1 })}`)
-          if (trees.trees?.[0]) openTree(created.id, trees.trees[0].tree_id, focusNode?.leaf ? { geneIds: focusGeneIds() } : null)
+          if (trees.trees?.[0]) openTree(created.id, trees.trees[0].tree_id)
         } else {
           setNotice(`${created.name} is ready: ${created.tree_count.toLocaleString()} trees and ${created.leaf_count.toLocaleString()} genes indexed. Search for a gene to open its tree.`)
           searchInput.current?.focus()
@@ -502,12 +783,20 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
 
   const act = useCallback((item, action) => {
     if (!index || !view) return
-    if (item.kind === 'leaf') { setFocusLeaf(item.id); return }
+    // Clicking the focused gene again lets it go. The focus bar floats over the top of the
+    // tree rather than pushing it down, so the view only moves when the bar would cover the
+    // gene just clicked.
+    if (item.kind === 'leaf') {
+      if (item.id === focusLeaf) { setFocusLeaf(-1); return }
+      setFocusLeaf(item.id)
+      canvasRef.current?.reveal(item.id, (layer ? LAYER_BAR_INSET + (layer.compare ? COMPARE_ROW_H : 0) : 0) + FOCUS_BAR_H)
+      return
+    }
     if (action === 'expand') setView(expandSubtree(index, view, item.id))
     else if (action === 'focus') setView(focusOn(index, view, item.id))
     else if (action === 'flip') setView(toggleFlipped(index, view, item.id))
     else setView(toggleCollapsed(index, view, item.id))
-  }, [index, view, setView, setFocusLeaf])
+  }, [index, view, setView, setFocusLeaf, focusLeaf, layer])
 
   const onNodeClick = useCallback((item, mods) => {
     if (mods.alt) act(item, 'expand')
@@ -529,7 +818,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     }
     if (!genome || !onAddGenome) { setNotice('That genome could not be found locally.'); return }
     const result = await onAddGenome(genome, 'gene_trees', { desired: 'selected' })
-    setNotice(result?.ok === false ? (result.message || 'The genome could not be added to the top bar.') : `${genome.common_name || genome.scientific_name || assembly} is in the top bar.`)
+    if (result?.ok === false) setNotice(result.message || 'The genome could not be added to the top bar.')
   }
 
   const exportTree = async (format, node = null) => {
@@ -542,17 +831,12 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     if (!index) return
     setView(layer ? emptyViewState() : defaultView(index, focusLeaf))
     setFlipH(false)
-    setFlipV(false)
     setFitKey(k => k + 1)
   }
 
   // ── subtree layers ──
 
-  const setTool = useCallback(next => {
-    setToolState(next)
-    // The tool button's face remembers the last of its own tools, not the layer bar's.
-    if (next !== 'explore' && TOOLS.some(t => t.id === next)) setLastTool(next)
-  }, [])
+  const setTool = useCallback(next => setToolState(next), [])
   const clearPicks = useCallback(() => setPicks({ key: '', ids: new Set() }), [])
 
   const layerSummary = l => {
@@ -578,14 +862,14 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
 
   // What is picked, turned into fragments: copied out of the Original, or out of the
   // layer's own fragments (keeping where each node first came from).
-  const picksAsFragments = useCallback((ids, { whole = wholeClades } = {}) => {
+  const picksAsFragments = useCallback(ids => {
     if (!ids?.size || !index) return []
     const collapsed = view?.collapsed || new Set()
     if (!layer) {
       if (!treeData || !current) return []
       const folded = [...ids].filter(id => collapsed.has(id))
       const source = { collectionId: current.collectionId, treeId: current.treeId, treeName: treeData.name }
-      return extract(treeData.nodes, ids, { wholeClades: whole, folded, srcTree: `${current.collectionId}:${current.treeId}`, links: treeData.links })
+      return extract(treeData.nodes, ids, { folded, srcTree: `${current.collectionId}:${current.treeId}`, links: treeData.links })
         .map(nodes => ({ nodes, source }))
     }
     const byFragment = new Map()
@@ -599,10 +883,10 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     const out = []
     for (const [f, sel] of byFragment) {
       const fragment = layer.fragments[f]
-      for (const nodes of extract(fragment.nodes, sel.ids, { wholeClades: whole, folded: sel.folded })) out.push({ nodes, source: fragment.source })
+      for (const nodes of extract(fragment.nodes, sel.ids, { folded: sel.folded })) out.push({ nodes, source: fragment.source, view: fragment.dataView })
     }
     return out
-  }, [index, view, layer, treeData, current, forest, wholeClades])
+  }, [index, view, layer, treeData, current, forest])
 
   const pickCounts = useMemo(() => {
     if (!picked || !index) return { genes: 0, pieces: 0, single: -1 }
@@ -618,12 +902,10 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     }
     return { genes: genes.size, pieces: roots.length, single: roots.length === 1 ? roots[0] : -1 }
   }, [picked, index, view])
-  const pickSummary = `${pickCounts.genes.toLocaleString()} genes · ${picked?.size || 0} picks`
 
   const copyPicks = useCallback(target => {
     const pieces = picksAsFragments(picked)
     if (!pieces.length) { setNotice('Nothing with a gene in it is picked: pick some leaves, or a clade.'); return }
-    let targetName = ''
     commit(w => {
       let next = w
       let id = target
@@ -632,16 +914,16 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
         next = made.ws
         id = made.layer.id
       }
-      targetName = next.layers.find(l => l.id === id)?.name || ''
-      next = addFragments(next, id, pieces.map(p => createFragment(p.nodes, p.source)))
+      // Each arrives showing the layer's data view, if all its subtrees share one; into an
+      // empty layer, the view it showed where it came from (see dataColumns.js).
+      const already = next.layers.find(l => l.id === id)?.fragments || []
+      next = addFragments(next, id, pieces.map(p => carryView(createFragment(p.nodes, p.source), arrivingView(already, layer ? p.view : dataView))))
       return { ...next, active: id, original: false }
     })
     clearPicks()
     setToolState('explore')
     setFitKey(k => k + 1)
-    const genes = pieces.reduce((n, p) => n + p.nodes.filter(x => x.leaf).length, 0)
-    setNotice(`Copied ${genes.toLocaleString()} gene${genes === 1 ? '' : 's'} in ${pieces.length} subtree${pieces.length === 1 ? '' : 's'} into ${targetName}.`)
-  }, [picksAsFragments, picked, commit, clearPicks])
+  }, [picksAsFragments, picked, commit, clearPicks, layer, dataView])
 
   // Operations inside a layer act on the fragment a drawn node belongs to.
   const inFragment = useCallback(id => {
@@ -666,20 +948,6 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     clearPicks()
   }, [layer, picked, inFragment, commit, clearPicks])
 
-  const splitNode = useCallback(id => {
-    const at = inFragment(id)
-    if (!at || at.nodeId === 0) { setNotice('Split cuts below a subtree’s root: click a node inside it.'); return }
-    commit(w => replaceFragment(w, layer.id, at.fragment.id, splitAt(at.fragment.nodes, at.nodeId)))
-    clearPicks()
-  }, [inFragment, commit, layer, clearPicks])
-
-  const rerootNode = useCallback(id => {
-    const at = inFragment(id)
-    if (!at || at.nodeId === 0) return
-    commit(w => replaceFragment(w, layer.id, at.fragment.id, [reroot(at.fragment.nodes, at.nodeId)]))
-    clearPicks()
-    setNotice('Re-rooted. Clade names along the old root path were cleared: they no longer describe their clades.')
-  }, [inFragment, commit, layer, clearPicks])
 
 
   // ── a subtree layer's tools (the bar over the layer) ──
@@ -710,8 +978,217 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     return { ok: false, why: `${fragmentName(from)} is from ${from.source?.treeName || 'another tree'} and ${fragmentName(into)} from ${into.source?.treeName || 'another'}: a merge follows one original tree. Graft them instead.` }
   }, [layer, fragmentName])
 
+  // ── Compare: two subtrees of a layer facing each other, lines between matching genes ──
+
+  const fragmentRootId = useCallback(fragmentId => (forest ? forest.nodes.findIndex(n => n.fragRoot === fragmentId) : -1), [forest])
+  // The lines and where the trees agree (compareTrees.js), for the canvas to draw.
+  const compareModel = useMemo(() => {
+    if (!comparing || !index || shape === 'radial') return null
+    const rootA = fragmentRootId(comparing.a), rootB = fragmentRootId(comparing.b)
+    if (rootA < 0 || rootB < 0) return null
+    const { links, partners, onlyA, onlyB } = compareLinks(index, rootA, rootB, comparing.by || 'species')
+    const agree = agreement(index, rootA, rootB, links)
+    const showConflict = comparing.disagreement !== false
+    const warn = isLight ? '#d08a00' : '#f5b942'
+    const plain = isLight ? '#5d8fc4' : '#7ea7d6'
+    const coloured = links.map(link => ({ ...link,
+      color: !showConflict ? plain
+        : agree.groups.has(link.a) ? NEIGHBOUR_PALETTE[agree.groups.get(link.a) % NEIGHBOUR_PALETTE.length]
+          : agree.unsettled.has(link.a) ? warn : plain }))
+    // What a hovered node lights: a leaf, its partners; a clade, its matched leaves' partners
+    // and, when the other tree has the very same clade, that clade too.
+    const lit = new Map()
+    const partnersOf = id => {
+      if (lit.has(id)) return lit.get(id)
+      const out = new Set()
+      if (index.nodes[id] && !index.nodes[id].virtual) {
+        const under = index.nodes[id].children.length ? descendants(index, id) : [id]
+        for (const leaf of under) {
+          const others = partners.get(leaf)
+          if (!others) continue
+          out.add(leaf)
+          for (const other of others) out.add(other)
+        }
+        if (agree.counterpart.has(id)) out.add(agree.counterpart.get(id))
+      }
+      lit.set(id, out)
+      return out
+    }
+    return { rootA, rootB, links: coloured, partners, partnersOf, agree, onlyA, onlyB, facing: Boolean(comparing.facing), scaleX: comparing.scaleX || 1,
+      conflict: showConflict ? agree.conflict : new Set(), conflictColor: warn,
+      ambiguousColor: isLight ? '#8193a8' : '#6d7f96', faded: new Set([...onlyA, ...onlyB]) }
+  }, [comparing, index, shape, fragmentRootId, isLight])
+  const compareCrossings = useMemo(() => (compareModel && view
+    ? currentCrossings(index, view, compareModel.rootA, compareModel.rootB, compareModel.links) : 0), [compareModel, index, view])
+
+  // Facing: the first subtree where the layer starts, the second to its right with its root on
+  // the right, room between them for both sets of labels and the lines; every other subtree
+  // stacked underneath. Labels keep their size at any zoom, so the room for them is laid out
+  // for one horizontal scale (`scaleX`: the one at which the pair just fills the view's width,
+  // at most 1), and while they face each other the view never goes narrower than that.
+  const measureCtx = useRef(null)
+  const facingPlaces = useCallback((a, b) => {
+    if (!layout?.fragmentBoxes || !index) return null
+    const boxes = layout.fragmentBoxes
+    const boxA = boxes.get(a), boxB = boxes.get(b)
+    if (!boxA || !boxB) return null
+    const ctx = measureCtx.current || (measureCtx.current = document.createElement('canvas').getContext('2d'))
+    const laneOf = id => layout.byId.get(fragmentRootId(id))?.lane
+    const widest = id => {
+      const lane = laneOf(id)
+      let most = 0
+      for (const item of layout.items) {
+        if (item.lane !== lane || item.kind === 'internal') continue
+        most = Math.max(most, measureTerminal(ctx, index, item, null).width)
+      }
+      return most + LABEL_GAP + (layout.laneOffsets?.[lane] || 0)
+    }
+    const dir = flipH ? -1 : 1
+    const all = [...boxes.values()]
+    const top = Math.min(...all.map(box => box.y))
+    const start = dir > 0 ? Math.min(...all.map(box => box.x)) : Math.max(...all.map(box => box.x))
+    const labels = widest(a) + 180 + widest(b)
+    const viewWidth = canvasRef.current?.canvas()?.clientWidth || 1200
+    const scaleX = Math.min(1, Math.max(0.2, (viewWidth - 120 - labels) / Math.max(1, boxA.w + boxB.w)))
+    const gap = labels / scaleX
+    const places = {
+      [a]: { x: start, y: top, w: boxA.w, h: boxA.h },
+      [b]: { x: start + dir * (boxA.w + gap + boxB.w), y: top, w: boxB.w, h: boxB.h },
+    }
+    let cursor = top + Math.max(boxA.h, boxB.h) + layout.pitch * 4
+    for (const fragment of layer.fragments) {
+      if (fragment.id === a || fragment.id === b) continue
+      const box = boxes.get(fragment.id)
+      if (!box) continue
+      places[fragment.id] = { x: start, y: cursor, w: box.w, h: box.h }
+      cursor += box.h + layout.pitch * 3
+    }
+    return { places, scaleX }
+  }, [layout, index, fragmentRootId, flipH, layer])
+  const placedNow = useCallback(() => Object.fromEntries((layer?.fragments || []).map(f => [f.id, f.pos || null])), [layer])
+  const withPlaces = (fragments, places) => fragments.map(f => {
+    if (!(f.id in places)) return f
+    const next = { ...f }
+    if (places[f.id]) next.pos = places[f.id]
+    else delete next.pos
+    return next
+  })
+
+  const untangleCompare = useCallback((model = compareModel) => {
+    if (!model || !index || !view) return
+    const result = untangle(index, view, model.rootA, model.rootB, model.links, model.partners)
+    if (result.after < result.before) setView(result.view)
+  }, [compareModel, index, view, setView])
+
+  const startCompare = useCallback((a, b) => {
+    if (!layer || a === b || shape === 'radial') return
+    const facing = facingPlaces(a, b)
+    const saved = placedNow()
+    commit(w => updateLayer(w, layer.id, l => ({ ...l,
+      fragments: facing ? withPlaces(l.fragments, facing.places) : l.fragments,
+      compare: { a, b, by: l.compare?.by || 'species', facing: Boolean(facing), scaleX: facing?.scaleX ?? 1,
+        disagreement: l.compare?.disagreement !== false, saved } })))
+    // Lines that cross least from the start: the flips it changes are put back at the end.
+    flipsBeforeCompare.current[layer.id] = view?.flipped || new Set()
+    const rootA = fragmentRootId(a), rootB = fragmentRootId(b)
+    if (index && view && rootA >= 0 && rootB >= 0) {
+      const { links, partners } = compareLinks(index, rootA, rootB, layer.compare?.by || 'species')
+      const result = untangle(index, view, rootA, rootB, links, partners)
+      if (result.after < result.before) setView(result.view)
+    }
+    setComparePick(null)
+    setFitKey(k => k + 1)
+  }, [layer, shape, facingPlaces, placedNow, commit, view, index, fragmentRootId, setView])
+
+  const setCompare = useCallback(change => {
+    if (!layer || !comparing) return
+    commit(w => updateLayer(w, layer.id, l => ({ ...l, compare: { ...l.compare, ...change } })))
+  }, [layer, comparing, commit])
+
+  // Facing ⇄ as the user had them: facing keeps where they were, to put them back.
+  const setFacing = useCallback(facing => {
+    if (!layer || !comparing || facing === Boolean(comparing.facing)) return
+    if (facing) {
+      const arranged = facingPlaces(comparing.a, comparing.b)
+      if (!arranged) return
+      const saved = placedNow()
+      commit(w => updateLayer(w, layer.id, l => ({ ...l, fragments: withPlaces(l.fragments, arranged.places),
+        compare: { ...l.compare, facing: true, scaleX: arranged.scaleX, saved } })))
+    } else {
+      commit(w => updateLayer(w, layer.id, l => ({ ...l, fragments: withPlaces(l.fragments, l.compare.saved || {}), compare: { ...l.compare, facing: false } })))
+    }
+    setFitKey(k => k + 1)
+  }, [layer, comparing, facingPlaces, placedNow, commit])
+
+  const swapCompare = useCallback(() => {
+    if (!layer || !comparing) return
+    const a = comparing.b, b = comparing.a
+    const arranged = comparing.facing ? facingPlaces(a, b) : null
+    commit(w => updateLayer(w, layer.id, l => ({ ...l, fragments: arranged ? withPlaces(l.fragments, arranged.places) : l.fragments,
+      compare: { ...l.compare, a, b, ...(arranged ? { scaleX: arranged.scaleX } : {}) } })))
+    setFitKey(k => k + 1)
+  }, [layer, comparing, facingPlaces, commit])
+
+  const endCompare = useCallback(() => {
+    if (!layer?.compare) return
+    commit(w => updateLayer(w, layer.id, l => {
+      const next = { ...l, fragments: l.compare.facing ? withPlaces(l.fragments, l.compare.saved || {}) : l.fragments }
+      delete next.compare
+      return next
+    }))
+    const flips = flipsBeforeCompare.current[layer.id]
+    if (flips && view) setView({ ...view, flipped: flips })
+    delete flipsBeforeCompare.current[layer.id]
+    setComparePick(null)
+    if (tool === 'compare') setToolState('explore')
+    setFitKey(k => k + 1)
+  }, [layer, commit, view, setView, tool])
+
+  // The layer bar's Compare: ends a comparison; with just two subtrees starts one at once;
+  // otherwise picks them, one click each.
+  const pressCompare = useCallback(() => {
+    if (!layer) return
+    if (comparing) { endCompare(); return }
+    if (tool === 'compare') { setToolState('explore'); setComparePick(null); return }
+    if (layer.fragments.length === 2) { startCompare(layer.fragments[0].id, layer.fragments[1].id); return }
+    setComparePick(null)
+    setTool('compare')
+  }, [layer, comparing, endCompare, tool, startCompare, setTool])
+
+  const compareBar = comparing ? (() => {
+    const name = id => {
+      const root = fragmentRootId(id)
+      const fragment = layer.fragments.find(f => f.id === id)
+      return root >= 0 && index ? fragmentTitle(index, root, fragment) : 'Subtree'
+    }
+    const st = compareModel?.agree.stats
+    const linked = compareModel ? compareModel.links.length : 0
+    const ambiguous = compareModel ? compareModel.links.filter(l => !l.oneToOne).length : 0
+    return {
+      a: name(comparing.a), b: name(comparing.b), by: comparing.by || 'species', facing: Boolean(comparing.facing),
+      disagreement: comparing.disagreement !== false, matchChoices: MATCH_BY,
+      stats: st ? [
+        { text: `${linked.toLocaleString()} linked`, title: `${st.matched} genes matched one to one${ambiguous ? `, ${ambiguous} lines between copies of the same species (dashed)` : ''}${compareModel.onlyA.length + compareModel.onlyB.length ? `; ${compareModel.onlyA.length + compareModel.onlyB.length} genes with no match (faded)` : ''}` },
+        { text: `${st.shared} of ${Math.max(st.cladesA, st.cladesB)} clades shared`, title: 'Clades (branches, ignoring the root) found in both trees, counting only genes matched one to one' },
+        ...(st.conflictA + st.conflictB ? [{ text: `${st.conflictA + st.conflictB} conflicting`, warn: true, title: `Clades in one tree but not the other: ${st.conflictA} on the left, ${st.conflictB} on the right (dashed)` }] : []),
+        { text: `${compareCrossings.toLocaleString()} crossing${compareCrossings === 1 ? '' : 's'}`, title: 'Lines that cross. Untangle flips branches to bring this down.' },
+      ] : [],
+      onSwap: swapCompare, onBy: by => setCompare({ by }), onFacing: setFacing, onUntangle: () => untangleCompare(),
+      onDisagreement: on => setCompare({ disagreement: on }), onEnd: endCompare,
+    }
+  })() : null
+
   const onLayerAction = useCallback(async action => {
     if (!layer) return
+    // The Rename tool: the subtree's name tag becomes a text box (TreeCanvas `naming`).
+    if (action.type === 'rename') { setNaming(action.fragmentId); return }
+    // Compare: the first subtree clicked, then the second.
+    if (action.type === 'compare-pick') {
+      if (!comparePick) setComparePick(action.fragmentId)
+      else if (comparePick === action.fragmentId) setComparePick(null)
+      else { startCompare(comparePick, action.fragmentId); setToolState('explore') }
+      return
+    }
     const find = id => layer.fragments.find(f => f.id === id)
     const at = id => {
       const where = forest.fragmentOf.get(id)
@@ -719,10 +1196,12 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     }
     const edit = fn => commit(w => updateLayer(w, layer.id, l => ({ ...l, fragments: fn(l.fragments) })))
     // Once a layer has been arranged, every fragment is pinned where it stands: an edit to
-    // one never sends the others elsewhere. The first move pins them all.
+    // one never sends the others elsewhere. The first move pins them all. Each edit pins them
+    // afresh, where they are drawn and at the size they are drawn (see placeFragments), so
+    // gaps kept for a subtree that has grown are kept from here on as they now are.
     const arranged = action.type === 'move' || layer.fragments.some(f => f.pos)
     const pin = list => (arranged && action.places
-      ? list.map(f => (f.pos || !action.places[f.id] ? f : { ...f, pos: action.places[f.id] }))
+      ? list.map(f => (action.places[f.id] ? { ...f, pos: action.places[f.id] } : f))
       : list)
     if (action.type === 'move') {
       edit(list => pin(list).map(f => (f.id === action.fragmentId ? { ...f, pos: action.pos } : f)))
@@ -740,18 +1219,21 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
       edit(prior => {
         const rest = pin(prior).filter(f => f.id !== from.id)
         const at = rest.findIndex(f => f.id === into.id)
-        const merged = createFragment(result.fragment, into.source, '', rest[at].pos || null)
-        rest.splice(at, 1, merged, ...result.leftovers.map(nodes => createFragment(nodes, into.source)))
+        // It shows the data view of the subtree it was dropped on, as do any leftover pieces.
+        const merged = carryView(createFragment(result.fragment, into.source, '', rest[at].pos || null), into.dataView)
+        rest.splice(at, 1, merged, ...result.leftovers.map(nodes => carryView(createFragment(nodes, into.source), into.dataView)))
         return rest
       })
-      setNotice(`Merged ${fragmentName(from)} with ${fragmentName(into)} as ${into.source.treeName || 'their tree'} joins them${result.duplicates ? ` (${result.duplicates} gene${result.duplicates === 1 ? ' was' : 's were'} in both and appear${result.duplicates === 1 ? 's' : ''} once)` : ''}${result.leftovers.length ? `; ${result.leftovers.length} grafted piece${result.leftovers.length === 1 ? '' : 's'} had nowhere to go and stand apart` : ''}.`)
+      // Only worth saying when the result is not what the drop suggests.
+      const left = result.leftovers.length
+      if (left) setNotice(`${left} grafted piece${left === 1 ? '' : 's'} had no place in the merged tree, so ${left === 1 ? 'it was' : 'they were'} kept as separate subtree${left === 1 ? '' : 's'}.`)
     } else if (action.type === 'graft') {
       const moving = find(action.fragmentId)
       const target = at(action.nodeId)
       if (!moving || !target || target.fragment.id === moving.id) return
       const joined = graft(moving.nodes, target.fragment.nodes, target.nodeId, { onBranch: true })
       edit(prior => pin(prior).filter(f => f.id !== moving.id)
-        .map(f => (f.id === target.fragment.id ? createFragment(joined, f.source, '', f.pos || null) : f)))
+        .map(f => (f.id === target.fragment.id ? carryView(createFragment(joined, f.source, '', f.pos || null), f.dataView) : f)))
     } else if (action.type === 'cut') {
       const target = at(action.nodeId)
       if (!target || target.nodeId === 0) return
@@ -762,7 +1244,8 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
         const list = pin(prior)
         const i = list.findIndex(f => f.id === target.fragment.id)
         const rest = { ...list[i], nodes: pieces[0], ...(placed && action.restPos ? { pos: action.restPos } : {}) }
-        const clade = createFragment(pieces[1], target.fragment.source, '', placed ? action.cladePos : null)
+        // Both halves go on showing the data view the subtree showed.
+        const clade = carryView(createFragment(pieces[1], target.fragment.source, '', placed ? action.cladePos : null), target.fragment.dataView)
         return [...list.slice(0, i), rest, clade, ...list.slice(i + 1)]
       })
     } else if (action.type === 'remove') {
@@ -776,10 +1259,20 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
           : list.filter(f => f.id !== target.fragment.id)
       })
     }
-  }, [layer, forest, commit, loadSource, fragmentName])
+  }, [layer, forest, commit, loadSource, comparePick, startCompare])
+
+  // A subtree put somewhere with no size recorded yet (a piece just cut off, what is left
+  // after a removal, a layer arranged before sizes were kept) takes the size it is drawn at
+  // now, so from here on it pushes its neighbours as it grows. Not an edit: not undone.
+  useEffect(() => {
+    const boxes = layout?.fragmentBoxes
+    if (!layer || !boxes || !layer.fragments.some(f => f.pos && f.pos.w === undefined && boxes.has(f.id))) return
+    const sized = f => (f.pos && f.pos.w === undefined && boxes.has(f.id) ? { ...f, pos: { ...f.pos, w: boxes.get(f.id).w, h: boxes.get(f.id).h } } : f)
+    patch(w => updateLayer(w, layer.id, l => ({ ...l, fragments: l.fragments.map(sized) })))
+  }, [layer, layout, patch])
 
   const onLayerDrag = useCallback(event => {
-    setLayerDrag(event.phase === 'end' ? null : { x: event.clientX, y: event.clientY, tool: event.tool, fragmentId: event.fragmentId, target: event.target })
+    setLayerDrag(event.phase === 'end' ? null : { x: event.clientX, y: event.clientY, tool: event.tool, fragmentId: event.fragmentId, target: event.target, snapped: event.snapped })
   }, [])
 
   // The focus bar's re-centre: the gene of focus, in the middle of the view at a readable
@@ -873,37 +1366,48 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     else openTree(choice.source.collectionId, choice.source.treeId, { geneIds: focusGeneIds() })
   }
 
-  // What the layer bar's Rename acts on: the subtree the selection is in, when it is all in one.
-  const renameTarget = (() => {
-    if (!layer || !picked?.size || !forest) return null
-    let at = -1
-    for (const id of picked) {
-      const where = forest.fragmentOf.get(id)
-      if (!where) continue
-      if (at >= 0 && where[0] !== at) return null
-      at = where[0]
-    }
-    if (at < 0) return null
-    const fragment = layer.fragments[at]
-    const root = forest.nodes.find(n => n.fragRoot === fragment.id)
-    return { id: fragment.id, name: fragment.name || '', label: root && index ? fragmentTitle(index, root.id, fragment) : 'the subtree',
-      auto: root && index ? fragmentTitle(index, root.id, { ...fragment, name: '' }) : 'Subtree' }
-  })()
 
-  // The control bar's Clade menu: what can be done with the selected clade (the root of a
-  // selection that is one connected piece), where the right-click menu used to offer it.
-  const selectedClade = pickCounts.single
-  const cladeTarget = selectedClade >= 0 && index ? cladeTitle(index, selectedClade) : ''
-  const showing = view?.root ?? 0
-  const cladeItems = [
-    { label: 'Show only this clade', disabled: selectedClade < 0 || selectedClade === showing || Boolean(index?.nodes[selectedClade]?.leaf),
-      onClick: () => { setView(showSubtree(expandSubtree(index, view, selectedClade), selectedClade)); setFitKey(k => k + 1) } },
-    { label: 'Show the whole tree', disabled: showing === 0, onClick: () => { setView(showSubtree(view, 0)); setFitKey(k => k + 1) } },
-    { label: 'Flip branches', disabled: selectedClade < 0 || Boolean(index?.nodes[selectedClade]?.leaf),
-      onClick: () => setView(toggleFlipped(index, view, selectedClade)) },
-    { label: 'Export as Newick', disabled: !picked, onClick: () => exportNodes(cladeTarget || 'selection', picksAsFragments(picked).map(p => p.nodes), { nhx: false }) },
-    { label: 'Export as NHX', disabled: !picked, onClick: () => exportNodes(cladeTarget || 'selection', picksAsFragments(picked).map(p => p.nodes)) },
-  ]
+  // The Nodes button: pressing it applies its state to what is showing; choosing a state
+  // from its list selects it and applies it. Either way the view is refitted.
+  const applyNodes = mode => {
+    setNodeMode(mode)
+    savePreference('nodeMode', mode)
+    setHighlighted(mode === 'highlight-local' ? displayKey : '')
+    if (!index || !view) return
+    setView(applyNodeMode(index, view, mode, localPaths))
+    setFitKey(k => k + 1)
+    if (mode === 'select-local' && localPaths) {
+      // The local genes and every branch between them: one connected piece, which a copy
+      // takes as a single subtree. (Not a subtree layer's invisible root.)
+      setPicked([...localPaths].filter(id => !index.nodes[id].virtual))
+    }
+  }
+
+  // Pressing the Nodes button: Highlight local, while it lights this tree, turns off;
+  // anything else applies the state selected.
+  const highlighting = nodeMode === 'highlight-local' && highlighted === displayKey && Boolean(localPaths)
+  const pressNodes = () => (highlighting ? setHighlighted('') : applyNodes(nodeMode))
+
+  // The Data view button: in a layer it acts on the subtrees the picks touch, or on every
+  // subtree; the Original has the one view. A view is a view setting: saved, not undone.
+  const dataScope = useMemo(() => (layer ? viewScope(layer, forest?.fragmentOf, picked) : null), [layer, forest, picked])
+  const dataValue = layer ? scopeView(layer, dataScope.ids) : dataView
+  const dataScopeLabel = (() => {
+    if (!layer) return ''
+    const count = dataScope.ids.length
+    if (!count) return 'No subtrees in this layer yet'
+    if (dataScope.selected && count === 1) {
+      const fragment = layer.fragments.find(f => f.id === dataScope.ids[0])
+      const root = forest?.nodes.find(n => n.fragRoot === fragment?.id)
+      return `Applies to ${root && index ? fragmentTitle(index, root.id, fragment) : 'the selected subtree'} (selected)`
+    }
+    if (dataScope.selected) return `Applies to the ${count} selected subtrees`
+    return count === 1 ? 'Applies to the subtree in this layer' : `Applies to all ${count} subtrees · select subtrees to change only those`
+  })()
+  const chooseDataView = next => {
+    if (!layer) { setDataView(next); return }
+    patch(w => updateLayer(w, layer.id, l => withFragmentViews(l, dataScope.ids, next)))
+  }
 
   // A face of the Cycle drum: a layer's tree (or the Original) fitted into the preview,
   // drawn with the view's own layout settings and folds.
@@ -914,7 +1418,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     if (!source?.nodes?.length || source.nodes.length < 2) return
     const idx = indexTree(source)
     const previewView = id === 'original' ? (origView || emptyViewState()) : (layerViews[id] || emptyViewState())
-    const lay = layoutTree(idx, previewView, { layout: layoutName, phylogram, shape, alignLeaves, flipHorizontal: flipH, flipVertical: flipV })
+    const lay = layoutTree(idx, previewView, { layout: layoutName, phylogram, shape, alignLeaves, flipHorizontal: flipH })
     const cache = new Map()
     const b = contentBounds(ctx, idx, lay, cache)
     const pad = 18
@@ -923,7 +1427,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     const t = { k, kx: k, x: pad - b.minX * k + (width - pad * 2 - bw * k) / 2, y: pad - b.minY * k + (height - pad * 2 - bh * k) / 2 }
     paintTree(ctx, { layout: lay, index: idx, t, width, height, palette, links: source.links || {}, topbarAssemblies, genomeColors,
       labelCache: cache, noClear: true })
-  }, [palette, treeData, ws.layers, origView, layerViews, layoutName, phylogram, shape, alignLeaves, flipH, flipV, topbarAssemblies, genomeColors])
+  }, [palette, treeData, ws.layers, origView, layerViews, layoutName, phylogram, shape, alignLeaves, flipH, topbarAssemblies, genomeColors])
 
   // The focus bar's ✕, as the genome browser's: no gene in focus, here or in any layer.
   const clearFocus = () => {
@@ -936,7 +1440,9 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     const moving = layer?.fragments.find(f => f.id === drag.fragmentId)
     const name = moving ? fragmentName(moving) : 'The subtree'
     const target = drag.target
-    if (drag.tool === 'move') return { title: name, detail: 'Release to put it here · Esc puts it back' }
+    if (drag.tool === 'move') {
+      return { title: name, detail: drag.snapped ? 'Lined up with the subtree beside it · hold ⌥ to place freely' : 'Release to put it here · Esc puts it back' }
+    }
     if (drag.tool === 'merge') {
       if (!target) return { title: name, detail: 'Drop it on another subtree from the same tree' }
       const into = layer.fragments.find(f => f.id === target.fragmentId)
@@ -984,9 +1490,34 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   }, [picked, tool, setPicked])
 
   const onToolClick = useCallback((target, mods) => {
+    if (tool === 'fold') {
+      // Fold the tree down to the node clicked; a subtree's name tag stands for its root.
+      const item = target.kind === 'fragment' ? layout?.items.find(i => i.node.fragRoot === target.fragmentId)
+        : target.kind === 'node' ? target.item : null
+      if (item) { setView(foldTo(index, view, item.id)); setFitKey(k => k + 1) }
+      return
+    }
+    if (tool === 'expand') {
+      // Open everything below the node clicked; a subtree's name tag stands for its root.
+      const item = target.kind === 'fragment' ? layout?.items.find(i => i.node.fragRoot === target.fragmentId)
+        : target.kind === 'node' ? target.item : null
+      if (item && item.kind !== 'leaf') { setView(expandSubtree(index, view, item.id)); setFitKey(k => k + 1) }
+      return
+    }
+    if (tool === 'flip') {
+      // Flip mirrors the clade under a node, down to its leaves; a subtree's name tag stands for its root.
+      const item = target.kind === 'fragment' ? layout?.items.find(i => i.node.fragRoot === target.fragmentId)
+        : target.kind === 'node' ? target.item : null
+      if (item?.kind === 'internal') setView(mirrorClade(index, view, item.id))
+      return
+    }
     if (target.kind === 'fragment') {
+      // A subtree's name tag picks all of it; pressed again while it is all picked, it clears.
       const item = layout?.items.find(i => i.node.fragRoot === target.fragmentId)
-      if (item) setPicked(new Set([item.id, ...descendants(index, item.id)]))
+      if (!item) return
+      const whole = [item.id, ...descendants(index, item.id)]
+      if (picked && whole.every(id => picked.has(id))) clearPicks()
+      else setPicked(new Set(whole))
       return
     }
     if (target.kind !== 'node') { if (tool !== 'explore') clearPicks(); return }
@@ -1003,7 +1534,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
       for (const n of clade) { if (already && mods.shift) next.delete(n); else next.add(n) }
       setPicked(next)
     }
-  }, [tool, layout, index, picked, setPicked, clearPicks])
+  }, [tool, layout, index, view, setView, picked, setPicked, clearPicks])
 
   const dropTargetAt = (x, y) => {
     const element = document.elementFromPoint(x, y)?.closest?.('[data-selection-drop]')
@@ -1076,11 +1607,24 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     for (const item of index.nodes) {
       if (!item.fragRoot) continue
       const fragment = layer.fragments.find(f => f.id === item.fragRoot)
-      tags.set(item.fragRoot, { label: fragmentTitle(index, item.id, fragment, true), color: layer.color,
-        lifted: layerDrag?.fragmentId === item.fragRoot })
+      // Lit while the whole subtree is picked (as its name tag's click picks it).
+      const picking = Boolean(picked?.has(item.id)) && descendants(index, item.id).every(id => picked.has(id))
+      // Compare: the subtree picked first, and the two being compared, say which side they are.
+      const side = comparePicking === item.fragRoot ? '1' : comparing ? (comparing.a === item.fragRoot ? '1' : comparing.b === item.fragRoot ? '2' : '') : ''
+      tags.set(item.fragRoot, { label: `${side ? `${side} · ` : ''}${fragmentTitle(index, item.id, fragment, true)}`, color: layer.color,
+        lifted: layerDrag?.fragmentId === item.fragRoot, picked: picking, editing: naming === item.fragRoot })
     }
     return tags
-  }, [layer, index, layerDrag?.fragmentId])
+  }, [layer, index, layerDrag?.fragmentId, picked, naming, comparePicking, comparing])
+  // What the Rename tool's text box starts from: the subtree's own name, with its automatic
+  // one (the clade's name, or its genes and species) shown when that is empty.
+  const namingBox = (() => {
+    const fragment = naming && layer?.fragments.find(f => f.id === naming)
+    const root = fragment && forest?.nodes.find(n => n.fragRoot === naming)
+    if (!root || !index) return null
+    return { fragmentId: naming, initial: fragment.name || '', color: layer.color,
+      placeholder: fragmentTitle(index, root.id, { ...fragment, name: '' }) }
+  })()
 
   const fragmentRows = layer ? layer.fragments.map(f => {
     const genes = f.nodes.filter(n => n.leaf).length
@@ -1107,9 +1651,10 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     if (hover.hit.part === 'neighbour') {
       // A gene in the Neighbourhood column: what it is, where, and how many rows share it.
       const { gene, entry } = hover.hit
-      const symbol = String(gene.name || '').trim().toLowerCase()
-      const shared = symbol ? neighbours?.rows?.get(symbol) || 0 : 0
+      const group = neighbours?.matcher?.group(gene) || ''
+      const shared = group ? neighbours?.rows?.get(group) || 0 : 0
       const centre = gene.id === entry.center
+      const family = gene.families?.length ? neighbours?.families?.get(String(gene.families[0])) : null
       const style = { left: Math.min(hover.x + 14, window.innerWidth - 300), top: Math.min(hover.y + 14, window.innerHeight - 200) }
       const neighbourRows = [
         ['Gene', gene.id],
@@ -1117,31 +1662,87 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
         ['Biotype', gene.biotype || 'protein_coding'],
         ['Genome', leafSpeciesLabel(node.leaf) || links[item.id]?.genome_name || ''],
       ]
-      if (entry.flipped) neighbourRows.push(['Shown', 'reversed, so the tree gene points right'])
+      if (family) neighbourRows.push(['Family', `${family.name}${family.collection ? ` · ${family.collection}` : ''}`])
+      else if (neighbours?.matcher?.by === 'family') neighbourRows.push(['Family', group.startsWith('f:') ? 'Not in your trees; matched by name' : 'Not in any of your trees'])
+      if (entry.flipped) neighbourRows.push(['Shown', 'Flipped, so the tree’s gene points right'])
       return createPortal(
         <div className={`gt-tooltip${isLight ? ' light' : ''}`} style={style}>
           <strong>{gene.name || gene.id}</strong>
           <dl>{neighbourRows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
-          <small>{centre ? 'The gene in this tree' : shared > 1 ? `Beside the tree gene in ${shared} genomes here` : 'Only beside the tree gene in this genome'}</small>
+          <small>{centre ? 'The gene from the tree' : shared > 1 ? `${group.startsWith('f:') ? 'Its family is' : 'A gene with this name is'} in ${shared} rows` : 'Only in this row'}</small>
+        </div>, document.body)
+    }
+    if (hover.hit.part === 'alignment') {
+      // A place in an alignment column: which transcript, and what is there — an exon (how
+      // many genes share its boundaries), a left-out intron, or a base.
+      const { row, column: at, exon, cut } = hover.hit
+      const where = at == null ? null : genomicAt(row, at)
+      const alignRows = [
+        ['Transcript', row.transcript_id],
+        ['Genome', leafSpeciesLabel(node.leaf) || row.genome_name || row.assembly],
+      ]
+      let heading = `${row.gene_symbol || row.gene_id} · ${row.strand === '-' ? 'minus strand, shown 5′→3′' : 'plus strand'}`
+      if (cut) {
+        heading = `Intron · ${cut.bp.toLocaleString()} bp`
+        alignRows.push(['Location', `${row.chrom}:${Number(cut.start - (row.region?.intron_edge || 0)).toLocaleString()}-${Number(cut.end + (row.region?.intron_edge || 0)).toLocaleString()}`])
+        alignRows.push(['Aligned', `${row.region?.intron_edge || 0} bases at each end; ${cut.removed.toLocaleString()} left out`])
+      } else {
+        if (exon) {
+          const coding = featuresAt(row, exon.start).some(f => f.type === 'cds') || featuresAt(row, exon.end).some(f => f.type === 'cds')
+          alignRows.push(['Exon', `${exon.index + 1} of ${hover.hit.exonCount}${coding ? '' : ' · non-coding'}`])
+          const others = hover.hit.rows - 1
+          const shares = [['5′ boundary', exon.index > 0 ? hover.hit.shared.start : null], ['3′ boundary', exon.index < hover.hit.exonCount - 1 ? hover.hit.shared.end : null]]
+          for (const [label, n] of shares) {
+            if (n == null) continue
+            alignRows.push([label, n ? `Lines up with ${n} of ${others} other gene${others === 1 ? '' : 's'}` : 'Not shared at this aligned position'])
+          }
+          const exonShare = column?.rowShare?.(row, exon.start, exon.end + 1)
+          if (exonShare != null) alignRows.push(['Exon agreement', `This gene’s bases across it are shared by ${Math.round(exonShare * 100)}% of the genes, on average`])
+        }
+        const found = featuresAt(row, at).map(f => f.type).filter(type => FEATURE_WORDS[type])
+        const what = found.length ? FEATURE_WORDS[found[found.length - 1]] : where ? (where.kind.startsWith('flank') ? 'Flank' : 'Intron') : null
+        alignRows.push(['Column', `${(at + 1).toLocaleString()} of ${(alignment.data?.length || 0).toLocaleString()}`])
+        alignRows.push(['Here', where ? `${where.chrom}:${where.position.toLocaleString()} · ${where.base} · ${what}` : 'A gap: other genes have sequence here'])
+        const shared = where ? column?.baseShare?.(row, at) : null
+        if (where) alignRows.push(['Shared by', shared ? `${shared.count} of the ${shared.present} genes with a base here have ${where.base}` : 'Too few genes have a base here to compare'])
+      }
+      alignRows.push(['Identity', `${Math.round(row.identity || 0)}% to the consensus`])
+      const style = { left: Math.min(hover.x + 14, window.innerWidth - 300), top: Math.min(hover.y + 14, window.innerHeight - 200) }
+      return createPortal(
+        <div className={`gt-tooltip${isLight ? ' light' : ''}`} style={style}>
+          <strong>{heading}</strong>
+          <dl>{alignRows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+          <small>Click anywhere on the alignment for its details; zoom over it to stretch it, pan left and right to move along it</small>
         </div>, document.body)
     }
     if (node.leaf) {
       const leaf = node.leaf
       title = leafSpeciesLabel(leaf) || leafGeneLabel(leaf)
       if (leaf.common_name && leaf.species) rows.push(['Species', leaf.species])
-      if (leaf.symbol) rows.push(['Symbol', leaf.symbol])
-      if (leaf.gene_id) rows.push(['Gene', leaf.gene_id])
-      if (leaf.protein_id) rows.push(['Protein', leaf.protein_id])
-      if (!leaf.gene_id && !leaf.protein_id && leaf.label) rows.push(['Label', leaf.label])
-      if (node.branch_length != null) rows.push(['Branch length', Number(node.branch_length).toPrecision(3)])
       const link = links[item.id]
-      rows.push(['Local', link?.status === 'linked' ? `${link.genome_name || link.assembly}${link.matched_by === 'symbol' ? ' (matched by symbol)' : ''}` : STATUS_LABELS[linkStatus(link, topbarAssemblies)]])
+      // What the tree file says, filled in from the local annotation where it says nothing.
+      const symbol = leaf.symbol || link?.gene?.name
+      const geneId = leaf.gene_id || link?.gene?.id
+      if (symbol) rows.push(['Symbol', symbol])
+      if (geneId) rows.push(['Gene', geneId])
+      if (leaf.protein_id) rows.push(['Protein', leaf.protein_id])
+      if (!geneId && !leaf.protein_id && leaf.label) rows.push(['Label', leaf.label])
+      if (link?.gene?.chrom) rows.push(['Location', `${link.gene.chrom}:${Number(link.gene.start).toLocaleString()}-${Number(link.gene.end).toLocaleString()}`])
+      else if (leaf.location) rows.push(['Location', leaf.location])
+      if (node.branch_length != null) rows.push(['Branch length', Number(node.branch_length).toPrecision(3)])
+      rows.push(['Local', link?.status === 'linked' ? `${link.genome_name || link.assembly}${link.matched_by === 'symbol' ? ' (matched by symbol)' : ''}` : statusText(link, linkStatus(link, topbarAssemblies), leaf)])
     } else {
       title = cladeTitle(index, item.id)
       if (node.taxon?.common_name) rows.push(['Common name', node.taxon.common_name])
       if (node.taxon?.mya) rows.push(['Age', `~${node.taxon.mya} million years`])
       if (node.event) rows.push(['Event', `${EVENT_LABELS[node.event] || node.event}${node.event_inferred ? ' (inferred)' : ''}`])
       rows.push(['Genes', index.leafCount[item.id].toLocaleString()])
+      // The user's genomes in this clade, as the chips on a folded clade's label show them.
+      const held = cladeGenomes(index, item.id, links, topbarAssemblies)
+      if (held.length) {
+        const named = held.slice(0, 6).map(g => `${g.link?.genome_name || g.assembly} (${g.count.toLocaleString()})`)
+        rows.push(['Local genes', named.join(' · ') + (held.length > 6 ? ` · +${held.length - 6} more` : '')])
+      }
       if (node.branch_length != null) rows.push(['Branch length', Number(node.branch_length).toPrecision(3)])
       if (node.support != null) rows.push(['Support', node.support])
       if (node.taxon?.inferred) rows.push(['Taxon', 'inferred from its species'])
@@ -1164,7 +1765,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     <div className={`gene-trees${isLight ? ' light' : ''}`} data-tour-id="gene-trees-view">
       <div className="gt-top">
         <div className="gt-search">
-          <input ref={searchInput} type="search" value={search} placeholder="Find trees by gene symbol, gene or protein ID, or tree ID" aria-label="Find trees"
+          <input ref={searchInput} type="search" value={search} placeholder="Find a tree by gene or ID" title="Search by gene symbol, gene or protein ID, or tree ID" aria-label="Find trees"
             onChange={e => setSearch(e.target.value)} onKeyDown={onSearchKey} onFocus={() => { if (searchResults || searching) setSearchOpen(true) }} />
           <button type="button" className={`gt-search-go${searching ? ' busy' : ''}`} onClick={() => runSearch(search)}
             aria-label="Search" title="Search the tree library">
@@ -1200,20 +1801,20 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
             </div>
           ) : null}
         </div>
-        <button type="button" onClick={() => setDialog({ kind: 'library' })}>Library{collections.length ? ` (${collections.length})` : ''}</button>
-        <button type="button" onClick={() => setDialog({ kind: 'load' })}>Load trees…</button>
-        <span className="gt-spacer" />
-        <ToolButton tool={activeTool} lastTool={lastTool} onTool={setTool} inLayer={Boolean(layer)} isLight={isLight}
-          pickSummary={picked ? pickSummary : ''} onClear={clearPicks} />
-        <CladeMenu target={cladeTarget} items={cladeItems} isLight={isLight} />
-        <DataViewMenu value={dataView} onChange={setDataView} isLight={isLight} views={[
-          { id: 'neighbourhood', label: 'Neighbourhood', hint: `The genes around each local gene · ${NEIGHBOURHOOD_FLANK} either side`,
-            disabled: shape === 'radial', note: 'Data views are shown in the linear layout' },
+        <button type="button" onClick={() => setDialog({ kind: 'library' })}>Library</button>
+        <button type="button" onClick={() => setDialog({ kind: 'load' })}>Load trees</button>
+        <ToolButton tool={activeTool} onTool={setTool} inLayer={Boolean(layer)} isLight={isLight} />
+        <NodesButton mode={nodeMode} highlighting={highlighting} onMode={applyNodes} onPress={pressNodes} hasLocal={Boolean(localPaths)} isLight={isLight} />
+        <DataViewMenu value={dataValue} onChange={chooseDataView} scope={dataScopeLabel} isLight={isLight} views={[
+          { id: 'neighbourhood', label: 'Neighbourhood', hint: `The genes next to each gene you have locally · ${flank} each side`,
+            disabled: shape === 'radial', note: 'Data views are shown in the linear layout', options: neighbourOptions },
+          { id: 'structure', label: 'Transcript structure', hint: 'Each local gene’s transcript, aligned so exons line up',
+            disabled: shape === 'radial', note: 'Data views are shown in the linear layout', options: structureOptions },
+          { id: 'sequence', label: 'Aligned sequence', hint: 'The same alignment, base by base, coloured by feature',
+            disabled: shape === 'radial', note: 'Data views are shown in the linear layout', options: sequenceOptions },
         ]} />
-        <UndoRedo canUndo={canUndo} canRedo={canRedo} onUndo={() => undo(false)} onRedo={() => undo(true)} />
-        <LayerSwitcher layers={allLayers} activeId={layer ? layer.id : 'original'} onSwitch={switchDisplay} onNew={newLayer} isLight={isLight} />
+        <span className="gt-spacer" />
         <TreeCycle entries={allLayers} active={layer ? layer.id : 'original'} onChoose={switchDisplay} paint={paintPreview} isLight={isLight} />
-        <button type="button" onClick={resetTree} disabled={!treeData}>Reset tree</button>
       </div>
 
       {activeJobs.map(job => {
@@ -1252,11 +1853,59 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
           </span>
         </div>
       ) : null}
+      {showStructure && display ? (() => {
+        const { status, plan, job, error, genes } = alignment
+        const est = plan?.estimate
+        const failedCount = plan?.failed?.length || 0
+        const unusable = failedCount ? ` ${failedCount} linked gene${failedCount === 1 ? '' : 's'} can't be drawn (see the Legend).` : ''
+        if (status === 'too-few') {
+          return <div className="gt-notice gt-align-bar"><span>Aligning needs at least two genes linked to your local genomes{genes ? ` (this tree has ${genes})` : ''}.</span></div>
+        }
+        if (status === 'planning' || status === 'loading') {
+          return <div className="gt-notice gt-align-bar"><span className="gt-spinner" aria-hidden="true" /><span>{status === 'planning' ? `Looking for a stored alignment of ${genes} genes…` : 'Loading the alignment…'}</span></div>
+        }
+        if (status === 'error') {
+          return <div className="gt-notice error gt-align-bar"><span>{error}</span><button type="button" onClick={alignment.retry}>Try again</button></div>
+        }
+        if (status === 'running') {
+          const percent = Math.round((job?.fraction || 0) * 100)
+          const phase = ALIGN_PHASES[job?.phase] || 'Aligning'
+          const detail = job?.phase === 'extracting' && job.total ? `${job.done} of ${job.total} genes`
+            : job?.phase === 'aligning' && job.stage && MAFFT_STAGES[job.stage]
+              ? `${MAFFT_STAGES[job.stage]}${job.passes > 1 ? ` (pass ${job.pass} of ${job.passes})` : ''}${job.total ? ` · ${job.done} of ${job.total}` : ''}` : ''
+          const elapsed = job?.started ? Math.round(Date.now() / 1000 - job.started) : 0
+          return (
+            <div className="gt-job gt-align-bar" role="status">
+              <div className="gt-job-text">
+                <strong>{phase} · {est?.rows ?? plan?.rows?.length ?? genes} genes</strong>
+                <span>{[detail, `${percent}%`, elapsed > 2 ? `${elapsed} s` : ''].filter(Boolean).join(' · ')}</span>
+              </div>
+              <div className="gt-progress" aria-hidden="true"><div style={{ width: `${Math.max(2, percent)}%` }} /></div>
+              <button type="button" onClick={alignment.cancel}>Cancel</button>
+            </div>
+          )
+        }
+        if (status === 'needs-run' && est) {
+          const big = est.level !== 'ok'
+          return (
+            <div className={`gt-notice gt-align-bar${big ? ' warn' : ''}`}>
+              <span>
+                No stored alignment of these {est.rows} transcripts ({kb(est.total_bp)}{alignOpts.region === 'exons' ? ', exons' : ', whole genes'}). Aligning takes {aboutSeconds(est.seconds)}.
+                {big ? ` That's a lot of sequence${est.max_bp > 50_000 ? ` (the longest is ${kb(est.max_bp)})` : ''}: it could take much longer${alignOpts.region === 'genomic' ? '. Aligning exons only is far quicker' : ''}, or align a subtree in a layer.` : ''}
+                {unusable}
+              </span>
+              <button type="button" className="primary" onClick={alignment.run}>Run alignment</button>
+            </div>
+          )
+        }
+        return null
+      })() : null}
       {notice ? <div className="gt-notice"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Dismiss">×</button></div> : null}
       {error ? <div className="gt-notice error"><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss">×</button></div> : null}
 
       <div className="gt-body">
         <div className="gt-main">
+        <div className={`gt-stage${focusLeafData ? ' has-focus-bar' : ''}`} data-screenshot-capture="view">
         {focusLeafData ? (
           <div className="gt-contexts" aria-live="polite">
             <button type="button" className="gt-recentre" onClick={recentreFocus} data-tour-id="gene-trees-recenter"
@@ -1268,15 +1917,16 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
               <strong>{focusLeafData.symbol || focusLink?.gene?.name || leafGeneLabel(focusLeafData)}</strong>
               <span>{leafSpeciesLabel(focusLeafData)}</span>
             </span>
+            {focusStatus === 'local' ? <button type="button" className="gt-focus-add" onClick={() => addGenome(focusLink.assembly)}
+              title={`Add ${focusLink.genome_name || focusLink.assembly} to the top bar`}>Add genome to the top bar</button> : null}
             {treeChoices.length > 1 ? <TreePicker choices={treeChoices} onPick={pickTree} isLight={isLight} /> : null}
             <button type="button" className="gt-unfocus" onClick={clearFocus} title="Clear the gene of focus" aria-label="Clear the gene of focus">✕</button>
           </div>
         ) : null}
-        <div className="gt-stage" data-screenshot-capture="view">
           {layer && !layer.fragments.length ? (
             <div className="gt-empty">
               <h2>{layer.name} is empty</h2>
-              <p>Go back to a tree (the layer switcher, or the Original in the drawer), pick parts of it with <strong>Select</strong> or <strong>Pick clade</strong>, and drag them here — or use <strong>Copy to layer</strong>.</p>
+              <p>Go back to a tree (the Original in the Layers list, or Cycle), select parts of it with <strong>Free select</strong> or <strong>Clade select</strong>, and drag them here, or use <strong>Copy to layer</strong>.</p>
               <div className="gt-row gt-center"><button type="button" className="primary" onClick={() => switchDisplay('original')}>Back to the Original</button></div>
             </div>
           ) : display && layout ? (
@@ -1290,21 +1940,27 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
               focusIds={focusTwins}
               palette={palette}
               topbarAssemblies={topbarAssemblies}
+              lit={highlighting ? localPaths : null}
               controls={controls}
               fitKey={`${fitKey}:${layoutName}:${phylogram}:${shape}`}
               focusRowId={focusLeaf}
               onNodeClick={onNodeClick}
               onHover={onCanvasHover}
+              onColumnClick={onColumnClick}
               genomeColors={genomeColors}
               ariaLabel={`Gene tree ${layer ? layer.name : treeData?.name || ''}`}
               tool={activeTool}
               onLayerAction={onLayerAction}
-              insetTop={layer ? 52 : 0}
-              neighbours={neighbours}
+              insetTop={(layer ? LAYER_BAR_INSET + (compareBar ? COMPARE_ROW_H : 0) : 0) + (focusLeafData ? FOCUS_BAR_H : 0)}
+              column={column}
               onLayerDrag={onLayerDrag}
               canMerge={mergeVerdict}
               picked={picked}
               fragmentTags={fragmentTags}
+              naming={namingBox}
+              compare={compareModel}
+              comparePick={comparePicking ? 2 : 1}
+              onNamed={(fragmentId, name) => { setNaming(null); if (name !== null) renameFragment(fragmentId, name) }}
               onMarquee={onMarquee}
               onToolClick={onToolClick}
               onDragOut={onDragOut}
@@ -1325,7 +1981,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
                   <h2>{collections.length ? 'Choose a tree' : 'Load a gene tree'}</h2>
                   <p>Gene trees from Ensembl Compara (NHX, JSON or EMF dumps), OrthoFinder, IQ-TREE, RAxML or any Newick file. Leaves that are genes in your local genomes are linked to them.</p>
                   <div className="gt-row gt-center">
-                    <button type="button" className="primary" onClick={() => setDialog({ kind: 'load' })}>Load trees…</button>
+                    <button type="button" className="primary" onClick={() => setDialog({ kind: 'load' })}>Load trees</button>
                     {collections.length ? <button type="button" onClick={() => setDialog({ kind: 'library' })}>Open the library</button> : null}
                   </div>
                 </>
@@ -1335,15 +1991,14 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
           {loading && treeData ? <div className="gt-loading">Opening…</div> : null}
           {layer && layout ? (
             <LayerBar layer={layer} tool={activeTool} onTool={setTool} radial={shape === 'radial'} isLight={isLight}
-              arranged={layer.fragments.some(f => f.pos)} onRestack={restack}
-              canUndo={canUndo} canRedo={canRedo} onUndo={() => undo(false)} onRedo={() => undo(true)}
-              renameTarget={renameTarget} onRename={renameFragment} />
+              arranged={layer.fragments.some(f => f.pos) && !comparing?.facing} onRestack={restack}
+              subtrees={layer.fragments.length} comparing={Boolean(comparing)} onCompare={pressCompare} compare={compareBar}
+              canUndo={canUndo} canRedo={canRedo} onUndo={() => undo(false)} onRedo={() => undo(true)} />
           ) : null}
           {picked ? (
             <SelectionBar genes={pickCounts.genes} pieces={pickCounts.pieces} layers={allLayers} activeId={layer ? layer.id : 'original'}
-              inLayer={Boolean(layer)} wholeClades={wholeClades} onWholeClades={setWholeClades} onCopy={copyPicks}
-              onRemove={removePicks} onClear={clearPicks} singleNode={pickCounts.single >= 0}
-              onSplit={() => splitNode(pickCounts.single)} onReroot={() => rerootNode(pickCounts.single)} isLight={isLight} />
+              inLayer={Boolean(layer)} onCopy={copyPicks} onDuplicate={() => layer && copyPicks(layer.id)}
+              onClear={clearPicks} isLight={isLight} />
           ) : null}
           {selectionDrag ? <div className="gt-selection-dim" /> : null}
           {display && shownRoot !== 0 ? (
@@ -1389,7 +2044,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
               <LayerPanel layers={allLayers} activeId={layer ? layer.id : 'original'} dropTarget={selectionDrag?.target} dragging={Boolean(selectionDrag)}
                 fragments={fragmentRows}
                 onSwitch={switchDisplay} onNew={newLayer}
-                onRename={(id, name) => commit(w => updateLayer(w, id, l => ({ ...l, name })))}
+                onEdit={id => setDialog({ kind: 'layer', layerId: id })}
                 onDelete={id => {
                   const target = ws.layers.find(l => l.id === id)
                   if (target?.fragments.length && !window.confirm(`Delete “${target.name}” and its ${target.fragments.length} subtree(s)? (⌘Z brings it back.)`)) return
@@ -1438,13 +2093,16 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
               {stats.events_inferred ? <p className="gt-muted">Events were inferred from species overlap; the file did not mark them.</p> : null}
               {layer ? null : <p className="gt-linked-summary">
                 <Glyph kind="topbar" /> {(summary.linked || 0).toLocaleString()} gene{summary.linked === 1 ? '' : 's'} in local genomes
-                {summary.genome ? <><br /><Glyph kind="genome" /> {summary.genome} in a local species but not found</> : null}
+                {summary.genome ? <><br /><Glyph kind="genome" /> {summary.genome} in a local species, but not in its annotation</> : null}
+                {summary.no_index ? <><br /><Glyph kind="no_index" /> {summary.no_index} in a local species whose annotation is not indexed</> : null}
                 {treeData?.links_pending ? <><br /><span className="gt-muted">Checking protein identifiers…</span></> : null}
               </p>}
               <div className="gt-row">
                 {!layer && collection ? <button type="button" onClick={() => setDialog({ kind: 'links', collection })}>Link genomes…</button> : null}
                 {!layer && collection ? <button type="button" onClick={() => setDialog({ kind: 'details', collection })}>Details</button> : null}
                 <button type="button" onClick={() => (layer ? exportNodes(layer.name, layer.fragments.map(f => f.nodes)) : exportTree('newick'))}>Export</button>
+                {!layer ? <button type="button" onClick={resetTree} disabled={!treeData}
+                  title="Undo folds and flips, and go back to the tree as it first opened">Reset tree</button> : null}
               </div>
             </Section>
 
@@ -1470,51 +2128,87 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
               <label className="gt-check"><input type="checkbox" checked={flipH} onChange={e => setFlipH(e.target.checked)} />{shape === 'radial' ? 'Mirror left to right' : 'Root on the right'}</label>
               <label className="gt-check"><input type="checkbox" checked={alignLeaves} onChange={e => setAlignLeaves(e.target.checked)} />
                 Align leaves <small>{shape === 'radial' ? 'tips on the outer circle' : flipH ? 'labels in one column on the left' : 'labels in one column on the right'}</small></label>
-              <label className="gt-check"><input type="checkbox" checked={flipV} onChange={e => setFlipV(e.target.checked)} />{shape === 'radial' ? 'Mirror top to bottom' : 'Upside down'}</label>
             </Section>
 
-            <Section title="Nodes">
-              <div className="gt-row">
-                <button type="button" onClick={() => setView(expandAll(view))}>Expand all</button>
-                <button type="button" disabled={focusLeaf < 0} onClick={() => setView(focusOn(index, view, focusLeaf))}>Fold to focus</button>
-                <button type="button" disabled={!stats.duplication} onClick={() => setView(expandEvents(index, view, ['duplication']))}>Open duplications</button>
-              </div>
+            <Section title="Legend">
+              <h4 className="gt-legend-heading">Nodes</h4>
               <ul className="gt-key">
                 <li><Glyph kind="speciation" />Speciation</li>
                 <li><Glyph kind="duplication" />Gene duplication</li>
                 <li><Glyph kind="gene_split" />Gene split</li>
                 <li><Glyph kind="dubious" />Ambiguous</li>
                 <li><Glyph kind="collapsed" />Folded clade, with its gene count</li>
+                <li><Glyph kind="collapsed_topbar" />Folded clade with genes in a top-bar genome</li>
+                <li><Glyph kind="collapsed_local" />Folded clade with genes only in other local genomes</li>
               </ul>
-            </Section>
-
-            <Section title="Genes">
-              {focusLeafData ? (
-                <div className="gt-focus-card">
-                  <strong>{leafSpeciesLabel(focusLeafData) || 'Selected gene'}</strong>
-                  <dl>
-                    {focusLeafData.symbol || focusLink?.gene?.name ? <div><dt>Symbol</dt><dd>{focusLeafData.symbol || focusLink?.gene?.name}</dd></div> : null}
-                    {focusLeafData.gene_id || focusLink?.gene?.id ? <div><dt>Gene</dt><dd className="gt-mono">{focusLeafData.gene_id || focusLink.gene.id}</dd></div> : null}
-                    {focusLeafData.protein_id ? <div><dt>Protein</dt><dd className="gt-mono">{focusLeafData.protein_id}</dd></div> : null}
-                    {focusLink?.gene ? <div><dt>Location</dt><dd className="gt-mono">{focusLink.gene.chrom}:{Number(focusLink.gene.start).toLocaleString()}-{Number(focusLink.gene.end).toLocaleString()}</dd></div> : (focusLeafData.location ? <div><dt>Location</dt><dd className="gt-mono">{focusLeafData.location}</dd></div> : null)}
-                    <div><dt>Local</dt><dd><Glyph kind={focusStatus === 'none' ? 'unresolved' : focusStatus} /> {focusLink?.status === 'linked' ? `${focusLink.genome_name || focusLink.assembly}${focusLink.matched_by === 'symbol' ? ' · matched by symbol' : ''}` : STATUS_LABELS[focusStatus]}</dd></div>
-                  </dl>
-                  {focusStatus === 'local' ? <button type="button" onClick={() => addGenome(focusLink.assembly)}>Add genome to the top bar</button> : null}
-                </div>
-              ) : null}
+              <h4 className="gt-legend-heading">Genes</h4>
               <ul className="gt-key">
                 <li><Glyph kind="focus" />Focus gene</li>
                 <li><KeyPill color={genomeColors.values().next().value} state="active" isLight={isLight} />In a genome in the top bar, in its colour</li>
                 <li><KeyPill color={genomeColors.values().next().value} state="inactive" isLight={isLight} />In a local genome not in the top bar</li>
-                <li><Glyph kind="genome" />Local species, gene not found</li>
+                <li><Glyph kind="genome" />Local species, gene not in its annotation</li>
+                <li><Glyph kind="no_index" />Local species, annotation not indexed</li>
                 <li><Glyph kind="unresolved" />Not local</li>
               </ul>
+              {showNeighbourhoods ? <h4 className="gt-legend-heading">Neighbourhood</h4> : null}
               {showNeighbourhoods ? (
                 <ul className="gt-key">
-                  <li><i className="gt-key-arrow centre" />Neighbourhood: the gene in the tree</li>
-                  <li><i className="gt-key-arrow shared" />A neighbour found beside it in several genomes</li>
-                  <li><i className="gt-key-arrow" />A neighbour in this genome only</li>
+                  <li><i className="gt-key-arrow centre" />The gene from the tree</li>
+                  <li><i className="gt-key-arrow" />{neighbourOpts.colour === 'plain' ? 'A nearby gene' : 'Any other nearby gene'}</li>
+                  {neighbourOpts.colour === 'top' && neighbours?.order?.length ? neighbours.order.slice(0, neighbours.colours.size).map(group => (
+                    <li key={group}><i className="gt-key-arrow" style={{ background: neighbours.colours.get(group) }} />{groupName(group, neighbours)} · {neighbours.rows.get(group)} rows</li>
+                  )) : null}
+                  {neighbourOpts.colour === 'all' ? <li><span className="gt-key-swatches">{[...neighbours?.colours?.values() || []].slice(0, 4).map((c, i) => <i key={i} style={{ background: c }} />)}</span>Found in more than one row</li> : null}
+                  {neighbourOpts.links === 'on' ? <>
+                    {neighbourOpts.match === 'family' ? <li><i className="gt-key-link" />Same gene family</li> : null}
+                    <li><i className="gt-key-link symbol" />Same name</li>
+                  </> : null}
                 </ul>
+              ) : null}
+              {showStructure ? <h4 className="gt-legend-heading">{showStructureModel && showSequence ? 'Transcript structure and sequence' : showSequence ? 'Aligned sequence' : 'Transcript structure'}</h4> : null}
+              {showStructure && column?.conservation ? (
+                <div className="gt-heat-key">
+                  <div className="gt-heat-bar" style={{ background: `linear-gradient(to right, ${column.conservation.ramp.join(', ')})` }} />
+                  <div className="gt-heat-ends"><span>0%</span><span>50%</span><span>100%</span></div>
+                  <p className="gt-muted">Each base by the share of genes with the same base in its column: where five of six agree, their bases are 5/6 and the odd one out 1/6. Zoomed out, and along the structures, a gene’s bases are averaged, so a gene that differs where others agree reads cooler there. Observed agreement, not a constraint score. Grey: too few genes to compare.</p>
+                </div>
+              ) : null}
+              {showSequence && !column?.conservation ? (
+                <ul className="gt-key">
+                  <li><i className="gt-key-exon cds-stripes" />Coding (CDS), a shade a codon</li>
+                  <li><i className="gt-key-exon utr" />Untranslated (UTR)</li>
+                  <li><i className="gt-key-exon intron" />Intron</li>
+                  <li><i className="gt-key-exon splice" />Splice site</li>
+                  <li><i className="gt-key-exon start" />Start codon <i className="gt-key-exon stop" />Stop</li>
+                  {alignOpts.differences ? <li><i className="gt-key-exon faded" />Agrees with the consensus</li> : null}
+                </ul>
+              ) : null}
+              {showStructure ? (
+                <>
+                  <ul className="gt-key" hidden={!showStructureModel}>
+                    {column?.conservation ? <li><i className="gt-key-box coding" style={{ background: column.conservation.ramp[column.conservation.ramp.length - 1] }} />Exons filled by agreement; non-coding (UTR) paler</li> : <>
+                      <li><i className="gt-key-box coding" />Coding exon</li>
+                      <li><i className="gt-key-box" />Non-coding (UTR)</li>
+                    </>}
+                    <li><i className="gt-key-exon line" />Intron, drawn to scale up to {INTRON_CAP_BP} bp; longer ones are labelled with their length</li>
+                    <li><i className="gt-key-exon dotted" />Flank beyond the transcript</li>
+                    <li><i className="gt-key-exon gap" />A gap in an exon: bases other genes have there</li>
+                    {alignOpts.boundaries !== false ? <li><i className="gt-key-box coding shared" />Splice boundary other genes share, on the alignment</li> : null}
+                    <li><i className="gt-key-box lit" />Hovered exon, and exons sharing its boundaries</li>
+                  </ul>
+                  {alignment.data ? (
+                    <p className="gt-muted gt-align-note">
+                      {alignment.data.transcripts} transcripts, {alignment.data.length.toLocaleString()} alignment columns
+                      {alignment.data.strategy ? ` · MAFFT ${alignment.data.strategy}` : ''}. Shown 5′→3′, minus-strand genes turned round.
+                    </p>
+                  ) : null}
+                  {alignment.plan?.failed?.length ? (
+                    <details className="gt-align-failed">
+                      <summary>{alignment.plan.failed.length} linked gene{alignment.plan.failed.length === 1 ? '' : 's'} not drawn</summary>
+                      <ul>{alignment.plan.failed.map(f => <li key={f.gene}><strong>{f.gene.split(':').slice(1).join(':')}</strong> {f.reason}</li>)}</ul>
+                    </details>
+                  ) : null}
+                </>
               ) : null}
             </Section>
             </div>
@@ -1550,6 +2244,12 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
               : 'Drop on a layer or ＋ New layer · Esc cancels'}</span>
         </div>, document.body) : null}
 
+      {dialog?.kind === 'layer' && ws.layers.some(l => l.id === dialog.layerId) ? (
+        <LayerEditDialog layer={ws.layers.find(l => l.id === dialog.layerId)} theme={theme} palette={genomeColorPalette(config)}
+          onColor={color => commit(w => updateLayer(w, dialog.layerId, l => ({ ...l, color })))}
+          onRename={name => commit(w => updateLayer(w, dialog.layerId, l => ({ ...l, name })))}
+          onClose={() => setDialog(null)} />
+      ) : null}
       {dialog?.kind === 'load' ? (
         <LoadTreeDialog theme={theme} config={config} onClose={() => setDialog(null)} onStarted={job => {
           setDialog(null)

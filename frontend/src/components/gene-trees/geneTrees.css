@@ -41,8 +41,10 @@
 .gt-spacer { flex:1; }
 
 /* Header */
-.gt-top { display:flex; align-items:center; gap:8px; padding:10px 14px; background:var(--gt-panel); border-bottom:1px solid var(--gt-border); flex-shrink:0; flex-wrap:wrap; }
-.gt-search { position:relative; flex:0 1 460px; min-width:220px; }
+.gt-top { display:flex; align-items:center; gap:8px; padding:10px 14px; background:var(--gt-panel); border-bottom:1px solid var(--gt-border); flex-shrink:0; flex-wrap:nowrap; }
+/* One line: the search gives way first, and every button keeps its width. */
+.gt-top > :not(.gt-search):not(.gt-spacer) { flex-shrink:0; }
+.gt-search { position:relative; flex:0 1 280px; min-width:150px; }
 .gt-search { display:flex; gap:6px; }
 .gt-search input { flex:1; min-width:0; box-sizing:border-box; }
 .gt-search-go { width:34px; flex-shrink:0; padding:0 !important; display:flex; align-items:center; justify-content:center;
@@ -67,7 +69,7 @@
 .gt-legacy button { font-size:13px !important; padding:5px 10px !important; background:var(--gt-panel) !important; border:1px solid var(--gt-border) !important; }
 .gt-legacy button.primary { background:var(--gt-primary) !important; color:#fff !important; }
 .gt-small { font-size:12px; line-height:1.55; }
-.gt-search-results { position:absolute; left:0; right:0; top:calc(100% + 6px); z-index:30; max-height:380px; overflow:auto; background:var(--gt-panel);
+.gt-search-results { position:absolute; left:0; width:max(100%, min(460px, calc(100vw - 48px))); box-sizing:border-box; top:calc(100% + 6px); z-index:30; max-height:380px; overflow:auto; background:var(--gt-panel);
   border:1px solid var(--gt-accent); border-radius:8px; box-shadow:0 16px 48px #0006; padding:6px; display:flex; flex-direction:column; gap:4px; }
 .gt-search-results button { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; white-space:normal; border-color:transparent; }
 .gt-search-results span { color:var(--gt-muted); font-size:12px; }
@@ -76,11 +78,14 @@
 .gt-icon-button { width:34px; padding:6px 0 !important; text-align:center; font-weight:700; }
 
 /* The focus gene and every tree it appears in: the same band as the drawer's head, so
-   the two read as one strip across the view, as the browser's focus bar and drawer do. */
-.gt-contexts { height:var(--gt-band-h); box-sizing:border-box; display:flex; align-items:center; gap:10px; padding:0 14px;
+   the two read as one strip across the view, as the browser's focus bar and drawer do.
+   It floats over the top of the tree rather than pushing it down: focusing a gene only
+   moves the view when the bar would cover it (TreeCanvas reveal). */
+.gt-contexts { position:absolute; top:0; left:0; right:0; z-index:20; height:var(--gt-band-h); box-sizing:border-box; display:flex; align-items:center; gap:10px; padding:0 14px;
   background:var(--gt-band); color:var(--gt-band-text); border-bottom:1px solid var(--gt-band-border); flex-shrink:0; overflow:hidden; }
 .gt-contexts-gene { display:flex; align-items:center; gap:6px; flex-shrink:0; }
 .gt-contexts-gene strong { font-size:14px; }
+.gene-trees .gt-focus-add { flex-shrink:0; padding:3px 9px; font-size:12px; }
 .gt-contexts-gene span { opacity:.75; }
 .gt-contexts-label { opacity:.75; flex-shrink:0; }
 .gt-chip { display:flex; flex-direction:column; align-items:flex-start; gap:0; padding:3px 11px !important; border-radius:8px !important; text-align:left; flex-shrink:0; }
@@ -95,13 +100,15 @@
 
 /* Canvas and drawer */
 .gt-body { flex:1; min-height:0; display:flex; }
-.gt-stage { flex:1; min-width:0; position:relative; }
+.gt-stage { flex:1; min-width:0; position:relative; --gt-stage-top:0px; }
+/* What else floats at the top of the tree sits under the focus bar while it shows. */
+.gt-stage.has-focus-bar { --gt-stage-top:var(--gt-band-h); }
 .gt-canvas-wrap { position:absolute; inset:0; }
 .gt-canvas { display:block; cursor:grab; touch-action:none; outline:none; }
 .gt-empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:24px; text-align:center; }
 .gt-empty h2 { font-size:20px; margin:0; }
 .gt-empty p { max-width:520px; color:var(--gt-muted); margin:0; line-height:1.6; }
-.gt-loading { position:absolute; top:12px; left:50%; transform:translateX(-50%); padding:4px 12px; border-radius:999px; background:var(--gt-panel); border:1px solid var(--gt-border); color:var(--gt-muted); }
+.gt-loading { position:absolute; top:calc(var(--gt-stage-top) + 12px); left:50%; transform:translateX(-50%); padding:4px 12px; border-radius:999px; background:var(--gt-panel); border:1px solid var(--gt-border); color:var(--gt-muted); }
 .gt-floating { position:absolute; left:14px; bottom:14px; box-shadow:0 6px 20px #0004; }
 
 .gt-main { flex:1; min-width:0; display:flex; flex-direction:column; }
@@ -145,7 +152,7 @@
 .gt-stat strong { font-size:15px; font-variant-numeric:tabular-nums; }
 .gt-stat span { color:var(--gt-muted); font-size:12px; }
 .gt-linked-summary { margin:0; line-height:1.9; }
-.gt-linked-summary svg, .gt-focus-card dd svg, .gt-key svg, .gt-contexts svg { display:inline-block; }
+.gt-linked-summary svg, .gt-key svg, .gt-contexts svg { display:inline-block; }
 .gt-linked-summary svg { vertical-align:-4px; }
 .gt-radio-row { display:flex; gap:16px; }
 .gt-option-row { display:flex; align-items:center; gap:12px; }
@@ -155,13 +162,10 @@
 .gt-radio-row label, .gt-check { display:flex; align-items:center; gap:7px; cursor:pointer; }
 .gt-key { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:3px; }
 .gt-key li { display:flex; align-items:center; gap:8px; }
-.gt-focus-card { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid var(--gt-border); border-radius:8px; background:var(--gt-bg); }
-.gt-focus-card strong { font-size:14px; }
-.gt-focus-card dl, .gt-tooltip dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:3px 10px; }
-.gt-focus-card dl div, .gt-tooltip dl div { display:contents; }
-.gt-focus-card dt, .gt-tooltip dt { color:var(--gt-muted); }
-.gt-focus-card dd, .gt-tooltip dd { margin:0; word-break:break-word; }
-.gt-focus-card dd svg { vertical-align:-4px; }
+.gt-tooltip dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:3px 10px; }
+.gt-tooltip dl div { display:contents; }
+.gt-tooltip dt { color:var(--gt-muted); }
+.gt-tooltip dd { margin:0; word-break:break-word; }
 
 /* Glyphs, matching the canvas */
 .gt-g-speciation { fill:var(--gt-speciation); }
@@ -171,9 +175,12 @@
 .gt-g-linked-fill { fill:var(--gt-accent); }
 .gt-g-local { fill:var(--gt-halo); stroke:var(--gt-accent); stroke-width:2.25; }
 .gt-g-genome { fill:var(--gt-halo); stroke:var(--gt-warn); stroke-width:2.25; }
+.gt-g-noindex { stroke-width:1.9; stroke-dasharray:2.2 2.2; }
 .gt-g-none { fill:var(--gt-halo); stroke:#9aa6b4; stroke-width:1.5; }
 .gt-g-focus { fill:var(--gt-focus); }
 .gt-g-pill { fill:var(--gt-pill); }
+.gt-g-ring-topbar { fill:none; stroke:var(--gt-accent); stroke-width:1.5; }
+.gt-g-ring-local { fill:none; stroke:var(--gt-warn); stroke-width:1.5; }
 
 /* Tooltip and menus (portalled) */
 .gt-tooltip { position:fixed; z-index:60; pointer-events:none; max-width:300px; padding:10px 12px; border-radius:8px; background:var(--gt-panel); color:var(--gt-text);
@@ -188,6 +195,7 @@
 .gt-menu.gt-anchored.above::before { top:auto; bottom:-6px; border-top:0; border-left:0;
   border-bottom:1px solid var(--gt-accent); border-right:1px solid var(--gt-accent); }
 .gt-menu-heading { font-weight:700; padding:2px 6px 6px; border-bottom:1px solid var(--gt-border); margin-bottom:2px; }
+.gt-menu-scope { margin:4px 6px 6px; font-size:12px; color:var(--gt-accent); }
 .gt-menu > button { text-align:left; border-color:transparent; }
 .gt-menu-option { display:flex; flex-direction:column; gap:1px; white-space:normal !important; }
 .gt-menu-option span { color:var(--gt-muted); font-size:12px; }
@@ -206,6 +214,11 @@
 .gt-modal-body label { display:flex; flex-direction:column; gap:5px; font-weight:600; }
 .gt-modal-body label input, .gt-modal-body label textarea { font-weight:400; }
 .gt-modal-body p { margin:0; line-height:1.6; }
+.gt-field { display:flex; flex-direction:column; gap:5px; font-weight:600; }
+.gt-layer-colour { display:flex; align-items:center; gap:8px; font-weight:400; }
+.gt-layer-colour i { width:20px; height:20px; border-radius:6px; border:1px solid #ffffff33; flex:0 0 auto; }
+.gt-colour-preview { display:flex; flex-direction:column; gap:6px; padding:14px; border-radius:8px; background:#0f1826; }
+.gt-colour-preview span { height:12px; border-radius:3px; display:block; }
 .gt-modal-footer { display:flex; gap:8px; align-items:center; justify-content:flex-end; padding:12px 22px; border-top:1px solid var(--gt-border); }
 .gt-modal-footer > span { flex:1; font-size:12px; }
 .gt-close { position:absolute; right:12px; top:12px; border:0 !important; padding:2px 8px !important; font-size:20px; background:transparent !important; }
@@ -229,31 +242,32 @@
 .gt-species-row select { max-width:60%; }
 
 /* ── Subtree layers ─────────────────────────────────────────────────────────
-   Tools, layer switcher, the Layers panel, selection bar and drag feedback. The
+   The Cursor control, the Layers panel, selection bar and drag feedback. The
    pick colour is the Alignment Explorer's gold (#edc263). */
 .gene-trees, .gt-menu, .gt-selection-ghost { --gt-picked:#edc263; }
 
-/* Tool split button, after the Alignment Explorer's CursorTool. */
-.gt-split { display:inline-flex; }
-.gt-split .gt-split-main { display:inline-flex; align-items:center; gap:6px; border-radius:6px 0 0 6px !important; }
-.gt-split .gt-split-arrow { border-radius:0 6px 6px 0 !important; margin-left:-1px; padding:6px 8px !important; }
-.gt-split .gt-split-main.selected { color:#1d2b3a !important; background:var(--gt-picked) !important; border-color:var(--gt-picked) !important; }
+/* The Cursor control, after the Alignment Explorer's: one bordered object whose face acts
+   and whose arrow opens the menu; lit in the accent while a select mode is on. */
+.gt-split { display:inline-flex; align-items:stretch; height:33px; box-sizing:border-box; border:1px solid var(--gt-border); border-radius:6px;
+  background:var(--gt-panel); overflow:hidden; }
+.gene-trees .gt-split button { border:0 !important; border-radius:0 !important; background:transparent !important; }
+.gene-trees .gt-split button:hover:not(:disabled) { background:color-mix(in srgb, var(--gt-accent) 12%, transparent) !important; }
+.gt-split .gt-split-main { min-width:128px; padding:3px 10px !important; text-align:left; }
+.gt-split .gt-split-arrow { width:30px; padding:0 !important; display:flex; align-items:center; justify-content:center;
+  border-left:1px solid var(--gt-border) !important; }
+.gt-split.selected { border-color:var(--gt-accent); background:color-mix(in srgb, var(--gt-accent) 12%, var(--gt-panel)); }
+.gt-split.selected .gt-control-label strong { color:var(--gt-accent); }
+/* A control's name small above its value, as in the Alignment Explorer's bar. */
+.gt-control-label { display:flex; flex-direction:column; gap:1px; min-width:0; text-align:left; }
+.gt-control-label span { color:var(--gt-muted); font-size:10px; line-height:11px; font-weight:400; }
+.gt-control-label strong { font-size:12px; line-height:15px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gt-control-chevron { flex-shrink:0; color:var(--gt-muted); transition:transform .12s; }
+.menu-open .gt-control-chevron, .menu-open > .gt-control-chevron { transform:rotate(180deg); color:var(--gt-accent); }
 .gt-tool-option, .gt-layer-option { gap:3px !important; }
 .gt-tool-option-head { display:flex; align-items:center; gap:7px; }
 .gt-tool-option-head i { width:11px; height:11px; border-radius:3px; flex-shrink:0; }
-.gt-tool-option kbd { margin-left:auto; font:11px/1 "IBM Plex Mono", monospace; padding:2px 5px; border:1px solid var(--gt-border); border-radius:4px; color:var(--gt-muted); }
-.gt-menu-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 6px 2px; margin-top:4px; border-top:1px solid var(--gt-border); font-size:12px; color:var(--gt-muted); }
-.gt-menu-foot button { padding:4px 9px !important; font-size:12px; }
 
-.gt-undo { display:inline-flex; }
-.gt-undo button { padding:6px 8px !important; display:flex; align-items:center; }
-.gt-undo button:first-child { border-radius:6px 0 0 6px !important; }
-.gt-undo button:last-child { border-radius:0 6px 6px 0 !important; margin-left:-1px; }
-
-.gt-layer-switcher { display:inline-flex; align-items:stretch; }
-.gt-layer-current { display:inline-flex; align-items:center; gap:7px; max-width:220px; }
-.gt-layer-current span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.gt-layer-current i, .gt-layer-dot { display:inline-block; width:11px; height:11px; border-radius:3px; flex-shrink:0; }
+.gt-layer-dot { display:inline-block; width:11px; height:11px; border-radius:3px; flex-shrink:0; }
 .gt-layer-dot { margin-right:7px; vertical-align:-1px; }
 
 /* The Layers panel, after the Alignment Explorer's sidebar layer list. */
@@ -264,7 +278,6 @@
 .gt-layer-targets.is-dragging .selection-drop-disabled, .gt-layer-targets.is-dragging .gt-original { opacity:.45; }
 .gt-layer-main { flex:1; min-width:0; display:flex; align-items:center; gap:9px; text-align:left; border:0 !important; background:transparent !important; padding:5px 6px !important; white-space:normal !important; }
 .gt-layer-main > i { width:13px; height:13px; border-radius:3px; flex-shrink:0; }
-.gt-layer-main input { flex:1; min-width:0; }
 .gt-layer-text { display:flex; flex-direction:column; min-width:0; }
 .gt-layer-text strong { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gt-layer-text small { font-size:11px; color:var(--gt-muted); }
@@ -293,8 +306,11 @@
 .gt-selection-count { display:flex; align-items:center; gap:7px; font-weight:700; white-space:nowrap; }
 .gt-selection-count i { width:10px; height:10px; border-radius:50%; background:var(--gt-picked); }
 .gt-selection-bar button { padding:5px 10px !important; }
-.gt-selection-bar .gt-check { font-size:12px; }
-.gt-tool-hint { position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:15; padding:5px 12px; border-radius:999px;
+/* Clearing sits on the bar's top-right corner, as a badge. */
+.gt-selection-bar .gt-selection-close { position:absolute; top:-9px; right:-9px; width:20px; height:20px; padding:0 !important; border-radius:50%;
+  display:grid; place-items:center; background:var(--gt-panel); border:1px solid var(--gt-picked); color:inherit; cursor:pointer; box-shadow:0 2px 6px #0005; }
+.gt-selection-bar .gt-selection-close:hover { background:var(--gt-picked); color:#111827; }
+.gt-tool-hint { position:absolute; top:calc(var(--gt-stage-top) + 12px); left:50%; transform:translateX(-50%); z-index:15; padding:5px 12px; border-radius:999px;
   background:var(--gt-panel); border:1px solid var(--gt-picked); font-size:12px; pointer-events:none; white-space:nowrap; }
 
 /* Dragging a selection out: shade the canvas, lift the drop targets above it. */
@@ -319,7 +335,7 @@
 /* The bar over a subtree layer: its tools, floating at the top of the canvas as the
    sequence view's transcript bar floats over the sequence (SequenceReadingBar: same
    panel, accent edge, radius and shadow; the tool in hand filled, as its reading is). */
-.gt-layerbar-track { position:absolute; top:10px; left:0; right:0; z-index:16; display:flex; justify-content:center; pointer-events:none; }
+.gt-layerbar-track { position:absolute; top:calc(var(--gt-stage-top) + 10px); left:0; right:0; z-index:16; display:flex; justify-content:center; pointer-events:none; }
 .gt-layerbar { pointer-events:auto; display:inline-flex; flex-direction:column; max-width:calc(100% - 24px); box-sizing:border-box;
   background:var(--gt-panel); border:1px solid var(--gt-accent); border-radius:7px; box-shadow:0 6px 18px #0006;
   font:12px/1.3 Lato, system-ui, sans-serif; color:var(--gt-text); }
@@ -341,6 +357,22 @@
   color:var(--gt-muted) !important; background:transparent !important; border:1px solid transparent !important; border-radius:5px !important; }
 .gt-layerbar .gt-layerbar-act:hover:not(:disabled) { color:var(--gt-text) !important; background:color-mix(in srgb, var(--gt-accent) 14%, transparent) !important; }
 .gt-layerbar .gt-layerbar-act:disabled { opacity:.35; cursor:default; }
+/* Comparing two subtrees: a second row under the tools. */
+.gt-compare-row { border-top:1px solid var(--gt-border); align-items:center; flex-wrap:wrap; row-gap:4px; }
+.gt-compare-pair { display:inline-flex; align-items:center; gap:2px; padding-left:4px; min-width:0; }
+.gt-compare-name { display:inline-flex; align-items:center; gap:5px; max-width:180px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gt-compare-name b { flex-shrink:0; display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%;
+  background:var(--gt-accent); color:var(--gt-panel); font-size:10px; }
+.gt-compare-group { display:inline-flex; align-items:center; gap:2px; }
+.gt-compare-label { color:var(--gt-muted); padding:0 4px; white-space:nowrap; }
+.gt-layerbar .gt-compare-choice { padding:4px 8px !important; font-size:11.5px; font-weight:600; white-space:nowrap; color:var(--gt-muted) !important;
+  background:transparent !important; border:1px solid transparent !important; border-radius:5px !important; }
+.gt-layerbar .gt-compare-choice:hover:not(.on) { color:var(--gt-text) !important; background:color-mix(in srgb, var(--gt-accent) 14%, transparent) !important; }
+.gt-layerbar .gt-compare-choice.on { color:var(--gt-accent) !important; border-color:var(--gt-accent) !important;
+  background:color-mix(in srgb, var(--gt-accent) 12%, transparent) !important; }
+.gt-compare-check { display:inline-flex; align-items:center; gap:5px; padding:0 6px; color:var(--gt-muted); font-weight:600; white-space:nowrap; cursor:pointer; }
+.gt-compare-stats { display:inline-flex; gap:10px; padding:0 6px; color:var(--gt-muted); white-space:nowrap; }
+.gt-compare-stats .warn { color:var(--gt-warn); font-weight:700; }
 
 /* The focus bar's re-centre, as the genome browser's focus bar draws it: the reset mark in
    the accent colour, first thing on the bar. */
@@ -365,11 +397,18 @@
 /* Renaming a subtree, in the drawer. */
 .gt-fragment-name-input { flex:1; min-width:0; margin:3px 4px; padding:4px 8px; font-size:12.5px; font-weight:700; border-radius:5px;
   border:1px solid var(--gt-accent); background:var(--gt-bg); color:var(--gt-text); outline:none; }
-.gt-layerbar-rename { display:inline-flex; align-items:center; gap:2px; padding:0 2px; }
-.gt-layerbar-rename input { width:180px; padding:5px 8px; font-size:12.5px; font-weight:600; border-radius:5px;
-  border:1px solid var(--gt-accent); background:var(--gt-bg); color:var(--gt-text); outline:none; }
-.gt-clade-menu { display:inline-flex; }
-.gt-clade-menu > button { display:inline-flex; align-items:center; gap:6px; }
+/* Renaming a subtree on the canvas (the Rename tool): its name tag becomes a text box, the
+   same pill the painter draws (fragmentTagBox), kept on it as the view moves. */
+.gt-tag-edit { position:absolute; left:0; top:0; z-index:5; display:inline-flex; align-items:center; gap:4px; }
+.gt-tag-input { height:22px; box-sizing:border-box; padding:0 8px; border-radius:11px;
+  border:0; outline:2px solid var(--gt-accent); outline-offset:2px; font-family:inherit; font-size:12px; font-weight:700; line-height:22px; }
+.gt-tag-input::placeholder { color:inherit; opacity:.6; }
+.gene-trees .gt-tag-act { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0 !important;
+  border-radius:50% !important; border:1px solid var(--gt-border) !important; background:var(--gt-panel) !important; color:var(--gt-muted) !important;
+  box-shadow:0 2px 8px #0003; }
+.gene-trees .gt-tag-act:first-of-type { margin-left:4px; }
+.gene-trees .gt-tag-act:hover { color:var(--gt-text) !important; border-color:var(--gt-accent) !important; }
+.gene-trees .gt-tag-act.apply { color:var(--gt-accent) !important; }
 
 /* Cycle: the Alignment Explorer's layer drum, beside the layer's name. */
 .gt-cycle { display:inline-flex; align-items:center; gap:6px; }
@@ -381,3 +420,92 @@
 .gene-trees .gt-unfocus { margin-left:auto; flex-shrink:0; border:0 !important; background:transparent !important; padding:4px 6px !important;
   color:var(--gt-text) !important; opacity:.5; font-size:13px; line-height:1; }
 .gene-trees .gt-unfocus:hover { opacity:1; }
+
+/* Data views: the control bar's menu (lit while a view is on), each view's options, and the Neighbourhood key. */
+.gt-data-options { display:flex; flex-direction:column; gap:11px; margin-top:4px; padding:10px 6px 2px; border-top:1px solid var(--gt-border); }
+/* A view in the menu: one button (the view) with a cog set into its right edge that opens
+   the view's settings under it, in place. The row draws the button; the two inside are bare. */
+.gt-view { display:flex; flex-direction:column; }
+.gt-view-row { display:flex; align-items:center; border:1px solid transparent; border-radius:6px; }
+.gt-view-row:hover:not(.disabled) { border-color:var(--gt-accent); background:color-mix(in srgb, var(--gt-accent) 9%, var(--gt-panel)); }
+.gt-view-row.selected { border-color:var(--gt-accent); background:color-mix(in srgb, var(--gt-accent) 14%, var(--gt-panel)); }
+.gt-menu .gt-view-row > button, .gt-menu .gt-view-row > button:hover:not(:disabled) { border-color:transparent; background:transparent; }
+.gt-menu .gt-view-pick { flex:1; min-width:0; text-align:left; }
+.gt-menu .gt-view-toggle { flex-shrink:0; display:flex; align-items:center; justify-content:center; width:26px; height:26px; margin-right:8px;
+  padding:0; border-radius:4px; color:var(--gt-drawer-accent); }
+.gt-menu .gt-view-row > .gt-view-toggle:hover:not(:disabled) { color:var(--gt-drawer-accent); background:var(--gt-drawer-hover); }
+.gt-view-settings { margin:2px 0 8px 12px; padding:8px 4px 4px 12px; border-top:0; border-left:2px solid var(--gt-border); }
+.gt-view.open .gt-view-settings { border-left-color:color-mix(in srgb, var(--gt-accent) 45%, var(--gt-border)); }
+.gt-data-option { display:flex; flex-direction:column; gap:5px; }
+.gt-data-option > strong, .gt-menu-check strong { font-size:12px; }
+.gt-data-option > small { line-height:1.45; }
+/* As the Alignment Explorer's menus: separate buttons, equal widths, not a joined bar. */
+.gt-choice-row { display:grid; grid-template-columns:repeat(var(--gt-choices), 1fr); gap:4px; }
+.gt-choice-row button { padding:5px 4px !important; font-size:12px; text-align:center; }
+.gt-choice-cards { display:grid; grid-template-columns:repeat(var(--gt-choices), 1fr); gap:5px; }
+.gt-choice-card { display:flex; flex-direction:column; align-items:flex-start; gap:3px; text-align:left;
+  white-space:normal !important; padding:6px 8px !important; }
+.gt-choice-card strong { font-size:12px; }
+.gt-choice-card small { line-height:1.4; }
+.gt-swatch { display:flex; gap:2px; width:100%; height:8px; margin-bottom:2px; }
+.gt-swatch i { flex:1; border-radius:2px; }
+.gt-menu-check { display:flex; align-items:flex-start; gap:8px; cursor:pointer; }
+.gt-menu-check input { margin-top:2px; accent-color:var(--gt-accent); }
+.gt-menu-check span { display:flex; flex-direction:column; gap:2px; }
+.gt-menu-check small { line-height:1.4; }
+/* The Neighbourhood key: the view's own genes (blue, the tree gene orange) and its links. */
+.gt-key-arrow { display:inline-block; width:22px; height:10px; flex-shrink:0; background:#3b82f6;
+  clip-path:polygon(0 0, 70% 0, 100% 50%, 70% 100%, 0 100%); }
+.gene-trees.light .gt-key-arrow { background:#0099ff; }
+.gt-key-arrow.centre { background:#fb923c !important; }
+.gene-trees.light .gt-key-arrow.centre { background:#f97316 !important; }
+.gt-key-swatches { display:inline-flex; gap:2px; flex-shrink:0; width:22px; }
+.gt-key-swatches i { flex:1; height:10px; border-radius:2px; }
+.gt-key-link { display:inline-block; width:22px; flex-shrink:0; border-top:2px solid #d1d5db; opacity:.8; }
+.gene-trees.light .gt-key-link { border-top-color:#374151; }
+.gt-key-link.symbol { border-top-style:dashed; }
+/* The drawer's Legend: one section, a small heading over each key. */
+.gt-legend-heading { margin:4px 0 2px; font-size:12px; font-weight:700; color:var(--gt-muted); }
+.gt-legend-heading:first-child { margin-top:0; }
+
+/* ── the Transcript structure column ── */
+.gt-align-bar { justify-content:flex-start; color:var(--gt-text, inherit); }
+.gt-align-bar > span:not(.gt-spinner) { flex:1; min-width:0; }
+.gt-align-bar .gt-spinner { color:var(--gt-accent); flex-shrink:0; }
+.gt-notice.gt-align-bar button { border:1px solid var(--gt-border) !important; padding:5px 12px !important; font-size:13px; border-radius:6px;
+  background:var(--gt-panel) !important; white-space:nowrap; flex-shrink:0; }
+.gt-notice.gt-align-bar button.primary { background:var(--gt-primary) !important; border-color:var(--gt-primary) !important; color:#fff !important; }
+.gt-align-bar.warn { box-shadow:inset 3px 0 0 #f59e0b; }
+/* The conservation key: the heat ramp and the agreement it was scaled to. */
+.gt-heat-key { display:flex; flex-direction:column; gap:3px; margin:2px 0 8px; }
+.gt-heat-bar { height:10px; border-radius:3px; }
+.gt-heat-ends { display:flex; justify-content:space-between; font-size:11px; color:var(--gt-muted); }
+.gt-heat-key p { margin:2px 0 0; font-size:11px; line-height:1.45; }
+.gt-key-exon { display:inline-block; width:22px; height:10px; flex-shrink:0; background:#60a5fa; }
+.gt-key-exon.utr { background:#c4b5fd; height:6px; }
+.gt-key-exon.line { height:2px; background:#7c8594; }
+.gene-trees.light .gt-key-exon.line { background:#64748b; }
+.gt-key-exon.gap { height:10px; background:none; border-top:1px dashed #5b8def; border-bottom:1px dashed #5b8def; box-sizing:border-box; }
+.gene-trees.light .gt-key-exon.gap { border-color:#3366cc; }
+.gt-key-cut { display:inline-block; width:22px; flex-shrink:0; text-align:center; font-style:normal; font-weight:700; letter-spacing:-1px; }
+.gt-align-note { font-size:12px; margin:6px 0 0; }
+.gt-align-failed { font-size:12px; margin-top:8px; color:var(--gt-muted); }
+.gt-align-failed summary { cursor:pointer; }
+.gt-align-failed ul { margin:6px 0 0; padding-left:16px; }
+.gt-align-failed li { margin:2px 0; }
+.gt-key-exon.cds-stripes { background:linear-gradient(90deg, #60a5fa 50%, #bfdbfe 50%); }
+.gt-key-exon.intron { background:#4a5568; }
+.gt-key-exon.splice { background:#ed8936; }
+.gt-key-exon.start { background:#0d9488; }
+.gt-key-exon.stop { background:#c026d3; margin-left:8px; }
+.gt-key-exon.faded { background:#60a5fa; opacity:.28; }
+/* The Structure key: the genome browser's exon boxes and lines. */
+.gt-key-box { display:inline-block; width:22px; height:10px; flex-shrink:0; box-sizing:border-box; border:1.5px solid #5b8def; background:transparent; }
+.gene-trees.light .gt-key-box { border-color:#3366cc; }
+.gt-key-box.coding { background:#5b8def; }
+.gene-trees.light .gt-key-box.coding { background:#3366cc; }
+.gt-key-box.shared { box-shadow:inset 2px 0 0 #fff, inset -2px 0 0 #fff; }
+.gene-trees.light .gt-key-box.shared { box-shadow:inset 2px 0 0 #0f172a, inset -2px 0 0 #0f172a; }
+.gt-key-box.lit { border-color:#7dd3fc; background:rgba(125,211,252,.22); }
+.gene-trees.light .gt-key-box.lit { border-color:#0ea5e9; background:rgba(14,165,233,.18); }
+.gt-key-exon.dotted { height:0; background:none; border-top:1px dotted #5b8def; }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FEATURE_COLORS } from './FeatureLegend'
 import { normalizeWheelDelta, wheelZoomFactor } from '../utils/browsingControls'
 import { monoFont } from '../utils/typography'
+import { alignedCodonStripes, rowCodingColumns } from '../utils/codonStripes'
 
 const ROW_HEIGHT = 24
 const HEADER_HEIGHT = 34
@@ -71,48 +72,6 @@ function normalizeRow(row, index) {
         noCoverage: Boolean(row?.no_coverage ?? row?.noCoverage),
         features,
     }
-}
-
-function buildCdsStripeMap(features, seq) {
-    const cdsRanges = (features || [])
-        .filter((f) => f?.type === 'cds')
-        .map((f) => ({ start: f.start, end: f.end }))
-        .sort((a, b) => a.start - b.start || a.end - b.end)
-    if (cdsRanges.length === 0) return null
-
-    const startCodons = (features || [])
-        .filter((f) => f?.type === 'start_codon')
-        .map((f) => ({ start: f.start, end: f.end }))
-        .sort((a, b) => a.start - b.start || a.end - b.end)
-
-    let anchor = null
-    for (const sc of startCodons) {
-        const codon = String(seq.substring(sc.start, sc.end + 1) || '').toUpperCase()
-        if (codon !== 'ATG') continue
-        const inside = cdsRanges.some((r) => sc.start >= r.start && sc.end <= r.end)
-        if (inside) {
-            anchor = sc.start
-            break
-        }
-    }
-    if (anchor === null) anchor = cdsRanges[0].start
-
-    const stripeMap = new Map()
-    let cdsBaseIndex = 0
-    let started = false
-    for (const range of cdsRanges) {
-        for (let pos = range.start; pos <= range.end; pos += 1) {
-            if (!started) {
-                if (pos < anchor) continue
-                started = true
-            }
-            const codonPhase = Math.floor(cdsBaseIndex / 3) % 2
-            stripeMap.set(pos, CDS_STRIPE_COLORS[codonPhase])
-            const base = String(seq?.[pos] || '')
-            if (base !== '-') cdsBaseIndex += 1
-        }
-    }
-    return stripeMap
 }
 
 function getColorAt(features, pos, seq, cdsStripeMap = null) {
@@ -375,13 +334,25 @@ export default function MultiAlignmentPanel({
         [rows, visibleLength, result?.consensus]
     )
 
+    // Codon shades by alignment column, so aligned codons match whatever indels lie
+    // upstream of them in one row or another (see utils/codonStripes.js).
     const rowStripeMaps = useMemo(() => {
+        const infos = rows.map((row) => ({ row, cds: rowCodingColumns(row.features, row.sequence, visibleLength) }))
+        const stripes = alignedCodonStripes(
+            infos.filter((i) => i.cds).map((i) => ({ sequence: i.row.sequence, coding: i.cds.coding, anchor: i.cds.anchor })),
+            visibleLength
+        )
         const maps = new Map()
-        for (const row of rows) {
-            maps.set(row.genomeKey, buildCdsStripeMap(row.features, row.sequence))
+        for (const { row, cds } of infos) {
+            if (!cds) { maps.set(row.genomeKey, null); continue }
+            const map = new Map()
+            for (let pos = cds.anchor; pos < visibleLength; pos += 1) {
+                if (cds.coding[pos] && stripes[pos] >= 0) map.set(pos, CDS_STRIPE_COLORS[stripes[pos]])
+            }
+            maps.set(row.genomeKey, map)
         }
         return maps
-    }, [rows])
+    }, [rows, visibleLength])
 
     const charWidth = BASE_CHAR_WIDTH * zoomLevel
     const maxScroll = Math.max(0, visibleLength * charWidth - Math.max(0, viewWidth - LABEL_WIDTH - 8))
@@ -1027,9 +998,10 @@ export default function MultiAlignmentPanel({
         0,
         Math.max(0, minimapContentWidth - viewportWidthPx)
     )
+    // The control always names what is showing: introns in full, or collapsed on a genome's.
     const collapseDropdownValue = collapseIntrons
         ? (String(collapseSourceGenomeKey || '').trim() || '__off__')
-        : '__prompt__'
+        : '__off__'
 
     return (
         <div className={`${isLight ? 'bg-white border border-gray-200 shadow-sm' : 'bg-gray-800'} rounded-lg overflow-hidden flex flex-col`}>
@@ -1081,7 +1053,7 @@ export default function MultiAlignmentPanel({
                                 value={collapseDropdownValue}
                                 onChange={(e) => {
                                     const next = String(e.target.value || '')
-                                    if (next === '__prompt__' || next === '__off__') {
+                                    if (next === '__off__') {
                                         onCollapseIntronsChange?.(false)
                                         return
                                     }
@@ -1089,13 +1061,12 @@ export default function MultiAlignmentPanel({
                                     onCollapseIntronsChange?.(true)
                                 }}
                                 className={`h-7 min-w-[148px] rounded px-2 text-[11px] border ${isLight ? 'bg-gray-50 border-gray-300 text-gray-900' : 'bg-gray-700 border-gray-600 text-white'}`}
-                                title="Collapse introns source genome"
+                                title={collapseIntrons ? 'Introns are collapsed on this genome\'s introns: choose "Introns in full" to show them' : 'Introns are shown in full: choose a genome to collapse on its introns'}
                             >
-                                <option value="__prompt__" hidden>Collapse introns</option>
-                                <option value="__off__">Don't collapse</option>
+                                <option value="__off__">Introns in full</option>
                                 {(collapseSourceOptions || []).map((option) => (
                                     <option key={option.genome_key} value={option.genome_key}>
-                                        {option.tag} {option.label}
+                                        Collapse introns · {option.tag} {option.label}
                                     </option>
                                 ))}
                             </select>

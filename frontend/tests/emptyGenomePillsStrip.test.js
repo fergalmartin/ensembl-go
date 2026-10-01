@@ -86,8 +86,14 @@ test('the buttons go through the same handler as the header buttons', () => {
 test('a tutorial gets the blank reservation, never the message', () => {
   // A tutorial sandbox starts with no pills deliberately and adds its own; telling the
   // reader to go and download a genome is the opposite of what the step is teaching.
-  assert.match(app, /const showNoGenomesMessage = topBarSpecies\.length === 0 && !tutorialConfig/)
+  assert.match(app, /const showNoGenomesMessage = configLoaded && topBarSpecies\.length === 0 && !tutorialConfig/)
   assert.match(app, /visibility: \(topBarSpecies\.length === 0 && !showNoGenomesMessage\) \? 'hidden' : undefined/)
+})
+
+test('the message waits for the saved configuration before saying there are no genomes', () => {
+  // Until /api/config answers, topBarSpecies is the empty default, not the user's
+  // selection. Telling them to go and fetch a genome then reads as lost settings.
+  assert.match(app, /const showNoGenomesMessage = configLoaded && /)
 })
 
 test('the header keeps its full bottom padding when there is no strip under it', () => {
