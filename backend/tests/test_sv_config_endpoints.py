@@ -491,6 +491,75 @@ class ValidateTests(SvConfigEndpointTestCase):
 
 
 class SaveAndAttachTests(SvConfigEndpointTestCase):
+    def record_text(self, label="A to B"):
+        return (
+            "# Required fields\n"
+            f"label = {label}\n"
+            "reference_accession = GCA_1\n"
+            "target_accession = GCA_2\n"
+            f"chain = {self.chain}\n"
+            "indexed_side = target\n\n"
+            "# Optional fields and comments survive editor saves\n"
+            "description = testing = literal # text\n"
+            "reference_mapping =\n"
+        )
+
+    def test_record_editor_save_preserves_comments_and_blank_fields(self):
+        destination = self.root / "records.cfg"
+        text = self.record_text()
+        result = self.save(destination, text, attach=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["text"], text)
+        self.assertEqual(destination.read_text(), text)
+        read = asyncio.run(read_sv_config(path=str(destination)))
+        self.assertEqual(read["text"], text)
+        self.assertEqual([a["label"] for a in self.catalog()["alignments"]], ["A to B"])
+
+    def test_merging_records_retains_the_format_and_both_alignments(self):
+        destination = self.root / "records.cfg"
+        self.save(destination, self.record_text())
+        self.save(destination, self.record_text("Alternative"), mode="merge", attach=True)
+        self.assertIn('\n---\n', destination.read_text())
+        self.assertEqual(sorted(a["label"] for a in self.catalog()["alignments"]), ["A to B", "Alternative"])
+
+    def test_form_registration_can_add_to_record_config(self):
+        destination = self.root / "records.cfg"
+        self.save(destination, self.record_text(), attach=True)
+        self.register(target={"kind": "config", "path": str(destination), "mode": "merge"})
+        self.assertIn('reference_accession =', destination.read_text())
+        self.assertEqual(len(self.catalog()["alignments"]), 2)
+
+    def test_deleting_the_last_record_keeps_a_valid_config(self):
+        destination = self.root / "records.cfg"
+        self.save(destination, self.record_text(), attach=True)
+        alignment = self.catalog()["alignments"][0]
+        result = asyncio.run(delete_sv_alignment(alignment["id"], SvAlignmentDeleteRequest(config_path=str(destination), output_dir=str(self.root))))
+        self.assertTrue(result["ok"])
+        read = asyncio.run(read_sv_config(path=str(destination)))
+        self.assertEqual(read["diagnostics"], [])
+        self.assertEqual(self.catalog()["alignments"], [])
+
+    def test_existing_json_in_cfg_stays_json(self):
+        destination = self.root / "old.cfg"
+        destination.write_text(self.config_text())
+        self.save(destination, self.config_text("Updated"))
+        self.assertEqual(json.loads(destination.read_text())["ensembl_go_sv_config"], 1)
+
+    def test_save_as_converts_between_json_and_records(self):
+        records = self.root / "export.cfg"
+        self.assertTrue(self.save(records, self.config_text())["ok"])
+        self.assertIn('reference_accession =', records.read_text())
+        destination = self.root / "export.json"
+        self.assertTrue(self.save(destination, records.read_text())["ok"])
+        self.assertEqual(json.loads(destination.read_text())["ensembl_go_sv_config"], 1)
+
+    def test_missing_record_mapping_is_in_validation_report(self):
+        missing = self.root / 'absent.tsv'
+        text = self.record_text().replace('reference_mapping =', f'reference_mapping = {missing}')
+        result = asyncio.run(validate_sv_config(SvConfigValidateRequest(text=text)))
+        self.assertTrue(result["ok"])
+        self.assertIn(str(missing), result["missing_files"])
+
     def config_text(self, label="A to B"):
         return json.dumps({
             "ensembl_go_sv_config": 1,

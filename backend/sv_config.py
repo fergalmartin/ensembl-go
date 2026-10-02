@@ -8,9 +8,9 @@ the production pipeline rather than something the view needs.
 This module owns that file format. It converts between three shapes:
 
 ``config``
-    What a user reads and edits. Genomes are declared once under short handles and
-    referenced by handle from each alignment, so a record is a few short lines
-    rather than a page of duplicated accessions and aliases.
+    What a user reads and edits: self-contained key=value records separated by
+    ``---``, or JSON declaring shared genomes under short handles. Record text is
+    translated into the same JSON-shaped config before validation.
 
 ``dataset``
     The flat dict the rest of the backend already consumes. Producing this shape
@@ -585,6 +585,119 @@ def _relativize(path: Any, base_dir: Optional[Path]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def is_sv_key_value_text(text: str) -> bool:
+    """Distinguish record configs from JSON without depending on the extension."""
+    first = str(text).lstrip("\ufeff \t\r\n")
+    return first.startswith(("#", ";", "---")) or bool(re.match(r"[\w.]+\s*=", first))
+
+
+def _key_value_payload(text: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, int]]:
+    """Translate self-contained key=value records into the existing JSON schema."""
+    records: List[Tuple[Dict[str, str], Dict[str, int]]] = []
+    values: Dict[str, str] = {}
+    lines: Dict[str, int] = {}
+    diagnostics: List[Dict[str, Any]] = []
+    for number, raw in enumerate(text.lstrip("\ufeff").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line == "---":
+            if values:
+                records.append((values, lines))
+            values, lines = {}, {}
+            continue
+        if "=" not in line:
+            diagnostics.append(diagnostic("error", "", "Expected key = value or a --- record divider.", number))
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if value.startswith('"'):
+            try:
+                decoded = json.loads(value)
+                if not isinstance(decoded, str):
+                    raise ValueError("Expected a string")
+                value = decoded
+            except ValueError:
+                diagnostics.append(diagnostic("error", "", f"Invalid quoted value for '{key}'; use a JSON string or an unquoted value.", number))
+                continue
+        if key in values:
+            diagnostics.append(diagnostic("error", "", f"Duplicate field '{key}' in this record.", number))
+            continue
+        values[key], lines[key] = value, number
+    if values:
+        records.append((values, lines))
+    payload: Dict[str, Any] = {CONFIG_VERSION_KEY: CONFIG_VERSION, "genomes": {}, "pairs": []}
+    index: Dict[str, int] = {}
+    basic = {"label", "reference_accession", "target_accession", "chain", "indexed_side", "id", "description"}
+    genome_fields = {"assembly_name", "species", "aliases", "mapping"}
+    for record_number, (record, source_lines) in enumerate(records):
+        pointer = f"pairs/{record_number}/alignments/0"
+        start = min(source_lines.values())
+        index[pointer] = start
+        alignment: Dict[str, Any] = {}
+        for key in ("label", "chain", "indexed_side", "id", "description"):
+            if record.get(key):
+                alignment[key] = record[key]
+            index[f"{pointer}/{key}"] = source_lines.get(key, start)
+        if not record.get("indexed_side"):
+            diagnostics.append(diagnostic("error", f"{pointer}/indexed_side", "Each key=value record needs indexed_side = reference or target.", source_lines.get("indexed_side", start)))
+        for key in record:
+            if key in basic:
+                continue
+            side, _, suffix = key.partition("_")
+            valid = side in INDEXED_SIDES and (
+                suffix in genome_fields or
+                (suffix.startswith("sequence_alias.") and len(suffix) > len("sequence_alias.")) or
+                bool(re.fullmatch(r"track\.[1-9][0-9]*\.(path|label|type)", suffix))
+            )
+            if not valid:
+                diagnostics.append(diagnostic("error", pointer, f"Unknown field '{key}'. Check the SV config template for supported fields.", source_lines[key]))
+
+        for side in INDEXED_SIDES:
+            accession_key = f"{side}_accession"
+            accession = record.get(accession_key, "")
+            handle = accession or f"missing_{side}_{record_number}"
+            alignment[side] = handle
+            index[f"{pointer}/{side}"] = source_lines.get(accession_key, start)
+            genome_pointer = f"genomes/{handle}"
+            index[genome_pointer] = source_lines.get(accession_key, start)
+            index[f"{genome_pointer}/accession"] = source_lines.get(accession_key, start)
+            genome = payload["genomes"].setdefault(handle, {"accession": accession})
+            for field in ("assembly_name", "species"):
+                key = f"{side}_{field}"
+                if record.get(key):
+                    if genome.get(field) and genome[field] != record[key]:
+                        diagnostics.append(diagnostic("error", genome_pointer, f"Conflicting {field} for assembly '{accession}'. Use the same metadata in every record.", source_lines[key]))
+                    genome[field] = record[key]
+            alias_key = f"{side}_aliases"
+            if record.get(alias_key):
+                genome["aliases"] = unique_strings([*(genome.get("aliases") or []), *record[alias_key].split(",")])
+            alias_prefix = f"{side}_sequence_alias."
+            for key, value in record.items():
+                if key.startswith(alias_prefix) and value:
+                    alias = key[len(alias_prefix):]
+                    aliases = genome.setdefault("sequence_aliases", {})
+                    if aliases.get(alias) and aliases[alias] != value:
+                        diagnostics.append(diagnostic("error", genome_pointer, f"Conflicting sequence alias '{alias}' for assembly '{accession}'.", source_lines[key]))
+                    aliases[alias] = value
+            mapping_key = f"{side}_mapping"
+            if record.get(mapping_key):
+                alignment.setdefault("legacy_mappings", {})[mapping_key] = record[mapping_key]
+            tracks: Dict[int, Dict[str, str]] = {}
+            for key, value in record.items():
+                match = re.fullmatch(rf"{side}_track\.([1-9][0-9]*)\.(path|label|type)", key)
+                if match and value:
+                    tracks.setdefault(int(match[1]), {})[match[2]] = value
+            if tracks:
+                alignment.setdefault("tracks", {})[handle] = [tracks[n] for n in sorted(tracks)]
+                for track_index, n in enumerate(sorted(tracks)):
+                    track_pointer = f"{pointer}/tracks/{handle}/{track_index}"
+                    index[track_pointer] = min(source_lines[k] for k in source_lines if k.startswith(f"{side}_track.{n}."))
+                    for field in ("path", "label", "type"):
+                        index[f"{track_pointer}/{field}"] = source_lines.get(f"{side}_track.{n}.{field}", index[track_pointer])
+        payload["pairs"].append({"alignments": [alignment]})
+    return payload, diagnostics, index
+
+
 def parse_sv_config(source: Any, base_dir: Optional[Path] = None) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """Read config text (or an already-decoded object) into a normalised config.
 
@@ -594,15 +707,19 @@ def parse_sv_config(source: Any, base_dir: Optional[Path] = None) -> Tuple[Dict[
     :func:`has_errors` first.
     """
     diagnostics: List[Dict[str, Any]] = []
+    line_index: Dict[str, int] = {}
 
     if isinstance(source, (str, bytes)):
         text = source.decode("utf-8") if isinstance(source, bytes) else source
         if not text.strip():
             return _empty_config(), [diagnostic("error", "", "The configuration is empty.")]
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError as exc:
-            return _empty_config(), [diagnostic("error", "", f"Invalid JSON: {exc.msg}", line=exc.lineno)]
+        if is_sv_key_value_text(text):
+            payload, diagnostics, line_index = _key_value_payload(text)
+        else:
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError as exc:
+                return _empty_config(), [diagnostic("error", "", f"Invalid JSON: {exc.msg}", line=exc.lineno)]
     else:
         payload = source
 
@@ -635,6 +752,14 @@ def parse_sv_config(source: Any, base_dir: Optional[Path] = None) -> Tuple[Dict[
         "genomes": genomes,
         "pairs": pairs,
     }
+    for item in diagnostics:
+        if not item["line"] and line_index:
+            pointer = item["pointer"].strip("/")
+            while pointer:
+                if pointer in line_index:
+                    item["line"] = line_index[pointer]
+                    break
+                pointer = pointer.rpartition("/")[0]
     return config, diagnostics
 
 
@@ -1169,6 +1294,54 @@ def config_to_document(config: Dict[str, Any], base_dir: Optional[Path] = None) 
 def serialize_sv_config(config: Dict[str, Any]) -> str:
     """Config object -> the exact text written to disk and shown in the editor."""
     return json.dumps(config, indent=2, ensure_ascii=False) + "\n"
+
+
+def serialize_sv_key_value_config(config: Dict[str, Any], base_dir: Optional[Path] = None) -> str:
+    """Write records after a form registration, merge, removal, or Save as .cfg."""
+    records: List[str] = []
+    for dataset in config_to_datasets(config):
+        lines = [
+            "# Required fields",
+            f"label = {dataset['label']}",
+            f"reference_accession = {dataset['reference_genome']['accession']}",
+            f"target_accession = {dataset['target_genome']['accession']}",
+            f"chain = {_relativize(dataset['chain_path'], base_dir)}",
+            f"indexed_side = {dataset['indexed_side']}",
+            "", "# Optional fields",
+        ]
+        if dataset['id'] != slugify_label(dataset['label']):
+            lines.append(f"id = {dataset['id']}")
+        if dataset.get('description'):
+            lines.append(f"description = {dataset['description']}")
+        for side, mapping_key in (("reference", "ref_mapping_path"), ("target", "tgt_mapping_path")):
+            genome = dataset[f"{side}_genome"]
+            metadata = _genome_config_from_record(genome, genome['accession'])
+            for field in ("assembly_name", "species"):
+                if metadata.get(field):
+                    lines.append(f"{side}_{field} = {metadata[field]}")
+            if metadata.get('aliases'):
+                lines.append(f"{side}_aliases = {', '.join(metadata['aliases'])}")
+            if dataset.get(mapping_key):
+                lines.append(f"{side}_mapping = {_relativize(dataset[mapping_key], base_dir)}")
+            for alias, sequence in (dataset.get(f"{side}_sequence_aliases") or {}).items():
+                lines.append(f"{side}_sequence_alias.{alias} = {sequence}")
+            for number, track in enumerate(dataset['tracks'][side], 1):
+                lines.append(f"{side}_track.{number}.path = {_relativize(track['path'], base_dir)}")
+                lines.append(f"{side}_track.{number}.label = {track['label']}")
+                if not track_type_from_path(track['path']):
+                    lines.append(f"{side}_track.{number}.type = {track['type']}")
+        # JSON can contain multiline values. Quote only those as JSON strings so
+        # each entry remains one line; ordinary paths (including backslashes) stay literal.
+        encoded = []
+        for line in lines:
+            if " = " in line:
+                key, value = line.split(" = ", 1)
+                if '\n' in value or '\r' in value or value.startswith('"'):
+                    line = f"{key} = {json.dumps(value, ensure_ascii=False)}"
+            encoded.append(line)
+        records.append('\n'.join(encoded))
+    header = "# Ensembl Go structural-variation alignments\n# key = value; --- separates records. See docs/STRUCTURAL_VARIATION.md.\n\n"
+    return header + '\n\n---\n\n'.join(records) + '\n'
 
 
 # ---------------------------------------------------------------------------

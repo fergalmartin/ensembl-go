@@ -112,5 +112,6 @@ test-data/
 # it explicitly rather than sweeping all of outputs/, which is scratch.
 docs/browsing-controls-handoff.md
 docs/tutorial-builder-genome-playlists-handoff.md
-outputs/alignment-explorer-genome-links/44_mammals_epo_release115_genome_links.tsv
+outputs/
+#outputs/alignment-explorer-genome-links/44_mammals_epo_release115_genome_links.tsv
 

@@ -172,11 +172,13 @@ from sv_config import (
     config_to_document as sv_config_to_document,
     derive_sequence_map as sv_derive_sequence_map,
     has_errors as sv_config_has_errors,
+    is_sv_key_value_text,
     locate_pointer_lines as sv_locate_pointer_lines,
     merge_sv_config,
     parse_sv_config,
     remove_alignment as sv_remove_alignment,
     serialize_sv_config,
+    serialize_sv_key_value_config,
 )
 from security_utils import (
     get_with_validated_redirects,
@@ -18950,9 +18952,19 @@ def _sv_read_config_file(path: Path) -> Tuple[Dict[str, Any], List[Dict[str, Any
     return config, sv_locate_pointer_lines(text, diagnostics), text
 
 
-def _sv_write_config_file(path: Path, config: Dict[str, Any]) -> str:
+def _sv_write_config_file(path: Path, config: Dict[str, Any], source_text: Optional[str] = None) -> str:
     """Write a config atomically, under the same lock every SV write takes."""
-    text = serialize_sv_config(sv_config_to_document(config, base_dir=path.parent))
+    existing_text = path.read_text(encoding="utf-8") if path.exists() else ""
+    use_records = path.suffix.lower() == ".cfg" and (
+        not existing_text or is_sv_key_value_text(existing_text) or
+        (source_text is not None and is_sv_key_value_text(source_text))
+    )
+    if use_records:
+        # An editor replacement has already passed validation. Preserve comments,
+        # ordering, and blank optional fields exactly as the user wrote them.
+        text = source_text if source_text is not None and is_sv_key_value_text(source_text) else serialize_sv_key_value_config(config, base_dir=path.parent)
+    else:
+        text = serialize_sv_config(sv_config_to_document(config, base_dir=path.parent))
     with _sv_config_write_lock:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_name(f"{path.name}.tmp")
@@ -19158,6 +19170,10 @@ async def validate_sv_config(payload: SvConfigValidateRequest):
         chain = str(dataset.get("chain_path") or "")
         if chain and not Path(chain).expanduser().exists():
             missing_files.append(chain)
+        for field in ("ref_mapping_path", "tgt_mapping_path"):
+            path = str(dataset.get(field) or "")
+            if path and not Path(path).expanduser().exists():
+                missing_files.append(path)
         for side in ("reference", "target"):
             for track in (dataset.get("tracks") or {}).get(side) or []:
                 path = str(track.get("path") or "")
@@ -19240,7 +19256,7 @@ async def save_sv_config(payload: SvConfigSaveRequest):
     else:
         final = incoming
 
-    text = _sv_write_config_file(destination, final)
+    text = _sv_write_config_file(destination, final, source_text=source if isinstance(source, str) and mode != "merge" else None)
     if payload.attach:
         _sv_attach_config_path(destination)
     return {"ok": True, "path": str(destination), "text": text, "diagnostics": diagnostics}

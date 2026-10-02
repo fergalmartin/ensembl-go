@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useMemo, useCallback, Component } from 're
 import { trackAchievement } from '../achievements/tracker.js'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import { getGenomeKey } from '../utils/genomeIdentity'
+import { genomeColorResolver } from '../genomeColorSchemes'
+import { genomePillColors } from '../utils/genomePillColors'
 import {
   markWheelHandled,
   readWheelEvent,
@@ -364,6 +366,7 @@ function NeighbourhoodView({
   onHomologyFiltersChange = () => { },
 }) {
   const isLight = theme === 'light'
+  const resolveGenomeColor = useMemo(() => genomeColorResolver(config), [config])
   const sidePanelRef = useRef(null)
   const trackAreaRef = useRef(null)
   const trackWheelHandlerRef = useRef(null)
@@ -1252,6 +1255,10 @@ function NeighbourhoodView({
             const isLoading = Boolean(loadingByGenome?.[key])
             const rowError = String(errorByGenome?.[key] || '')
             const isDisabled = Boolean(row.isDisabled)
+            const pillColors = genomePillColors(resolveGenomeColor(row.species), {
+              isLight,
+              state: isDisabled ? 'inactive' : 'active',
+            })
             return (
               <div
                 key={key}
@@ -1268,11 +1275,9 @@ function NeighbourhoodView({
                     type="button"
                     className="inline-flex h-6 w-[190px] min-w-[190px] max-w-[190px] items-center rounded-full border px-2.5 text-xs font-medium truncate"
                     style={{
-                      backgroundColor: isDisabled
-                        ? (isLight ? '#9ca3af' : '#4b5563')
-                        : (isLight ? '#0099ff' : '#0077cc'),
-                      color: '#ffffff',
-                      borderColor: 'transparent',
+                      backgroundColor: pillColors.backgroundColor,
+                      color: pillColors.textColor,
+                      borderColor: pillColors.borderColor,
                     }}
                     title={formatSpeciesLabel(row.species)}
                     onClick={() => onToggleGenome(key)}

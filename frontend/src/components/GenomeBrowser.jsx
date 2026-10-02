@@ -1,7 +1,7 @@
 import { NUCLEOTIDE_COLORS, getBaseColor } from '../utils/nucleotideStyle'
 import { browserControlKey } from '../achievements/browserControls.js'
 import { trackAchievement } from '../achievements/tracker.js'
-import { Fragment, useRef, useEffect, useId, useLayoutEffect, useState, useCallback, useMemo } from 'react'
+import { Fragment, memo, useRef, useEffect, useId, useLayoutEffect, useState, useCallback, useMemo } from 'react'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import iconAnchorRaw from '../assets/icons/icon_anchor.svg?raw'
 import {
@@ -47,6 +47,7 @@ import {
 import InfoGlyph from './InfoGlyph'
 import { registerBrowserViewport } from '../utils/browserTutorialControls'
 import useTutorial from '../hooks/useTutorial'
+import useNearViewport from '../hooks/useNearViewport'
 import { getTranscriptExonSegments } from './genomeBrowserExonSegments'
 import { orderTranscripts, resolveGeneTranscriptView } from './genomeBrowserTranscriptView'
 import { shouldResetStickyGeneRows } from './genomeBrowserTranscriptLayout'
@@ -106,6 +107,7 @@ import {
     shouldHoldGeneTrackHeight,
 } from '../utils/geneIndexOverlay'
 import { INDEX_BUILDING_STATUS } from '../utils/browserReadiness'
+const EMPTY_LIST = Object.freeze([])
 const TRACK_HEIGHT = 40
 // How often the panel asks how the gene index behind it is getting on.
 // Fast enough that the meter reads as live, slow enough that a build
@@ -475,10 +477,13 @@ const COLORS = {
 
 // ============ Helper Functions ============
 
+// Shared for the same reason as the ruler's: this runs per label, per frame.
+const COORD_FORMAT = new Intl.NumberFormat()
+
 function formatCoord(n) {
     const value = Number(n)
     if (!Number.isFinite(value)) return '—'
-    return Math.round(value).toLocaleString()
+    return COORD_FORMAT.format(Math.round(value))
 }
 
 function formatBp(n) {
@@ -1736,7 +1741,7 @@ function fillScreenText(ctx, mirrorAxis, text, x, y) {
 
 // ============ GenomeBrowser Component ============
 
-export default function GenomeBrowser({
+function GenomeBrowser({
     isActive = true,
     genome = 'reference',
     tutorialRecipeId = '',
@@ -1769,8 +1774,8 @@ export default function GenomeBrowser({
     sequenceTrackLabel = 'SR',
     sequenceTrackTooltip = 'Base level view of the reference',
     customTrackBrowsePath = '.',
-    availableTracks = [],  // all registered tracks from Track Manager API
-    availableGroups = [],  // track groups for this panel's genome, from the same API
+    availableTracks = EMPTY_LIST,  // all registered tracks from Track Manager API
+    availableGroups = EMPTY_LIST,  // track groups for this panel's genome, from the same API
     // What this genome had open last session, and where to report what it has open now.
     // `sessionReady` says the registry and the saved session have both been read; null
     // `onSessionTracksChange` means nothing is being remembered (switched off, or a tutorial).
@@ -1784,7 +1789,7 @@ export default function GenomeBrowser({
     compressTranscripts = false,
     flattenTracks = false,
     adaptiveHeight = false,
-    hiddenBiotypeClasses = [],
+    hiddenBiotypeClasses = EMPTY_LIST,
     onGeneSelect,
     // Genes the location drawer has hidden from the track. Scoped to the
     // location of focus by the view, which drops the set when that focus goes —
@@ -1824,6 +1829,9 @@ export default function GenomeBrowser({
     screenshotTargetId = '',
     onScreenshotTargetChange = null,
     onViewSync = null,
+    // Told when the panel moves out of (false) or back into (true) painting range,
+    // so the view can stop driving an off-screen panel's viewport every frame.
+    onNearViewportChange = null,
     // Shared band height for multi-genome layouts: the parent raises every panel
     // to the tallest genome's natural height so the rows stay aligned.
     minCanvasHeight = 0,
@@ -1838,6 +1846,8 @@ export default function GenomeBrowser({
 }) {
     // Refs
     const rootRef = useRef(null)
+    const nearViewport = useNearViewport(rootRef, isActive)
+    const paintCanvasRef = useRef(null)
     const canvasRef = useRef(null)
     const overlayRef = useRef(null)
     const containerRef = useRef(null)
@@ -6590,7 +6600,7 @@ export default function GenomeBrowser({
 
     const bufferedTranscriptExpandGenes = useMemo(() => {
         if (!isViewportTranscriptExpandMode || !selectedChrom) {
-            return []
+            return EMPTY_LIST
         }
         const viewGStart = genomicViewRange.start
         const viewGEnd = genomicViewRange.end
@@ -6661,19 +6671,25 @@ export default function GenomeBrowser({
     // The single seam every visual consumer shares: row packing, drawing,
     // hit-testing and footer geometry all read their rows from here, so they
     // cannot disagree about how many rows a gene occupies or what is in them.
-    const getDisplayTranscriptRows = useCallback((gene) => {
-        const txs = transcriptCache[gene.id]
-        if (shouldForceGeneBlockView || !txs || txs.length === 0) {
-            return []
+    const getDisplayTranscriptRows = useMemo(() => {
+        // Row packing, painting, hit testing and footer controls all ask for the
+        // same rows. Resolve once per gene until the data or display policy changes.
+        const rowsByGene = new Map()
+        return (gene) => {
+            const txs = transcriptCache[gene.id]
+            if (shouldForceGeneBlockView || !txs || txs.length === 0) return EMPTY_LIST
+            if (rowsByGene.has(gene.id)) return rowsByGene.get(gene.id)
+            const geneView = getGeneTranscriptView(gene.id)
+            const rows = resolveGeneTranscriptView({
+                transcripts: txs,
+                limit: getEffectiveTranscriptLimit(gene.id, txs),
+                order: geneView?.order,
+                hidden: geneView?.hidden,
+                ghostId: geneView?.ghostId,
+            }).rows
+            rowsByGene.set(gene.id, rows)
+            return rows
         }
-        const geneView = getGeneTranscriptView(gene.id)
-        return resolveGeneTranscriptView({
-            transcripts: txs,
-            limit: getEffectiveTranscriptLimit(gene.id, txs),
-            order: geneView?.order,
-            hidden: geneView?.hidden,
-            ghostId: geneView?.ghostId,
-        }).rows
     }, [transcriptCache, shouldForceGeneBlockView, getEffectiveTranscriptLimit, getGeneTranscriptView])
 
     // Ghost rows are a hover preview, not content: anything that reasons about
@@ -6687,23 +6703,21 @@ export default function GenomeBrowser({
         Math.max(1, getDisplayTranscriptRows(gene).length || 1)
     ), [getDisplayTranscriptRows])
 
-    // Feed the focus drawer: the gene plus whatever transcripts we have for it.
-    useEffect(() => {
-        if (!onFocusTranscriptsChangeRef.current) return
-        if (!selectedGene?.id) {
-            onFocusTranscriptsChangeRef.current(null)
-            return
-        }
+    // Derive the payload first: when no gene is focused this stays null while
+    // the viewport moves, so panning cannot enqueue a parent state update per frame.
+    const focusTranscriptsPayload = useMemo(() => {
+        if (!selectedGene?.id) return null
         const cached = transcriptCache[selectedGene.id]
-        onFocusTranscriptsChangeRef.current({
+        return {
             gene: selectedGeneForVisibility || selectedGene,
-            transcripts: Array.isArray(cached) ? cached : [],
+            transcripts: Array.isArray(cached) ? cached : EMPTY_LIST,
             loading: !cached,
-            // What the panel is actually showing, so a drawer that has not taken
-            // a view of this gene yet renders the expansion already on screen.
             expanded: Boolean(cached) && getEffectiveTranscriptLimit(selectedGene.id, cached) > 1,
-        })
+        }
     }, [selectedGene, selectedGeneForVisibility, transcriptCache, getEffectiveTranscriptLimit])
+    useEffect(() => {
+        onFocusTranscriptsChangeRef.current?.(focusTranscriptsPayload)
+    }, [focusTranscriptsPayload])
 
     // Once the drawer takes an explicit view, mirror it into the panel's own
     // expand map so unfocusing the gene leaves it as the user last had it.
@@ -6947,6 +6961,61 @@ export default function GenomeBrowser({
         }
         return [Math.max(minStart, start), Math.min(maxEnd, end)]
     }, [browsableRange, chromLength, isAligned, alignData])
+
+    // Reconcile a changed linked command before React commits the old viewport.
+    // Doing this in a layout effect creates a nested commit for every pan frame;
+    // continuous linked input can keep that chain alive until React's depth limit.
+    // Only this component's state is adjusted, and only when an input changes.
+    const externalSyncInputs = [lockPan, lockZoom, externalPosition, clampView, selectedChrom, regions]
+    const [lastExternalSyncInputs, setLastExternalSyncInputs] = useState(null)
+    if (!lastExternalSyncInputs || externalSyncInputs.some((value, index) => !Object.is(value, lastExternalSyncInputs[index]))) {
+        setLastExternalSyncInputs(externalSyncInputs)
+        const applyExternalPosition = () => {
+            if (!externalPosition) return
+            const extChrom = String(externalPosition.chrom || '').trim()
+            if (extChrom && extChrom !== selectedChrom) {
+                const region = regions.find((r) => r.chrom === extChrom)
+                if (region) {
+                    setSelectedChrom(extChrom)
+                    if (region?.end) setChromLength(region.end)
+                    setGenes([])
+                    // Requests are retired by the chromosome-change effect; tiles are
+                    // already keyed by chromosome. Re-render with the new bounds.
+                    return
+                }
+                if (regions.length > 0) {
+                    console.warn(`[GenomeBrowser:${genome}] Ignoring linked viewport chromosome ${extChrom}; it is not present in this genome.`)
+                }
+            }
+            if (lockPan) {
+                // Pan lock: sync both start and end (position + zoom)
+                let [nextStart, nextEnd] = clampView(externalPosition.start, externalPosition.end)
+                if (Math.abs(nextStart - viewStart) > 1e-6 || Math.abs(nextEnd - viewEnd) > 1e-6) {
+                    setViewStart(nextStart)
+                    setViewEnd(nextEnd)
+                }
+            } else if (lockZoom) {
+                if (Number.isFinite(externalPosition.anchorRatio)) {
+                    // Zoom event: the parent pre-computed our ratio-anchored position — apply directly.
+                    let [nextStart, nextEnd] = clampView(externalPosition.start, externalPosition.end)
+                    if (Math.abs(nextStart - viewStart) > 1e-6 || Math.abs(nextEnd - viewEnd) > 1e-6) {
+                        setViewStart(nextStart)
+                        setViewEnd(nextEnd)
+                    }
+                } else {
+                    // Pan event: keep our own center, just match the span.
+                    const extSpan = externalPosition.end - externalPosition.start
+                    const myCenter = (viewStart + viewEnd) / 2
+                    let [nextStart, nextEnd] = clampView(myCenter - extSpan / 2, myCenter + extSpan / 2)
+                    if (Math.abs(nextStart - viewStart) > 1e-6 || Math.abs(nextEnd - viewEnd) > 1e-6) {
+                        setViewStart(nextStart)
+                        setViewEnd(nextEnd)
+                    }
+                }
+            }
+        }
+        applyExternalPosition()
+    }
 
     const scheduleInteractiveViewport = useCallback((start, end, targetTrack = undefined, anchorRatio = undefined) => {
         // Update refs immediately so multiple input events in one frame accumulate
@@ -7883,6 +7952,9 @@ export default function GenomeBrowser({
         if (!rootNode || !canvas) {
             throw new Error('Browser panel is not ready for export.')
         }
+        // An off-screen panel may have skipped painting while its data and
+        // coordinates advanced. Exports must always capture the latest state.
+        paintCanvasRef.current?.()
 
         const width = Math.max(
             1,
@@ -9694,55 +9766,6 @@ export default function GenomeBrowser({
         }
     }, [isFlipped, viewWidth, getCustomTrackHoverInTrackFrame])
 
-    // Sync with external position (for locked dual browsers).
-    // useLayoutEffect (not useEffect) so the position update is applied synchronously
-    // before the browser paints — keeps secondary panels in step with the primary.
-    useLayoutEffect(() => {
-        if (!externalPosition) return
-        const extChrom = String(externalPosition.chrom || '').trim()
-        if (extChrom && extChrom !== selectedChrom) {
-            const region = regions.find((r) => r.chrom === extChrom)
-            if (region) {
-                setSelectedChrom(extChrom)
-                if (region?.end) setChromLength(region.end)
-                setGenes([])
-                tileCacheRef.current.clear()
-                fetchingTilesRef.current.clear()
-                // Re-run once selected chromosome state has been applied.
-                return
-            }
-            if (regions.length > 0) {
-                console.warn(`[GenomeBrowser:${genome}] Ignoring linked viewport chromosome ${extChrom}; it is not present in this genome.`)
-            }
-        }
-        if (lockPan) {
-            // Pan lock: sync both start and end (position + zoom)
-            let [nextStart, nextEnd] = clampView(externalPosition.start, externalPosition.end)
-            if (Math.abs(nextStart - viewStartRef.current) > 1e-6 || Math.abs(nextEnd - viewEndRef.current) > 1e-6) {
-                setViewStart(nextStart)
-                setViewEnd(nextEnd)
-            }
-        } else if (lockZoom) {
-            if (Number.isFinite(externalPosition.anchorRatio)) {
-                // Zoom event: the parent pre-computed our ratio-anchored position — apply directly.
-                let [nextStart, nextEnd] = clampView(externalPosition.start, externalPosition.end)
-                if (Math.abs(nextStart - viewStartRef.current) > 1e-6 || Math.abs(nextEnd - viewEndRef.current) > 1e-6) {
-                    setViewStart(nextStart)
-                    setViewEnd(nextEnd)
-                }
-            } else {
-                // Pan event: keep our own center, just match the span.
-                const extSpan = externalPosition.end - externalPosition.start
-                const myCenter = (viewStartRef.current + viewEndRef.current) / 2
-                let [nextStart, nextEnd] = clampView(myCenter - extSpan / 2, myCenter + extSpan / 2)
-                if (Math.abs(nextStart - viewStartRef.current) > 1e-6 || Math.abs(nextEnd - viewEndRef.current) > 1e-6) {
-                    setViewStart(nextStart)
-                    setViewEnd(nextEnd)
-                }
-            }
-        }
-
-    }, [lockPan, lockZoom, externalPosition, clampView, selectedChrom, regions])
 
     // Notify parent of our actual current view position so it can use the real
     // value for ratio-anchored zoom (avoids stale panelPositions state jumps).
@@ -9853,9 +9876,10 @@ export default function GenomeBrowser({
         transcriptLayoutMetrics, getEffectiveTranscriptLimit, viewWidth, colors.forwardStrandBg,
         colors.reverseStrandBg])
 
+    const hasExpandedGeneFooters = expandedGeneFooters.length > 0
     useLayoutEffect(() => {
         const canvas = canvasRef.current
-        if (!canvas || expandedGeneFooters.length === 0) {
+        if (!canvas || !hasExpandedGeneFooters) {
             setExpandedFooterViewport((prev) => (prev === null ? prev : null))
             return undefined
         }
@@ -9914,7 +9938,7 @@ export default function GenomeBrowser({
             window.removeEventListener('resize', scheduleViewportUpdate)
             resizeObserver?.disconnect()
         }
-    }, [expandedGeneFooters])
+    }, [hasExpandedGeneFooters])
 
     const expandedFooterPlacementByGeneId = useMemo(() => {
         const placements = new Map()
@@ -10923,7 +10947,16 @@ export default function GenomeBrowser({
     }, [naturalCanvasHeight])
 
 
-    useEffect(() => {
+    // Preserve page geometry even when the bitmap is not being repainted.
+    // Scroll/cycle targets and shared panel heights still follow current data.
+    useLayoutEffect(() => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+        canvas.style.width = `${viewWidth}px`
+        canvas.style.height = `${Math.max(naturalCanvasHeight, Number(minCanvasHeight) || 0)}px`
+    }, [viewWidth, naturalCanvasHeight, minCanvasHeight])
+
+    const paintCanvas = useCallback(() => {
         const canvas = canvasRef.current
         if (!canvas) return
 
@@ -13419,7 +13452,24 @@ export default function GenomeBrowser({
             }
         }
 
-    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, focusLocationRange, isLocationFocusVisible, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, sidebarToggleIconColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackIntervalPixelBounds, bigWigZoneScales, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight, expandedFooterGeneIds])
+    }, [viewStart, viewEnd, viewWidth, genes, selectedGene, focusLocationRange, isLocationFocusVisible, expandedGenes, transcriptCache, sequence, seqRange, theme, colors, genomicToScreen, showSequenceTrack, sequenceTrackLabel, layout, effectiveHiddenStrands, draggingTrack, hoveredTrack, isAligned, alignData, bpPerPx, selectionRect, customTracksById, customTrackData, customTrackLoading, isCustomTrackId, formatSignalValue, getCustomTrackGeometry, getSpliceLodMode, isPrimaryPanel, panelExonColor, panelPillColor, sidebarToggleIconColor, hoveredVcfBlock, hoveredSpliceJunction, hoveredBigBedFeature, clickedVcfVariant, clickedSpliceJunction, clickedBigBedFeature, hoveredSeqBase, overlayToGenomic, getBasePixelBounds, getGenomicIntervalPixelBounds, getCustomTrackIntervalPixelBounds, bigWigZoneScales, spliceArcLiftOffsets, anchorIconReady, getDisplayTranscriptsForGene, getDisplayTranscriptRows, focusTranscriptView, getEffectiveTranscriptLimit, getGeneTotalHeight, transcriptLayoutMetrics, isTranscriptCompressionActive, isCompressedLayoutActive, flattenTracks, compactPanelHeight, effectiveTrackAlign, effectiveRulerPosition, effectiveRulerHeight, naturalCanvasHeight, minCanvasHeight, expandedFooterGeneIds,
+        // Read by the painter but missing before it became a callback. An effect
+        // re-reads them whenever it runs; a memoized painter called on scroll-in or
+        // export would otherwise draw with whatever they were at its last change.
+        alignmentCoords, compressTranscripts, dimNonSelectedGenes, getCustomTrackToggleY, isFlipped, isLight,
+        shouldForceGeneBlockView, trackOrder, trackWidth, viewSpan])
+
+    useLayoutEffect(() => {
+        paintCanvasRef.current = paintCanvas
+    }, [paintCanvas])
+
+    useEffect(() => {
+        if (isActive && nearViewport) paintCanvas()
+    }, [isActive, nearViewport, paintCanvas])
+
+    useEffect(() => {
+        onNearViewportChange?.(nearViewport)
+    }, [nearViewport, onNearViewportChange])
 
     useLayoutEffect(() => {
         const anchor = verticalZoomTrackAnchorRef.current
@@ -14225,16 +14275,11 @@ export default function GenomeBrowser({
     // Reported in container-local pixels. Page scrolling moves the panel and the
     // drawer together, so a client-space reading taken here would be stale the
     // moment the user scrolled; the view adds the panel's live position instead.
-    useEffect(() => {
-        const report = onFocusRowGeometryChangeRef.current
-        if (!report) return
+    const focusRowGeometry = useMemo(() => {
         const geneForPin = pinnedTranscriptId && selectedGene
             ? genes.find((gene) => gene.id === selectedGene.id)
             : null
-        if (!geneForPin) {
-            report(null)
-            return
-        }
+        if (!geneForPin) return null
 
         const isForward = geneForPin.strand === '+'
         const trackY = isForward ? layout.FORWARD_Y : layout.REVERSE_Y
@@ -14244,15 +14289,19 @@ export default function GenomeBrowser({
         const rows = getDisplayTranscriptRows(geneForPin)
         const rowIndex = rows.findIndex((row) => String(row.transcript?.id) === pinnedTranscriptId)
 
-        report({
+        return {
             transcriptId: pinnedTranscriptId,
             // A gene drawn as a block has no row of its own to meet, so the block
             // stands in for it until the panel is back at transcript zoom.
             offsetTop: baseGeneY + (rowIndex > 0 ? rowIndex * transcriptLayoutMetrics.rowPitch : 0),
             height: transcriptLayoutMetrics.rowPitch - transcriptLayoutMetrics.rowGap,
             resolved: rowIndex >= 0,
-        })
+        }
     }, [pinnedTranscriptId, selectedGene, genes, layout, transcriptLayoutMetrics, getDisplayTranscriptRows])
+    useEffect(() => {
+        onFocusRowGeometryChangeRef.current?.(focusRowGeometry)
+    }, [focusRowGeometry])
+
 
     // Restore the focus framing on pin, but only when the view has actually
     // drifted from it. Re-framing unconditionally would re-run the whole focus
@@ -16473,3 +16522,5 @@ export default function GenomeBrowser({
         </div>
     )
 }
+
+export default memo(GenomeBrowser)

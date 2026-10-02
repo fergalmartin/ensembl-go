@@ -43,11 +43,15 @@ export const MONO_ADVANCE_RATIO = 0.6
 /** Defensive cap so a pathological span/width can never spin the tick loop. */
 const MAX_TICKS = 512
 
+// toLocaleString builds a formatter per call, and every tick of every panel is
+// labelled on every frame of a pan; one shared formatter gives the same text.
+const RULER_COORD_FORMAT = new Intl.NumberFormat('en-US')
+
 /** `31532331` -> `31,532,331`, matching the site's Intl-formatted labels. */
 export function formatRulerCoord(value) {
     const numeric = Number(value)
     if (!Number.isFinite(numeric)) return '—'
-    return Math.round(numeric).toLocaleString('en-US')
+    return RULER_COORD_FORMAT.format(Math.round(numeric))
 }
 
 /** Width in px of `text` set in IBM Plex Mono at `fontSize`. */

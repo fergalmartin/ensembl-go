@@ -105,6 +105,7 @@ import {
 } from './backendRuntime'
 import {
   DEFAULT_GENOME_COLOR,
+  genomeColorResolver,
   migrateLegacyGenomeColors,
   normalizeCustomGenomeColors,
   normalizeGenomeColorAssignments,
@@ -892,7 +893,26 @@ function App() {
   // Genes selected in the genome browser (shared across views)
   const [browserRefGene, setBrowserRefGene] = useState(null)
   const [browserTgtGene, setBrowserTgtGene] = useState(null)
-  const [browserRefViewport, setBrowserRefViewport] = useState(null)
+  const [browserRefViewport, commitBrowserRefViewport] = useState(null)
+  // The browser reports its primary viewport on every frame of a pan, but only
+  // the Structural Variation view reads it, and that view is not mounted while
+  // the browser is on screen. Re-rendering all of App per frame bought nothing,
+  // so reports land once the viewport has been still briefly. Clearing goes
+  // through immediately and cancels a report still waiting to land.
+  const browserRefViewportTimerRef = useRef(null)
+  const setBrowserRefViewport = useCallback((viewport) => {
+    window.clearTimeout(browserRefViewportTimerRef.current)
+    browserRefViewportTimerRef.current = null
+    commitBrowserRefViewport(viewport)
+  }, [])
+  const reportBrowserRefViewport = useCallback((viewport) => {
+    window.clearTimeout(browserRefViewportTimerRef.current)
+    browserRefViewportTimerRef.current = window.setTimeout(() => {
+      browserRefViewportTimerRef.current = null
+      commitBrowserRefViewport(viewport)
+    }, 150)
+  }, [])
+  useEffect(() => () => window.clearTimeout(browserRefViewportTimerRef.current), [])
   const refResolveInFlightQueryRef = useRef('')
   const tgtResolveInFlightQueryRef = useRef('')
   const refLastResolvedQueryRef = useRef('')
@@ -3139,6 +3159,13 @@ function App() {
     }
     return map
   }, [config?.active_species])
+
+  const alignmentGenomeColorsByKey = useMemo(() => {
+    const resolveColor = genomeColorResolver(config)
+    return Object.fromEntries(
+      [...activeSpeciesByKey].map(([key, species]) => [key, resolveColor(species)])
+    )
+  }, [activeSpeciesByKey, config])
 
   useEffect(() => {
     if (multiAlignmentResult) return
@@ -6907,6 +6934,7 @@ function App() {
                 <MultiAlignmentSidebar
                   theme={theme}
                   rows={alignmentInputs}
+                  genomeColorsByKey={alignmentGenomeColorsByKey}
                   rowDisplayMetaByGenomeKey={alignmentDisplayMetaByGenomeKey}
                   globalFlanks={alignmentGlobalFlanks}
                   globalFlanksLocked={alignmentGlobalFlanksLocked}
@@ -7232,7 +7260,7 @@ function App() {
                 onClearAlignmentOverlay={() => { }}
                 onRefGeneSelect={handleRefGeneSelect}
                 onTgtGeneSelect={handleTgtGeneSelect}
-                onRefViewportChange={setBrowserRefViewport}
+                onRefViewportChange={reportBrowserRefViewport}
                 refReloadKey={refBrowserReloadKey}
                 tgtReloadKey={tgtBrowserReloadKey}
                 externalRefGene={browserRefGene}

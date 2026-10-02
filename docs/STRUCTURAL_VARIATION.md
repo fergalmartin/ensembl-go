@@ -23,9 +23,84 @@ the chain file. Existing alignments that reference those TSVs keep working — s
 
 ## The configuration file
 
-An alignment is described by a JSON configuration file. Registering through the
-interface writes one; you can also write one by hand, edit one in the app, or
-share one with a colleague. It is the same file either way.
+Start with the commented [key=value template](examples/sv-alignments.template.cfg).
+Copy it to a `.cfg` file, fill in your paths and metadata, then choose
+**Structural Variation → Configuration → Load file**. You can still register
+alignments through the form, including adding them to an existing config.
+
+### Simple `.cfg` records
+
+Each record is self-contained, with required fields first and optional fields
+below them. A line containing only `---` separates records. There is no limit
+on the number of records, and they can describe different genome pairs or
+alternative alignments of the same pair.
+
+```ini
+# Required fields
+label = GRCh38 to HG00438 paternal
+reference_accession = GCA_000001405.29
+target_accession = GCA_018472595.2
+chain = chains/alt_hg00438_to_ref_grch38.bigChain.bb
+indexed_side = target
+
+# Optional fields
+reference_assembly_name = GRCh38.p14
+target_assembly_name = HG00438_pat_hprc_f2
+target_track.1.path = tracks/HG00438.pat.bw
+target_track.1.label = Signal
+
+---
+
+# Required fields
+label = GRCh38 to HG00733 maternal
+reference_accession = GCA_000001405.29
+target_accession = GCA_018506975.2
+chain = chains/alt_hg00733_to_ref_grch38.bigChain.bb
+indexed_side = target
+```
+
+| Required field | Meaning |
+| --- | --- |
+| `label` | Unique alignment label, used in the view and when updating a registration. |
+| `reference_accession` | Assembly accession of the anchor genome. |
+| `target_accession` | Assembly accession of the compared genome. Must differ from the reference. |
+| `chain` | Path to the BigChain alignment file. |
+| `indexed_side` | `reference` or `target`: which genome the indexed BED coordinates describe. Stated explicitly in this format to avoid guessing. |
+
+| Optional field | Meaning |
+| --- | --- |
+| `description` | Free text for this alignment. |
+| `reference_assembly_name`, `target_assembly_name` | Human-readable assembly names. |
+| `reference_species`, `target_species` | Scientific species names. |
+| `reference_aliases`, `target_aliases` | Comma-separated alternative identifiers for the same assembly. |
+| `reference_mapping`, `target_mapping` | Existing HAL mapping TSVs for sequence-name translation. Usually unnecessary. |
+| `reference_sequence_alias.<name>`, `target_sequence_alias.<name>` | A specific alignment sequence name mapped to its local FASTA name, e.g. `target_sequence_alias.CM089167.1 = 1`. |
+| `reference_track.<N>.path`, `target_track.<N>.path` | BigWig/BigBed track path; number tracks independently on each side, starting at 1. |
+| `reference_track.<N>.label`, `target_track.<N>.label` | Optional display label for that track. |
+| `reference_track.<N>.type`, `target_track.<N>.type` | `bigwig` or `bigbed`; only needed when the suffix does not identify the type. |
+| `id` | Optional stable ID from an older registration; normally generated from the label. |
+
+Blank optional values are ignored. Blank lines and whole-line comments starting
+with `#` or `;` are ignored. Split each entry at the first `=`; spaces, `#`, extra
+`=` signs and backslashes in unquoted values remain literal. Do not add inline
+comments. For quoted values, use JSON string escaping (e.g. `description =
+"Line one\nLine two"`). Duplicate fields and unknown field names are errors.
+Metadata repeated for the same accession must agree across records.
+
+Relative paths resolve against the config's directory; absolute paths and `~`
+also work. Both genomes still need their local FASTA/index data for browsing.
+Loading a config does not download genomes or copy the alignment files.
+
+Saving edits to a `.cfg` record file preserves your comments and field order.
+Adding or removing alignments through the form regenerates the records, retaining
+their metadata and keeping required fields first. **Save as** to a new `.cfg`
+exports records; saving to `.json` exports the JSON format below. Existing JSON
+configs, including JSON stored in `.cfg` files, remain supported.
+
+### JSON configurations
+
+JSON is also supported. It declares shared genomes once and groups alignments
+into pairs. The app's installation registry uses this format.
 
 ```json
 {
@@ -185,15 +260,22 @@ have moved. Registering under a different label creates a second alignment.
 
 ## Loading and editing a configuration
 
-**Configuration** in the SV toolbar opens the configuration editor.
+**Configuration** in the SV toolbar opens a summary of the loaded alignments.
 
 - The dropdown selects what you are looking at: *This installation* (the app's own
   store) or any configuration file you have loaded.
-- **Load file** opens a configuration file and starts using its alignments.
+- **Load file** registers the file's alignments and shows a notification and
+  summary of their labels, genome pairs, tracks, and availability. The text
+  editor stays closed. You can close the summary and select **Anchor**, **Region**,
+  and **Second** (optionally **Third**) from the dropdowns above.
 - **Stop using** removes a file from the view. The file itself is untouched.
-- **Validate** checks the text without writing anything, and reports each problem
-  with the line it is on. Clicking a message jumps to that line.
-- **Save** writes the file. **Save as** writes to a new one and starts using it.
+- **Validate** checks the configuration without writing anything. Its result
+  appears at the top of the panel with the time checked, alignment count,
+  missing-file warnings, and any errors. Clicking an error opens the editor at
+  that line.
+- **Edit configuration** opens the text editor when you want to change metadata
+  or paths. **Save** applies your changes and returns to the summary. **Save as**
+  writes to a new file and starts using it.
 
 Nothing is written unless it parses, so a mistake in the editor cannot damage a
 working configuration.
@@ -214,10 +296,11 @@ view still lists them, grouped by whether they can be used:
 ## Several alignments for one genome pair
 
 A pair can hold more than one alignment: the two directions of a comparison, or
-alternative alignments of the same pair. When more than one applies to the current
-selection, a **Second alignment** (and **Third alignment**) dropdown appears next
-to the genome selectors, listing them by label. This is why labels have to be
-unique.
+alternative alignments of the same pair. Select genomes through **Anchor**,
+**Second**, and **Third**, and choose an anchor **Region**. The view automatically
+uses the first applicable alignment in catalog order for each target genome.
+The loaded-alignment summary and **Available alignments** list every registered
+record by its unique label.
 
 Direction still matters for what the view can show. Registering A as reference and
 B as target does not create a B-to-A alignment; register the reverse chain

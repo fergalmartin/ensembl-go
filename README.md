@@ -42,5 +42,6 @@ not to stop it aborts the launch without changing that process.
 - [Installation and first run](./INSTALLATION.md)
 - [Development and packaging](./DEVELOPMENT.md)
 - [Structural-variation view and alignment registration](./docs/STRUCTURAL_VARIATION.md)
+- [Structural-variation alignment config template](./docs/examples/sv-alignments.template.cfg)
 - [Release packaging, including initial Linux builds](./electron/RELEASE.md)
 - [Windows/WSL test checklist](./electron/WINDOWS_TEST_CHECKLIST.md)

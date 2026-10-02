@@ -52,9 +52,13 @@ import {
     noteWheelGestureOrigin,
 } from '../utils/browsingControls'
 
-/** Shared empties, so a panel with no notes hands its children a stable prop. */
+/** Shared empties keep absent notes and track registries stable across frames. */
 const EMPTY_NOTE_COUNTS = Object.freeze({})
 const EMPTY_NOTE_LIST = Object.freeze([])
+const EMPTY_TRACK_LIST = Object.freeze([])
+const EMPTY_FAR_PANELS = new Set()
+/** How often a linked panel parked off screen catches up with the pan. */
+const OFFSCREEN_LINK_INTERVAL_MS = 200
 
 /**
  * Things a drag must not be stolen from: controls that expect a click, and text
@@ -194,7 +198,7 @@ function samePanelPosition(a, b) {
         Number(a.start) === Number(b.start) &&
         Number(a.end) === Number(b.end) &&
         String(a.targetTrack || '') === String(b.targetTrack || '') &&
-        Number(a.anchorRatio) === Number(b.anchorRatio)
+        Object.is(Number(a.anchorRatio), Number(b.anchorRatio))
     )
 }
 
@@ -305,9 +309,9 @@ export default function GenomeBrowserView({
         smallNonCoding: true,
         pseudogene: true,
     })
-    const hiddenBiotypeClasses = Object.entries(biotypeFilter)
+    const hiddenBiotypeClasses = useMemo(() => Object.entries(biotypeFilter)
         .filter(([, v]) => !v)
-        .map(([k]) => k)
+        .map(([k]) => k), [biotypeFilter])
 
     const [selectedGenes, setSelectedGenes] = useState({})
     // panelKey -> the location of focus that panel holds, mirrored up from the
@@ -1912,12 +1916,12 @@ export default function GenomeBrowserView({
         setSelectedScreenshotTarget(null)
     }, [])
 
-    const clearPendingLinkApply = useCallback(() => {
+    const clearPendingLinkApply = useCallback((resetSource = true) => {
         if (linkApplyTimerRef.current) {
             window.clearTimeout(linkApplyTimerRef.current)
             linkApplyTimerRef.current = null
         }
-        syncSourcePanelKeyRef.current = ''
+        if (resetSource) syncSourcePanelKeyRef.current = ''
     }, [])
 
     useEffect(() => {
@@ -2333,7 +2337,10 @@ export default function GenomeBrowserView({
     }, [tgtReloadKey, clearPendingLinkApply])
 
     const handleManualBrowserNavigate = useCallback(() => {
-        clearPendingLinkApply()
+        // Input arrives before the next animation-frame broadcast. Keep the last
+        // source excluded until that broadcast establishes the new source; clearing
+        // it here can feed an old linked position back into the actively panned panel.
+        clearPendingLinkApply(false)
     }, [clearPendingLinkApply])
 
     const flushPanelPositionChange = useCallback((panelKey, chrom, start, end, targetTrack, anchorRatio = null) => {
@@ -2833,6 +2840,58 @@ export default function GenomeBrowserView({
         ))
     }, [])
 
+    // Linked panels well off screen do not paint, but re-rendering one to follow
+    // every frame of a pan still costs most of what a visible panel does. While
+    // pan-locked, such a panel is held at its last position and caught up at most
+    // every OFFSCREEN_LINK_INTERVAL_MS, which keeps its data loading along the way.
+    // It goes back to live positions as soon as it is within the margin
+    // useNearViewport wakes it at, so it is current before it is on screen.
+    // Zoom-only lock is left live: it zooms each panel from where that panel last
+    // reported being, and a held panel would report a stale position.
+    const [farPanelKeys, setFarPanelKeys] = useState(EMPTY_FAR_PANELS)
+    const [heldPanelPositions, setHeldPanelPositions] = useState(null)
+    const panelPositionsRef = useRef(panelPositions)
+    panelPositionsRef.current = panelPositions
+    const heldPositionsTimerRef = useRef(null)
+    const holdFarPanels = effectiveLockPan && farPanelKeys.size > 0
+
+    const handlePanelNearViewportChange = useCallback((panelKey, near) => {
+        setFarPanelKeys((prev) => {
+            if (prev.has(panelKey) === !near) return prev
+            const next = new Set(prev)
+            if (near) next.delete(panelKey)
+            else next.add(panelKey)
+            return next
+        })
+    }, [])
+
+    useEffect(() => {
+        setHeldPanelPositions((prev) => {
+            if (!holdFarPanels) return null
+            const next = {}
+            for (const key of farPanelKeys) {
+                next[key] = prev && key in prev ? prev[key] : (panelPositionsRef.current[key] || null)
+            }
+            return next
+        })
+    }, [holdFarPanels, farPanelKeys])
+
+    useEffect(() => {
+        if (!heldPanelPositions || heldPositionsTimerRef.current !== null) return
+        const stale = Object.keys(heldPanelPositions)
+            .some((key) => heldPanelPositions[key] !== (panelPositions[key] || null))
+        if (!stale) return
+        // A throttle, not a debounce: a continuous pan must still catch up.
+        heldPositionsTimerRef.current = window.setTimeout(() => {
+            heldPositionsTimerRef.current = null
+            setHeldPanelPositions((prev) => prev && Object.fromEntries(
+                Object.keys(prev).map((key) => [key, panelPositionsRef.current[key] || null]),
+            ))
+        }, OFFSCREEN_LINK_INTERVAL_MS)
+    }, [heldPanelPositions, panelPositions])
+
+    useEffect(() => () => window.clearTimeout(heldPositionsTimerRef.current), [])
+
     // Identity-stable: depend on the scheme id alone, and resolveBrowsingControls
     // caches per id, so this survives `config` churning on every autosave. A new
     // controls object mid-gesture would re-register the panel wheel listeners.
@@ -3050,6 +3109,33 @@ export default function GenomeBrowserView({
             stopDrag()
         }
     }, [])
+
+    // Stable props let an unchanged genome skip parent updates (including every
+    // frame reported by the primary genome). Keep normal shallow comparison:
+    // changing a callback or any visual prop must still reach the panel.
+    const panelCallbacks = useMemo(() => Object.fromEntries(panels.map(({ key: panelKey }) => [panelKey, {
+        onOpenGeneNotes: (geneId) => handleOpenGeneNotes(panelKey, geneId),
+        onGenomePillClick: () => handleGenomePillClick(panelKey),
+        onTrackVisibilityChange: (hiddenStrands, meta) => handlePanelTrackVisibilityChange(panelKey, hiddenStrands, meta),
+        onPositionChange: (chrom, start, end, targetTrack, anchorRatio) => handlePanelPositionChange(panelKey, chrom, start, end, targetTrack, anchorRatio),
+        onContentHeightChange: (height) => handlePanelContentHeight(panelKey, height),
+        onBrowsingTargetChange: (descriptor) => handleBrowsingTargetChange(panelKey, descriptor),
+        onGeneSelect: (gene) => handlePanelGeneSelect(panelKey, gene),
+        onLocationSelect: (location) => handlePanelLocationSelect(panelKey, location),
+        onFocusTranscriptsChange: (payload) => handleFocusTranscriptsChange(panelKey, payload),
+        onFocusTranscriptViewChange: (patch) => handleFocusTranscriptViewChange(panelKey, patch),
+        onFocusRowGeometryChange: (geometry) => handleFocusRowGeometryChange(panelKey, geometry),
+        onGeneTranscriptViewChange: (geneId, patch) => handleGeneTranscriptViewChange(panelKey, geneId, patch),
+        onScreenshotTargetChange: (descriptor) => handleScreenshotTargetChange(panelKey, descriptor),
+        onViewSync: (chrom, start, end) => { panelActualPositionsRef.current[panelKey] = { chrom, start, end } },
+        onNearViewportChange: (near) => handlePanelNearViewportChange(panelKey, near),
+    }])), [panels, handlePanelNearViewportChange,
+        handleOpenGeneNotes, handleGenomePillClick, handlePanelTrackVisibilityChange,
+        handlePanelPositionChange, handlePanelContentHeight, handleBrowsingTargetChange,
+        handlePanelGeneSelect, handlePanelLocationSelect, handleFocusTranscriptsChange,
+        handleFocusTranscriptViewChange, handleFocusRowGeometryChange,
+        handleGeneTranscriptViewChange, handleScreenshotTargetChange,
+    ])
 
     return (
         <div
@@ -3487,14 +3573,14 @@ export default function GenomeBrowserView({
                                             tutorialRecipeId={panel.species.tutorial_dataset_id || ''}
                                             tutorialActive={tutorialRunning}
                                             geneNoteCounts={noteCountsByPanel[panelKey] || EMPTY_NOTE_COUNTS}
-                                            onOpenGeneNotes={(geneId) => handleOpenGeneNotes(panelKey, geneId)}
+                                            onOpenGeneNotes={panelCallbacks[panelKey].onOpenGeneNotes}
                                             alignmentRole={panel.alignmentRole}
                                             reloadEpoch={panelReloadKey}
                                             theme={theme}
                                             label={panel.label}
                                             genomePillLabel={panel.genomePillLabel}
                                             genomeColor={resolveGenomeColor(panel.species)}
-                                            onGenomePillClick={() => handleGenomePillClick(panelKey)}
+                                            onGenomePillClick={panelCallbacks[panelKey].onGenomePillClick}
                                             genomePillExpanded={Boolean(assemblyDrawerOpenByPanel[panelKey])}
                                             toolbarPosition="top"
                                             rulerPosition="top"
@@ -3507,15 +3593,15 @@ export default function GenomeBrowserView({
                                                 ? 'Base level view of the secondary genome'
                                                 : 'Base level view of the primary genome'}
                                             customTrackBrowsePath={trackBrowsePath}
-                                            availableTracks={availableTracksByPanel[panelKey] || []}
-                                            availableGroups={availableGroupsByPanel[panelKey] || []}
+                                            availableTracks={availableTracksByPanel[panelKey] || EMPTY_TRACK_LIST}
+                                            availableGroups={availableGroupsByPanel[panelKey] || EMPTY_TRACK_LIST}
                                             sessionTracks={sessionTracksByGenome?.[trackAssemblyKey(getGenomeKey(panel.species))]?.entries || null}
                                             sessionReady={sessionReady}
                                             onSessionTracksChange={sessionActive ? sessionHandlerFor(trackAssemblyKey(getGenomeKey(panel.species))) : null}
                                             refreshAvailableTracks={refreshRegisteredTracks}
                                             tutorialTracksRequest={browserTracksRequest}
                                             onTutorialHideInactive={setHideInactiveMode}
-                                            onTrackVisibilityChange={(hiddenStrands, meta) => handlePanelTrackVisibilityChange(panelKey, hiddenStrands, meta)}
+                                            onTrackVisibilityChange={panelCallbacks[panelKey].onTrackVisibilityChange}
                                             forceTracksVisibility={forceTracksVisibility}
                                             hideInactiveTracks={hideInactiveMode}
                                             compressTranscripts={compressMode}
@@ -3524,41 +3610,44 @@ export default function GenomeBrowserView({
                                             hiddenBiotypeClasses={hiddenBiotypeClasses}
                                             dimNonSelectedGenes={config?.dim_non_selected_genes !== false}
                                             alignmentOverlay={panel.alignmentRole ? alignmentOverlay : null}
-                                            onPositionChange={(chrom, start, end, targetTrack, anchorRatio) => handlePanelPositionChange(panelKey, chrom, start, end, targetTrack, anchorRatio)}
-                                            onViewSync={(chrom, start, end) => { panelActualPositionsRef.current[panelKey] = { chrom, start, end } }}
+                                            onPositionChange={panelCallbacks[panelKey].onPositionChange}
+                                            onViewSync={panelCallbacks[panelKey].onViewSync}
+                                            onNearViewportChange={panelCallbacks[panelKey].onNearViewportChange}
                                             minCanvasHeight={Math.max(
                                                 sharedCanvasHeight,
                                                 locationDrawerFitByPanel[panelKey]
                                                     ? (panelContentHeights[panelKey] || 0) + locationDrawerFitByPanel[panelKey]
                                                     : 0
                                             )}
-                                            onContentHeightChange={(height) => handlePanelContentHeight(panelKey, height)}
+                                            onContentHeightChange={panelCallbacks[panelKey].onContentHeightChange}
                                             browsingControls={browsingControls}
-                                            onBrowsingTargetChange={(descriptor) => handleBrowsingTargetChange(panelKey, descriptor)}
+                                            onBrowsingTargetChange={panelCallbacks[panelKey].onBrowsingTargetChange}
                                             externalPosition={
                                                 (effectiveLockPan || effectiveLockZoom) && syncSourcePanelKeyRef.current !== panelKey
-                                                    ? (panelPositions[panelKey] || null)
+                                                    ? (holdFarPanels && farPanelKeys.has(panelKey) && heldPanelPositions && panelKey in heldPanelPositions
+                                                        ? heldPanelPositions[panelKey]
+                                                        : (panelPositions[panelKey] || null))
                                                     : null
                                             }
                                             lockPan={effectiveLockPan}
                                             lockZoom={effectiveLockZoom}
-                                            onGeneSelect={(gene) => handlePanelGeneSelect(panelKey, gene)}
-                                            onLocationSelect={(location) => handlePanelLocationSelect(panelKey, location)}
+                                            onGeneSelect={panelCallbacks[panelKey].onGeneSelect}
+                                            onLocationSelect={panelCallbacks[panelKey].onLocationSelect}
                                             hiddenGeneIds={locationHiddenGenesByPanel[panelKey] || null}
                                             focusTranscriptView={focusTranscriptViews[panelKey] || null}
                                             geneTranscriptViews={geneTranscriptViews[panelKey] || null}
                                             focusDrawerInset={focusDrawerInsetFor(panelKey)}
                                             focusDrawerInsetOnFocus={FOCUS_DRAWER_WIDTH}
-                                            onFocusTranscriptsChange={(payload) => handleFocusTranscriptsChange(panelKey, payload)}
-                                            onFocusTranscriptViewChange={(patch) => handleFocusTranscriptViewChange(panelKey, patch)}
-                                            onFocusRowGeometryChange={(geometry) => handleFocusRowGeometryChange(panelKey, geometry)}
-                                            onGeneTranscriptViewChange={(geneId, patch) => handleGeneTranscriptViewChange(panelKey, geneId, patch)}
+                                            onFocusTranscriptsChange={panelCallbacks[panelKey].onFocusTranscriptsChange}
+                                            onFocusTranscriptViewChange={panelCallbacks[panelKey].onFocusTranscriptViewChange}
+                                            onFocusRowGeometryChange={panelCallbacks[panelKey].onFocusRowGeometryChange}
+                                            onGeneTranscriptViewChange={panelCallbacks[panelKey].onGeneTranscriptViewChange}
                                             navigateToGene={navigateGenes[panelKey] || null}
                                             navigateToLocation={externalFocusLocationsByGenome?.[panelKey] || null}
                                             onManualNavigate={handleManualBrowserNavigate}
                                             clearFocusEpoch={clearFocusEpoch + (panelClearEpochs[panelKey] || 0)}
                                             screenshotTargetId={panelKey}
-                                            onScreenshotTargetChange={(descriptor) => handleScreenshotTargetChange(panelKey, descriptor)}
+                                            onScreenshotTargetChange={panelCallbacks[panelKey].onScreenshotTargetChange}
                                         />
                                     ) : (
                                         <IndexPreparingNotice

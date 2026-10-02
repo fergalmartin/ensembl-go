@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { DEFAULT_GENOME_COLOR } from '../genomeColorSchemes'
+import { genomePillColors } from '../utils/genomePillColors'
 
 const LockedIcon = ({ className = '' }) => (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
@@ -71,6 +73,7 @@ function SectionToggle({ isLight, open, onClick, titleExpand, titleCollapse }) {
 export default function MultiAlignmentSidebar({
     theme = 'dark',
     rows = [],
+    genomeColorsByKey = {},
     rowDisplayMetaByGenomeKey = {},
     globalFlanks = { flank5: 100, flank3: 100 },
     globalFlanksLocked = true,
@@ -346,6 +349,10 @@ export default function MultiAlignmentSidebar({
                             const selectedTranscript = transcripts.find((tx) => String(tx?.id || '') === String(selectedTranscriptId || ''))
                             const selectedIsCanonical = Boolean(selectedTranscript?.is_canonical)
                             const displayMeta = rowDisplayMetaByGenomeKey?.[row.genome_key] || {}
+                            const pillColors = genomePillColors(
+                                genomeColorsByKey[row.genome_key] || DEFAULT_GENOME_COLOR,
+                                { isLight, state: 'active' }
+                            )
                             const geneLabel = String(
                                 displayMeta?.geneLabel
                                 || row?.resolved?.gene?.name
@@ -360,9 +367,9 @@ export default function MultiAlignmentSidebar({
                                         <span
                                             className="inline-flex items-center h-6 w-[190px] px-2.5 text-xs font-medium truncate rounded-full border"
                                             style={{
-                                                backgroundColor: isLight ? '#0099ff' : '#0077cc',
-                                                color: '#ffffff',
-                                                borderColor: 'transparent',
+                                                backgroundColor: pillColors.backgroundColor,
+                                                color: pillColors.textColor,
+                                                borderColor: pillColors.borderColor,
                                             }}
                                         >
                                             <span className="truncate">{row.pillLabel}</span>
