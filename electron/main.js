@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -8,6 +8,7 @@ const net = require('net');
 
 let mainWindow;
 let backendProcess;
+let backendSetupProcess;
 let backendStartupPromise = null;
 let appIsQuitting = false;
 
@@ -207,6 +208,28 @@ function getWindowsBackendMainPath(windowsRootPath) {
   return path.join(windowsRootPath, 'backend', 'main.py');
 }
 
+function fingerprintBackendSource(backendPath) {
+  const hash = crypto.createHash('sha256');
+  const skippedNames = new Set(['.venv', '__pycache__', '.pytest_cache', 'cache']);
+  function addDirectory(directory, relativePath = '') {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (skippedNames.has(entry.name) || /\.(pyc|pyo)$/i.test(entry.name)) {
+        continue;
+      }
+      const childRelativePath = path.posix.join(relativePath, entry.name);
+      const childPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        addDirectory(childPath, childRelativePath);
+      } else if (entry.isFile()) {
+        hash.update(childRelativePath);
+        hash.update(fs.readFileSync(childPath));
+      }
+    }
+  }
+  addDirectory(backendPath);
+  return hash.digest('hex').slice(0, 16);
+}
+
 function getWslCommand() {
   return findCommandOnPath(['wsl.exe', 'wsl']) || 'wsl.exe';
 }
@@ -263,7 +286,7 @@ function decodeCapturedOutput(chunks) {
 }
 
 function getDefaultWslPythonCommand() {
-  return sanitizeSpawnArgument(process.env.ENSEMBL_LOCAL_WSL_PYTHON) || 'python3';
+  return sanitizeSpawnArgument(process.env.ENSEMBL_LOCAL_WSL_PYTHON);
 }
 
 function createEmptyDiagnostics() {
@@ -298,6 +321,7 @@ function createBackendState() {
     launchedByElectron: false,
     status: 'checking',
     lastError: '',
+    setupProgress: '',
     diagnostics: process.platform === 'win32' ? createEmptyDiagnostics() : null,
     setupCommands: {},
     timestamp: Date.now(),
@@ -485,10 +509,11 @@ async function captureHtmlSnapshot(payload = {}) {
 }
 
 function runCommandCapture(command, args, options = {}) {
-  const { env, cwd, timeoutMs = 15000 } = options;
+  const { env, cwd, timeoutMs = 15000, onOutput, onSpawn } = options;
 
   return new Promise((resolve) => {
     let settled = false;
+    let timer = null;
     const stdoutChunks = [];
     const stderrChunks = [];
 
@@ -514,12 +539,13 @@ function runCommandCapture(command, args, options = {}) {
         cwd,
         windowsHide: true,
       });
+      if (onSpawn) onSpawn(child);
     } catch (error) {
       finish({ status: null, error });
       return;
     }
 
-    const timer = timeoutMs
+    timer = timeoutMs
       ? setTimeout(() => {
           child.kill();
           finish({ status: null, error: new Error('Timed out') });
@@ -528,12 +554,16 @@ function runCommandCapture(command, args, options = {}) {
 
     if (child.stdout) {
       child.stdout.on('data', (data) => {
-        stdoutChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(String(data)));
+        const chunk = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
+        stdoutChunks.push(chunk);
+        if (onOutput && !settled) onOutput(sanitizeCommandText(chunk.toString('utf8')));
       });
     }
     if (child.stderr) {
       child.stderr.on('data', (data) => {
-        stderrChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(String(data)));
+        const chunk = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
+        stderrChunks.push(chunk);
+        if (onOutput && !settled) onOutput(sanitizeCommandText(chunk.toString('utf8')));
       });
     }
 
@@ -553,7 +583,7 @@ function buildWslArgs(commandLine, distro = '') {
   if (sanitizedDistro) {
     args.push('-d', sanitizedDistro);
   }
-  args.push('--', 'bash', '-lc', sanitizeCommandText(commandLine));
+  args.push('--exec', 'bash', '-lc', sanitizeCommandText(commandLine));
   return args;
 }
 
@@ -567,7 +597,7 @@ async function translateWindowsPathToWsl(windowsPath, distro = '') {
   if (sanitizedDistro) {
     args.push('-d', sanitizedDistro);
   }
-  args.push('--', 'wslpath', '-a', windowsPath);
+  args.push('--exec', 'wslpath', '-a', windowsPath);
   const result = await runCommandCapture(getWslCommand(), args, { timeoutMs: 15000 });
   if (result.status !== 0 || result.error) {
     const detail = (result.stderr || result.stdout || result.error?.message || 'Unknown error').trim();
@@ -578,6 +608,40 @@ async function translateWindowsPathToWsl(windowsPath, distro = '') {
     throw new Error('WSL path translation returned an empty result.');
   }
   return translated.trim();
+}
+
+async function prepareNativeWslBackend(windowsRootPath, distro) {
+  const sourceRoot = await translateWindowsPathToWsl(windowsRootPath, distro);
+  const homeResult = await runWslShell('printf %s "$HOME"', distro, 15000);
+  const home = homeResult.stdout.trim();
+  if (homeResult.status !== 0 || !home.startsWith('/') || home.startsWith('/mnt/')) {
+    throw new Error('Could not find a native WSL home directory for the backend.');
+  }
+
+  const fingerprint = fingerprintBackendSource(path.join(windowsRootPath, 'backend'));
+  const nativeRoot = path.posix.join(home, '.local', 'share', 'ensembl-go', 'backend', fingerprint);
+  const markerPath = path.posix.join(nativeRoot, '.source-ready');
+  const backendMainPath = path.posix.join(nativeRoot, 'backend', 'main.py');
+  const ready = await runWslShell(
+    `[ -f ${quoteForPosixShell(markerPath)} ] && [ -f ${quoteForPosixShell(backendMainPath)} ]`,
+    distro,
+    15000,
+  );
+  if (ready.status !== 0) {
+    const sourceBackendPath = path.posix.join(sourceRoot, 'backend');
+    const nativeBackendPath = path.posix.join(nativeRoot, 'backend');
+    const stageCommand = [
+      'set -euo pipefail',
+      `mkdir -p ${quoteForPosixShell(nativeBackendPath)}`,
+      `tar -C ${quoteForPosixShell(sourceBackendPath)} --exclude=.venv --exclude=cache --exclude=__pycache__ --exclude=.pytest_cache --exclude='*.pyc' --exclude='*.pyo' -cf - . | tar -C ${quoteForPosixShell(nativeBackendPath)} -xf -`,
+      `touch ${quoteForPosixShell(markerPath)}`,
+    ].join('; ');
+    const staged = await runWslShell(stageCommand, distro, 120000);
+    if (staged.status !== 0 || staged.error) {
+      throw new Error((staged.stderr || staged.stdout || staged.error?.message || 'Could not copy the backend into WSL.').trim());
+    }
+  }
+  return nativeRoot;
 }
 
 function parseWslListOutput(output) {
@@ -604,41 +668,36 @@ function parseWslListOutput(output) {
   return sanitizeSpawnArgument(candidates[0] || '');
 }
 
+function getWslDistroVersion(output, distro) {
+  for (const rawLine of sanitizeCommandText(output).split(/\r?\n/)) {
+    const columns = rawLine.replace(/^\s*\*\s*/, '').trim().split(/\s+/);
+    if (columns[0] === distro && /^[12]$/.test(columns.at(-1))) {
+      return Number(columns.at(-1));
+    }
+  }
+  return null;
+}
+
 async function resolveWslDistro() {
   const override = sanitizeSpawnArgument(process.env.ENSEMBL_LOCAL_WSL_DISTRO);
-  if (override) {
-    return {
-      ok: true,
-      value: override,
-      details: 'Using ENSEMBL_LOCAL_WSL_DISTRO override.',
-    };
-  }
-
   const verbose = await runCommandCapture(getWslCommand(), ['-l', '-v'], { timeoutMs: 15000 });
   if (verbose.status === 0) {
-    const distro = parseWslListOutput(verbose.stdout);
+    const distro = override || parseWslListOutput(verbose.stdout);
     if (distro) {
+      const version = getWslDistroVersion(verbose.stdout, distro);
       return {
-        ok: true,
+        ok: version === 2,
         value: distro,
-        details: `Default WSL distro: ${distro}`,
+        details: version === 2
+          ? `${override ? 'Selected' : 'Default'} WSL 2 distro: ${distro}`
+          : version === 1
+            ? `${distro} uses WSL 1. In PowerShell, run wsl --set-version ${distro} 2 and retry.`
+            : `Could not confirm that ${distro} uses WSL 2. Check wsl -l -v in PowerShell.`,
       };
     }
   }
 
-  const quiet = await runCommandCapture(getWslCommand(), ['-l', '-q'], { timeoutMs: 15000 });
-  if (quiet.status === 0) {
-    const distro = parseWslListOutput(quiet.stdout);
-    if (distro) {
-      return {
-        ok: true,
-        value: distro,
-        details: `Detected WSL distro: ${distro}`,
-      };
-    }
-  }
-
-  const detail = sanitizeCommandText(verbose.stderr || verbose.stdout || quiet.stderr || quiet.stdout || 'No WSL distro is installed yet.').trim();
+  const detail = sanitizeCommandText(verbose.stderr || verbose.stdout || 'No WSL 2 distro is installed yet.').trim();
   return {
     ok: false,
     value: '',
@@ -695,40 +754,42 @@ async function waitForBackendReady(maxAttempts = 60, intervalMs = 500) {
   return lastHealth;
 }
 
-async function resolveWslPythonCommand(linuxRootPath, distro = '') {
+function resolveWslPythonCommand(linuxRootPath) {
   const override = sanitizeSpawnArgument(process.env.ENSEMBL_LOCAL_WSL_PYTHON);
   if (override) {
     return override;
   }
 
   if (linuxRootPath) {
-    const venvPython = path.posix.join(linuxRootPath, '.venv', 'bin', 'python');
-    const venvCheck = await runWslShell(`[ -x ${quoteForPosixShell(venvPython)} ]`, distro, 15000);
-    if (venvCheck.status === 0) {
-      return venvPython;
-    }
+    return path.posix.join(linuxRootPath, 'backend', '.venv', 'bin', 'python');
   }
 
-  return 'python3';
+  return '';
 }
 
-function createWindowsSetupCommands(linuxRootPath, pythonCommand) {
+function createWindowsSetupCommands(linuxRootPath, pythonCommand, uvAvailable = false) {
   if (!linuxRootPath) {
     return {};
   }
 
   const backendMain = path.posix.join(linuxRootPath, 'backend', 'main.py');
   const requirementsPath = path.posix.join(linuxRootPath, 'backend', 'requirements.txt');
-  const venvDir = path.posix.join(linuxRootPath, '.venv');
+  const venvDir = path.posix.join(linuxRootPath, 'backend', '.venv');
   const venvPython = path.posix.join(venvDir, 'bin', 'python');
-  const installPythonDeps = sanitizeSpawnArgument(process.env.ENSEMBL_LOCAL_WSL_PYTHON)
+  const pythonOverride = sanitizeSpawnArgument(process.env.ENSEMBL_LOCAL_WSL_PYTHON);
+  const installWithUv = pythonOverride
+    ? `uv pip install --python ${quoteForPosixShell(pythonCommand)} -r ${quoteForPosixShell(requirementsPath)}`
+    : `uv venv --python 3.12 ${quoteForPosixShell(venvDir)} && uv pip install --python ${quoteForPosixShell(venvPython)} -r ${quoteForPosixShell(requirementsPath)}`;
+  const installWithPython = pythonOverride
     ? `${quoteForPosixShell(pythonCommand)} -m pip install -r ${quoteForPosixShell(requirementsPath)}`
-    : `python3 -m venv ${quoteForPosixShell(venvDir)} && ${quoteForPosixShell(venvPython)} -m pip install --upgrade pip && ${quoteForPosixShell(venvPython)} -m pip install -r ${quoteForPosixShell(requirementsPath)}`;
+    : `python3 -m venv ${quoteForPosixShell(venvDir)} && ${quoteForPosixShell(venvPython)} -m pip install -r ${quoteForPosixShell(requirementsPath)}`;
 
   return {
-    installSystemPackages: 'sudo apt update && sudo apt install -y python3 python3-pip python3-venv',
+    uvAvailable,
+    installSystemPackages: 'sudo apt update && sudo apt install -y python3 python3-venv',
     installMafft: 'sudo apt install -y mafft',
-    installPythonDeps,
+    installWithUv,
+    installWithPython,
     startBackend: `ENSEMBL_LOCAL_API_TOKEN=${quoteForPosixShell(LOCAL_API_TOKEN)} ${quoteForPosixShell(pythonCommand)} ${quoteForPosixShell(backendMain)} --host ${BACKEND_HOST} --port ${BACKEND_PORT}`,
   };
 }
@@ -803,12 +864,12 @@ async function collectWindowsDiagnostics(health = { ok: false, statusCode: null,
   let backendLinuxRoot = '';
   if (diagnostics.wsl.ok && distroInfo.ok) {
     try {
-      backendLinuxRoot = await translateWindowsPathToWsl(backendWindowsRoot, distroInfo.value);
+      backendLinuxRoot = await prepareNativeWslBackend(backendWindowsRoot, distroInfo.value);
       diagnostics.backendSource = {
         ok: true,
         windowsPath: backendWindowsRoot,
         linuxPath: backendLinuxRoot,
-        details: 'Backend source bundle is available and reachable from WSL.',
+        details: 'Backend source is ready on the native WSL filesystem.',
       };
     } catch (error) {
       diagnostics.backendSource = {
@@ -823,13 +884,16 @@ async function collectWindowsDiagnostics(health = { ok: false, statusCode: null,
       ok: false,
       windowsPath: backendWindowsRoot,
       linuxPath: '',
-      details: 'Backend source bundle cannot be translated until WSL and a default distro are available.',
+      details: 'Backend source cannot be copied into WSL until WSL 2 and a distro are available.',
     };
   }
 
-  const pythonCommand = await resolveWslPythonCommand(backendLinuxRoot, distroInfo.value);
+  const pythonCommand = resolveWslPythonCommand(backendLinuxRoot);
   diagnostics.python.command = pythonCommand;
-  const setupCommands = createWindowsSetupCommands(backendLinuxRoot, pythonCommand);
+  const uvCheck = diagnostics.wsl.ok && distroInfo.ok
+    ? await runWslShell('command -v uv >/dev/null 2>&1', distroInfo.value, 15000)
+    : null;
+  const setupCommands = createWindowsSetupCommands(backendLinuxRoot, pythonCommand, uvCheck?.status === 0);
 
   if (diagnostics.wsl.ok && distroInfo.ok) {
     const pythonCheck = pythonCommand.includes('/')
@@ -840,7 +904,7 @@ async function collectWindowsDiagnostics(health = { ok: false, statusCode: null,
       command: pythonCommand,
       details: pythonCheck.status === 0
         ? `${pythonCommand} is available inside WSL.`
-        : `${pythonCommand} was not found in WSL. Install Python 3 in your distro before retrying.`,
+        : `${pythonCommand} was not found in WSL. Create the backend virtual environment with the command below, then retry.`,
     };
   }
 
@@ -917,12 +981,8 @@ async function collectWindowsDiagnostics(health = { ok: false, statusCode: null,
 
   const blockingReason = canLaunch
     ? ''
-    : diagnostics.wsl.details
-      || diagnostics.distro.details
-      || diagnostics.backendSource.details
-      || diagnostics.python.details
-      || diagnostics.modules.details
-      || diagnostics.health.details;
+    : [diagnostics.wsl, diagnostics.distro, diagnostics.backendSource, diagnostics.python, diagnostics.modules]
+      .find((item) => item.ok === false)?.details || diagnostics.health.details;
 
   return {
     diagnostics,
@@ -933,6 +993,45 @@ async function collectWindowsDiagnostics(health = { ok: false, statusCode: null,
     pythonCommand,
     launchCommandLine,
     blockingReason,
+  };
+}
+
+function shouldAutoSetupWindowsBackend(result) {
+  return !process.env.ENSEMBL_LOCAL_WSL_PYTHON
+    && result.setupCommands.uvAvailable
+    && result.diagnostics.wsl.ok
+    && result.diagnostics.distro.ok
+    && result.diagnostics.backendSource.ok
+    && (!result.diagnostics.python.ok || !result.diagnostics.modules.ok);
+}
+
+async function autoSetupWindowsBackend(result) {
+  let recentOutput = '';
+  let lastUpdate = 0;
+  const commandResult = await runCommandCapture(
+    getWslCommand(),
+    buildWslArgs(result.setupCommands.installWithUv, result.distro),
+    {
+      timeoutMs: 900000,
+      onSpawn: (child) => { backendSetupProcess = child; },
+      onOutput: (chunk) => {
+        recentOutput = (recentOutput + chunk).slice(-2000);
+        const line = recentOutput.split(/[\r\n]+/).filter(Boolean).pop()?.trim();
+        if (line && Date.now() - lastUpdate > 400) {
+          updateBackendState({ setupProgress: line.slice(-240) });
+          lastUpdate = Date.now();
+        }
+      },
+    },
+  );
+  backendSetupProcess = null;
+  if (commandResult.status === 0 && !commandResult.error) {
+    return { ok: true, error: '' };
+  }
+  const detail = (commandResult.error?.message || commandResult.stderr || commandResult.stdout || 'Unknown error').trim();
+  return {
+    ok: false,
+    error: `Automatic backend setup failed. Use the manual commands below, then retry launch. ${detail.slice(-800)}`,
   };
 }
 
@@ -988,7 +1087,7 @@ function startNativeBackendProcess() {
 
 function startWindowsBackendProcess(distro, launchCommandLine) {
   const args = buildWslArgs(launchCommandLine, distro);
-  console.log(`Starting WSL backend: ${getWslCommand()} ${args.join(' ')}`);
+  console.log(`Starting WSL backend in ${distro || 'the default distro'} on ${BACKEND_HOST}:${BACKEND_PORT}`);
   const child = spawn(getWslCommand(), args, { env: process.env, windowsHide: true });
   attachManagedProcess(child, 'WSL backend');
 }
@@ -1050,6 +1149,9 @@ async function ensureNativeBackend({ allowLaunch = true } = {}) {
 }
 
 async function ensureWindowsBackend({ allowLaunch = true } = {}) {
+  const previousDiagnostics = backendState.diagnostics || createEmptyDiagnostics();
+  const previousSetupCommands = backendState.setupCommands;
+  const managedProcess = Boolean(backendProcess && backendState.launchedByElectron);
   updateBackendState({
     mode: 'wsl',
     status: 'checking',
@@ -1057,6 +1159,7 @@ async function ensureWindowsBackend({ allowLaunch = true } = {}) {
     attached: false,
     launchedByElectron: false,
     lastError: '',
+    setupProgress: '',
     diagnostics: createEmptyDiagnostics(),
     setupCommands: {},
   });
@@ -1066,24 +1169,44 @@ async function ensureWindowsBackend({ allowLaunch = true } = {}) {
     updateBackendState({
       ready: true,
       attached: true,
-      launchedByElectron: false,
+      launchedByElectron: managedProcess,
       status: 'ready',
       lastError: '',
       diagnostics: {
-        ...createEmptyDiagnostics(),
+        ...previousDiagnostics,
         health: { ok: true, details: createHealthDetails(health) },
       },
-      setupCommands: {},
+      setupCommands: previousSetupCommands,
     });
     return true;
   }
 
-  const diagnosticsResult = await collectWindowsDiagnostics(health);
+  let diagnosticsResult = await collectWindowsDiagnostics(health);
   updateBackendState({
     diagnostics: diagnosticsResult.diagnostics,
     setupCommands: diagnosticsResult.setupCommands,
     lastError: diagnosticsResult.blockingReason || createHealthDetails(health),
   });
+
+  if (allowLaunch && shouldAutoSetupWindowsBackend(diagnosticsResult)) {
+    updateBackendState({
+      status: 'installing',
+      lastError: '',
+      setupProgress: 'Creating the WSL backend virtual environment and installing Python dependencies…',
+    });
+    const setupResult = await autoSetupWindowsBackend(diagnosticsResult);
+    diagnosticsResult = await collectWindowsDiagnostics(health);
+    updateBackendState({
+      diagnostics: diagnosticsResult.diagnostics,
+      setupCommands: diagnosticsResult.setupCommands,
+      setupProgress: '',
+      lastError: setupResult.error,
+    });
+    if (!setupResult.ok) {
+      updateBackendState({ status: 'setup_required' });
+      return false;
+    }
+  }
 
   if (!allowLaunch || !diagnosticsResult.canLaunch) {
     updateBackendState({
@@ -1219,6 +1342,25 @@ function createWindow() {
 app.whenReady().then(async () => {
   await configureManagedBackendEndpoint();
 
+  if (process.platform === 'win32') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { role: 'fileMenu' },
+      { role: 'editMenu' },
+      { role: 'viewMenu' },
+      {
+        label: 'Help',
+        submenu: [{
+          label: 'Backend setup…',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('backend:open-setup');
+            }
+          },
+        }],
+      },
+    ]));
+  }
+
   ipcMain.handle('dialog:openFile', async (_event, defaultPath) => {
     const options = {
       properties: ['openFile'],
@@ -1311,8 +1453,13 @@ app.whenReady().then(async () => {
     }
   });
 
+  if (process.platform === 'win32') {
+    createWindow();
+  }
   const ready = await ensureBackend({ allowLaunch: !shouldSkipBackend });
-  createWindow();
+  if (process.platform !== 'win32') {
+    createWindow();
+  }
 
   if (!ready && process.platform !== 'win32') {
     dialog.showMessageBox({
@@ -1337,5 +1484,6 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   appIsQuitting = true;
+  if (backendSetupProcess) backendSetupProcess.kill();
   stopBackend();
 });
