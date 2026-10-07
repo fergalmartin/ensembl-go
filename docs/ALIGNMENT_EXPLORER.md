@@ -106,8 +106,9 @@ opens on a rail centred under the button, which needs the room to the right.
 The **Select** and **Zoom** menus have no Apply. Each offers one choice among a
 handful, so picking one takes effect where the pick was made and closes the
 menu; Close is there for a menu opened to look rather than to change. **Colour**
-keeps Apply, being several settings edited together, one of which starts a motif
-search. Block navigation and Auto arrange share one control's height because they
+keeps Apply, being several settings edited together. **Find** is not a menu: it
+is the sequence view's find box, a band under the bar that stays open while the
+reader steps between matching blocks, and closing it is turning it off. Block navigation and Auto arrange share one control's height because they
 are never both live — Auto arrange is dead in Original, the only place the block
 navigator appears — and side by side they were what pushed the bar to a second
 row. Cycle carries its name alone rather than the active layer's, as in the

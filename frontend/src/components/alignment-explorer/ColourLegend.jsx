@@ -12,7 +12,7 @@
 export default function ColourLegend({ legend, cohort, inline = false, onDismiss }) {
   if (!legend) return null
   const cohortLine = cohort
-    ? ` ${cohort.ids.length} ${cohort.ids.length === 1 ? 'sequence' : 'sequences'}${cohort.picked ? ' picked' : ' in view'}.`
+    ? ` ${cohort.ids.length} ${cohort.ids.length === 1 ? 'sequence' : 'sequences'}${cohort.picked ? ' selected for comparison' : ' in view'}.`
     : ''
   const described = legend.kind === 'swatches'
     ? `${legend.swatches.map(s => s.label).join(', ')}. ${legend.note}`
@@ -32,6 +32,6 @@ export default function ColourLegend({ legend, cohort, inline = false, onDismiss
       </>}
     <small className="al-legend-note">{legend.note}{cohortLine}</small>
     {!inline && !!onDismiss && <button className="al-legend-close" aria-label="Hide this colour key"
-      title="Hide this key. Bring it back from the Colour menu." onClick={onDismiss}>×</button>}
+      title="Hide the colour key. Show it again from the Colour menu." onClick={onDismiss}>×</button>}
   </div>
 }

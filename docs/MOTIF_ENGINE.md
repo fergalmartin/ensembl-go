@@ -15,10 +15,18 @@
 > `frontend/src/utils/findPatterns.js`, shared with the sequence view. See
 > **Finding something** in `SEQUENCE_VIEW.md` for the other half.
 
-The alignment explorer's Colour, Select, Zoom and Hide menus use draft settings
-with Apply and Cancel. Colour → Find remembers patterns on Apply. Cancelling
-preparation keeps the previous applied view; remembered patterns remain
-available for another attempt.
+In the alignment explorer, Find is its own control on the bar, next to Colour,
+and works as the sequence view's does: the face opens a find box under the bar,
+the chevron opens the saved list, and both are the sequence view's `FindBar`.
+Submitting the box (or applying the list, which writes `[P1,P2]` into the box)
+starts a preparation; nothing is searched while typing. A submit that changes
+only colours reuses the prepared search, since the server's runs name patterns
+by their place in the list, not by colour. While the box is open the alignment
+is painted in find colours over a neutral sheet; closing it turns Find off and
+Colour's own scheme comes back. Previous and next step between matching blocks
+on the current sheet. Hiding unmatched blocks and the on-sheet key are toggles
+on the box's own row. Cancelling preparation keeps the previous applied view;
+remembered patterns remain available for another attempt.
 
 ## Pipeline
 

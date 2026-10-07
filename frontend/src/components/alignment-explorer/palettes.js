@@ -15,7 +15,7 @@ import { NUCLEOTIDE_COLORS } from '../../utils/nucleotideStyle.js'
 export const BASE_PALETTES = [
   {
     id: 'classic', label: 'Classic',
-    note: 'A red, C blue, G orange, T green.',
+    note: 'A: red, C: blue, G: orange, T: green.',
     light: NUCLEOTIDE_COLORS.light, dark: NUCLEOTIDE_COLORS.dark,
   },
   {
@@ -23,7 +23,7 @@ export const BASE_PALETTES = [
     // no red-green pair carries meaning, and the two blues differ in lightness
     // as well as hue, so they survive being printed grey.
     id: 'accessible', label: 'Colour-blind safe',
-    note: 'Pink, blue, sky and orange: no red-green pair carries meaning.',
+    note: 'A: pink, C: light blue, G: orange, T: blue. Avoids red–green contrasts.',
     light: { baseA: '#c2568f', baseT: '#0072b2', baseC: '#56b4e9', baseG: '#d98200', baseN: '#95a5a6' },
     dark: { baseA: '#ef8ab9', baseT: '#4ea3dd', baseC: '#8ed3f5', baseG: '#f0a93c', baseN: '#5c5f66' },
   },
@@ -36,14 +36,14 @@ export const BASE_PALETTES = [
     // like side by side in the menu. The rose G is deepened to keep its
     // distance from the new orange, the one pair now closest in hue.
     id: 'vivid', label: 'Vivid',
-    note: 'Violet, orange, rose and teal: strong, and unlike the other two.',
+    note: 'A: violet, C: orange, G: rose, T: teal.',
     light: { baseA: '#7c3aed', baseT: '#0d9488', baseC: '#d97706', baseG: '#be123c', baseN: '#95a5a6' },
     dark: { baseA: '#a78bfa', baseT: '#2dd4bf', baseC: '#fb923c', baseG: '#e11d48', baseN: '#5c5f66' },
   },
   {
     // Quiet enough to read annotations, features and picked regions over.
     id: 'muted', label: 'Muted',
-    note: 'The same four hues, damped, so annotations and picks read over them.',
+    note: 'Softer base colours help annotations and selections stand out.',
     light: { baseA: '#b0736c', baseT: '#6f9e7c', baseC: '#6a8cae', baseG: '#b39a66', baseN: '#a7aeb8' },
     dark: { baseA: '#9d6a66', baseT: '#6f9576', baseC: '#6b87a6', baseG: '#a79268', baseN: '#5c5f66' },
   },
@@ -57,7 +57,7 @@ export const RAMP_PALETTES = [
     // with red-green colour blindness, and its yellow shoulder also collided
     // with the gold this app reserves for what is picked out.
     id: 'heat', label: 'Blue to red',
-    note: 'Through purple, avoiding the green and yellow a red-green reader cannot separate.',
+    note: 'Blue through purple to red, without green or yellow.',
     dark: [[0, 30, 48, 110], [.25, 78, 68, 168], [.5, 136, 76, 178], [.75, 196, 76, 150], [1, 246, 92, 84]],
     light: [[0, 150, 178, 224], [.25, 134, 140, 210], [.5, 140, 96, 186], [.75, 164, 60, 146], [1, 178, 32, 44]],
   },
@@ -65,7 +65,7 @@ export const RAMP_PALETTES = [
     // Blue to green rather than through it: the pair that fails for a
     // red-green reader is red against green, and neither end here is red.
     id: 'field', label: 'Blue to green',
-    note: 'A cool ramp for reading beside warm annotations.',
+    note: 'Blue to green, contrasting with warm annotation colours.',
     dark: [[0, 34, 52, 118], [.33, 36, 104, 158], [.66, 40, 154, 146], [1, 108, 214, 124]],
     light: [[0, 168, 196, 232], [.33, 106, 160, 202], [.66, 54, 134, 150], [1, 16, 94, 74]],
   },
@@ -73,7 +73,7 @@ export const RAMP_PALETTES = [
     // One hue, ordered by lightness alone, for when the colour has to survive
     // being screenshotted, printed, or read next to something else coloured.
     id: 'ice', label: 'Ice',
-    note: 'One hue ordered by lightness: it survives greyscale and printing.',
+    note: 'A blue scale with varying lightness for greyscale viewing and printing.',
     dark: [[0, 24, 44, 82], [.5, 42, 108, 168], [1, 150, 220, 246]],
     light: [[0, 198, 218, 238], [.5, 92, 150, 206], [1, 16, 52, 112]],
   },
@@ -81,7 +81,7 @@ export const RAMP_PALETTES = [
     // No hue at all. The one to use when something else on the sheet is
     // carrying the colour - features, picked regions, another layer.
     id: 'mono', label: 'Mono',
-    note: 'No hue at all, so anything coloured drawn over it stays the only colour.',
+    note: 'A neutral scale that helps coloured annotations and selections stand out.',
     dark: [[0, 48, 58, 74], [1, 226, 234, 244]],
     light: [[0, 214, 221, 230], [1, 30, 42, 58]],
   },
@@ -120,9 +120,9 @@ export function basesLegend(light, scale, palette, shading) {
   return {
     kind: 'swatches',
     swatches: uniform ? [...bases, { label: 'Present', colour: presenceColour(light) }] : bases,
-    note: 'One colour per base, with gaps left as the page. Zoomed out past single bases, '
+    note: 'Each base has its own colour; gaps use the background colour. When zoomed out, '
       + (uniform
-        ? 'every block becomes one flat colour: where sequence is, and nothing about it.'
-        : 'colour becomes agreement with the comparison row instead.'),
+        ? 'one flat colour shows where sequence is present.'
+        : 'colour shows agreement with the comparison row.'),
   }
 }

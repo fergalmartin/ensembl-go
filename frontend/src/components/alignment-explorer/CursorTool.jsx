@@ -32,7 +32,7 @@ export default function CursorTool({ mode, shape, picked = 0, rows = 0, root, on
   const choose = option => { if (isSelectMode(option.mode)) onShape(option.mode); onMode(option.mode); close() }
   return <>
     <div className={`al-split al-control-cursor ${selecting ? 'selected' : ''} ${anchor ? 'menu-open' : ''}`} ref={button}>
-      <button className="al-split-main" aria-pressed={selecting} title={`${current.hint} Click for ${other.label}.`}
+      <button className="al-split-main" aria-pressed={selecting} title={`${current.hint} Click to switch to ${other.label}.`}
         onClick={() => onMode(other.mode)}><ControlLabel label="Cursor" value={current.label}/></button>
       <button className="al-split-arrow" aria-label="Cursor options" aria-expanded={!!anchor} aria-haspopup="dialog" aria-controls={anchor ? menuId : undefined}
         title="Choose what the pointer does"
@@ -47,11 +47,11 @@ export default function CursorTool({ mode, shape, picked = 0, rows = 0, root, on
       </div>
       <div className="al-menu-foot">
         <small>{picked
-          ? `${rows} ${rows === 1 ? 'sequence' : 'sequences'} · ${picked} ${picked === 1 ? 'pick' : 'picks'}`
-          : 'Nothing picked yet'}</small>
+          ? `${rows} ${rows === 1 ? 'sequence' : 'sequences'} · ${picked} ${picked === 1 ? 'region' : 'regions'}`
+          : 'No selection'}</small>
         <button type="button" disabled={!picked} onClick={() => { onClear(); close() }}>Clear selection</button>
       </div>
-      <div className="al-menu-actions"><small>A completed selection returns the cursor to Move view; the shape is remembered.</small><button onClick={close}>Close</button></div>
+      <div className="al-menu-actions"><small>After selection, the cursor returns to Move view. Your selection mode is saved for next time.</small><button onClick={close}>Close</button></div>
     </ControlMenu>
   </>
 }

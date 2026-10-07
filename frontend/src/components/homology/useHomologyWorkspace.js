@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { API_BASE } from '../../backendRuntime'
+import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../../sessionResume.js'
 import { getGenomeKey } from '../../utils/genomeIdentity.js'
 import { allowedTargets, effectiveQuery, hasHomologySource, homologyResultTab, initialWorkspace, PAGE_SIZE, SearchQueue, workspaceReducer } from './model.js'
 
@@ -12,7 +13,58 @@ async function search(body, signal) {
 
 // Owned by App, including the queue, so unmounting the view does not erase results.
 export default function useHomologyWorkspace({ genomes, localGenomes, outputDir, enabled }) {
-    const [state, dispatch] = useReducer(workspaceReducer, undefined, initialWorkspace)
+    // The searches the reader had before the page reloaded (see sessionResume.js): the
+    // query, filters and tab come back at once, and the searches themselves are run again
+    // the first time the view is open, rather than on load for a view nobody is looking at.
+    const resumeRef = useRef(undefined)
+    if (resumeRef.current === undefined) {
+        const saved = peekRestoredSessionState('homology.workspace')
+        resumeRef.current = saved && typeof saved === 'object' ? saved : null
+    }
+    const [state, dispatch] = useReducer(workspaceReducer, undefined, () => {
+        const base = initialWorkspace()
+        const saved = resumeRef.current
+        if (!saved) return base
+        return {
+            ...base,
+            sharedQuery: typeof saved.sharedQuery === 'string' ? saved.sharedQuery : '',
+            activeTab: typeof saved.activeTab === 'string' && saved.activeTab ? saved.activeTab : base.activeTab,
+            filters: { ...base.filters, ...(saved.filters && typeof saved.filters === 'object' ? saved.filters : {}) },
+            visibleColumns: Array.isArray(saved.visibleColumns) ? saved.visibleColumns : null,
+            summaryPage: Number(saved.summaryPage) || 0,
+        }
+    })
+    const pendingResumeRef = useRef(undefined)
+    if (pendingResumeRef.current === undefined) {
+        const panels = resumeRef.current?.panels
+        pendingResumeRef.current = panels && typeof panels === 'object' && Object.keys(panels).length
+            ? Object.fromEntries(Object.entries(panels).map(([key, entry]) => [key, { ...entry, phase: 'waiting' }]))
+            : null
+    }
+    // Read only when a snapshot is taken. Results are not kept — they are searched again.
+    const stateRef = useRef(state)
+    stateRef.current = state
+    useEffect(() => {
+        consumeRestoredSessionState('homology.workspace')
+        return registerSessionState('homology.workspace', () => {
+            const current = stateRef.current
+            const panels = {}
+            for (const [key, panel] of Object.entries(current.panels)) {
+                const searched = ['queued', 'loading', 'ready'].includes(panel.status) ? panel.submittedQuery : ''
+                const pending = pendingResumeRef.current?.[key]
+                if (pending) panels[key] = { override: pending.override ?? null, query: pending.query || '', offset: pending.offset || 0, navigation: pending.navigation || null }
+                else if (searched || panel.override !== null) panels[key] = { override: panel.override, query: searched, offset: panel.offset || 0, navigation: panel.navigation || null }
+            }
+            return {
+                sharedQuery: current.sharedQuery,
+                activeTab: current.activeTab,
+                filters: current.filters,
+                visibleColumns: current.visibleColumns,
+                summaryPage: current.summaryPage,
+                panels,
+            }
+        })
+    }, [])
     const [queue] = useState(() => new SearchQueue(3))
     const [diskGenomes, setDiskGenomes] = useState({ outputDir: '', genomes: [] })
     const availableGenomes = useMemo(() => {
@@ -77,8 +129,8 @@ export default function useHomologyWorkspace({ genomes, localGenomes, outputDir,
         return () => queue.dispose()
     }, [queue])
 
-    const run = useCallback(key => {
-        const query = effectiveQuery(state, key)
+    const run = useCallback((key, submitted = null) => {
+        const query = submitted ?? effectiveQuery(state, key)
         queue.cancel(`detail:${key}`)
         const requestId = queue.replace(`search:${key}`, async task => {
             if (task.controller.signal.aborted) return
@@ -93,6 +145,35 @@ export default function useHomologyWorkspace({ genomes, localGenomes, outputDir,
         dispatch({ type: 'start', key, requestId, query })
         queue.pump()
     }, [state, queue])
+
+    // Searching again for what the reader had found before the reload, then going back to
+    // the page or the gene they were on once the results are in.
+    const runRef = useRef(run)
+    runRef.current = run
+    useEffect(() => {
+        const pending = pendingResumeRef.current
+        if (!enabled || !pending) return
+        for (const [key, entry] of Object.entries(pending)) {
+            const panel = state.panels[key]
+            if (!panel) continue
+            if (entry.phase === 'waiting') {
+                if (entry.override !== null && entry.override !== undefined && panel.override !== entry.override) {
+                    dispatch({ type: 'override', key, value: entry.override })
+                }
+                if (!entry.query) { delete pending[key]; continue }
+                if (!hasHomologySource(panel)) continue
+                entry.phase = 'searching'
+                runRef.current(key, entry.query)
+            } else if (entry.phase === 'searching' && panel.status === 'ready') {
+                if (entry.navigation?.geneId) dispatch({ type: 'focus', key, geneId: entry.navigation.geneId, targetKey: entry.navigation.targetKey })
+                else if (entry.offset) dispatch({ type: 'page', key, offset: entry.offset })
+                delete pending[key]
+            } else if (entry.phase === 'searching' && ['error', 'stale', 'missing'].includes(panel.status)) {
+                delete pending[key]
+            }
+        }
+        if (!Object.keys(pending).length) pendingResumeRef.current = null
+    }, [enabled, state.panels])
 
     const runAll = useCallback(() => {
         for (const genome of genomes) {

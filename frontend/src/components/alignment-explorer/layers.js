@@ -41,7 +41,17 @@ export const DEFAULT_COLLAPSE_MIN = 1
  * rather than assumed. */
 export const DEFAULT_GAP_PERCENT = 100
 export const gapPercent = value => Math.min(100, Math.max(1, Math.round(Number(value)) || DEFAULT_GAP_PERCENT))
-export const emptyWorkspace = () => ({ version: 2, filter: null, filterOff: false, hidden: null, hideWhat: 'blocks', hideMode: 'or', hideMemory: null, collapseGaps: false, collapseMin: DEFAULT_COLLAPSE_MIN, collapsePercent: DEFAULT_GAP_PERCENT, collapseMarks: true, rowOrder: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', annotations: false, colourScheme: 'bases', palette: {}, shading: 'relative', legendOverlay: false, connectionUnit: 'columns', highlighted: [], selection: [], planeZoom: false, camera: defaultCamera() })
+/** What the find box last searched for. `saved` stands for every enabled
+ * pattern in the list, which is how a workspace from before Find had its own
+ * box asked; the view writes it out as `[P1,P2]` once it has the list. */
+function findApplied(value){
+  if(!value||typeof value!=='object')return null
+  const query=String(value.query??'').slice(0,500).trim(),kind=value.kind==='regex'?'regex':'literal'
+  if(value.saved===true)return {query:'',kind,saved:true}
+  return query?{query,kind}:null
+}
+
+export const emptyWorkspace = () => ({ version: 2, filter: null, filterOff: false, hidden: null, hideWhat: 'blocks', hideMode: 'or', hideMemory: null, collapseGaps: false, collapseMin: DEFAULT_COLLAPSE_MIN, collapsePercent: DEFAULT_GAP_PERCENT, collapseMarks: true, rowOrder: null, layers: [], active: '', original: true, sourceBlock: 1, mode: 'pan', annotations: false, colourScheme: 'bases', palette: {}, shading: 'relative', legendOverlay: false, find: '', findApplied: null, hideUnmatchedMotifBlocks: false, connectionUnit: 'columns', highlighted: [], selection: [], planeZoom: false, camera: defaultCamera() })
 export function createFragment(sourceBlock, start, end, rowIds, options = {}) {
   return { id: newId(), sourceBlock, start, end, rowIds: [...new Set(rowIds)], x: 0, y: 0, slots: null, ...options }
 }
@@ -894,7 +904,11 @@ export function validateLayerWorkspace(value,ids) {
   const hidden=hiddenState(value.hidden),hideMemory=hideSettings(value.hideMemory)
   const collapseMin=Math.min(100000,Math.max(1,Math.round(Number(value.collapseMin))||DEFAULT_COLLAPSE_MIN))
   const collapsePercent=gapPercent(value.collapsePercent)
-  return {...emptyWorkspace(),...value,hidden,hideMemory,layers,collapseGaps:!!value.collapseGaps,collapseMin,collapsePercent,collapseMarks:value.collapseMarks!==false,colourScheme:schemeById(value.colourScheme).id,palette:validPalettes(value.palette),shading:shadingById(value.shading).id,legendOverlay:!!value.legendOverlay,highlighted:highlightedRows(value.highlighted).filter(id=>known.has(id)),rowOrder:Array.isArray(value.rowOrder)&&value.rowOrder.every(id=>typeof id==='string')?value.rowOrder:null,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(value.camera)}}
+  // Find was once the Colour menu's fourth scheme. A workspace saved with it on
+  // comes back with the find box open over the same saved patterns, and its
+  // colouring back on Bases - the scheme it had before is not on record.
+  const legacyFind=value.colourScheme==='motif'
+  return {...emptyWorkspace(),...value,hidden,hideMemory,layers,collapseGaps:!!value.collapseGaps,collapseMin,collapsePercent,collapseMarks:value.collapseMarks!==false,colourScheme:legacyFind?'bases':schemeById(value.colourScheme).id,find:legacyFind||value.find?'simple':'',findApplied:findApplied(value.findApplied)||(legacyFind?{query:'',kind:'literal',saved:true}:null),hideUnmatchedMotifBlocks:!!value.hideUnmatchedMotifBlocks,palette:validPalettes(value.palette),shading:shadingById(value.shading).id,legendOverlay:!!value.legendOverlay,highlighted:highlightedRows(value.highlighted).filter(id=>known.has(id)),rowOrder:Array.isArray(value.rowOrder)&&value.rowOrder.every(id=>typeof id==='string')?value.rowOrder:null,original:!!value.original||!layers.length,active:layers.some(l=>l.id===value.active)?value.active:layers[0]?.id||'',selection:[],camera:{x:Number(value.camera?.x)||0,y:Number(value.camera?.y)||0,scale:clamp(Number(value.camera?.scale)||2,Number.EPSILON,24),plane:planeOf(value.camera)}}
 }
 
 /** The names a selection rectangle covers.

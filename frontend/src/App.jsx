@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
 import { FONT_MONO } from './utils/typography'
+import { consumeRestoredSessionState, endSessionRestore, peekRestoredSessionState, registerSessionState } from './sessionResume.js'
+import { useResumableState } from './hooks/useResumableState.js'
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -865,6 +867,51 @@ function FpsCounter() {
   )
 }
 
+/**
+ * Scroll `node` to `target` and keep it there while the page is still growing into
+ * place: content that arrives in stages (the browser's panels size themselves as their
+ * data lands) would otherwise clamp the offset, or the browser's scroll anchoring would
+ * shift it. Lets go once the height has been still for `settleMs`, after `maxMs`, or the
+ * moment the reader scrolls. Returns a function that stops it early.
+ */
+function holdScrollTop(node, target, { settleMs = 750, maxMs = 8000, onDone = null } = {}) {
+  let frame = 0
+  const startedAt = performance.now()
+  let lastHeight = -1
+  let stableSince = startedAt
+  const stop = () => {
+    cancelAnimationFrame(frame)
+    node.removeEventListener('wheel', finish)
+    node.removeEventListener('pointerdown', finish)
+    window.removeEventListener('keydown', finish)
+  }
+  const finish = () => {
+    stop()
+    onDone?.()
+  }
+  const hold = () => {
+    const now = performance.now()
+    const height = node.scrollHeight
+    if (height !== lastHeight) {
+      lastHeight = height
+      stableSince = now
+    }
+    const reachable = height - node.clientHeight
+    const wanted = Math.min(target, Math.max(0, reachable))
+    if (Math.abs(node.scrollTop - wanted) > 1) node.scrollTop = wanted
+    if ((reachable >= target && now - stableSince > settleMs) || now - startedAt > maxMs) {
+      finish()
+      return
+    }
+    frame = requestAnimationFrame(hold)
+  }
+  node.addEventListener('wheel', finish, { passive: true })
+  node.addEventListener('pointerdown', finish)
+  window.addEventListener('keydown', finish)
+  hold()
+  return stop
+}
+
 function App() {
   const [backendRuntime, setBackendRuntime] = useState(() => getInitialBackendRuntime())
   const [backendSetupOpen, setBackendSetupOpen] = useState(false)
@@ -891,9 +938,16 @@ function App() {
   const [refError, setRefError] = useState(null)
   const [tgtError, setTgtError] = useState(null)
 
-  // Genes selected in the genome browser (shared across views)
-  const [browserRefGene, setBrowserRefGene] = useState(null)
-  const [browserTgtGene, setBrowserTgtGene] = useState(null)
+  // Genes selected in the genome browser (shared across views). Every view that
+  // follows the gene of focus reads these, so they come back after a reload even
+  // when the browser itself is not on screen to put its panels' focus back.
+  const resumedFocus = useMemo(() => {
+    const saved = peekRestoredSessionState('app.focus')
+    return saved && typeof saved === 'object' ? saved : null
+  }, [])
+  const isGeneFocus = (gene) => Boolean(gene && typeof gene === 'object' && gene.id)
+  const [browserRefGene, setBrowserRefGene] = useState(() => (isGeneFocus(resumedFocus?.ref) ? resumedFocus.ref : null))
+  const [browserTgtGene, setBrowserTgtGene] = useState(() => (isGeneFocus(resumedFocus?.tgt) ? resumedFocus.tgt : null))
   const [browserGeneEntry, setBrowserGeneEntry] = useState(null)
   const handleBrowserGeneEntryConsumed = useCallback((entry) => {
     setBrowserGeneEntry((current) => current === entry ? null : current)
@@ -968,8 +1022,36 @@ function App() {
     [mainContentNode]
   )
 
-  // Navigation: which view is active
-  const [currentView, setCurrentView] = useState('home')
+  // Navigation: which view is active. A reload within the same launch puts the reader
+  // back in the view they were in (see sessionResume.js); a fresh launch starts on Home.
+  const [currentView, setCurrentViewState] = useState(() => {
+    const saved = peekRestoredSessionState('app.view')
+    return typeof saved === 'string' && saved ? saved : 'home'
+  })
+  // Every view shares the one scrolling page, so switching used to land the next view
+  // wherever the last one had been scrolled to. A view now opens at the top, except the
+  // genome browser, which stays mounted while hidden and goes back to where it was. Its
+  // offset is read once, on the way out, not tracked while the reader scrolls.
+  const mainContentNodeRef = useRef(null)
+  mainContentNodeRef.current = mainContentNode
+  const currentViewRef = useRef(currentView)
+  currentViewRef.current = currentView
+  const scrollTopByViewRef = useRef({})
+  const setCurrentView = useCallback((nextView) => {
+    const node = mainContentNodeRef.current
+    if (node) scrollTopByViewRef.current[currentViewRef.current] = node.scrollTop
+    setCurrentViewState(nextView)
+  }, [])
+  const scrolledForViewRef = useRef(currentView)
+  useLayoutEffect(() => {
+    if (scrolledForViewRef.current === currentView) return undefined
+    scrolledForViewRef.current = currentView
+    if (!mainContentNode) return undefined
+    const target = currentView === 'genome_browser' ? (scrollTopByViewRef.current.genome_browser || 0) : 0
+    mainContentNode.scrollTop = target
+    // The browser's panels can come back shorter for a moment than they were.
+    return target > 0 ? holdScrollTop(mainContentNode, target, { settleMs: 300, maxMs: 2000 }) : undefined
+  }, [currentView, mainContentNode])
   // What the sequence view should open on when another view hands off to it. A
   // fresh object each time, so asking for the same gene twice still arrives as a
   // new request -- the same contract as browserLocationFocusByGenome.
@@ -1002,10 +1084,32 @@ function App() {
   const [alignmentViewLoading, setAlignmentViewLoading] = useState(false)
   const [saveAlignmentModalOpen, setSaveAlignmentModalOpen] = useState(false)
   const [loadAlignmentModalOpen, setLoadAlignmentModalOpen] = useState(false)
-  const [alignmentGlobalFlanks, setAlignmentGlobalFlanks] = useState({ flank5: 100, flank3: 100 })
-  const [alignmentGlobalFlanksLocked, setAlignmentGlobalFlanksLocked] = useState(true)
-  const [alignmentGlobalFlankMax, setAlignmentGlobalFlankMax] = useState(1000)
-  const [alignmentSidebarCollapsed, setAlignmentSidebarCollapsed] = useState(false)
+  // The Feature Alignment as it was before the page reloaded, if it did (see
+  // sessionResume.js): its rows and flanks, and where its result came from so the
+  // result can be asked for again — from the backend's alignment cache for a run, or
+  // from the saved file for a loaded one — rather than kept in the page.
+  const resumedAlignmentRef = useRef(undefined)
+  if (resumedAlignmentRef.current === undefined) {
+    const saved = peekRestoredSessionState('alignment.workspace')
+    resumedAlignmentRef.current = saved && typeof saved === 'object' && Array.isArray(saved.rows) ? saved : null
+  }
+  const resumedAlignment = resumedAlignmentRef.current
+  const [alignmentGlobalFlanks, setAlignmentGlobalFlanks] = useState(() => (
+    Number.isFinite(Number(resumedAlignment?.globalFlanks?.flank5)) && Number.isFinite(Number(resumedAlignment?.globalFlanks?.flank3))
+      ? { flank5: Number(resumedAlignment.globalFlanks.flank5), flank3: Number(resumedAlignment.globalFlanks.flank3) }
+      : { flank5: 100, flank3: 100 }
+  ))
+  const [alignmentGlobalFlanksLocked, setAlignmentGlobalFlanksLocked] = useState(() => resumedAlignment?.globalFlanksLocked ?? true)
+  const [alignmentGlobalFlankMax, setAlignmentGlobalFlankMax] = useState(() => Number(resumedAlignment?.globalFlankMax) || 1000)
+  const [alignmentSidebarCollapsed, setAlignmentSidebarCollapsed] = useState(() => Boolean(resumedAlignment?.sidebarCollapsed))
+  // Where the result on screen came from: { kind: 'run', signature } or
+  // { kind: 'loaded', name, genomeKeys }. Only read when a snapshot is taken.
+  const alignmentResultSourceRef = useRef(null)
+  // Rows still to be put back, and the result to ask for once they are.
+  const pendingAlignmentRowsRef = useRef(resumedAlignment
+    ? new Map(resumedAlignment.rows.filter((row) => row?.genome_key).map((row) => [row.genome_key, row]))
+    : null)
+  const pendingAlignmentResultRef = useRef(resumedAlignment?.result || null)
   const [alignmentRunSettings, setAlignmentRunSettings] = useState({
     profile: 'balanced',
     soft_warn_sequences: 6,
@@ -1013,7 +1117,9 @@ function App() {
     max_total_bp: 500000,
     timeout_sec: 300,
   })
-  const [browserFocusByGenome, setBrowserFocusByGenome] = useState({})
+  const [browserFocusByGenome, setBrowserFocusByGenome] = useState(() => (
+    Object.fromEntries(Object.entries(resumedFocus?.byGenome || {}).filter(([, gene]) => isGeneFocus(gene)))
+  ))
   // genomeKey -> { chrom, start, end } asked for from outside the browser — a
   // location note or alignment selection offering to take the reader to its
   // region. Consumed by the panel, which focuses it the same way a search does.
@@ -1087,13 +1193,25 @@ function App() {
   const [inactiveSelectedSpecies, setInactiveSelectedSpecies] = useState([])
   const sandboxInactiveSnapshotRef = useRef(null)
   const [dualViewFocus, setDualViewFocus] = useState({ primaryKey: '', secondaryKey: '' })
-  const [svFullyActiveSpeciesKeys, setSvFullyActiveSpeciesKeys] = useState([])
-  const [svAnchorRegionId, setSvAnchorRegionId] = useState('')
-  const [svAnchorSpeciesKey, setSvAnchorSpeciesKey] = useState('')
-  const [svSecondSpeciesKey, setSvSecondSpeciesKey] = useState('')
-  const [svThirdSpeciesKey, setSvThirdSpeciesKey] = useState('')
-  const [svRegionExplicitlySelected, setSvRegionExplicitlySelected] = useState(false)
-  const svSavedViewportRef = useRef(null)
+  // Structural Variation's choices of genomes and region, and where its viewport was,
+  // come back after a reload like the rest of the session (see sessionResume.js).
+  const isStringArray = (value) => Array.isArray(value) && value.every((item) => typeof item === 'string')
+  const isString = (value) => typeof value === 'string'
+  const [svFullyActiveSpeciesKeys, setSvFullyActiveSpeciesKeys] = useResumableState('sv.activeKeys', [], { isValid: isStringArray })
+  const [svAnchorRegionId, setSvAnchorRegionId] = useResumableState('sv.anchorRegionId', '', { isValid: isString })
+  const [svAnchorSpeciesKey, setSvAnchorSpeciesKey] = useResumableState('sv.anchorSpeciesKey', '', { isValid: isString })
+  const [svSecondSpeciesKey, setSvSecondSpeciesKey] = useResumableState('sv.secondSpeciesKey', '', { isValid: isString })
+  const [svThirdSpeciesKey, setSvThirdSpeciesKey] = useResumableState('sv.thirdSpeciesKey', '', { isValid: isString })
+  const [svRegionExplicitlySelected, setSvRegionExplicitlySelected] = useResumableState('sv.regionExplicit', false, { isValid: (value) => typeof value === 'boolean' })
+  const svSavedViewportRef = useRef(undefined)
+  if (svSavedViewportRef.current === undefined) {
+    const saved = peekRestoredSessionState('sv.viewport')
+    svSavedViewportRef.current = saved?.refWindow ? saved : null
+  }
+  useEffect(() => {
+    consumeRestoredSessionState('sv.viewport')
+    return registerSessionState('sv.viewport', () => svSavedViewportRef.current || undefined)
+  }, [])
   const [featureExplorerGenomeKey, setFeatureExplorerGenomeKey] = useState('')
   const dualViewFocusRef = useRef(dualViewFocus)
   const inactiveSelectedSpeciesRef = useRef(inactiveSelectedSpecies)
@@ -1317,6 +1435,93 @@ function App() {
       setInactiveSelectedSpecies(restored)
     }
   }, [tutorialConfig])
+
+  // Where the reader is, offered to the session snapshot (sessionResume.js). Read only
+  // when a snapshot is taken — the page hiding, unloading or the machine sleeping — so
+  // keeping it current is one assignment per render.
+  const sessionStateRef = useRef(null)
+  sessionStateRef.current = {
+    currentView, config, configLoaded, inactiveSelectedSpecies, dualViewFocus, mainContentNode,
+    browserRefGene, browserTgtGene, browserFocusByGenome,
+    alignmentInputs, alignmentGlobalFlanks, alignmentGlobalFlanksLocked, alignmentGlobalFlankMax,
+    alignmentSidebarCollapsed, multiAlignmentResult, loadedAlignmentBaselineByGenome,
+  }
+  useEffect(() => {
+    consumeRestoredSessionState('app.focus')
+    const unregisterView = registerSessionState('app.view', () => sessionStateRef.current.currentView)
+    const unregisterFocus = registerSessionState('app.focus', () => {
+      const state = sessionStateRef.current
+      return { ref: state.browserRefGene, tgt: state.browserTgtGene, byGenome: state.browserFocusByGenome }
+    })
+    const unregisterGenomes = registerSessionState('app.genomes', () => {
+      const state = sessionStateRef.current
+      // Before the configuration has loaded there is nothing of the reader's to note;
+      // the snapshot keeps what it had (sessionResume carries untaken values forward).
+      if (!state.configLoaded) return undefined
+      return {
+        activeKeys: dedupeSpeciesList(state.config?.active_species || []).map(speciesItemKey).filter(Boolean),
+        selectedPlaylistId: state.config?.selected_genome_playlist_id || '',
+        inactiveSelected: dedupeSpeciesList(state.inactiveSelectedSpecies || []),
+        viewFocus: state.dualViewFocus,
+      }
+    })
+    consumeRestoredSessionState('alignment.workspace')
+    const unregisterAlignment = registerSessionState('alignment.workspace', () => {
+      const state = sessionStateRef.current
+      return {
+        rows: (state.alignmentInputs || []).map((row) => ({
+          genome_key: row.genome_key,
+          query: row.query || '',
+          lastAutoQuery: row.lastAutoQuery || '',
+          settings: row.settings || {},
+        })),
+        globalFlanks: state.alignmentGlobalFlanks,
+        globalFlanksLocked: state.alignmentGlobalFlanksLocked,
+        globalFlankMax: state.alignmentGlobalFlankMax,
+        sidebarCollapsed: state.alignmentSidebarCollapsed,
+        // Not the result itself, which can be large: where to get it again. A result
+        // waiting to be asked for again is still the reader's.
+        result: pendingAlignmentResultRef.current || (state.multiAlignmentResult ? alignmentResultSourceRef.current : null),
+        baseline: state.loadedAlignmentBaselineByGenome,
+      }
+    })
+    const unregisterScroll = registerSessionState('app.scroll', () => {
+      const state = sessionStateRef.current
+      const top = Math.round(state.mainContentNode?.scrollTop || 0)
+      return top > 0 ? { view: state.currentView, top } : undefined
+    })
+    return () => {
+      unregisterView()
+      unregisterFocus()
+      unregisterAlignment()
+      unregisterGenomes()
+      unregisterScroll()
+    }
+  }, [])
+
+  // The first time the reader goes somewhere new after a reload, whatever has not been
+  // restored by then belongs to the old session and is dropped.
+  const restoredViewRef = useRef(currentView)
+  useEffect(() => {
+    if (currentView !== restoredViewRef.current) endSessionRestore()
+  }, [currentView])
+
+  // Put the page back where it was scrolled to. The content arrives in stages (the
+  // browser's panels size themselves as their data lands), and the browser's scroll
+  // anchoring shifts the offset as content above grows, so the offset is held until the
+  // page has stopped changing height. Gives up the moment the reader scrolls, or after a
+  // few seconds; it runs once, after a reload, and never otherwise.
+  useEffect(() => {
+    if (!configLoaded || !mainContentNode) return undefined
+    const saved = peekRestoredSessionState('app.scroll')
+    const target = Number(saved?.top)
+    if (!saved || saved.view !== currentView || !(target > 0)) return undefined
+    // Consumed only on finishing, not on cleanup, so StrictMode's rehearsal unmount
+    // leaves it for the real mount.
+    return holdScrollTop(mainContentNode, target, { onDone: () => consumeRestoredSessionState('app.scroll') })
+    // Once, when the page is first ready; later view changes are the reader's own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configLoaded, mainContentNode])
 
   useEffect(() => {
     if (!configLoaded) return undefined
@@ -1586,8 +1791,8 @@ function App() {
   const [neighbourhoodLoadingByGenome, setNeighbourhoodLoadingByGenome] = useState({})
   const [neighbourhoodResolvingByGenome, setNeighbourhoodResolvingByGenome] = useState({})
   const [neighbourhoodErrorByGenome, setNeighbourhoodErrorByGenome] = useState({})
-  const [neighbourhoodGenomeOrderKeys, setNeighbourhoodGenomeOrderKeys] = useState([])
-  const [neighbourhoodDisabledByGenome, setNeighbourhoodDisabledByGenome] = useState({})
+  const [neighbourhoodGenomeOrderKeys, setNeighbourhoodGenomeOrderKeys] = useResumableState('neighbourhood.order', [], { isValid: Array.isArray })
+  const [neighbourhoodDisabledByGenome, setNeighbourhoodDisabledByGenome] = useResumableState('neighbourhood.disabled', {}, { isValid: (value) => Boolean(value) && typeof value === 'object' })
   const neighbourhoodTrackRequestSeqRef = useRef({})
   const neighbourhoodPairRequestSeqRef = useRef({})
   const neighbourhoodTrackAbortRef = useRef({})
@@ -1596,14 +1801,14 @@ function App() {
   const lastTgtFocusKeyRef = useRef('')
 
   // Neighbourhood "Use Homology" state — real Ensembl Compara homology-link mode
-  const [neighbourhoodUseHomology, setNeighbourhoodUseHomology] = useState(false)
-  const [neighbourhoodHomologyFilters, setNeighbourhoodHomologyFilters] = useState({
+  const [neighbourhoodUseHomology, setNeighbourhoodUseHomology] = useResumableState('neighbourhood.useHomology', false, { isValid: (value) => typeof value === 'boolean' })
+  const [neighbourhoodHomologyFilters, setNeighbourhoodHomologyFilters] = useResumableState('neighbourhood.homologyFilters', {
     showRbh: true,
     showRegular: true,
     types: [],
     minIdentity: 0,
     minCoverage: 0,
-  })
+  }, { isValid: (value) => Boolean(value) && typeof value === 'object' && Array.isArray(value.types) })
   const [neighbourhoodHomologyLinksByPair, setNeighbourhoodHomologyLinksByPair] = useState({})
   const [neighbourhoodHomologyAvailabilityByGenome, setNeighbourhoodHomologyAvailabilityByGenome] = useState({})
   const [neighbourhoodHomologyDownloadTaskByGenome, setNeighbourhoodHomologyDownloadTaskByGenome] = useState({})
@@ -1764,12 +1969,50 @@ function App() {
           target_index: '',
           ...(hasActiveSpecies ? {} : { ref_fasta: '', ref_gff: '', ref_index: '', homologies_file: '' })
         }
+        // Resuming after a reload rather than launching: the saved configuration already
+        // has the right genomes, but not the order the reader had them in, the playlist
+        // they had open, the genomes they had selected without activating, or which of
+        // the active ones each view was showing. Those come from the session snapshot.
+        // Peeked, not taken: StrictMode runs this load twice in development, and both
+        // runs must resume the same way. It stops applying once the restore window
+        // closes, or an explicit save below asks for the configuration as saved.
+        const resumedGenomes = peekRestoredSessionState('app.genomes')
+        let resumedInactive = []
+        let resumedFocus = null
+        if (resumedGenomes && typeof resumedGenomes === 'object') {
+          const activeByKey = new Map(dedupeSpeciesList(startupConfig.active_species).map((species) => [speciesItemKey(species), species]))
+          const orderedKeys = Array.isArray(resumedGenomes.activeKeys) ? resumedGenomes.activeKeys.filter((key) => activeByKey.has(key)) : []
+          if (orderedKeys.length) {
+            const ordered = orderedKeys.map((key) => activeByKey.get(key))
+            for (const [key, species] of activeByKey) {
+              if (!orderedKeys.includes(key)) ordered.push(species)
+            }
+            startupConfig.active_species = ordered
+            startupConfig.next_previous_session_genomes = buildPreviousSessionGenomes(ordered)
+          }
+          const playlistId = String(resumedGenomes.selectedPlaylistId || '')
+          if (playlistId && (playlistId === '__all__' || (startupConfig.genome_playlists || []).some((playlist) => playlist?.id === playlistId))) {
+            startupConfig.selected_genome_playlist_id = playlistId
+          }
+          if (Array.isArray(resumedGenomes.inactiveSelected)) {
+            resumedInactive = dedupeSpeciesList(resumedGenomes.inactiveSelected.filter((species) => (
+              species && typeof species === 'object' && !activeByKey.has(speciesItemKey(species))
+            )))
+          }
+          const focus = resumedGenomes.viewFocus
+          if (focus && activeByKey.has(focus.primaryKey)) {
+            resumedFocus = {
+              primaryKey: focus.primaryKey,
+              secondaryKey: activeByKey.has(focus.secondaryKey) ? focus.secondaryKey : '',
+            }
+          }
+        }
         const startupActive = dedupeSpeciesList(startupConfig.active_species)
         const startupPrimary = startupActive[0] || null
         const startupSecondary = startupActive[1] || null
         setConfig(startupConfig)
-        setInactiveSelectedSpecies([])
-        setDualViewFocus({
+        setInactiveSelectedSpecies(resumedInactive)
+        setDualViewFocus(resumedFocus || {
           primaryKey: startupPrimary ? speciesItemKey(startupPrimary) : '',
           secondaryKey: startupSecondary ? speciesItemKey(startupSecondary) : '',
         })
@@ -2697,9 +2940,20 @@ function App() {
 
   useEffect(() => {
     const activeSpecies = dedupeSpeciesList(config?.active_species || []).filter((species) => Boolean(species?.files?.gff3))
+    const restoring = pendingAlignmentRowsRef.current
     setAlignmentInputs((prev) => {
       const byKey = new Map((prev || []).map((row) => [row.genome_key, row]))
-      return activeSpecies.map((species, idx) => buildAlignmentInputRow(species, idx, byKey.get(speciesItemKey(species)) || null))
+      return activeSpecies.map((species, idx) => {
+        const key = speciesItemKey(species)
+        // A row from before a reload starts from what the reader had in it; it is
+        // resolved again below, keeping the transcript they had chosen.
+        const restored = !byKey.has(key) ? restoring?.get(key) : null
+        return buildAlignmentInputRow(species, idx, byKey.get(key) || (restored ? {
+          query: String(restored.query || ''),
+          lastAutoQuery: String(restored.lastAutoQuery || ''),
+          settings: restored.settings && typeof restored.settings === 'object' ? restored.settings : {},
+        } : null))
+      })
     })
   }, [config?.active_species, buildAlignmentInputRow])
 
@@ -2829,18 +3083,52 @@ function App() {
     resolveAlignmentInput(genomeKey)
   }, [cancelAlignmentInputResolve, resolveAlignmentInput])
 
+  // The gene a genome's row follows: its gene of focus in the browser.
+  const alignmentFocusTokenFor = useCallback((genomeKey, idx) => {
+    const focus = (idx === 0 ? browserRefGene : (idx === 1 ? browserTgtGene : null))
+      || browserFocusByGenome?.[genomeKey]
+    return String(focus?.name || focus?.id || '').trim()
+  }, [browserFocusByGenome, browserRefGene, browserTgtGene])
+
+  // One gene for every genome, from the search across the top of the controls. Each
+  // row is then the reader's own: marked as already holding its focus, so the focus
+  // filling below leaves it alone until that genome's focus actually changes.
+  const handleAlignmentSearchAll = useCallback((query) => {
+    const token = String(query || '').trim()
+    if (!token) return
+    const rows = alignmentInputsRef.current || []
+    const focusTokens = new Map(rows.map((row, idx) => [row.genome_key, alignmentFocusTokenFor(row.genome_key, idx).toLowerCase()]))
+    setAlignmentInputs((prev) => prev.map((row) => ({
+      ...row,
+      query: token,
+      status: 'idle',
+      error: '',
+      resolved: null,
+      lastAutoQuery: focusTokens.get(row.genome_key) || row.lastAutoQuery || '',
+      settings: { ...(row.settings || {}), selectedTranscriptId: '' },
+    })))
+    for (const row of rows) resolveAlignmentInput(row.genome_key, token)
+  }, [alignmentFocusTokenFor, resolveAlignmentInput])
+
+  // Fill each genome's row from its gene of focus. Runs when a focus changes and also
+  // when rows appear — after a reload, or a genome being activated — since the focus may
+  // already be there by then. Each row is filled from its own genome's focus once: a row
+  // the reader has since typed into is theirs, and another genome's focus changing does
+  // not overwrite it.
+  const alignmentRowKeysSignature = (alignmentInputs || []).map((row) => row.genome_key).join('|')
   useEffect(() => {
     const rows = alignmentInputsRef.current || []
     if (!rows.length) return
     rows.forEach((row, idx) => {
       const genomeKey = row.genome_key
-      const focus = (idx === 0 ? browserRefGene : (idx === 1 ? browserTgtGene : null))
-        || browserFocusByGenome?.[genomeKey]
-      const token = String(focus?.name || focus?.id || '').trim()
+      // A row being put back from before a reload is resolved by the restore below.
+      if (pendingAlignmentRowsRef.current?.has(genomeKey)) return
+      const token = alignmentFocusTokenFor(genomeKey, idx)
       if (!token) return
       const tokenNorm = token.toLowerCase()
       const currentNorm = String(row.query || '').trim().toLowerCase()
       const alreadyAuto = String(row.lastAutoQuery || '') === tokenNorm
+      if (alreadyAuto && currentNorm !== tokenNorm) return
       if (alreadyAuto && currentNorm === tokenNorm && row.status === 'resolved') return
       if (alreadyAuto && currentNorm === tokenNorm && row.status === 'resolving') return
 
@@ -2851,7 +3139,7 @@ function App() {
       )))
       resolveAlignmentInput(genomeKey, token, { auto: true })
     })
-  }, [browserFocusByGenome, browserRefGene, browserTgtGene, resolveAlignmentInput])
+  }, [alignmentFocusTokenFor, resolveAlignmentInput, alignmentRowKeysSignature])
 
   const handleAlignmentRowQueryChange = useCallback((genomeKey, value) => {
     setAlignmentInputs((prev) => prev.map((row) => (
@@ -3151,6 +3439,7 @@ function App() {
       setLoadedAlignmentBaselineByGenome(nextLoadedBaseline)
       setMultiAlignmentResult(data)
       setLastSuccessfulMultiAlignmentSignature(runSignature)
+      alignmentResultSourceRef.current = { kind: 'run', signature: runSignature }
       // Bridge from Feature Alignment to the browser alignment overlay is disabled for now.
       setAlignmentOverlay(null)
     } catch (e) {
@@ -3159,6 +3448,37 @@ function App() {
       setAlignmentViewLoading(false)
     }
   }, [alignmentInputs, alignmentRunSettings, alignmentGlobalFlanks, buildResolvedAlignmentSignature])
+
+  // Putting the Feature Alignment back after a reload. Each restored row is resolved
+  // again, keeping the transcript the reader had chosen; once they all have, the result
+  // is asked for again — but only when the view is open, never in the background. A run
+  // comes back from the backend's alignment cache, and only if the rows still describe
+  // exactly what was run; a loaded alignment is read from its saved file again.
+  useEffect(() => {
+    const pending = pendingAlignmentRowsRef.current
+    if (!pending || !alignmentInputs.length) return
+    const rowKeys = new Set(alignmentInputs.map((row) => row.genome_key))
+    for (const key of [...pending.keys()]) {
+      if (!rowKeys.has(key)) pending.delete(key)
+    }
+    for (const row of alignmentInputs) {
+      const saved = pending.get(row.genome_key)
+      if (!saved) continue
+      const query = String(row.query || '').trim()
+      if (!query) {
+        pending.delete(row.genome_key)
+      } else if (!saved.started) {
+        saved.started = true
+        resolveAlignmentInput(row.genome_key, query, {
+          selectedTranscriptId: saved.settings?.selectedTranscriptId || '',
+          preferSelectedTranscriptId: true,
+        })
+      } else if (row.status === 'resolved' || row.status === 'error') {
+        pending.delete(row.genome_key)
+      }
+    }
+    if (!pending.size) pendingAlignmentRowsRef.current = null
+  }, [alignmentInputs, resolveAlignmentInput])
 
   // Build a map of genome_key → full species object from active_species for use in save modal
   const activeSpeciesByKey = useMemo(() => {
@@ -3379,6 +3699,7 @@ function App() {
       setAlignmentInputs(nextAlignmentRows)
       setLoadedAlignmentBaselineByGenome(immediateLoadedBaseline)
       setMultiAlignmentResult(data)
+      alignmentResultSourceRef.current = { kind: 'loaded', name, genomeKeys: includeKeys }
       setAlignmentViewError(null)
 
       const loadedRefQuery = refGenomeKey ? String(loadedRowByGenomeKey.get(refGenomeKey)?.query || '').trim() : ''
@@ -3978,6 +4299,8 @@ function App() {
   const handleConfigSaved = async () => {
     const prev = savedConfigRef.current
     tutorialRuntime.emitSignal('config.saved')
+    // What was saved is what the reader wants now, not what they had before a reload.
+    consumeRestoredSessionState('app.genomes')
     // Fetch latest config from backend (may have new index paths, etc.)
     const newConfig = await fetchConfig()
     if (!newConfig || !prev) return
@@ -4107,7 +4430,22 @@ function App() {
 
   // Called when GenomeBrowserView or GenomeSelectorView changes active genome selection.
   // Immediately saves new config to backend so browser fetch calls get the right index/gff paths.
+  // Counted while in flight, so a Feature Alignment being put back after a reload can
+  // wait for the view's genome assignment to settle: finishing one clears whatever
+  // alignment is on screen. The epoch only moves while such a restore is waiting.
+  const configChangesInFlightRef = useRef(0)
+  const [configChangeSettledEpoch, setConfigChangeSettledEpoch] = useState(0)
   const handleBrowserConfigChange = async (configUpdate) => {
+    configChangesInFlightRef.current += 1
+    try {
+      return await applyBrowserConfigChange(configUpdate)
+    } finally {
+      configChangesInFlightRef.current -= 1
+      if (pendingAlignmentResultRef.current) setConfigChangeSettledEpoch((epoch) => epoch + 1)
+    }
+  }
+
+  const applyBrowserConfigChange = async (configUpdate) => {
     const prev = configRef.current
     const rawNewConfig = typeof configUpdate === 'function'
       ? configUpdate(prev)
@@ -4517,6 +4855,41 @@ function App() {
     if (activeUnchanged && !hasGenomeAssignmentChanges(currentConfig, aligned)) return
     handleBrowserConfigChange(aligned)
   }, [currentView, config?.active_species, dualViewFocus.primaryKey, dualViewFocus.secondaryKey, buildFocusFromActive, getAlignedGenomeConfigForView, hasGenomeAssignmentChanges])
+
+  // The alignment's result, asked for again once its rows are back (see above).
+  useEffect(() => {
+    const wanted = pendingAlignmentResultRef.current
+    // Not while the view is still settling which genomes it shows: that clears whatever
+    // alignment is on screen when it finishes, and would take the restored one with it.
+    if (!wanted || currentView !== 'alignment' || pendingAlignmentRowsRef.current) return
+    if (configChangesInFlightRef.current > 0) return
+    pendingAlignmentResultRef.current = null
+    if (wanted.kind === 'run') {
+      if (buildResolvedAlignmentSignature(alignmentInputs, alignmentGlobalFlanks) === wanted.signature) {
+        runMultiAlignment()
+      }
+      return
+    }
+    if (wanted.kind !== 'loaded' || !wanted.name || !config?.output_dir) return
+    let cancelled = false
+    fetch(`${API_BASE}/api/alignments/load`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: wanted.name, output_dir: config.output_dir, genome_keys: wanted.genomeKeys || [] }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return
+        setMultiAlignmentResult(data)
+        if (resumedAlignment?.baseline && typeof resumedAlignment.baseline === 'object') {
+          setLoadedAlignmentBaselineByGenome(resumedAlignment.baseline)
+        }
+        alignmentResultSourceRef.current = wanted
+      })
+      .catch((error) => console.error('Could not reopen the loaded alignment:', error))
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentView, alignmentInputs, alignmentGlobalFlanks, runMultiAlignment, buildResolvedAlignmentSignature, config?.output_dir, configChangeSettledEpoch])
 
 	  // `options.desired` states the outcome the caller wants — 'selected' or 'deselected'
 	  // — for a change applied on a delay, which may find the world already in that state
@@ -6931,47 +7304,6 @@ function App() {
             /* ========== FEATURE ALIGNMENT VIEW ========== */
             <ErrorBoundary>
               <div data-screenshot-capture="view" className="min-h-full flex items-start gap-4">
-              {/* Left sidebar */}
-              <div
-                className="flex-shrink-0 self-start transition-[width] duration-300 ease-out"
-                style={{ width: alignmentSidebarCollapsed ? '42px' : '360px' }}
-              >
-                <MultiAlignmentSidebar
-                  theme={theme}
-                  rows={alignmentInputs}
-                  genomeColorsByKey={alignmentGenomeColorsByKey}
-                  rowDisplayMetaByGenomeKey={alignmentDisplayMetaByGenomeKey}
-                  globalFlanks={alignmentGlobalFlanks}
-                  globalFlanksLocked={alignmentGlobalFlanksLocked}
-                  globalFlankMax={alignmentGlobalFlankMax}
-                  collapseIntrons={collapseIntrons}
-                  collapseSourceGenomeKey={collapseSource}
-                  collapseSourceOptions={collapseSourceOptions}
-                  collapsed={alignmentSidebarCollapsed}
-                  runSettings={alignmentRunSettings}
-                  loading={alignmentViewLoading}
-                  runDisabled={alignmentRunDisabled}
-                  alignedGenomeCount={alignedGenomeCount}
-                  unalignedGenomeCount={unalignedGenomeCount}
-                  showUpdateNotice={alignmentNeedsRerun}
-                  warnings={alignmentNeedsRerun ? [] : (multiAlignmentResult?.warnings || [])}
-                  onRowQueryChange={handleAlignmentRowQueryChange}
-                  onResolveRow={handleAlignmentResolveRow}
-                  onRowSettingChange={handleAlignmentRowSettingChange}
-                  onGlobalFlanksChange={handleAlignmentGlobalFlanksChange}
-                  onGlobalFlanksLockToggle={handleAlignmentGlobalFlanksLockToggle}
-                  onGlobalFlankMaxChange={handleAlignmentGlobalFlankMaxChange}
-                  onCollapseIntronsChange={setCollapseIntrons}
-                  onCollapseSourceChange={setCollapseSource}
-                  onRunSettingsChange={handleAlignmentRunSettingsChange}
-                  onRunAlignment={runMultiAlignment}
-                  onSaveAlignment={handleSaveAlignment}
-                  onLoadAlignment={() => setLoadAlignmentModalOpen(true)}
-                  hasResult={Boolean(multiAlignmentResult)}
-                  onToggleCollapsed={() => setAlignmentSidebarCollapsed((prev) => !prev)}
-                />
-              </div>
-
               {/* Main content - Alignment area */}
               <div className="flex-1 min-w-0 flex flex-col">
                 {alignmentViewError && (
@@ -7001,7 +7333,7 @@ function App() {
                     <h2 className="text-xl font-semibold mb-2">No alignment loaded</h2>
                     <p className={themeStyles.subtext}>
                       {alignmentPreparedCount >= 2
-                        ? 'Click Run alignment in the left panel to align the selected gene regions.'
+                        ? 'Click Run alignment in the panel on the right to align the selected gene regions.'
                         : 'Search for genes here, or select genes in Genome Browser. At least two genomes are needed.'}
                     </p>
                   </div>
@@ -7025,6 +7357,43 @@ function App() {
                   </>
                 )}
               </div>
+              {/* Controls, on the right like the other views' drawers */}
+              <div
+                className="flex-shrink-0 self-start transition-[width] duration-300 ease-out"
+                style={{ width: alignmentSidebarCollapsed ? '42px' : '360px' }}
+              >
+                <MultiAlignmentSidebar
+                  theme={theme}
+                  rows={alignmentInputs}
+                  genomeColorsByKey={alignmentGenomeColorsByKey}
+                  rowDisplayMetaByGenomeKey={alignmentDisplayMetaByGenomeKey}
+                  globalFlanks={alignmentGlobalFlanks}
+                  globalFlanksLocked={alignmentGlobalFlanksLocked}
+                  globalFlankMax={alignmentGlobalFlankMax}
+                  collapsed={alignmentSidebarCollapsed}
+                  runSettings={alignmentRunSettings}
+                  loading={alignmentViewLoading}
+                  runDisabled={alignmentRunDisabled}
+                  alignedGenomeCount={alignedGenomeCount}
+                  unalignedGenomeCount={unalignedGenomeCount}
+                  showUpdateNotice={alignmentNeedsRerun}
+                  warnings={alignmentNeedsRerun ? [] : (multiAlignmentResult?.warnings || [])}
+                  onSearchAll={handleAlignmentSearchAll}
+                  onRowQueryChange={handleAlignmentRowQueryChange}
+                  onResolveRow={handleAlignmentResolveRow}
+                  onRowSettingChange={handleAlignmentRowSettingChange}
+                  onGlobalFlanksChange={handleAlignmentGlobalFlanksChange}
+                  onGlobalFlanksLockToggle={handleAlignmentGlobalFlanksLockToggle}
+                  onGlobalFlankMaxChange={handleAlignmentGlobalFlankMaxChange}
+                  onRunSettingsChange={handleAlignmentRunSettingsChange}
+                  onRunAlignment={runMultiAlignment}
+                  onSaveAlignment={handleSaveAlignment}
+                  onLoadAlignment={() => setLoadAlignmentModalOpen(true)}
+                  hasResult={Boolean(multiAlignmentResult)}
+                  onToggleCollapsed={() => setAlignmentSidebarCollapsed((prev) => !prev)}
+                />
+              </div>
+
               </div>
             </ErrorBoundary>
           ) : currentView === 'sequence' ? (

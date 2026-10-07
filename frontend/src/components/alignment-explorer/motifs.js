@@ -37,6 +37,32 @@ function toExplorer(patterns) {
   return patterns.map(({ colour, ...rest }) => ({ ...rest, color: colour }))
 }
 
+/** The shared shape, for the find box, which is the sequence view's own. */
+export function loadFindPatterns(storage) {
+  return loadPatterns(MOTIF_STORAGE_KEY, storage)
+}
+/** What a search hands the painter and the server: this view's spelling. */
+export function explorerMotifs(patterns) {
+  return toExplorer(patterns)
+}
+
+// What is in the find box and how it is read, kept between visits the way the
+// sequence view keeps its own: the reader comes back to the box they left.
+export const FIND_QUERY_KEY = 'alignment-explorer:find:v1'
+export function loadFindQuery(storage) {
+  try {
+    const held = JSON.parse((storage ?? globalThis.localStorage)?.getItem(FIND_QUERY_KEY) || '{}')
+    return { query: String(held?.query || '').slice(0, 500), kind: held?.kind === 'regex' ? 'regex' : 'literal' }
+  } catch {
+    return { query: '', kind: 'literal' }
+  }
+}
+export function saveFindQuery(query, kind, storage) {
+  try { (storage ?? globalThis.localStorage)?.setItem(FIND_QUERY_KEY, JSON.stringify({ query, kind })) } catch {
+    // A private window refuses, and a find box is not worth failing over.
+  }
+}
+
 export function normalizeMotifs(value) {
   return toExplorer(normalisePatterns(value))
 }
@@ -57,7 +83,7 @@ export function motifLegend(motifs) {
   return {
     kind: 'swatches',
     swatches: activePatterns(motifs).map((m, i) => ({ label: `${i + 1}. ${m.pattern}`, colour: m.color })),
-    note: 'The top pattern wins overlaps. Unmatched sequence stays neutral.',
+    note: 'When matches overlap, the first pattern in the list determines the colour. Unmatched sequence uses a neutral colour.',
   }
 }
 

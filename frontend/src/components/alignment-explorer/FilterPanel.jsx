@@ -159,25 +159,25 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
       {ready&&<div className="al-filter-apply">
         <strong>{number(chosenSequenceIds.length)} sequences · {number(chosenBlockIds.length)} blocks</strong>
         {chunks.length?<small>{number(chunks.length)} chunks · {number(cells)} cells</small>
-          :<small>Narrow the sequences to build a layer from the result.</small>}
+          :<small>Choose sequences to create a layer from the filtered result.</small>}
         <button className="primary" disabled={!chunks.length} onClick={()=>onNewLayer(chunks)}>New layer from filter</button>
         <button onClick={()=>onApplyToOriginal({sequences:chosenSequenceIds,blocks:chosenBlockIds})}>Show only these in Original</button>
         {filterApplied&&<button onClick={onClearFilter}>Clear filter from Original</button>}
       </div>}
     </div>
 
-    {!ready&&<p className="al-hint">Reading the alignment inventory…</p>}
+    {!ready&&<p className="al-hint">Loading sequences and blocks…</p>}
     {ready&&summary.truncated?.sequences&&<p className="al-hint">Showing the first {number(summary.sequences.length)} of {number(summary.total.sequences)} sequences.</p>}
 
     {ready&&tab==='sequences'&&<div className="al-filter-body">
       <div className="al-filter-controls">
-      <TermInput label="Include" hint="keeps any of these words · Enter to add" placeholder="human"
+      <TermInput label="Include" hint="Match any term · Enter to add" placeholder="human"
         terms={sequenceFilter.include} onChange={v=>setSequenceFilter({...sequenceFilter,include:v})}/>
-      <TermInput label="Exclude" hint="drops any of these words · Enter to add" placeholder="ancestor"
+      <TermInput label="Exclude" hint="Exclude any matching term · Enter to add" placeholder="ancestor"
         terms={sequenceFilter.exclude} onChange={v=>setSequenceFilter({...sequenceFilter,exclude:v})}/>
       <label>Genome link
         <select value={sequenceFilter.genome} onChange={e=>setSequenceFilter({...sequenceFilter,genome:e.target.value})}>
-          <option value="any">Linked or not</option><option value="linked">Linked only</option><option value="unlinked">Not linked</option>
+          <option value="any">All sequences</option><option value="linked">Linked only</option><option value="unlinked">Not linked</option>
         </select></label>
       <Range label="Blocks" from={sequenceFilter.minBlocks} to={sequenceFilter.maxBlocks}
         onFrom={v=>setSequenceFilter({...sequenceFilter,minBlocks:v})} onTo={v=>setSequenceFilter({...sequenceFilter,maxBlocks:v})}/>
@@ -185,27 +185,27 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
         onFrom={v=>setSequenceFilter({...sequenceFilter,minBases:v})} onTo={v=>setSequenceFilter({...sequenceFilter,maxBases:v})}/>
       <div className="al-filter-actions">
         <span>{number(sequences.length)} of {number(summary.sequences.length)} match</span>
-        <button onClick={()=>setChosenSequences(new Set(sequences.map(s=>s.id)))}>Tick all shown</button>
-        <button disabled={!chosenSequences.size} onClick={()=>setChosenSequences(new Set())}>Untick all</button>
+        <button onClick={()=>setChosenSequences(new Set(sequences.map(s=>s.id)))}>Select all shown</button>
+        <button disabled={!chosenSequences.size} onClick={()=>setChosenSequences(new Set())}>Clear selection</button>
       </div>
       </div>
       <FilterGrid rows={sequences} columns={sequenceColumns} rowKey={s=>s.id} chosen={chosenSequences}
-        onChosen={setChosenSequences} label="Sequences" empty="Nothing matches these words."/>
+        onChosen={setChosenSequences} label="Sequences" empty="No sequences match these filters."/>
     </div>}
 
     {ready&&tab==='blocks'&&<div className="al-filter-body">
       <div className="al-filter-controls">
-      {within&&<p className="al-hint">Limited to the {number(within.size)} blocks holding the {number(chosenSequenceIds.length)} chosen sequences.</p>}
+      {within&&<p className="al-hint">Limited to the {number(within.size)} blocks containing the {number(chosenSequenceIds.length)} selected sequences.</p>}
       <div className="al-filter-coords">
-        <span>Genomic range <small>in each chosen sequence's own coordinates, 1-based</small></span>
+        <span>Genomic range <small>Using 1-based coordinates for each selected sequence</small></span>
         <div className="al-filter-range">
           <span/>
           <input type="number" min="1" placeholder="from" value={range.start} onChange={e=>setRange({...range,start:e.target.value})}/>
           <input type="number" min="1" placeholder="to" value={range.end} onChange={e=>setRange({...range,end:e.target.value})}/>
         </div>
-        {chosenSequenceIds.length>200&&<small className="al-hint">Narrow to 200 sequences or fewer to filter on coordinates.</small>}
-        {matches&&<small className="al-hint">{number(matches.length)} rows overlap, in {number(new Set(matches.map(m=>m.block)).size)} blocks. A layer takes just the overlapping columns.</small>}
-        {interval&&!matches&&<small className="al-hint">Looking up the interval…</small>}
+        {chosenSequenceIds.length>200&&<small className="al-hint">Select 200 sequences or fewer to filter by genomic coordinates.</small>}
+        {matches&&<small className="al-hint">{number(matches.length)} sequence intervals overlap this range across {number(new Set(matches.map(m=>m.block)).size)} blocks. New layers include only the overlapping columns.</small>}
+        {interval&&!matches&&<small className="al-hint">Finding sequences in this range…</small>}
       </div>
       <label>Block numbers <small>e.g. 1-20, 44, 60-70</small>
         <input placeholder="all" value={blockFilter.numbers} onChange={e=>setBlockFilter({...blockFilter,numbers:e.target.value})}/></label>
@@ -215,8 +215,8 @@ export default function FilterPanel({dataset,genomes,onClose,onNewLayer,onApplyT
         onFrom={v=>setBlockFilter({...blockFilter,minRows:v})} onTo={v=>setBlockFilter({...blockFilter,maxRows:v})}/>
       <div className="al-filter-actions">
         <span>{number(blocks.length)} of {number(summary.blocks.length)} match</span>
-        <button onClick={()=>setChosenBlocks(new Set(blocks.map(b=>b.id)))}>Tick all shown</button>
-        <button disabled={!chosenBlocks.size} onClick={()=>setChosenBlocks(new Set())}>Untick all</button>
+        <button onClick={()=>setChosenBlocks(new Set(blocks.map(b=>b.id)))}>Select all shown</button>
+        <button disabled={!chosenBlocks.size} onClick={()=>setChosenBlocks(new Set())}>Clear selection</button>
       </div>
       </div>
       <FilterGrid rows={blocks} columns={blockColumns} rowKey={b=>b.id} chosen={chosenBlocks}

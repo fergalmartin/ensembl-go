@@ -7,6 +7,7 @@ import {
 import { parseExonStateKey } from './featureExplorerExonUtils'
 
 import { API_BASE } from '../backendRuntime'
+import FeatureSectionHeader, { featureSectionClass, quietIconButtonClass } from './FeatureSection'
 const BASE_CELL_WIDTH = 14
 const BASE_BUFFER = 220
 const MIN_BASES_PER_WINDOW = 40
@@ -1384,39 +1385,15 @@ export default function FeatureExplorerSequencesPanel({
   }, [])
 
   return (
-    <div className={`rounded-xl border overflow-hidden ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800/80 border-gray-700'}`}>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={togglePanelCollapsed}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            togglePanelCollapsed()
-          }
-        }}
-        className={`px-4 py-3 flex items-center justify-between border-b cursor-pointer select-none ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
-      >
-        <div className={`text-sm font-semibold ${isLight ? 'text-gray-800' : 'text-gray-100'}`}>Transcript sequences</div>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            togglePanelCollapsed()
-          }}
-          className={`w-7 h-7 rounded border flex items-center justify-center transition-colors ${isLight
-            ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-            : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-            }`}
-          title={collapsed ? 'Expand transcript sequences panel' : 'Collapse transcript sequences panel'}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-            {collapsed
-              ? <polyline points="6 9 12 15 18 9" />
-              : <polyline points="18 15 12 9 6 15" />}
-          </svg>
-        </button>
-      </div>
+    <div className={featureSectionClass(isLight)}>
+      <FeatureSectionHeader
+        isLight={isLight}
+        title="Transcript sequences"
+        collapsed={collapsed}
+        onToggle={togglePanelCollapsed}
+        expandTitle="Expand transcript sequences panel"
+        collapseTitle="Collapse transcript sequences panel"
+      />
 
       {!collapsed && (
         <div
@@ -1529,10 +1506,7 @@ export default function FeatureExplorerSequencesPanel({
               <button
                 type="button"
                 onClick={() => setMenuCollapsed((prev) => !prev)}
-                className={`w-6 h-6 rounded border flex items-center justify-center transition-colors ${isLight
-                  ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                  : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                  } ${menuCollapsed ? 'mx-auto mt-1' : ''}`}
+                className={`w-6 h-6 ${quietIconButtonClass(isLight)} ${menuCollapsed ? 'mx-auto mt-1' : ''}`}
                 title={menuCollapsed ? 'Expand transcript list' : 'Collapse transcript list'}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -1708,10 +1682,7 @@ export default function FeatureExplorerSequencesPanel({
                               event.stopPropagation()
                               copyFullSequenceForTx(txId)
                             }}
-                            className={`w-6 h-6 shrink-0 rounded border flex items-center justify-center transition-colors ${isLight
-                              ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                              : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                              }`}
+                            className={`w-6 h-6 shrink-0 ${quietIconButtonClass(isLight)}`}
                             title={`Copy full ${sequenceType} sequence`}
                           >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2021,18 +1992,18 @@ export default function FeatureExplorerSequencesPanel({
                   <button
                     type="button"
                     onClick={() => toggleTranscript?.(txId)}
-                    className={`w-full h-[34px] rounded px-2 text-left text-xs border transition-colors ${isActive
+                    className={`w-full h-[34px] rounded px-2 text-left text-xs transition-colors ${isActive
                       ? (isLight
-                        ? 'bg-[#63acd8]/12 text-[#3f7696] border-[#559dc8] hover:bg-[#63acd8]/20'
-                        : 'bg-sky-400/14 text-sky-100 border-sky-300/60 hover:bg-sky-400/22')
+                        ? 'bg-[#63acd8]/12 text-[#3f7696] hover:bg-[#63acd8]/20'
+                        : 'bg-sky-400/14 text-sky-100 hover:bg-sky-400/22')
                       : (isLight
-                        ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                        : 'bg-gray-900/50 text-gray-300 border-gray-600 hover:bg-gray-700')
+                        ? 'text-gray-500 hover:bg-gray-100'
+                        : 'text-gray-400 hover:bg-[#273449]')
                       }`}
                     style={{
                       boxShadow: isDragSource
                         ? (isLight ? '0 0 0 2px rgba(59,130,246,0.8) inset' : '0 0 0 2px rgba(125,211,252,0.8) inset')
-                        : 'none',
+                        : (isActive ? `inset 3px 0 0 ${isLight ? '#559dc8' : 'rgba(125,211,252,0.7)'}` : 'none'),
                     }}
                     title={tx.id}
                   >

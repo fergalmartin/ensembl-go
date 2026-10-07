@@ -5,6 +5,7 @@ import { ACTIVE_ACHIEVEMENTS, ACHIEVEMENTS } from '../../achievements/catalogue.
 import { hasProgressBar, ruleProgress, unlockedCount } from '../../achievements/rules.js'
 import AppButtonIcon from '../AppButtonIcon'
 import { enableAchievements, resetAchievements, setAchievementNotifications, trackAchievement } from '../../achievements/tracker.js'
+import { useResumableState } from '../../hooks/useResumableState.js'
 
 // The trophy cabinet. Everything shown is derived from the tracker's snapshot on each
 // render; there is no state here beyond the filter and the reset confirmation.
@@ -152,7 +153,7 @@ export default function AchievementsView({ theme = 'dark', focusId = '', onFocus
   const snapshot = useAchievements()
   const { loaded, readonly, loadError, notificationsOn, enabled } = snapshot
   const facts = enabled ? snapshot.facts : EMPTY_FACTS
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useResumableState('achievements.filter', 'all', { isValid: (value) => typeof value === 'string' })
   const [confirmingReset, setConfirmingReset] = useState(false)
   const [resetState, setResetState] = useState({ busy: false, message: '', error: '' })
   const [highlightId, setHighlightId] = useState('')

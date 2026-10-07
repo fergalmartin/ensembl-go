@@ -23,6 +23,7 @@ import {
   summariseExons,
   summariseVariantImpacts,
 } from './structureExonMapping'
+import FeatureSectionHeader, { FeatureSubHeading, featureSectionClass } from './FeatureSection'
 
 const COLOR_MODES = [
   { key: 'exons', label: 'Exons', title: 'Colour the model by which coding exon contributes each residue' },
@@ -39,14 +40,6 @@ const SOURCE_LABELS = {
 
 // Matches the lock in the transcript panel, so the two mean the same thing.
 
-function Chevron({ collapsed }) {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-      {collapsed ? <polyline points="6 9 12 15 18 9" /> : <polyline points="18 15 12 9 6 15" />}
-    </svg>
-  )
-}
-
 /**
  * One collapsible block in the panel's side column.
  *
@@ -55,23 +48,21 @@ function Chevron({ collapsed }) {
  * column simply stacks them.
  */
 function StructureSection({ title, badge, open, onToggle, isLight, actions, children }) {
-  const headerClass = isLight ? 'text-gray-800 hover:bg-gray-100' : 'text-gray-100 hover:bg-gray-700/60'
   const mutedClass = isLight ? 'text-gray-500' : 'text-gray-400'
   return (
-    <div className={`rounded-md border ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
-      <div className="flex items-center">
-        <button
-          type="button"
-          onClick={onToggle}
-          className={`flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-left text-[11px] font-semibold transition-colors ${headerClass}`}
-        >
-          <Chevron collapsed={!open} />
-          <span className="truncate">{title}</span>
-          {badge != null && <span className={`shrink-0 tabular-nums font-normal ${mutedClass}`}>{badge}</span>}
-        </button>
-        {open && actions}
-      </div>
-      {open && <div className="px-2 pb-2">{children}</div>}
+    <div>
+      <FeatureSubHeading
+        label={title}
+        isLight={isLight}
+        collapsed={!open}
+        onToggle={onToggle}
+        expandTitle={`Show ${String(title).toLowerCase()}`}
+        collapseTitle={`Hide ${String(title).toLowerCase()}`}
+      >
+        {badge != null && <span className={`flex-none text-[11px] tabular-nums ${mutedClass}`}>{badge}</span>}
+        {open && actions ? <span className="flex-none" onClick={(event) => event.stopPropagation()}>{actions}</span> : null}
+      </FeatureSubHeading>
+      {open && <div className="pb-2">{children}</div>}
     </div>
   )
 }
@@ -565,19 +556,15 @@ export default function FeatureExplorerStructurePanel({
   }, [])
 
   // ── Styling shorthands ────────────────────────────────────────────────────
-  const panelBorderClass = isLight ? 'bg-white border-gray-200' : 'bg-gray-800/80 border-gray-700'
   const headerBorderClass = isLight ? 'border-gray-200' : 'border-gray-700'
-  const titleClass = isLight ? 'text-gray-800' : 'text-gray-100'
   const mutedClass = isLight ? 'text-gray-500' : 'text-gray-400'
   const bodyTextClass = isLight ? 'text-gray-700' : 'text-gray-200'
-  const btnActive = isLight ? 'bg-[#63acd8] text-white border-[#559dc8]' : 'bg-sky-500/75 text-white border-sky-400/80'
-  const btnInactive = isLight ? 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200' : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
+  // Toggles drawn without a box, as in the drawers: tinted when on, plain text when off.
+  const btnActive = isLight ? 'bg-blue-50 text-[#0077cc] border-transparent' : 'bg-[#2b3a55] text-sky-300 border-transparent'
+  const btnInactive = isLight ? 'text-gray-600 border-transparent hover:bg-gray-100' : 'text-gray-300 border-transparent hover:bg-[#273449]'
   const inputClass = isLight
     ? 'bg-white border-gray-300 text-gray-800 placeholder-gray-400'
     : 'bg-gray-900 border-gray-600 text-gray-100 placeholder-gray-500'
-  const collapseToggleClass = isLight
-    ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-    : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
   const miniButtonClass = `px-1.5 py-0.5 rounded text-[10px] font-semibold border ${btnInactive}`
 
   if (!resolvedGene) return null
@@ -592,37 +579,18 @@ export default function FeatureExplorerStructurePanel({
   const truncated = (variantData?.tracks || []).some((track) => track.truncated)
 
   return (
-    <div ref={containerRef} className={`rounded-xl border overflow-hidden ${panelBorderClass}`}>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => setCollapsed((prev) => !prev)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            setCollapsed((prev) => !prev)
-          }
-        }}
-        className={`px-4 py-3 flex items-center justify-between border-b cursor-pointer select-none ${headerBorderClass}`}
-      >
-        <div className={`text-sm font-semibold ${titleClass}`}>Structure</div>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            setCollapsed((prev) => !prev)
-          }}
-          className={`w-7 h-7 rounded border flex items-center justify-center transition-colors ${collapseToggleClass}`}
-          title={collapsed ? 'Expand structure panel' : 'Collapse structure panel'}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-            {collapsed ? <polyline points="6 9 12 15 18 9" /> : <polyline points="18 15 12 9 6 15" />}
-          </svg>
-        </button>
-      </div>
+    <div ref={containerRef} className={featureSectionClass(isLight)}>
+      <FeatureSectionHeader
+        isLight={isLight}
+        title="Structure"
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((prev) => !prev)}
+        expandTitle="Expand structure panel"
+        collapseTitle="Collapse structure panel"
+      />
 
       {!collapsed && (
-        <div className="p-3 space-y-3">
+        <div className="px-4 pt-1 pb-4 space-y-3">
           {/* ── Toolbar ─────────────────────────────────────────────────── */}
           <div className="flex flex-wrap items-center gap-2">
             <select
@@ -720,7 +688,7 @@ export default function FeatureExplorerStructurePanel({
 
           {/* ── Viewer and side column ──────────────────────────────────── */}
           <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0,1fr) 260px' }}>
-            <div className={`relative rounded-lg border overflow-hidden ${headerBorderClass}`} style={{ height: 420 }}>
+            <div className={`relative rounded-lg overflow-hidden ${isLight ? 'bg-gray-50' : 'bg-gray-900/40'}`} style={{ height: 420 }}>
               {/* allow-same-origin keeps the frame on the backend's origin rather
                   than an opaque one. It needs that for two reasons: its own CSP
                   restricts it to connect-src 'self', which matches nothing from an
@@ -943,7 +911,7 @@ export default function FeatureExplorerStructurePanel({
               )}
 
               {clickedResidue != null && (
-                <div className={`rounded-md border px-2 py-1.5 text-[11px] ${headerBorderClass} ${mutedClass}`}>
+                <div className={`rounded-md px-2 py-1.5 text-[11px] ${isLight ? 'bg-gray-50' : 'bg-gray-900/40'} ${mutedClass}`}>
                   <div className={bodyTextClass}>Residue {clickedResidue}</div>
                   {clickedExon
                     ? <div>Exon {exonSummary.indexOf(clickedExon) + 1}</div>

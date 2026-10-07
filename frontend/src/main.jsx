@@ -3,11 +3,13 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import { installApiFetchShim } from './backendRuntime.js'
+import { installSessionResumeTriggers } from './sessionResume.js'
 import { NoteStoreProvider } from './hooks/useNoteStore.jsx'
 import { TutorialProvider } from './hooks/useTutorial.jsx'
 import TutorialBuilderOverlay from './components/TutorialBuilderOverlay.jsx'
 
 installApiFetchShim()
+installSessionResumeTriggers()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

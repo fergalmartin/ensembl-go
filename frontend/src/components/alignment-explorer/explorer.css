@@ -40,7 +40,9 @@
    border and panel background back. */
 .alignment-layers .al-link { padding:0; border:0; border-radius:0; background:none; color:var(--al-accent); font:inherit; text-decoration:underline; cursor:pointer; }
 .alignment-layers .al-link:hover { color:var(--al-text); }
-.al-workspace { display:flex; flex:1; min-height:0; overflow:hidden; }
+.al-workspace { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+/* Under the full-width control bar: the alignment, the filter when open, the drawer. */
+.al-workspace-body { display:flex; flex:1; min-height:0; overflow:hidden; }
 .al-sidebar { width:240px; flex:0 0 240px; overflow:auto; background:var(--al-panel); border-right:1px solid var(--al-border); padding:12px; display:flex; flex-direction:column; gap:9px; }
 .al-original { display:flex; align-items:center; gap:8px; text-align:left; padding:10px 8px!important; }
 .al-original small,.al-layer small { display:block; font-size:10px; padding-top:2px; }
@@ -142,20 +144,6 @@
 /* Compact explorer: one toolbar, with secondary controls in the drawer. */
 .al-sidebar { width:226px; flex-basis:226px; padding:0; display:block; position:relative; }
 .al-sidebar.collapsed { width:30px; flex-basis:30px; overflow:hidden; }
-.al-sidebar-bar { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:4px; height:37px; padding-left:10px; background:var(--al-panel); }
-.al-sidebar-bar.closed { border-bottom:1px solid var(--al-border); }
-/* The section headings are <summary> elements; this one is a button on the
-   header row, so it borrows their weight and the marker they draw from the
-   list-style the UA gives a summary. Matching the marker's own advance rather
-   than spacing it by hand puts the two headings on the same left edge. */
-.al-sidebar-bar .al-layers-toggle { display:flex; align-items:center; border:0; background:none; padding:0; font-weight:600; color:inherit; }
-.al-layers-toggle>i { display:list-item; list-style-position:inside; list-style-type:disclosure-closed; font-style:normal; }
-.al-layers-toggle[aria-expanded="true"]>i { list-style-type:disclosure-open; }
-.al-sidebar-bar .al-new-layer { border:none; background:none; padding:0 6px; font-size:19px; line-height:1; color:var(--al-muted); }
-.al-sidebar-bar .al-new-layer:hover { color:var(--al-text); }
-.al-sidebar-toggle { display:flex; align-items:center; margin-left:auto; border:0!important; border-radius:0!important; padding:5px!important; }
-.al-sidebar.collapsed .al-layers-toggle,.al-sidebar.collapsed .al-sidebar-bar .al-new-layer { display:none; }
-.al-sidebar.collapsed .al-sidebar-content { display:none; }
 .al-sidebar-content { padding:0 10px 12px; }
 .al-section { border-bottom:1px solid var(--al-border); padding:8px 0; }
 .al-section>summary { cursor:pointer; font-weight:600; padding:2px 0 7px; }
@@ -364,30 +352,12 @@ label.al-filter-range input { width:100%; padding:3px!important; }
   padding-top:8px; border-top:1px solid var(--al-border); }
 .al-menu-foot button { font-size:11px; }
 
-/* Four tabs in one strip: the longest name wraps rather than being cut off,
+/* The tabs in one strip: the longest name wraps rather than being cut off,
    and flex makes every tab as tall as the tallest. */
 .al-menu-tabs { display:flex; gap:3px; }
 .al-menu-tabs button { flex:1; font-size:10.5px; line-height:1.25; padding:5px 4px!important; white-space:normal; }
 .al-colour-menu { min-width:340px; max-width:400px; }
 .al-colour-menu { overflow-y:auto; }
-.al-motif-menu { width:400px; min-width:0; max-width:calc(100vw - 16px); }
-.al-motifs { display:flex; flex-direction:column; gap:8px; }
-.al-motifs small { line-height:1.45; }
-.al-motif-list { display:flex; flex-direction:column; gap:7px; }
-.al-motif-row { padding:7px; border:1px solid var(--al-border); border-radius:6px; display:flex; flex-direction:column; gap:5px; }
-.al-motif-row.disabled { border-style:dashed; }
-.al-motif-row.disabled .al-motif-pattern { opacity:.6; }
-.al-motif-row.drop-target { border-color:#0099ff; box-shadow:0 -2px #0099ff; }
-.al-motif-controls { display:flex; align-items:center; gap:7px; }
-.al-motif-controls select { flex:1; min-width:0; }
-.al-motif-controls input[type=checkbox] { width:14px; height:14px; }
-.al-motif-grip { cursor:grab; padding:2px 5px!important; font-size:18px!important; }
-.al-motif-order { font-size:11px; min-width:10px; }
-.al-motif-color { width:23px; height:23px; padding:0!important; border-radius:5px!important; flex-shrink:0; }
-.al-motif-pattern { width:100%; box-sizing:border-box; font-family:'IBM Plex Mono',monospace; }
-.al-motif-delete { font-size:18px!important; padding:0 6px!important; }
-.al-motif-error { color:var(--al-error,#e05e64)!important; overflow-wrap:anywhere; }
-.al-motif-preview { padding:20px; border-radius:6px; font-family:'IBM Plex Mono',monospace; overflow-wrap:anywhere; }
 .al-menu-actions small { margin-right:auto; line-height:1.4; }
 .al-menu-actions { position:sticky; bottom:-11px; display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:10px 0 0; background:var(--al-panel); border-top:1px solid var(--al-border); }
 .al-motif-working { position:fixed; right:24px; bottom:30px; z-index:80; padding:12px; border:1px solid var(--al-border); border-radius:8px; background:var(--al-panel); box-shadow:0 8px 30px #0006; font-size:12px; }
@@ -475,6 +445,7 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-control-cursor { --al-w:116px; }
 .al-control-zoom { --al-w:115px; }
 .al-control-colour { --al-w:119px; }
+.al-control-find { --al-w:118px; }
 .al-control-filter { --al-w:64px; }
 .al-control-hide { --al-w:98px; }
 .al-control-gaps { --al-w:88px; }
@@ -584,8 +555,8 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-context-measure tr.is-active { outline:1px solid var(--al-accent); }
 .al-context-measure button { align-self:flex-start; }
 /* These controls edit or navigate the underlying sheet, not the context lens. */
-.al-main.is-context .al-toolbar-stack,
-.al-main.is-context .al-toolbar-context { display:none; }
+.al-workspace.is-context .al-toolbar-stack,
+.al-workspace.is-context .al-toolbar-context { display:none; }
 
 /* The two settings a collapse takes, on one line and on one baseline. The
    switch comes first because the threshold mainly governs how many marks the
@@ -651,3 +622,99 @@ label.al-filter-range input { width:100%; padding:3px!important; }
 .al-progress-foot button { padding:2px 8px; font-size:10px; }
 
 .al-menu-warn { color:var(--al-accent); }
+
+/* ── The sidebar as a drawer on the right ─────────────────────────────────────
+   Brought in line with the Gene Trees and browser drawers: on the right of the
+   alignment, a band across its head with the fold arrow and the layer on screen,
+   small-capitals section headings with a rule and an accent arrow, and layer rows
+   that are rows rather than boxes. */
+.alignment-layers { --al-drawer-bg:#1E2938; --al-drawer-border:#373a40; --al-band:#2b3a55; --al-band-text:#ffffff; --al-band-border:#1e293b;
+  --al-drawer-accent:#3b9dff; --al-drawer-rule:#374151; --al-drawer-hover:#273449; }
+.alignment-layers.light { --al-drawer-bg:#ffffff; --al-drawer-border:#dee2e6; --al-band:#dbe4ff; --al-band-text:#1e293b; --al-band-border:#b1c2ff;
+  --al-drawer-accent:#0099ff; --al-drawer-rule:#e5e7eb; --al-drawer-hover:#f3f4f6; }
+.al-sidebar { width:270px; flex:0 0 270px; padding:0; display:flex; flex-direction:column; background:var(--al-drawer-bg);
+  border-right:0; border-left:1px solid var(--al-drawer-border); }
+.al-sidebar.collapsed { width:36px; flex-basis:36px; overflow:hidden; }
+@media(max-width:1100px) { .al-sidebar { width:236px; flex-basis:236px; padding:0; } }
+@media(max-width:700px) { .al-sidebar { width:200px; flex-basis:200px; } }
+/* As tall as a block header (HEADER_HEIGHT in layout.js), whose top sits flush under
+   the control bar, so the band and the header read as one strip. */
+.al-band { position:sticky; top:0; z-index:2; flex-shrink:0; display:flex; align-items:center; gap:4px; height:48px; padding:0 8px 0 6px;
+  box-sizing:border-box; background:var(--al-band); color:var(--al-band-text); border-bottom:1px solid var(--al-band-border); }
+.al-sidebar.collapsed .al-band { justify-content:center; padding:0; }
+.al-sidebar.collapsed .al-band-text, .al-sidebar.collapsed .al-sidebar-content { display:none; }
+.alignment-layers .al-band-toggle, .alignment-layers .al-dh-icon { border:0!important; background:transparent!important; color:var(--al-drawer-accent)!important;
+  padding:0!important; width:26px; height:22px; display:flex; align-items:center; justify-content:center; border-radius:4px!important; flex-shrink:0; margin:0; }
+.alignment-layers .al-band-toggle:hover, .alignment-layers .al-dh-icon:hover { background:color-mix(in srgb, var(--al-drawer-accent) 14%, transparent)!important; }
+.alignment-layers .al-dh-icon.al-new-layer { font-size:17px; line-height:1; }
+.al-band-text { min-width:0; display:flex; flex-direction:column; gap:1px; }
+.al-band-text strong { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.al-band-text span { font-size:11px; opacity:.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.al-sidebar-content { flex:1; padding:6px 0 12px; }
+.al-section { border-bottom:0; padding:4px 12px 6px; }
+/* Headings: small caps, a rule out to the arrow. The same on <summary> and on the
+   Layers heading, which carries its own buttons. */
+.al-dh { display:flex; align-items:center; gap:8px; padding:4px 0 4px; cursor:pointer; list-style:none; }
+.al-dh::-webkit-details-marker { display:none; }
+.al-dh h3 { margin:0; flex:none; font-size:11px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--al-muted); }
+.al-dh-rule { flex:1; height:1px; background:var(--al-drawer-rule); }
+.al-dh-chevron { display:flex; color:var(--al-drawer-accent); padding:1px; border-radius:4px; }
+summary.al-dh:hover .al-dh-chevron { background:var(--al-drawer-hover); }
+details[open]>summary.al-dh .al-dh-chevron svg { transform:rotate(180deg); }
+.al-layers-section .al-dh { cursor:default; }
+.al-layer-targets { gap:3px; padding-top:4px; }
+.al-layer-list { gap:3px; }
+/* Rows, as the Gene Trees layers: no box until one is the layer on screen. */
+.alignment-layers .al-original, .al-layer { border:1px solid transparent!important; border-radius:7px; background:transparent; }
+.alignment-layers .al-original { padding:7px 8px!important; }
+.alignment-layers .al-original:hover:not(.selected), .al-layer:hover:not(.selected) { background:var(--al-drawer-hover); }
+.alignment-layers .al-original.selected, .al-layer.selected { background:color-mix(in srgb, var(--al-accent) 12%, transparent);
+  border-color:color-mix(in srgb, var(--al-accent) 45%, transparent)!important; }
+.al-layer>button:first-child:hover { background:transparent!important; border:0!important; }
+.al-layer .al-rename { opacity:.7; }
+.al-layer:hover .al-rename { opacity:1; }
+.al-overlay-check { padding:2px 8px 4px; }
+/* The filter opens beside the drawer, now on its left. */
+.al-filter { border-right:0; border-left:1px solid var(--al-border,#3a4d65); }
+
+/* Block # [box] Go ‹ ›: the label stays its own width so Go sits against the box,
+   drawn as a small accent button so it reads as the way to use the number typed,
+   and the arrows keep to the end. */
+.al-toolbar-stack .al-source-nav label { flex:0 0 auto; }
+.alignment-layers .al-toolbar-stack .al-source-nav .al-source-go { height:18px; padding:0 7px!important; font-weight:600; font-size:11px;
+  color:var(--al-drawer-accent); background:color-mix(in srgb, var(--al-drawer-accent) 14%, transparent)!important; border-radius:4px!important; }
+.alignment-layers .al-toolbar-stack .al-source-nav .al-source-go:hover:not(:disabled) { background:color-mix(in srgb, var(--al-drawer-accent) 24%, transparent)!important; }
+.alignment-layers .al-toolbar-stack .al-source-nav .al-source-go:disabled { color:var(--al-muted); background:transparent!important; }
+.al-toolbar-stack .al-source-nav button[aria-label="Previous block"] { margin-left:auto; }
+
+/* ── Controls at the width they need ─────────────────────────────────────────
+   Each control is as wide as its longest value, measured in the bar's own type,
+   and no wider: they no longer stretch to fill the bar. Cursor, Zoom, Colour, Hide
+   and Gaps need within ten pixels of each other (Conservation, Panel · 100%, Free
+   select, Sequences, Working… are the longest), so they share the widest of them
+   and read as a set. Whatever is left over opens up before Cycle, which keeps to
+   the right-hand end. Re-measure if a value is added or renamed. */
+.al-toolbar > .al-toolbar-group { flex:0 0 auto; }
+.al-toolbar > .al-toolbar-context { flex:1 0 auto; margin-left:0; }
+.al-toolbar .al-control,.al-toolbar .al-split { flex:0 0 var(--al-w); width:var(--al-w); min-width:var(--al-w); max-width:none; }
+.al-control-cursor, .al-control-zoom, .al-control-colour, .al-control-find, .al-control-hide, .al-control-gaps { --al-w:118px; }
+.al-control-filter { --al-w:64px; }
+.al-toolbar .al-control-layer { flex:0 0 auto; width:auto; min-width:0; margin-left:auto; padding:6px 14px; }
+/* The block box sizes to what it holds: Block # and a number, or a grouped range. */
+.al-toolbar-stack { flex:0 0 auto; min-width:0; max-width:none; width:max-content; }
+
+/* ── Find ─────────────────────────────────────────────────────────────────────
+   The band is the sequence view's own (FindBar.jsx, styled in its controls.css),
+   so the two views' find boxes are one object. It is drawn in that view's
+   tokens, which are this view's here: the same names, pointed at the colours
+   the explorer is already wearing, so the light/dark switch reaches it too. */
+.alignment-layers { --sv-bar:var(--al-bg); --sv-panel:var(--al-panel); --sv-field:var(--al-bg); --sv-border:var(--al-border);
+  --sv-text:var(--al-text); --sv-muted:var(--al-muted); --sv-accent:var(--al-accent); --sv-primary:var(--al-primary);
+  --sv-primary-hover:var(--al-primary-hover); --sv-warn:#fbbf24; }
+.alignment-layers.light { --sv-warn:#b45309; }
+.alignment-layers .sv-findbar { flex-shrink:0; }
+/* What only this view's box has: hiding the blocks with nothing in them, and
+   the key. Switches rather than settings, so they take effect as pressed. */
+.al-find-options { display:inline-flex; flex:none; gap:4px; }
+.alignment-layers .sv-findbar .al-find-options button { padding:5px 8px; font-size:11px; }
+.alignment-layers .al-menu-note { color:var(--al-accent); }

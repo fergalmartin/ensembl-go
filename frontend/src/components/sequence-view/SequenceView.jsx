@@ -152,6 +152,7 @@ import {
     readingFasta,
 } from '../../utils/transcriptSequenceView'
 import './controls.css'
+import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../../sessionResume.js'
 
 // One frozen empty list rather than a fresh one per render: it is a memo
 // dependency, and a new array every render would repaint every row.
@@ -199,8 +200,16 @@ export default function SequenceView({
     onNavigateToBrowser = null,
 }) {
     const isLight = theme === 'light'
-    const [chosenGenome, setGenomeKey] = useState('')
-    const [focus, dispatch] = useReducer(focusReducer, emptyFocus())
+    // What the reader was reading before the page reloaded, if it did (sessionResume.js).
+    const resumedRef = useRef(undefined)
+    if (resumedRef.current === undefined) {
+        const saved = peekRestoredSessionState('sequence.view')
+        resumedRef.current = saved?.genomeKey && saved?.focus?.chrom ? saved : null
+    }
+    const [chosenGenome, setGenomeKey] = useState(() => resumedRef.current?.genomeKey || '')
+    const [focus, dispatch] = useReducer(focusReducer, undefined, () => (
+        resumedRef.current ? { ...emptyFocus(), ...resumedRef.current.focus } : emptyFocus()
+    ))
     // How the reader likes to read, kept across visits. What was stored is read
     // field by field against the defaults as they are now -- see
     // utils/sequenceViewPrefs.js, which also reads an older shape forward.
@@ -305,6 +314,17 @@ export default function SequenceView({
     )
     const genomeKey = chosenGenome || options[0]?.key || ''
 
+    // Offered to the session snapshot, which reads it only when one is taken.
+    const sessionStateRef = useRef(null)
+    sessionStateRef.current = { genomeKey, focus }
+    useEffect(() => {
+        consumeRestoredSessionState('sequence.view')
+        return registerSessionState('sequence.view', () => {
+            const state = sessionStateRef.current
+            return state.genomeKey && state.focus?.chrom ? { genomeKey: state.genomeKey, focus: state.focus } : undefined
+        })
+    }, [])
+
     // How long each of this genome's chromosomes is, so a typed range can be
     // held inside one. See useChromExtents.js.
     const chromExtents = useChromExtents(genomeKey)
@@ -325,7 +345,9 @@ export default function SequenceView({
     // ask again, and the view would sit on an empty frame for good. So a
     // cancelled attempt leaves nothing behind and the next run retries; only a
     // reply, or a refusal, settles it.
-    const seeded = useRef({ key: '', settled: false })
+    const seeded = useRef(resumedRef.current
+        ? { key: resumedRef.current.genomeKey, settled: true }
+        : { key: '', settled: false })
     useEffect(() => {
         if (!genomeKey || incoming) return undefined
         if (focus.location && focus.genomeKey === genomeKey) return undefined

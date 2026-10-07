@@ -6,8 +6,9 @@ export const motifTransport = {
   }),
   status: (id, signal) => api(`/motif-jobs/${id}`, undefined, signal),
   cancel: id => api(`/motif-jobs/${id}/cancel`, {}),
+  // Every matching block, whether or not the rest are hidden: stepping from
+  // one match to the next in the find box walks this list.
   async finish(job, settings, signal) {
-    if (!settings.hideUnmatched) return { blocks: null }
     const blocks = []
     let after = 0
     do {

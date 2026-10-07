@@ -1,5 +1,5 @@
 import { FONT_MONO, FONT_SANS } from '../utils/typography'
-import { DownloadMark, GenomeBrowserMark } from './appIconMarks'
+import { DownloadMark, GenomeBrowserMark, HomologyMark } from './appIconMarks'
 
 export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
   const size = compact ? 18 : 24
@@ -54,7 +54,13 @@ export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
     </svg>
   )
 
-  if (buttonId === 'alignment_explorer') return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4ZM3 12l9 4 9-4M3 17l9 4 9-4"/></svg>
+  if (buttonId === 'alignment_explorer') return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 7l10-4 10 4-10 4Z" />
+      <path d="M2 12l10 4 10-4" />
+      <path d="M2 17l10 4 10-4" />
+    </svg>
+  )
 
   if (buttonId === 'home') {
     const iconSize = compact ? size + 2 : size + 7
@@ -186,19 +192,7 @@ export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
   }
 
   if (buttonId === 'homology') {
-    const edge = compact ? size + 2 : size + 6
-    return (
-      <svg width={edge} height={edge} viewBox="0 0 32 32" fill="currentColor" stroke="none" aria-hidden="true">
-        <path d="M24.6,9.1l-1.3,0.7l3,0.8l0.8-2.9l-1.4,0.8c-2.5-3.5-6.7-5.7-11.1-5.7h-0.2v1.3h0.2C18.7,4.1,22.4,6,24.6,9.1z M4.9,11.8
-L4,8.9L1,9.7l1.4,0.8c-1.9,3.9-1.7,8.4,0.5,12.1L3,22.7l1.2-0.6L4,21.9c-2-3.3-2.2-7.4-0.5-10.8C3.5,11.1,4.9,11.8,4.9,11.8z
- M25.3,21.7c-2,3.3-5.5,5.5-9.4,5.8l0-1.5l-2.2,2.2l2.2,2.2l0-1.5c4.4-0.3,8.4-2.8,10.6-6.5l0.1-0.1l-1.2-0.6L25.3,21.7z M8.1,22.8
-c-1.1,0-2,0.4-2.7,1.1c-0.8,0.7-1.1,1.6-1.1,2.7c0,1,0.4,1.9,1.1,2.7c0.8,0.7,1.7,1.1,2.7,1.1s2-0.4,2.7-1.1
-c0.8-0.7,1.1-1.6,1.1-2.7c0-1-0.4-1.9-1.1-2.7C10.2,23.2,9.2,22.7,8.1,22.8z M8.1,1.6c-1.1,0-2,0.4-2.7,1.1C4.6,3.5,4.3,4.3,4.3,5.4
-c0,1,0.4,1.9,1.1,2.7c0.8,0.7,1.7,1.1,2.7,1.1s2-0.4,2.7-1.1C11.7,7.3,12,6.4,12,5.4c0-1-0.4-1.9-1.1-2.7C10.2,2,9.2,1.6,8.1,1.6z
- M30.9,14.9c-0.3-1-0.9-1.8-1.8-2.3c-0.9-0.5-1.9-0.6-2.9-0.4c-1,0.3-1.8,0.9-2.4,1.7c-0.5,0.9-0.7,1.8-0.4,2.9
-c0.3,1,0.9,1.8,1.8,2.3c0.9,0.5,1.9,0.6,2.9,0.4c1-0.3,1.8-0.9,2.4-1.7C31,16.9,31.1,15.9,30.9,14.9z"/>
-      </svg>
-    )
+    return <HomologyMark size={compact ? size + 2 : size + 6} />
   }
 
   if (buttonId === 'stats') {

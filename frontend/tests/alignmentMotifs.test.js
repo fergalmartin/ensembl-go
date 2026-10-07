@@ -30,8 +30,22 @@ test('motifs round-trip across sessions and corrupt storage falls back safely', 
   value = '{bad'; assert.deepEqual(loadMotifs(storage), [])
   assert.deepEqual(normalizeMotifs([null, { id: 'a', color: 'bad' }, { id: 'a' }]), [{ ...motifs[0], pattern: '' }])
   assert.equal(saveMotifs(saved, { setItem: () => { throw Error('quota') } }), false)
-  assert.equal(validateLayerWorkspace({ ...emptyWorkspace(), colourScheme: 'motif' }, []).colourScheme, 'motif')
   assert.deepEqual(motifLegend(saved).swatches.map(s => s.label), ['1. TG.'])
+})
+
+test('find is its own setting: a workspace saved with the old Find colour opens with the box open over its saved patterns', () => {
+  const legacy = validateLayerWorkspace({ ...emptyWorkspace(), colourScheme: 'motif' }, [])
+  assert.equal(legacy.colourScheme, 'bases')
+  assert.equal(legacy.find, 'simple')
+  assert.deepEqual(legacy.findApplied, { query: '', kind: 'literal', saved: true })
+  const fresh = validateLayerWorkspace(emptyWorkspace(), [])
+  assert.equal(fresh.find, '')
+  assert.equal(fresh.findApplied, null)
+  // The list is a draft, so it never reopens; what was searched for does.
+  const open = validateLayerWorkspace({ ...emptyWorkspace(), find: 'full', findApplied: { query: ' [P1,P2] ', kind: 'regex' } }, [])
+  assert.equal(open.find, 'simple')
+  assert.deepEqual(open.findApplied, { query: '[P1,P2]', kind: 'regex' })
+  assert.equal(validateLayerWorkspace({ ...emptyWorkspace(), find: 'simple', findApplied: { query: '   ' } }, []).findApplied, null)
 })
 test('highlight spans clip to tiles and cropped fragments while preserving gaps', () => {
   const spans = [[9, 13, 'blue'], [15, 18, 'blue'], [20, 21, 'teal']]

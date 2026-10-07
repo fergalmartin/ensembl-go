@@ -147,10 +147,10 @@ export function conservationLegend(light, scale = DEFAULT_SCALE, palette) {
     high: scale.fitted ? `${(scale.hi * 100).toFixed(0)}%` : 'more',
     across: 'Agreement between the sequences present',
     heights: [1, 3, 5].map(r => 0.24 + 0.76 * (r + 1) / REPRESENTATION_STEPS),
-    down: 'Bar height: share of the cohort present',
+    down: 'Bar height: proportion of the comparison set present',
     note: scale.fitted
-      ? 'Observed column identity among the sequences in view, scaled to the range loaded. Not a constraint score.'
-      : 'Observed column identity among the sequences in view. Not a constraint score.',
+      ? 'Observed sequence identity, scaled to the loaded range. This does not measure evolutionary constraint.'
+      : 'Observed sequence identity. This does not measure evolutionary constraint.',
   }
 }
 
@@ -159,10 +159,10 @@ export function representationLegend(light, scale, palette) {
     kind: 'ramp',
     bar: buildRamp(light, palette),
     low: '0%', high: '100%',
-    across: 'Share of the cohort present',
+    across: 'Proportion of the comparison set present',
     heights: [],
     down: '',
-    note: 'How much of the cohort this block holds, whatever it agrees on.',
+    note: 'The proportion of the comparison set present, regardless of sequence agreement.',
   }
 }
 

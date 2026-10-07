@@ -56,6 +56,7 @@ import {
     touchRecentNoteView,
 } from '../utils/recentNoteActivity'
 import { beginWheelGesture, normalizeWheelDelta } from '../utils/browsingControls'
+import { useResumableState } from '../hooks/useResumableState.js'
 
 function Chevron({ open, size = 14 }) {
     return (
@@ -734,19 +735,19 @@ export default function NotesView({
         reloadNotes()
     }, [reloadNotes])
 
-    const [query, setQuery] = useState('')
-    const [selectedTags, setSelectedTags] = useState([])
-    const [tagMatchMode, setTagMatchMode] = useState('all')
-    const [idlePanelMode, setIdlePanelMode] = useState('recent')
+    const [query, setQuery] = useResumableState('notes.query', '', { isValid: (value) => typeof value === 'string' })
+    const [selectedTags, setSelectedTags] = useResumableState('notes.tags', [], { isValid: Array.isArray })
+    const [tagMatchMode, setTagMatchMode] = useResumableState('notes.tagMatchMode', 'all', { isValid: (value) => typeof value === 'string' })
+    const [idlePanelMode, setIdlePanelMode] = useResumableState('notes.idlePanelMode', 'recent', { isValid: (value) => typeof value === 'string' })
     const [tagCatalogueQuery, setTagCatalogueQuery] = useState('')
     const [tagCatalogueSort, setTagCatalogueSort] = useState('popular')
     const [expandedTagContexts, setExpandedTagContexts] = useState({})
     const [collapsedSections, setCollapsedSections] = useState({})
     const [collapsedNoteGroups, setCollapsedNoteGroups] = useState({})
-    const [openNoteId, setOpenNoteId] = useState('')
+    const [openNoteId, setOpenNoteId] = useResumableState('notes.openNoteId', '', { isValid: (value) => typeof value === 'string' })
     const [confirmingDeleteId, setConfirmingDeleteId] = useState('')
     const [busyGenomeKey, setBusyGenomeKey] = useState('')
-    const [noteSet, setNoteSet] = useState('active')
+    const [noteSet, setNoteSet] = useResumableState('notes.noteSet', 'active', { isValid: (value) => typeof value === 'string' })
     const [archiveBusyKey, setArchiveBusyKey] = useState('')
     const [bulkDeleteRequest, setBulkDeleteRequest] = useState(null)
     const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false)

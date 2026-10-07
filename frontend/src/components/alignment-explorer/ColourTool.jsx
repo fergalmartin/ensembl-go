@@ -7,8 +7,6 @@ import { COLOUR_SCHEMES, SHADING_MODES, schemeById } from './colourSchemes'
 import { palettesOfKind, basePalette, defaultPalette } from './palettes'
 import { buildRamp } from './conservation'
 import ColourLegend from './ColourLegend'
-import MotifEditor from './MotifEditor'
-import { motifLegend } from './motifs'
 
 /** A swatch of what a palette looks like, built from the palette itself rather
  * than drawn by hand, so a palette can never be advertised in colours it does
@@ -25,39 +23,38 @@ function Swatch({ kind, id, light }) {
 
 /** Menu edits are a draft. Only Apply can publish a new colour configuration. */
 export default function ColourTool({ scheme, palette, shading, legendOverlay, cohort, scale, light, root,
-  motifs, motifsSaved, config, hideUnmatched, onApply, disabled }) {
+  findOn = false, onApply, disabled }) {
   const [anchor, setAnchor] = useState(null), [draft, setDraft] = useState(null)
-  const [pickerOpen, setPickerOpen] = useState(false)
   const button = useRef(null), menuId = useId()
   const close = useCallback(() => { setAnchor(null); setDraft(null) }, [])
-  useMenuDismiss(!!anchor && !pickerOpen, close, button, 'al-tool-menu')
+  useMenuDismiss(!!anchor, close, button, 'al-tool-menu')
   const open = () => {
     if (anchor) { close(); return }
-    setDraft({ scheme, palette: { ...palette }, shading, legendOverlay, motifs, hideUnmatched })
+    setDraft({ scheme, palette: { ...palette }, shading, legendOverlay })
     setAnchor(menuPosition(button.current))
   }
   const edit = value => setDraft(current => ({ ...current, ...value }))
   const active = schemeById(draft?.scheme ?? scheme)
   const chosen = active.palettes ? (draft?.palette ?? palette)?.[active.id] || defaultPalette(active.palettes) : null
-  const legend = active.id === 'motif' ? motifLegend(draft?.motifs ?? motifs) : active.legend?.(light, scale, chosen, draft?.shading ?? shading)
+  const legend = active.legend?.(light, scale, chosen, draft?.shading ?? shading)
   return <>
     <button ref={button} className={`al-control al-control-colour ${anchor ? 'menu-open' : ''}`} disabled={disabled}
       aria-label={`Colour: ${schemeById(scheme).label}. Colour options`} aria-haspopup="dialog" aria-expanded={!!anchor} aria-controls={anchor ? menuId : undefined}
-      title="Choose colouring and apply changes" onClick={open}>
+      title="Choose how the alignment is coloured" onClick={open}>
       <ControlLabel label="Colour" value={schemeById(scheme).label}/><ControlChevron/>
     </button>
     {draft && <ControlMenu id={menuId} root={root} anchor={draft ? anchor : null} title="Colour" current={schemeById(scheme).label} className="al-colour-menu">
-      <div className="al-menu-tabs" role="tablist" aria-label="What a cell's colour means">
+      <div className="al-menu-tabs" role="tablist" aria-label="Colour scheme">
         {COLOUR_SCHEMES.map(option => <button key={option.id} type="button" role="tab"
           aria-selected={option.id === active.id} className={option.id === active.id ? 'selected' : ''}
           onClick={() => edit({ scheme: option.id })}>{option.label}</button>)}
       </div>
       <div className="al-menu-tab" role="tabpanel">
         <small className="al-menu-hint">{active.hint}</small>
-        {active.id === 'motif' && <MotifEditor motifs={draft.motifs} onChange={motifs => edit({ motifs })} light={light} config={config}
-          saved={motifsSaved} onPicker={setPickerOpen}
-          hideUnmatched={draft.hideUnmatched} onHideUnmatched={hideUnmatched => edit({ hideUnmatched })} />}
-        {!!active.shading && <div className="al-shading-row" role="group" aria-label="Shading below base resolution">
+        {/* Said here rather than by disabling the menu: the reader may well be
+            choosing what to come back to, and that is still theirs to set. */}
+        {findOn && <small className="al-menu-hint al-menu-note" role="status">While Find is open, matches use the search colours. Close Find to restore the colour scheme selected here.</small>}
+        {!!active.shading && <div className="al-shading-row" role="group" aria-label="Shading when zoomed out">
           {SHADING_MODES.map(option => <button key={option.id} type="button"
             className={`al-shading ${option.id === (draft.shading || SHADING_MODES[0].id) ? 'selected' : ''}`}
             aria-pressed={option.id === (draft.shading || SHADING_MODES[0].id)} title={option.hint}
@@ -76,9 +73,9 @@ export default function ColourTool({ scheme, palette, shading, legendOverlay, co
         </div>}
         <ColourLegend legend={legend} cohort={active.cohort ? cohort : null} inline />
         <label className="al-menu-check"><input type="checkbox" checked={!!draft.legendOverlay}
-          onChange={event => edit({ legendOverlay: event.target.checked })} />Show this key on the alignment</label>
+          onChange={event => edit({ legendOverlay: event.target.checked })} />Show colour key on the alignment</label>
       </div>
-      <small>Changes take effect with Apply.</small>
+      <small>Click Apply to save these settings.</small>
       <div className="al-menu-actions"><button onClick={close}>Cancel</button><button className="primary" onClick={() => { onApply(draft); close() }}>Apply</button></div>
     </ControlMenu>}
   </>

@@ -6,9 +6,9 @@ import ControlMenu from './ControlMenu'
 
 const ZOOM_MODES = [
   { id: 'alignment', label: 'Alignment',
-    hint: 'Zooms the columns and keeps rows at their normal height.' },
+    hint: 'Zoom horizontally through alignment columns while keeping row height fixed.' },
   { id: 'panel', label: 'Panel',
-    hint: 'Zooms the whole sheet: blocks, names and labels scale together.' },
+    hint: 'Zoom the entire view, scaling blocks, names and labels together.' },
 ]
 
 export default function ZoomTool({ panel, plane = 1, root, onMode }) {
@@ -35,7 +35,7 @@ export default function ZoomTool({ panel, plane = 1, root, onMode }) {
           aria-pressed={option.id === current.id} onClick={() => choose(option.id)}>
           <strong>{option.label}</strong><small>{option.hint}</small></button>)}
       </div>
-      <div className="al-menu-actions"><small>Picking one applies it.</small><button onClick={close}>Close</button></div>
+      <div className="al-menu-actions"><small>Changes apply immediately.</small><button onClick={close}>Close</button></div>
     </ControlMenu>
   </>
 }

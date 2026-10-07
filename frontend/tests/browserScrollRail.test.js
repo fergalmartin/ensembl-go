@@ -138,3 +138,69 @@ test('the rail can be placed away from an inner scroll container, into the page 
   assert.equal(inner.top, 310)
   assert.equal(scrollRailGeometry({ top: 0, left: 250, height: 600 }, { maxScroll: 900 }).left, 251)
 })
+
+// Balanced placement: every genome an equal share, which is what keeps the last
+// genome from collapsing to a dot at the end of the rail.
+const twoGeometry = scrollRailGeometry(hostRect, { maxScroll: 900, minScroll: 26 })
+const balancedTwo = placeScrollRailStops([
+  { key: 'human', scrollTop: 26 },
+  // The last genome can only just reach the top: its park position is the end of the page.
+  { key: 'mouse', scrollTop: 900 },
+], twoGeometry, { balanced: true })
+
+test('balanced: two genomes split the rail in half instead of one band and a dot', () => {
+  assert.equal(balancedTwo[0].offset, twoGeometry.padding)
+  assert.equal(balancedTwo[1].offset, twoGeometry.padding + twoGeometry.track / 2)
+})
+
+test('balanced: a dot is still exactly where aligning its genome puts the ring', () => {
+  for (const stop of balancedTwo) {
+    assert.equal(railOffsetForScroll(stop.scrollTop, twoGeometry, balancedTwo), stop.offset)
+  }
+})
+
+test('balanced: the ring moves through each genome at that genome\'s own pace', () => {
+  const halfway = railOffsetForScroll(463, twoGeometry, balancedTwo)
+  assert.ok(Math.abs(halfway - (twoGeometry.padding + twoGeometry.track / 4)) < 1e-6)
+})
+
+test('balanced: dragging into the last genome\'s share parks that genome', () => {
+  const end = twoGeometry.padding + twoGeometry.track
+  assert.equal(scrollForRailOffset(end - 5, twoGeometry, balancedTwo), 900)
+  assert.equal(scrollForRailOffset(end + 50, twoGeometry, balancedTwo), 900)
+  assert.equal(scrollForRailOffset(-50, twoGeometry, balancedTwo), 26)
+})
+
+test('balanced: scroll and rail are inverses inside a genome that has travel', () => {
+  const three = placeScrollRailStops([
+    { key: 'human', scrollTop: 26 },
+    { key: 'mouse', scrollTop: 300 },
+    { key: 'rat', scrollTop: 700 },
+  ], geometry, { balanced: true })
+  for (const scrollTop of [26, 100, 300, 512, 700, 950, 1200]) {
+    const offset = railOffsetForScroll(scrollTop, geometry, three)
+    assert.ok(Math.abs(scrollForRailOffset(offset, geometry, three) - scrollTop) < 1e-6, `at ${scrollTop}`)
+  }
+  // Each of the three gets a third of the rail.
+  assert.deepEqual(three.map((stop) => stop.offset), [0, 1, 2].map((i) => geometry.padding + geometry.track * (i / 3)))
+})
+
+test('balanced: genomes that share a park position never run the rail backwards', () => {
+  const crowded = placeScrollRailStops([
+    { key: 'human', scrollTop: 26 },
+    { key: 'mouse', scrollTop: 1200 },
+    { key: 'rat', scrollTop: 1200 },
+  ], geometry, { balanced: true })
+  let previous = -Infinity
+  for (const scrollTop of [26, 300, 800, 1200]) {
+    const offset = railOffsetForScroll(scrollTop, geometry, crowded)
+    assert.ok(offset >= previous)
+    previous = offset
+  }
+})
+
+test('without balancing a lone genome keeps the plain proportional rail', () => {
+  const lone = placeScrollRailStops([{ key: 'human', scrollTop: 26 }], geometry, { balanced: true })
+  assert.equal(lone[0].balanced, undefined)
+  assert.equal(railOffsetForScroll(1200, geometry, lone), geometry.padding + geometry.track)
+})

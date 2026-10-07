@@ -8,6 +8,7 @@ import {
   normalizeGenomeRecord,
   normalizeGenomeSourceDatabase,
 } from '../utils/genomeIdentity'
+import { useResumableState } from '../hooks/useResumableState.js'
 
 
 const MAJOR_CLASS_ORDER = ['coding', 'lnoncoding', 'snoncoding', 'pseudogene']
@@ -2454,8 +2455,8 @@ export default function StatsView({
   const panelClass = isLight ? 'bg-white border border-gray-200 shadow-sm' : 'bg-gray-800 border border-gray-700'
   const subtleClass = isLight ? 'bg-gray-50 border border-gray-200' : 'bg-gray-900/40 border border-gray-700'
 
-  const [mode, setMode] = useState('overview')
-  const [annotationBasis, setAnnotationBasis] = useState('genes')
+  const [mode, setMode] = useResumableState('stats.mode', 'overview', { isValid: (value) => typeof value === 'string' })
+  const [annotationBasis, setAnnotationBasis] = useResumableState('stats.annotationBasis', 'genes', { isValid: (value) => typeof value === 'string' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [summary, setSummary] = useState({ records: [], aggregates: {} })

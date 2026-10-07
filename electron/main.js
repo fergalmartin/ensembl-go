@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, powerMonitor } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -15,6 +15,9 @@ let appIsQuitting = false;
 let BACKEND_PORT = 8000;
 const BACKEND_HOST = '127.0.0.1';
 let DEFAULT_API_BASE = process.env.ENSEMBL_LOCAL_BACKEND_URL || `http://${BACKEND_HOST}:${BACKEND_PORT}`;
+// Identifies this run of the app to the page. The page resumes where the reader was
+// after a reload within the same launch, and starts fresh after a relaunch.
+const LAUNCH_ID = crypto.randomUUID();
 const LOCAL_API_TOKEN = process.env.ENSEMBL_LOCAL_API_TOKEN || crypto.randomBytes(32).toString('hex');
 const REQUIRED_WSL_MODULES = [
   'fastapi',
@@ -1334,6 +1337,23 @@ function createWindow() {
     mainWindow.show();
   });
 
+  // A renderer that dies (out of memory, a GPU fault, killed while the machine slept)
+  // would otherwise leave an empty window. Reload it: the page resumes where the reader
+  // was. Bounded, so a page that crashes as it loads does not spin forever.
+  const recentCrashes = [];
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`Renderer process gone: ${details.reason} (exit code ${details.exitCode})`);
+    if (details.reason === 'clean-exit' || appIsQuitting) return;
+    const now = Date.now();
+    while (recentCrashes.length && now - recentCrashes[0] > 60_000) recentCrashes.shift();
+    recentCrashes.push(now);
+    if (recentCrashes.length > 3) {
+      console.error('Renderer crashed repeatedly; not reloading again.');
+      return;
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -1413,6 +1433,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('screenshot:captureHtmlSnapshot', async (_event, payload) => captureHtmlSnapshot(payload));
 
+  ipcMain.on('app:getLaunchIdSync', (event) => {
+    event.returnValue = LAUNCH_ID;
+  });
+
   ipcMain.on('backend:getRuntimeSync', (event) => {
     event.returnValue = backendState;
   });
@@ -1468,6 +1492,24 @@ app.whenReady().then(async () => {
       message: 'The backend API did not become ready in time. Some features may not work until it is started.',
     });
   }
+
+  // Sleep and screen lock. Before: tell the page, so it notes where the reader is in
+  // case it reloads before they are back. After: a backend that exited while the
+  // machine slept is brought back. Only when it is known to be down — a live one that
+  // is merely slow to wake is left alone, since relaunching would cut off its work.
+  const notifySuspend = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('system:suspend');
+  };
+  const recoverBackendAfterWake = () => {
+    if (appIsQuitting || backendStartupPromise || backendState.ready) return;
+    ensureBackend({ allowLaunch: !shouldSkipBackend }).catch((error) => {
+      console.error('Backend recovery after wake failed:', error);
+    });
+  };
+  powerMonitor.on('suspend', notifySuspend);
+  powerMonitor.on('lock-screen', notifySuspend);
+  powerMonitor.on('resume', recoverBackendAfterWake);
+  powerMonitor.on('unlock-screen', recoverBackendAfterWake);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

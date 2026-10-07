@@ -3,6 +3,7 @@ import { parseExonStateKey } from './featureExplorerExonUtils'
 import { FEATURE_COLORS } from './FeatureLegend'
 
 import { API_BASE } from '../backendRuntime'
+import FeatureSectionHeader, { FeatureSubHeading, featureSectionClass, quietIconButtonClass } from './FeatureSection'
 
 const STATE_META = {
   coding: {
@@ -245,7 +246,7 @@ function sequencePreview(sequenceInfo, isLight) {
   const cdsStripeMap = buildCdsStripeMapForExonDetail(seq, features)
 
   return (
-    <div className={`rounded border px-2 py-2 ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-900/45 border-gray-700'}`}>
+    <div className={`rounded px-2 py-2 ${isLight ? 'bg-gray-50' : 'bg-gray-900/45'}`}>
       <div className="flex flex-wrap items-center">
         {Array.from(seq).map((rawBase, idx) => {
           const normalized = normalizeBase(rawBase)
@@ -326,7 +327,7 @@ function stateBadge(stateClass, isLight) {
 function StatCard({ label, value, isLight, onMouseEnter, onMouseMove, onMouseLeave }) {
   return (
     <div
-      className={`rounded border px-2 py-1 ${isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-900/40 border-gray-700'}`}
+      className={`px-3 py-0.5 border-l first:border-l-0 first:pl-0 ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
       onMouseEnter={onMouseEnter}
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
@@ -817,58 +818,31 @@ export default function FeatureExplorerExonsPanel({
   }, [])
 
   return (
-    <div className={`rounded-xl border overflow-hidden ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800/80 border-gray-700'}`}>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={togglePanelCollapsed}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            togglePanelCollapsed()
-          }
-        }}
-        className={`px-4 py-3 flex items-center justify-between border-b cursor-pointer select-none ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
-      >
-        <div className={`text-sm font-semibold ${isLight ? 'text-gray-800' : 'text-gray-100'}`}>Exons</div>
-        <div className="flex items-center gap-2">
+    <div className={featureSectionClass(isLight)}>
+      <FeatureSectionHeader
+        isLight={isLight}
+        title="Exons"
+        collapsed={collapsed}
+        onToggle={togglePanelCollapsed}
+        expandTitle="Expand exons panel"
+        collapseTitle="Collapse exons panel"
+        actions={(
           <button
             type="button"
-            onClick={(event) => {
-              event.stopPropagation()
-              setIncludeInactive((prev) => !prev)
-            }}
-            className={`px-2.5 py-1 rounded text-[11px] font-semibold border ${includeInactive
-              ? (isLight ? 'bg-[#63acd8] text-white border-[#559dc8]' : 'bg-sky-500/75 text-white border-sky-400/80')
-              : (isLight ? 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200' : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600')
+            onClick={() => setIncludeInactive((prev) => !prev)}
+            className={`px-2.5 py-1 rounded text-[11px] font-semibold transition-colors ${includeInactive
+              ? (isLight ? 'bg-blue-50 text-[#0077cc]' : 'bg-[#2b3a55] text-sky-300')
+              : (isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-300 hover:bg-[#273449]')
               }`}
             title={includeInactive ? 'Return to active transcripts only' : 'Include inactive transcripts in the exon atlas'}
           >
             {includeInactive ? 'Active only' : 'Show all'}
           </button>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation()
-              togglePanelCollapsed()
-            }}
-            className={`w-7 h-7 rounded border flex items-center justify-center transition-colors ${isLight
-              ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-              : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-              }`}
-            title={collapsed ? 'Expand exons panel' : 'Collapse exons panel'}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              {collapsed
-                ? <polyline points="6 9 12 15 18 9" />
-                : <polyline points="18 15 12 9 6 15" />}
-            </svg>
-          </button>
-        </div>
-      </div>
+        )}
+      />
 
       {!collapsed && (
-        <div className="px-3 py-3 space-y-3">
+        <div className="px-4 pt-1 pb-4 space-y-3">
           {summaryLoading && (
             <div className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Loading exon atlas...</div>
           )}
@@ -878,7 +852,7 @@ export default function FeatureExplorerExonsPanel({
 
           {!summaryLoading && !summaryError && summaryData && (
             <div ref={atlasScreenshotRef} className="space-y-3">
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
+              <div className="flex flex-wrap items-start gap-y-2">
                 {summaryCards.map((card) => (
                   <StatCard
                     key={`exon-stat-${card.label}`}
@@ -930,7 +904,7 @@ export default function FeatureExplorerExonsPanel({
                 </label>
               </div>
 
-              <div className={`rounded-lg border overflow-auto ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+              <div className="overflow-auto">
                 <table className="table-fixed text-[11px] whitespace-nowrap" style={{ width: `${atlasTableWidth}px`, minWidth: `${atlasTableWidth}px` }}>
                   <colgroup>
                     <col style={{ width: `${atlasColumnWidths.exon}px` }} />
@@ -1037,42 +1011,17 @@ export default function FeatureExplorerExonsPanel({
                 detailScreenshotRef.current = node
               }
             }}
-            className={`rounded-lg border ${isLight ? 'border-gray-200 bg-gray-50/70' : 'border-gray-700 bg-gray-900/35'}`}
           >
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={toggleDetailCollapsed}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault()
-                  toggleDetailCollapsed()
-                }
-              }}
-              className={`px-3 py-2 border-b flex items-center justify-between cursor-pointer select-none ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
-            >
-              <div className={`text-xs font-semibold ${isLight ? 'text-gray-700' : 'text-gray-200'}`}>Exon detail</div>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  toggleDetailCollapsed()
-                }}
-                className={`w-7 h-7 rounded border flex items-center justify-center transition-colors ${isLight
-                  ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                  : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                  }`}
-                title={detailCollapsed ? 'Expand exon detail' : 'Collapse exon detail'}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                  {detailCollapsed
-                    ? <polyline points="6 9 12 15 18 9" />
-                    : <polyline points="18 15 12 9 6 15" />}
-                </svg>
-              </button>
-            </div>
+            <FeatureSubHeading
+              label="Exon detail"
+              isLight={isLight}
+              collapsed={detailCollapsed}
+              onToggle={toggleDetailCollapsed}
+              expandTitle="Expand exon detail"
+              collapseTitle="Collapse exon detail"
+            />
             {!detailCollapsed && (
-              <div className="px-3 py-3 space-y-3">
+              <div className="pt-1 space-y-3">
               {!selectedExonStateKey && (
                 <div className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
                   Select an exon in the atlas, transcript tracks, or splice graph to view details.
@@ -1096,10 +1045,7 @@ export default function FeatureExplorerExonsPanel({
                         type="button"
                         onMouseDown={(event) => event.stopPropagation()}
                         onClick={copySelectedExonSequence}
-                        className={`w-6 h-6 rounded border flex items-center justify-center transition-colors ${isLight
-                          ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                          : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                          }`}
+                        className={`w-6 h-6 ${quietIconButtonClass(isLight)}`}
                         title="Copy selected exon sequence"
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1119,7 +1065,7 @@ export default function FeatureExplorerExonsPanel({
                     <div><span className={isLight ? 'text-gray-500' : 'text-gray-400'}>Stop codon overlap:</span> {formatCoord(detailData?.junctions?.stop_codon_inclusion_count || 0)}</div>
                   </div>
 
-                  <div className={`rounded border overflow-auto ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+                  <div className="overflow-auto">
                     <table className="w-full min-w-[860px] text-[11px]">
                       <thead>
                         <tr className={isLight ? 'bg-white border-b border-gray-200' : 'bg-gray-800 border-b border-gray-700'}>

@@ -44,6 +44,19 @@ function CloseGlyph() {
     )
 }
 
+/** What the box says, where a view has not said otherwise: the sequence view's words. */
+const FIND_COPY = {
+    box: 'Find in this region',
+    go: 'Search this region',
+    previous: 'Previous match',
+    next: 'Next match',
+    none: 'Nothing in this region matches.',
+    count: matchLabel,
+    listNote: 'Apply searches the whole region in focus and hands back to the find box, '
+        + 'with these written there as their places in this list. Case is ignored. '
+        + 'Remembered on this device.',
+}
+
 /**
  * The find box, in one of its two modes.
  *
@@ -88,7 +101,18 @@ export default function FindBar({
     onApplyPatterns,
     onMode,
     onClose,
+    // What the box is searching, in this view's words. The explorer searches a
+    // whole alignment and steps between blocks rather than between matches, so
+    // it says so; everything else about the box is the same object.
+    copy = null,
+    // Controls only one view has, on the box's own row and at the foot of the
+    // list. The explorer's "matching blocks only" is one.
+    extras = null,
+    listExtras = null,
+    // Whether a search here counts as the sequence view's Find achievement.
+    achievement = true,
 }) {
+    const words = { ...FIND_COPY, ...(copy || {}) }
     const box = useRef(null)
     useEffect(() => { box.current?.focus() }, [mode])
 
@@ -110,6 +134,8 @@ export default function FindBar({
                 counts={matches?.counts || null}
                 palette={palette}
                 saved={saved}
+                note={words.listNote}
+                extras={listExtras}
                 isLight={isLight}
                 onApply={onApplyPatterns}
                 onCancel={() => onMode?.('simple')}
@@ -129,12 +155,12 @@ export default function FindBar({
     const label = matches?.pending ? 'Searching…'
         : matches?.error ? 'Could not search'
             : stale ? ''
-                : matches?.searching ? matchLabel(matches.at, total, { truncated: matches.truncated })
+                : matches?.searching ? words.count(matches.at, total, { truncated: matches.truncated })
                     : ''
 
     const submit = (event) => {
         event?.preventDefault?.()
-        if (String(query || '').trim()) trackAchievement('seq.find')
+        if (String(query || '').trim() && achievement) trackAchievement('seq.find')
         onSubmit?.()
     }
 
@@ -145,7 +171,7 @@ export default function FindBar({
                     <span
                         className="sv-find-colour"
                         style={{ background: known.colour }}
-                        title={`Drawn in this colour. Pattern ${patterns.indexOf(known) + 1} of your list.`}
+                        title={`Saved pattern ${patterns.indexOf(known) + 1}. Matches use this colour.`}
                     />
                 ) : null}
                 <input
@@ -157,9 +183,9 @@ export default function FindBar({
                     autoComplete="off"
                     data-sequence-find-input="true"
                     placeholder={kind === FIND_REGEX
-                        ? 'A pattern, e.g. ATG[ACGT]{3} — or [P1,P2] for your saved ones'
-                        : 'A string, e.g. ATGGCC — or [P1,P2] for your saved ones'}
-                    aria-label="Find in this region"
+                        ? 'Regex, e.g. ATG[ACGT]{3} — or [P1,P2] for saved patterns'
+                        : 'Sequence, e.g. ATGGCC — or [P1,P2] for saved patterns'}
+                    aria-label={words.box}
                     onChange={(event) => onQuery?.(event.target.value)}
                     onKeyDown={(event) => {
                         if (event.key === 'Escape') { event.preventDefault(); onClose?.() }
@@ -181,8 +207,8 @@ export default function FindBar({
                     className="sv-icon-button sv-find-go"
                     disabled={matches?.pending || !query.trim()}
                     data-sequence-find-go="true"
-                    title="Search this region (Enter)"
-                    aria-label="Search this region"
+                    title={`${words.go} (Enter)`}
+                    aria-label={words.go}
                 >
                     {matches?.pending ? <SpinnerGlyph /> : <MagnifierGlyph />}
                 </button>
@@ -190,9 +216,9 @@ export default function FindBar({
                 {/* String or pattern, on the box rather than behind a menu: it
                     changes what the same typing means, so a reader has to be
                     able to see which one is on without going to look. */}
-                <div className="sv-find-kind" role="group" aria-label="How to read what was typed">
+                <div className="sv-find-kind" role="group" aria-label="Search type">
                     {[[FIND_LITERAL, 'Aa', 'Match the characters exactly'],
-                        [FIND_REGEX, '.*', 'Read it as a regular expression']].map(([id, glyph, hint]) => (
+                        [FIND_REGEX, '.*', 'Match using a regular expression']].map(([id, glyph, hint]) => (
                         <button
                             key={id}
                             type="button"
@@ -212,14 +238,15 @@ export default function FindBar({
 
                 <button type="button" className="sv-icon-button" disabled={!total || stale}
                     data-sequence-find-prev="true"
-                    onClick={() => matches?.step?.(-1)} title="Previous match (Shift-Enter)" aria-label="Previous match">
+                    onClick={() => matches?.step?.(-1)} title={`${words.previous} (Shift-Enter)`} aria-label={words.previous}>
                     <VerticalChevronGlyph size={13} />
                 </button>
                 <button type="button" className="sv-icon-button" disabled={!total || stale}
                     data-sequence-find-next="true"
-                    onClick={() => matches?.step?.(1)} title="Next match" aria-label="Next match">
+                    onClick={() => matches?.step?.(1)} title={words.next} aria-label={words.next}>
                     <VerticalChevronGlyph size={13} pointsDown />
                 </button>
+                {extras}
                 <button type="button" className="sv-icon-button" data-sequence-find-close="true"
                     onClick={onClose} title="Close the find box (Esc)" aria-label="Close the find box">
                     <CloseGlyph />
@@ -228,7 +255,7 @@ export default function FindBar({
 
             {matches?.error ? <div className="sv-find-error" role="alert">{matches.error}</div> : null}
             {!matches?.error && !matches?.pending && applied && !stale && total === 0 ? (
-                <div className="sv-find-note" role="status">Nothing in this region matches.</div>
+                <div className="sv-find-note" role="status">{words.none}</div>
             ) : null}
             {matches?.truncated ? (
                 <div className="sv-find-note" role="status">
@@ -248,7 +275,7 @@ export default function FindBar({
  * three of them one keystroke at a time would start three scans of a
  * chromosome, and two of those answers are of no interest to anybody.
  */
-function FindList({ patterns, counts, palette, saved, isLight, onApply, onCancel, onChange }) {
+function FindList({ patterns, counts, palette, saved, note, extras, isLight, onApply, onCancel, onChange }) {
     const [draft, setDraft] = useState(() => (patterns.length ? patterns : [newPattern([], palette)]))
     const [dragged, setDragged] = useState(null)
     const [over, setOver] = useState(null)
@@ -266,8 +293,8 @@ function FindList({ patterns, counts, palette, saved, isLight, onApply, onCancel
         <div className="sv-findbar full" data-sequence-find-bar="full">
             <div className="sv-find-list">
                 <small>
-                    Highest priority at the top: where two patterns cover a base, the upper one is
-                    drawn. Drag the grip to reorder, or focus it and use ↑ / ↓.
+                    When matches overlap, the higher pattern determines the colour.
+                    Drag the handle to reorder patterns, or focus it and press ↑ / ↓.
                 </small>
                 {draft.map((item, index) => (
                     <div
@@ -291,7 +318,7 @@ function FindList({ patterns, counts, palette, saved, isLight, onApply, onCancel
                             className="sv-find-grip"
                             draggable
                             aria-label={`Move pattern ${index + 1}`}
-                            title="Drag to reorder; arrow keys also move this one"
+                            title="Drag to reorder, or use the up and down arrow keys"
                             onDragStart={(event) => {
                                 setDragged(item.id)
                                 event.dataTransfer.setData('text/plain', item.id)
@@ -336,7 +363,7 @@ function FindList({ patterns, counts, palette, saved, isLight, onApply, onCancel
                             onChange={(event) => patch(item.id, { pattern: event.target.value })}
                         />
                         <select
-                            aria-label={`How to read pattern ${index + 1}`}
+                            aria-label={`Search type for pattern ${index + 1}`}
                             value={item.kind}
                             onChange={(event) => patch(item.id, { kind: event.target.value })}
                         >
@@ -368,6 +395,7 @@ function FindList({ patterns, counts, palette, saved, isLight, onApply, onCancel
                         ) : null}
                     </div>
                 ))}
+                {extras}
                 <div className="sv-find-actions">
                     <button
                         type="button"
@@ -378,11 +406,7 @@ function FindList({ patterns, counts, palette, saved, isLight, onApply, onCancel
                         + Add a pattern
                     </button>
                     <small className={saved ? '' : 'sv-find-error'} role="status">
-                        {saved
-                            ? 'Apply searches the whole region in focus and hands back to the find box, '
-                                + 'with these written there as their places in this list. Case is ignored. '
-                                + 'Remembered on this device.'
-                            : 'Could not remember these patterns on this device.'}
+                        {saved ? note : 'Could not save these patterns on this device.'}
                     </small>
                     <button type="button" data-sequence-find-cancel="true" onClick={onCancel}>Cancel</button>
                     <button

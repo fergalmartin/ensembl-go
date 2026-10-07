@@ -107,6 +107,7 @@ import {
     shouldHoldGeneTrackHeight,
 } from '../utils/geneIndexOverlay'
 import { INDEX_BUILDING_STATUS } from '../utils/browserReadiness'
+import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../sessionResume.js'
 const EMPTY_LIST = Object.freeze([])
 const TRACK_HEIGHT = 40
 // How often the panel asks how the gene index behind it is getting on.
@@ -1945,6 +1946,14 @@ function GenomeBrowser({
     const anchorIconImgRef = useRef(null)
     const [anchorIconReady, setAnchorIconReady] = useState(false)
     const selectedChromRef = useRef(selectedChrom)
+    // Where this panel was before the page reloaded, if it was there, until the regions
+    // load and the panel can go back to it. See the session snapshot further down.
+    const sessionPanelKey = `browser.panel:${String(screenshotTargetId || genome || '')}`
+    const resumeViewRef = useRef(undefined)
+    if (resumeViewRef.current === undefined) {
+        const saved = peekRestoredSessionState(sessionPanelKey)
+        resumeViewRef.current = (saved?.chrom && Number(saved.end) > Number(saved.start)) ? saved : null
+    }
     const viewWidthRef = useRef(viewWidth)
     const onTrackVisibilityChangeRef = useRef(onTrackVisibilityChange)
     const onGeneSelectRef = useRef(onGeneSelect)
@@ -4581,22 +4590,53 @@ function GenomeBrowser({
                     if (data.length > 0 && !selectedChrom && !pendingLocationNavigateRef.current && !geneNavigationRef.current) {
                         let initialized = false
 
-                        try {
-                            const prefRes = await fetch(`${API_BASE}/api/browse/default_locus?${params.toString()}`, { signal: controller.signal })
-                            if (prefRes.ok) {
-                                const pref = await prefRes.json()
-                                if (controller.signal.aborted) return
-                                if (pref?.chrom && !geneNavigationRef.current) {
-                                    setSelectedChrom(pref.chrom)
-                                    setChromLength(pref.chrom_length || pref.end || 0)
-                                    setViewStart(pref.start)
-                                    setViewEnd(pref.end)
-                                    initialized = true
-                                }
+                        // Back where the reader was before the page reloaded: the same
+                        // window, and the same gene or location in focus. Exactly that
+                        // window, not one re-framed around the focus, since the reader
+                        // may have moved off it.
+                        const resume = resumeViewRef.current
+                        resumeViewRef.current = null
+                        consumeRestoredSessionState(sessionPanelKey)
+                        const resumeRegion = resume
+                            ? data.find((region) => isSameChromToken(region.chrom, resume.chrom)) || null
+                            : null
+                        if (resumeRegion) {
+                            const regionEnd = Math.max(2, Number(resumeRegion.end) || 0)
+                            const span = Math.max(1, Math.min(regionEnd - 1, Number(resume.end) - Number(resume.start)))
+                            const start = Math.min(Math.max(1, Number(resume.start)), Math.max(1, regionEnd - span))
+                            setSelectedChrom(resumeRegion.chrom)
+                            setChromLength(resumeRegion.end)
+                            setViewStart(start)
+                            setViewEnd(start + span)
+                            const gene = resume.gene
+                            const location = getFocusLocationRange(resume.location)
+                            if (gene?.id && isSameChromToken(gene.chrom, resumeRegion.chrom)
+                                && Number.isFinite(Number(gene.start)) && Number.isFinite(Number(gene.end))) {
+                                setSelectedGene({ ...gene, chrom: resumeRegion.chrom })
+                            } else if (location && isSameChromToken(location.chrom, resumeRegion.chrom)) {
+                                setSelectedLocation({ ...location, chrom: resumeRegion.chrom })
                             }
-                        } catch (e) {
-                            if (e?.name !== 'AbortError') {
-                                console.warn(`[GenomeBrowser:${genome}] Default locus fetch failed, using fallback.`, e)
+                            initialized = true
+                        }
+
+                        if (!initialized) {
+                            try {
+                                const prefRes = await fetch(`${API_BASE}/api/browse/default_locus?${params.toString()}`, { signal: controller.signal })
+                                if (prefRes.ok) {
+                                    const pref = await prefRes.json()
+                                    if (controller.signal.aborted) return
+                                    if (pref?.chrom && !geneNavigationRef.current) {
+                                        setSelectedChrom(pref.chrom)
+                                        setChromLength(pref.chrom_length || pref.end || 0)
+                                        setViewStart(pref.start)
+                                        setViewEnd(pref.end)
+                                        initialized = true
+                                    }
+                                }
+                            } catch (e) {
+                                if (e?.name !== 'AbortError') {
+                                    console.warn(`[GenomeBrowser:${genome}] Default locus fetch failed, using fallback.`, e)
+                                }
                             }
                         }
 
@@ -6449,6 +6489,21 @@ function GenomeBrowser({
             fetchingTilesRef.current.clear()
         }
 
+        // This panel's own focus coming back after a reload, relayed by the view while
+        // the browser was hidden: go back to exactly the window the reader had, rather
+        // than re-framing and re-centring on the gene as a fresh focus would.
+        const resume = resumeViewRef.current
+        if (resume) {
+            resumeViewRef.current = null
+            consumeRestoredSessionState(sessionPanelKey)
+            if (String(resume.gene?.id || '') === String(id || '') && isSameChromToken(resume.chrom, chromName)) {
+                setViewStart(Number(resume.start))
+                setViewEnd(Number(resume.end))
+                setSelectedGene({ chrom: chromName, start: geneStart, end: geneEnd, strand, name, id })
+                return
+            }
+        }
+
         let nextStart
         let nextEnd
         if (Number.isFinite(windowStart) && Number.isFinite(windowEnd) && windowEnd > windowStart) {
@@ -6516,6 +6571,11 @@ function GenomeBrowser({
         // resolve against or clamp to, so this runs again when the regions land.
         if (regions.length === 0) return
         lastNavigateLocationRef.current = navigateToLocation
+        // Somewhere new was asked for, so the window from before a reload is moot.
+        if (resumeViewRef.current) {
+            resumeViewRef.current = null
+            consumeRestoredSessionState(sessionPanelKey)
+        }
         pendingLocationNavigateRef.current = false
         const range = getFocusLocationRange(navigateToLocation)
         if (!range) return
@@ -6927,6 +6987,38 @@ function GenomeBrowser({
     const interactiveViewportFrameRef = useRef(null)
     viewStartRef.current = pendingInteractiveViewportRef.current?.start ?? viewStart
     viewEndRef.current = pendingInteractiveViewportRef.current?.end ?? viewEnd
+
+    // Where this panel is, offered to the session snapshot (sessionResume.js) so a
+    // reload can put it back. Read from refs only when a snapshot is taken — never as
+    // the reader pans — and while the panel is still waiting to put back what it had,
+    // that is what it reports.
+    const selectedGeneRef = useRef(selectedGene)
+    selectedGeneRef.current = selectedGene
+    const selectedLocationRef = useRef(selectedLocation)
+    selectedLocationRef.current = selectedLocation
+    useEffect(() => registerSessionState(sessionPanelKey, () => {
+        if (resumeViewRef.current) return resumeViewRef.current
+        const chrom = selectedChromRef.current
+        const start = Math.round(viewStartRef.current)
+        const end = Math.round(viewEndRef.current)
+        if (!chrom || !(end > start)) return undefined
+        const gene = selectedGeneRef.current
+        const location = getFocusLocationRange(selectedLocationRef.current)
+        return {
+            chrom,
+            start,
+            end,
+            gene: gene?.id ? {
+                id: gene.id,
+                name: gene.name,
+                chrom: gene.chrom,
+                start: gene.start,
+                end: gene.end,
+                strand: gene.strand,
+            } : null,
+            location: location ? { chrom: location.chrom, start: location.start, end: location.end } : null,
+        }
+    }), [sessionPanelKey])
 
     // What the genome says is worth looking at on this region, if it says anything.
     const browsableRange = useMemo(() => {

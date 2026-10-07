@@ -87,30 +87,94 @@ export function scrollRailGeometry(hostRect, { maxScroll = 0, minScroll = 0, mar
     }
 }
 
-/** Where a scroll position sits on the rail, in pixels from the rail's top. */
-export function railOffsetForScroll(scrollTop, geometry) {
+/** Whether `placed` came from a balanced placement (see placeScrollRailStops). */
+function isBalanced(placed) {
+    return Array.isArray(placed) && placed.length >= 2 && placed[0]?.balanced === true
+}
+
+/** The stretch of rail and of scroll that belongs to the `index`th stop: from its
+ *  own dot to the next one's, the last running to the end of each. */
+function balancedSegment(placed, index, geometry) {
+    const stop = placed[index]
+    const next = placed[index + 1]
+    return {
+        fromScroll: stop.scrollTop,
+        toScroll: next ? next.scrollTop : geometry.maxScroll,
+        fromOffset: stop.offset,
+        toOffset: next ? next.offset : geometry.padding + geometry.track,
+    }
+}
+
+/** Where a scroll position sits on the rail, in pixels from the rail's top.
+ *  Given balanced stops it goes through each genome's equal share of the rail at
+ *  that genome's own pace, so a dot is still exactly where its genome is aligned. */
+export function railOffsetForScroll(scrollTop, geometry, placed = null) {
+    if (isBalanced(placed)) {
+        if (!(scrollTop > placed[0].scrollTop)) return placed[0].offset
+        let index = 0
+        for (let i = 0; i < placed.length; i += 1) {
+            if (placed[i].scrollTop <= scrollTop) index = i
+        }
+        const segment = balancedSegment(placed, index, geometry)
+        const range = segment.toScroll - segment.fromScroll
+        if (!(range > 0)) return segment.fromOffset
+        const fraction = Math.min(1, Math.max(0, (scrollTop - segment.fromScroll) / range))
+        return segment.fromOffset + (segment.toOffset - segment.fromOffset) * fraction
+    }
     const { padding, track, minScroll, span } = geometry
     if (!(span > 0) || !(track > 0)) return padding
     return padding + track * Math.min(1, Math.max(0, (scrollTop - minScroll) / span))
 }
 
 /** The inverse: what a point on the rail means as a scroll position. */
-export function scrollForRailOffset(offset, geometry) {
+export function scrollForRailOffset(offset, geometry, placed = null) {
+    if (isBalanced(placed)) {
+        const end = geometry.padding + geometry.track
+        const at = Math.min(end, Math.max(geometry.padding, offset))
+        let index = 0
+        for (let i = 0; i < placed.length; i += 1) {
+            if (placed[i].offset <= at) index = i
+        }
+        const segment = balancedSegment(placed, index, geometry)
+        const length = segment.toOffset - segment.fromOffset
+        const fraction = length > 0 ? (at - segment.fromOffset) / length : 0
+        return segment.fromScroll + (segment.toScroll - segment.fromScroll) * fraction
+    }
     const { padding, track, minScroll, span } = geometry
     if (!(span > 0) || !(track > 0)) return minScroll
     return minScroll + span * Math.min(1, Math.max(0, (offset - padding) / track))
 }
 
 /** Place each genome's dot. `stops` carry the scroll position that parks them at
- *  the top; anything unmeasurable is dropped rather than drawn in the wrong place. */
-export function placeScrollRailStops(stops, geometry) {
-    return (stops || [])
+ *  the top; anything unmeasurable is dropped rather than drawn in the wrong place.
+ *
+ *  By default a dot sits in proportion to the page above it. That starves the last
+ *  genome: it can only scroll as far as its own control bar reaching the top, which
+ *  is the end of the page, so its dot lands on the end of the rail with no band at
+ *  all — two genomes read as one colour and a dot. `balanced` gives every genome an
+ *  equal share instead, and the ring moves through each share at that genome's own
+ *  pace (railOffsetForScroll / scrollForRailOffset, passed these stops). */
+export function placeScrollRailStops(stops, geometry, { balanced = false } = {}) {
+    const clamped = (stops || [])
         .filter((stop) => stop && Number.isFinite(stop.scrollTop))
         .map((stop) => ({
             ...stop,
             scrollTop: Math.min(geometry.maxScroll, Math.max(geometry.minScroll, stop.scrollTop)),
-            offset: railOffsetForScroll(stop.scrollTop, geometry),
         }))
+    if (!balanced || clamped.length < 2) {
+        return clamped.map((stop) => ({ ...stop, offset: railOffsetForScroll(stop.scrollTop, geometry) }))
+    }
+    // Page order, and never backwards: a genome cannot be parked above the one before it.
+    let floor = -Infinity
+    return clamped.map((stop, index) => {
+        floor = Math.max(floor, stop.scrollTop)
+        return {
+            ...stop,
+            scrollTop: floor,
+            offset: geometry.padding + geometry.track * (index / clamped.length),
+            balanced: true,
+        }
+    })
 }
 
 /** Which genome the reader is currently looking at: the last one whose control

@@ -10,6 +10,7 @@ import {
   resolveBrowsingControls,
   resolveWheelAction,
 } from '../utils/browsingControls'
+import { useResumableState } from '../hooks/useResumableState.js'
 
 /**
  * The track is panned in raw pixels, so the genome browser's 2x wheel
@@ -383,17 +384,17 @@ function NeighbourhoodView({
   const [trackOffsetByGenome, setTrackOffsetByGenome] = useState({})
   const [flippedByGenome, setFlippedByGenome] = useState({})
   const [controlsCollapsed, setControlsCollapsed] = useState(false)
-  const [biotypeFilters, setBiotypeFilters] = useState({
+  const [biotypeFilters, setBiotypeFilters] = useResumableState('neighbourhood.biotypeFilters', {
     proteinCoding: true,
     longNonCoding: true,
     pseudogene: true,
     smallNonCoding: true,
-  })
+  }, { isValid: (value) => Boolean(value) && typeof value === 'object' })
   const [selectDimArmed, setSelectDimArmed] = useState(false)
   const [selectedGeneIdsByGenome, setSelectedGeneIdsByGenome] = useState({})
   const [selectionRect, setSelectionRect] = useState(null)
   const [homologyFiltersOpen, setHomologyFiltersOpen] = useState(false)
-  const [symbolModeActive, setSymbolModeActive] = useState(true)
+  const [symbolModeActive, setSymbolModeActive] = useResumableState('neighbourhood.symbolMode', true, { isValid: (value) => typeof value === 'boolean' })
 
   const rows = useMemo(() => (
     Array.isArray(genomes)

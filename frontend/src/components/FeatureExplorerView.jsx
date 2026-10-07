@@ -42,6 +42,7 @@ import {
   buildSvgDocument,
   rasterizeSvgMarkup,
 } from '../utils/screenshotExport'
+import FeatureSectionHeader, { featureSectionClass, quietIconButtonClass } from './FeatureSection'
 // The panels below the transcript tracks do not depend on the tracks' zoom or
 // hover state, so they are memoised: a redraw of the tracks (every committed
 // zoom, every exon hover) does not re-render thousands of elements they own.
@@ -85,15 +86,13 @@ const TRANSCRIPT_TRACK_MIN_VIEW_SPAN_BP = 24
 // view. Until then the drawn rows are moved with a transform (see
 // applyTranscriptViewPreview), so a gesture costs no React renders at all.
 const TRANSCRIPT_VIEW_COMMIT_IDLE_MS = 110
-// Wheel zoom draws the point it started on towards the middle of the track.
-// Per step the point's distance from the centre is multiplied by
-// exp(-PULL * |ln(zoom factor)|), so the pull depends on how far the view has
-// zoomed, not on how many wheel events that took: zooming 2x brings the point
-// about 65% of the way to the centre, 4x about 88%.
-const TRANSCRIPT_ZOOM_CENTRE_PULL = 1.5
-// The point being zoomed on is kept while the pointer stays put. Otherwise each
-// step would pick up whatever had just slid under the pointer, and zooming at
-// the edge of the track would turn into a steady pan.
+// Wheel zoom holds the point under the pointer where it is, the way the genome
+// browser does: an exon being zoomed on stays under the cursor. (It used to be
+// drawn towards the middle of the track as the view zoomed, which read as the
+// exon sliding away from the pointer.)
+//
+// The point being zoomed on is kept while the pointer stays put, so rounding in
+// each step's coordinate lookup cannot creep it along.
 const TRANSCRIPT_ZOOM_ANCHOR_MOVE_PX = 4
 const TRANSCRIPT_ZOOM_ANCHOR_IDLE_MS = 800
 
@@ -1961,14 +1960,8 @@ export default function FeatureExplorerView({
       let nextSpan = clamp(zoomSpan * intent.factor, minSpan, fullSpan)
       if (!Number.isFinite(nextSpan) || nextSpan <= 0) nextSpan = zoomSpan
       if (Math.abs(nextSpan - zoomSpan) < 1e-6) return
-      // Where the anchor sits across the view, drawn towards the middle in
-      // proportion to how much this step zoomed. A centred anchor keeps the
-      // old zoom-about-a-point behaviour.
-      const currentRatio = clamp((anchor - effectiveStart) / zoomSpan, 0, 1)
-      const pull = intent.anchor === 'center'
-        ? 0
-        : 1 - Math.exp(-TRANSCRIPT_ZOOM_CENTRE_PULL * Math.abs(Math.log(nextSpan / zoomSpan)))
-      const anchorRatio = currentRatio + ((0.5 - currentRatio) * pull)
+      // The anchor keeps its place across the view, so it stays under the pointer.
+      const anchorRatio = clamp((anchor - effectiveStart) / zoomSpan, 0, 1)
       let nextStart = anchor - (anchorRatio * nextSpan)
       let nextEnd = nextStart + nextSpan
       if (nextStart < fullTranscriptViewStart) {
@@ -2766,7 +2759,9 @@ export default function FeatureExplorerView({
         tourId="feature-scroll-rail"
         stopTourPrefix="feature-scroll-rail-section-"
       />
-      <div className={`rounded-xl border px-4 py-3 ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}>
+      {/* One surface: the search and section links across its top, the sections below. */}
+      <div className={`flex-1 min-h-0 flex flex-col rounded-xl border ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}>
+      <div className={`flex-none px-4 py-3 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3 flex-1 min-w-0">
             {genomeOptions.length > 0 ? (
@@ -2818,11 +2813,11 @@ export default function FeatureExplorerView({
                   type="button"
                   onClick={() => scrollToFeatureSection(item.key)}
                   disabled={!resolved?.gene}
-                  className={`px-3.5 py-2 rounded-lg text-sm font-semibold border transition-colors ${!resolved?.gene
-                    ? (isLight
-                      ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
-                      : 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed')
-                    : activeActionButtonClass
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${!resolved?.gene
+                    ? (isLight ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 cursor-not-allowed')
+                    : (isLight
+                      ? 'text-gray-600 hover:text-[#0077cc] hover:bg-blue-50'
+                      : 'text-gray-300 hover:text-sky-300 hover:bg-[#273449]')
                     }`}
                   title={`Jump to ${item.label}`}
                 >
@@ -2841,13 +2836,13 @@ export default function FeatureExplorerView({
       </div>
 
       {!hasGenome ? (
-        <div className={`rounded-xl border p-4 text-sm ${isLight ? 'bg-white border-gray-200 text-gray-600' : 'bg-gray-800 border-gray-700 text-gray-300'}`}>
+        <div className={`p-4 text-sm ${isLight ? 'text-gray-600' : 'text-gray-300'}`}>
           Select an active genome with annotation data to use Feature Explorer.
         </div>
       ) : (
         <div
           ref={contentScrollRef}
-          className={`relative flex-1 min-h-0 rounded-xl border overflow-auto ${isLight ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-800 border-gray-700'}`}
+          className="relative flex-1 min-h-0 overflow-auto rounded-b-xl"
         >
           {!resolved?.gene ? (
             isResolvingFocusedGene ? (
@@ -2873,46 +2868,20 @@ export default function FeatureExplorerView({
               </div>
             )
           ) : (
-            <div ref={screenshotContentRef} className="relative min-w-[940px] p-3 space-y-3">
-              <div ref={geneSectionRef} className={`rounded-xl border overflow-hidden ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800/80 border-gray-700'}`}>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setGeneSectionCollapsed((prev) => !prev)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      setGeneSectionCollapsed((prev) => !prev)
-                    }
-                  }}
-                  className={`px-4 py-3 flex items-center justify-between border-b cursor-pointer select-none ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
-                >
-                  <div className={`text-sm font-semibold ${isLight ? 'text-gray-800' : 'text-gray-100'}`}>
-                    {genePanelData
-                      ? `Gene: ${genePanelData.symbol !== '—' ? `${genePanelData.symbol}, ` : ''}${genePanelData.stableId}, ${genePanelData.location}`
-                      : 'Gene'}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setGeneSectionCollapsed((prev) => !prev)
-                    }}
-                    className={`w-7 h-7 rounded border flex items-center justify-center transition-colors ${isLight
-                      ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                      : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                      }`}
-                    title={geneSectionCollapsed ? 'Expand gene metadata' : 'Collapse gene metadata'}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                      {geneSectionCollapsed
-                        ? <polyline points="6 9 12 15 18 9" />
-                        : <polyline points="18 15 12 9 6 15" />}
-                    </svg>
-                  </button>
-                </div>
+            <div ref={screenshotContentRef} className="relative min-w-[940px] py-1">
+              <div ref={geneSectionRef} className={featureSectionClass(isLight)}>
+                <FeatureSectionHeader
+                  isLight={isLight}
+                  collapsed={geneSectionCollapsed}
+                  onToggle={() => setGeneSectionCollapsed((prev) => !prev)}
+                  expandTitle="Expand gene metadata"
+                  collapseTitle="Collapse gene metadata"
+                  title={genePanelData
+                    ? `Gene: ${genePanelData.symbol !== '—' ? `${genePanelData.symbol}, ` : ''}${genePanelData.stableId}, ${genePanelData.location}`
+                    : 'Gene'}
+                />
                 {!geneSectionCollapsed && genePanelData && (
-                  <div className="px-4 py-3">
+                  <div className="px-4 pt-1 pb-4">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 text-sm">
                       {genePanelStatColumns.map((column, columnIndex) => (
                         <div key={`gene-col-${columnIndex}`} className="space-y-2">
@@ -2931,39 +2900,15 @@ export default function FeatureExplorerView({
                 )}
               </div>
 
-              <div ref={transcriptsSectionRef} className={`rounded-xl border overflow-hidden ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800/80 border-gray-700'}`}>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setTranscriptsSectionCollapsed((prev) => !prev)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      setTranscriptsSectionCollapsed((prev) => !prev)
-                    }
-                  }}
-                  className={`px-4 py-3 flex items-center justify-between border-b cursor-pointer select-none ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
-                >
-                  <div className={`text-sm font-semibold ${isLight ? 'text-gray-800' : 'text-gray-100'}`}>Transcripts</div>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setTranscriptsSectionCollapsed((prev) => !prev)
-                    }}
-                    className={`w-7 h-7 rounded border flex items-center justify-center transition-colors ${isLight
-                      ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                      : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                      }`}
-                    title={transcriptsSectionCollapsed ? 'Expand transcripts panel' : 'Collapse transcripts panel'}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                      {transcriptsSectionCollapsed
-                        ? <polyline points="6 9 12 15 18 9" />
-                        : <polyline points="18 15 12 9 6 15" />}
-                    </svg>
-                  </button>
-                </div>
+              <div ref={transcriptsSectionRef} className={featureSectionClass(isLight)}>
+                <FeatureSectionHeader
+                  isLight={isLight}
+                  title="Transcripts"
+                  collapsed={transcriptsSectionCollapsed}
+                  onToggle={() => setTranscriptsSectionCollapsed((prev) => !prev)}
+                  expandTitle="Expand transcripts panel"
+                  collapseTitle="Collapse transcripts panel"
+                />
                 {!transcriptsSectionCollapsed && (
                   <div
                     onMouseDownCapture={(event) => {
@@ -3005,10 +2950,7 @@ export default function FeatureExplorerView({
                       type="button"
                       onClick={toggleAllActiveExpanded}
                       disabled={activeTranscriptIds.size === 0}
-                      className={`mt-2 w-6 h-6 rounded border flex items-center justify-center transition-colors ${activeTranscriptIds.size === 0
-                        ? (isLight ? 'bg-gray-100 text-gray-400 border-gray-300' : 'bg-gray-800 text-gray-500 border-gray-700')
-                        : (isLight ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100' : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600')
-                        }`}
+                      className={`mt-2 w-6 h-6 ${quietIconButtonClass(isLight, { disabled: activeTranscriptIds.size === 0 })}`}
                       title={allActiveExpanded ? 'Collapse all active transcript info' : 'Expand all active transcript info'}
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -3052,12 +2994,7 @@ export default function FeatureExplorerView({
                             setTranscriptSelectionRect(null)
                             transcriptSelectionDragRef.current = null
                           }}
-                          className={`w-6 h-6 rounded border transition-colors flex items-center justify-center ${isTranscriptBoxSelectMode
-                            ? activeActionButtonClass
-                            : (isLight
-                              ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                              : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600')
-                            }`}
+                          className={`w-6 h-6 ${quietIconButtonClass(isLight, { active: isTranscriptBoxSelectMode })}`}
                           title={isTranscriptBoxSelectMode ? 'Selection zoom active: drag to zoom transcripts' : 'Activate selection zoom mode for transcripts'}
                         >
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
@@ -3069,10 +3006,7 @@ export default function FeatureExplorerView({
                       <button
                         type="button"
                         onClick={() => setTranscriptListCollapsed((prev) => !prev)}
-                        className={`w-6 h-6 rounded border flex items-center justify-center transition-colors ${isLight
-                          ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                          : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                          }`}
+                        className={`w-6 h-6 ${quietIconButtonClass(isLight)}`}
                         title={transcriptListCollapsed ? 'Expand transcript list' : 'Collapse transcript list'}
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -3133,10 +3067,7 @@ export default function FeatureExplorerView({
                       <button
                         type="button"
                         onClick={() => toggleTranscriptExpanded(EXON_COVERAGE_ROW_ID)}
-                        className={`mt-2 w-6 h-6 rounded border flex items-center justify-center transition-colors ${isLight
-                          ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                          : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                          }`}
+                        className={`mt-2 w-6 h-6 ${quietIconButtonClass(isLight)}`}
                         title={expandedTranscriptIds.has(EXON_COVERAGE_ROW_ID) ? 'Collapse exon coverage info' : 'Expand exon coverage info'}
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -3160,10 +3091,7 @@ export default function FeatureExplorerView({
                         <button
                           type="button"
                           onClick={() => toggleTranscriptExpanded(tx.id)}
-                          className={`mt-2 w-6 h-6 rounded border flex items-center justify-center transition-colors ${isLight
-                            ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                            : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                            }`}
+                          className={`mt-2 w-6 h-6 ${quietIconButtonClass(isLight)}`}
                           title={isExpanded ? 'Collapse transcript info' : 'Expand transcript info'}
                         >
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -3307,9 +3235,9 @@ export default function FeatureExplorerView({
                           {expandedTranscriptIds.has(EXON_COVERAGE_ROW_ID) && (
                             <div
                               data-transcript-info-panel="true"
-                              className={`mx-1 mb-1 rounded border px-2 py-1 text-[11px] leading-5 ${isLight
-                                ? 'bg-gray-50 border-gray-200 text-gray-700'
-                                : 'bg-gray-900/45 border-gray-700 text-gray-300'
+                              className={`mx-1 mb-1 rounded px-2 py-1 text-[11px] leading-5 ${isLight
+                                ? 'bg-gray-50 text-gray-700'
+                                : 'bg-gray-900/45 text-gray-300'
                                 }`}
                             >
                               <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
@@ -3826,9 +3754,9 @@ export default function FeatureExplorerView({
                           {isExpanded && metadata && (
                             <div
                               data-transcript-info-panel="true"
-                              className={`mx-1 mb-1 rounded border px-2 py-1 text-[11px] leading-5 ${isLight
-                                ? 'bg-gray-50 border-gray-200 text-gray-700'
-                                : 'bg-gray-900/45 border-gray-700 text-gray-300'
+                              className={`mx-1 mb-1 rounded px-2 py-1 text-[11px] leading-5 ${isLight
+                                ? 'bg-gray-50 text-gray-700'
+                                : 'bg-gray-900/45 text-gray-300'
                                 }`}
                             >
                               <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
@@ -3909,14 +3837,15 @@ export default function FeatureExplorerView({
                             if (!exonCoverageRowActive) setExonCoverageRowHovered(true)
                           }}
                           onMouseLeave={() => setExonCoverageRowHovered(false)}
-                          className={`w-full h-[34px] mt-1 rounded px-2 text-left text-xs border transition-colors ${exonCoverageRowActive
+                          className={`w-full h-[34px] mt-1 rounded px-2 text-left text-xs transition-colors ${exonCoverageRowActive
                             ? (isLight
-                              ? 'bg-[#63acd8]/12 text-[#3f7696] border-[#559dc8] hover:bg-[#63acd8]/20'
-                              : 'bg-sky-400/14 text-sky-100 border-sky-300/60 hover:bg-sky-400/22')
+                              ? 'bg-[#63acd8]/12 text-[#3f7696] hover:bg-[#63acd8]/20'
+                              : 'bg-sky-400/14 text-sky-100 hover:bg-sky-400/22')
                             : (isLight
-                              ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                              : 'bg-gray-900/50 text-gray-300 border-gray-600 hover:bg-gray-700')
+                              ? 'text-gray-500 hover:bg-gray-100'
+                              : 'text-gray-400 hover:bg-[#273449]')
                             }`}
+                          style={{ boxShadow: exonCoverageRowActive ? `inset 3px 0 0 ${isLight ? '#559dc8' : 'rgba(125,211,252,0.7)'}` : 'none' }}
                           title={`${EXON_COVERAGE_ROW_LABEL}: how many of the active transcripts have each base in an exon. Click to turn ${exonCoverageRowActive ? 'off' : 'on'}.`}
                         >
                           <div className="flex items-center justify-between gap-2">
@@ -3933,10 +3862,7 @@ export default function FeatureExplorerView({
                         </button>
                         {expandedHeight > 0 && (
                           <div
-                            className={`mt-1 w-full rounded border ${isLight
-                              ? 'bg-gray-50 border-gray-200'
-                              : 'bg-gray-900/45 border-gray-700'
-                              }`}
+                            className={`mt-1 w-full rounded ${isLight ? 'bg-gray-50' : 'bg-gray-900/45'}`}
                             style={{ height: `${Math.max(0, expandedHeight - 6)}px` }}
                           />
                         )}
@@ -3986,18 +3912,18 @@ export default function FeatureExplorerView({
                           onMouseLeave={() => {
                             setHoveredInactiveTranscriptId((prev) => (prev === tx.id ? '' : prev))
                           }}
-                          className={`w-full h-[34px] mt-1 rounded px-2 text-left text-xs border transition-colors ${isActive
+                          className={`w-full h-[34px] mt-1 rounded px-2 text-left text-xs transition-colors ${isActive
                             ? (isLight
-                              ? 'bg-[#63acd8]/12 text-[#3f7696] border-[#559dc8] hover:bg-[#63acd8]/20'
-                              : 'bg-sky-400/14 text-sky-100 border-sky-300/60 hover:bg-sky-400/22')
+                              ? 'bg-[#63acd8]/12 text-[#3f7696] hover:bg-[#63acd8]/20'
+                              : 'bg-sky-400/14 text-sky-100 hover:bg-sky-400/22')
                             : (isLight
-                              ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                              : 'bg-gray-900/50 text-gray-300 border-gray-600 hover:bg-gray-700')
+                              ? 'text-gray-500 hover:bg-gray-100'
+                              : 'text-gray-400 hover:bg-[#273449]')
                             }`}
                           style={{
                             boxShadow: isDragSource
                               ? (isLight ? '0 0 0 2px rgba(59,130,246,0.8) inset' : '0 0 0 2px rgba(125,211,252,0.8) inset')
-                              : 'none',
+                              : (isActive ? `inset 3px 0 0 ${isLight ? '#559dc8' : 'rgba(125,211,252,0.7)'}` : 'none'),
                           }}
                           title={tx.id}
                           >
@@ -4021,10 +3947,7 @@ export default function FeatureExplorerView({
                         </button>
                         {isExpanded && expandedHeight > 0 && (
                           <div
-                            className={`mt-1 w-full rounded border ${isLight
-                              ? 'bg-gray-50 border-gray-200'
-                              : 'bg-gray-900/45 border-gray-700'
-                              }`}
+                            className={`mt-1 w-full rounded ${isLight ? 'bg-gray-50' : 'bg-gray-900/45'}`}
                             style={{ height: `${Math.max(0, expandedHeight - 6)}px` }}
                           />
                         )}
@@ -4165,6 +4088,7 @@ export default function FeatureExplorerView({
           )}
         </div>
       )}
+      </div>
     </div>
     <ScreenshotSelectionOverlay
       active={screenshotMode && screenshotTargets.length > 0}

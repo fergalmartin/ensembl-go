@@ -39,6 +39,7 @@ import { classifyBiotype } from '../utils/geneBiotypes'
 import { locationSpan } from '../utils/locationFocus'
 import useNoteStore from '../hooks/useNoteStore'
 import { alignBandToBar, getGenomeBrowserPanelSizing } from './genomeBrowserViewportLayout'
+import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../sessionResume.js'
 import {
     DRAG_AXIS_THRESHOLD_PX,
     isTextEntryTarget,
@@ -291,14 +292,22 @@ export default function GenomeBrowserView({
     // it: the tutorial provider sits above App, so every view can reach the runtime
     // without anything in between having to pass it along.
     const { emitSignal: emitTutorialSignal, isRunning: tutorialRunning, browserTracksRequest } = useTutorial()
-    const [lockPan, setLockPan] = useState(false)
-    const [lockZoom, setLockZoom] = useState(false)
+    // The browser's own controls as they were before the page reloaded, if it did (see
+    // sessionResume.js). Each panel puts back its own window and focus; this is the rest.
+    const resumedRef = useRef(undefined)
+    if (resumedRef.current === undefined) {
+        const saved = peekRestoredSessionState('browser.view')
+        resumedRef.current = saved && typeof saved === 'object' ? saved : null
+    }
+    const resumed = resumedRef.current
+    const [lockPan, setLockPan] = useState(() => Boolean(resumed?.lockPan))
+    const [lockZoom, setLockZoom] = useState(() => Boolean(resumed?.lockZoom))
 
     const [globalTracksState, setGlobalTracksState] = useState('on')
     const [forceTracksVisibility, setForceTracksVisibility] = useState(undefined)
-    const [hideInactiveMode, setHideInactiveMode] = useState(false)
-    const [compressMode, setCompressMode] = useState(false)
-    const [flattenMode, setFlattenMode] = useState(false)
+    const [hideInactiveMode, setHideInactiveMode] = useState(() => Boolean(resumed?.hideInactiveMode))
+    const [compressMode, setCompressMode] = useState(() => Boolean(resumed?.compressMode))
+    const [flattenMode, setFlattenMode] = useState(() => Boolean(resumed?.flattenMode))
     // null until the user presses the Adaptive button. Once they have, their choice
     // sticks for the rest of the session — including across multi -> single -> multi
     // — so we never re-enable something they deliberately turned off.
@@ -306,12 +315,13 @@ export default function GenomeBrowserView({
     const [panelContentHeights, setPanelContentHeights] = useState({})
     const [selectedScreenshotTarget, setSelectedScreenshotTarget] = useState(null)
 
-    const [biotypeFilter, setBiotypeFilter] = useState({
+    const [biotypeFilter, setBiotypeFilter] = useState(() => ({
         proteinCoding: true,
         lncRNA: true,
         smallNonCoding: true,
         pseudogene: true,
-    })
+        ...(resumed?.biotypeFilter && typeof resumed.biotypeFilter === 'object' ? resumed.biotypeFilter : {}),
+    }))
     const hiddenBiotypeClasses = useMemo(() => Object.entries(biotypeFilter)
         .filter(([, v]) => !v)
         .map(([k]) => k), [biotypeFilter])
@@ -339,7 +349,9 @@ export default function GenomeBrowserView({
     const [navigateGenes, setNavigateGenes] = useState({})
     const [incomingGeneError, setIncomingGeneError] = useState(null)
     const [panelPositions, setPanelPositions] = useState({})
-    const [linkedPanelKeys, setLinkedPanelKeys] = useState([])
+    const [linkedPanelKeys, setLinkedPanelKeys] = useState(() => (
+        Array.isArray(resumed?.linkedPanelKeys) && resumed?.linkModel ? resumed.linkedPanelKeys : []
+    ))
     const [linkingGene, setLinkingGene] = useState(false)
     const [linkingRegion, setLinkingRegion] = useState(false)
     const [browserReadyState, setBrowserReadyState] = useState({})
@@ -355,7 +367,13 @@ export default function GenomeBrowserView({
     const [focusDrawerOpenByPanel, setFocusDrawerOpenByPanel] = useState({})
 
     const tracksStateRef = useRef({})
-    const linkModelRef = useRef(null)
+    const linkModelRef = useRef(resumed?.linkModel && Array.isArray(resumed?.linkedPanelKeys) ? resumed.linkModel : null)
+    // Drawers the reader had collapsed. A focus arriving always opens its drawer, so these
+    // are applied as each panel's restored focus arrives rather than up front.
+    const resumeClosedDrawersRef = useRef({
+        focus: new Set(Array.isArray(resumed?.closedFocusDrawers) ? resumed.closedFocusDrawers : []),
+        location: new Set(Array.isArray(resumed?.closedLocationDrawers) ? resumed.closedLocationDrawers : []),
+    })
     const linkApplyTimerRef = useRef(null)
     const wasActiveRef = useRef(isActive)
     // Read by the gutter wheel router, which is attached to a container shared
@@ -510,7 +528,10 @@ export default function GenomeBrowserView({
             resetLocationPanelState(panelKey)
             // A fresh focus presents its drawer open, whatever the reader did
             // with the collapse arrow on the last one.
-            if (signature) setLocationDrawerOpenByPanel((all) => ({ ...all, [panelKey]: true }))
+            if (signature) {
+                const resumeClosed = resumeClosedDrawersRef.current.location.delete(panelKey)
+                setLocationDrawerOpenByPanel((all) => ({ ...all, [panelKey]: !resumeClosed }))
+            }
         }
     }, [locationSignature, resetLocationPanelState])
 
@@ -698,8 +719,10 @@ export default function GenomeBrowserView({
         })
         // A fresh focus always presents that panel's drawer open, whatever the
         // user did with its collapse arrow last time.
-        if (geneId) setFocusDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: true }))
-        else setDetailTranscriptByPanel((prev) => ({ ...prev, [panelKey]: '' }))
+        if (geneId) {
+            const resumeClosed = resumeClosedDrawersRef.current.focus.delete(panelKey)
+            setFocusDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: !resumeClosed }))
+        } else setDetailTranscriptByPanel((prev) => ({ ...prev, [panelKey]: '' }))
     }, [geneTranscriptViews])
 
     // Addressed by gene id rather than "whatever is focused", so the canvas
@@ -1465,8 +1488,44 @@ export default function GenomeBrowserView({
     // registry says about that assembly — the same fields the stats view lists.
     // The pill is a toggle and nothing else: it does not change colour or state,
     // so the drawer is the only thing that says whether it is out.
-    const [assemblyDrawerOpenByPanel, setAssemblyDrawerOpenByPanel] = useState({})
+    const [assemblyDrawerOpenByPanel, setAssemblyDrawerOpenByPanel] = useState(() => (
+        Object.fromEntries((Array.isArray(resumed?.openAssemblyDrawers) ? resumed.openAssemblyDrawers : []).map((key) => [key, true]))
+    ))
     const [assemblyInfoByPanel, setAssemblyInfoByPanel] = useState({})
+
+    // Offered to the session snapshot, which reads it only when one is taken. Fields are
+    // written into one long-lived object so a render allocates nothing for this.
+    const sessionStateRef = useRef({})
+    Object.assign(sessionStateRef.current, {
+        lockPan, lockZoom, hideInactiveMode, compressMode, flattenMode, biotypeFilter, linkedPanelKeys,
+        focusDrawerOpenByPanel, locationDrawerOpenByPanel, assemblyDrawerOpenByPanel, selectedGenes, selectedLocations,
+    })
+    useEffect(() => {
+        consumeRestoredSessionState('browser.view')
+        return registerSessionState('browser.view', () => {
+            const state = sessionStateRef.current
+            const keysWhere = (byPanel, wanted) => Object.keys(byPanel || {}).filter((key) => byPanel[key] === wanted)
+            // Only drawers with a focus behind them: the focus comes back with its panel,
+            // and that is when the collapse is applied.
+            const focusedGeneKeys = keysWhere(state.focusDrawerOpenByPanel, false).filter((key) => state.selectedGenes?.[key]?.id)
+            const focusedLocationKeys = keysWhere(state.locationDrawerOpenByPanel, false).filter((key) => state.selectedLocations?.[key])
+            return {
+                lockPan: state.lockPan,
+                lockZoom: state.lockZoom,
+                hideInactiveMode: state.hideInactiveMode,
+                compressMode: state.compressMode,
+                flattenMode: state.flattenMode,
+                biotypeFilter: state.biotypeFilter,
+                linkedPanelKeys: state.linkedPanelKeys,
+                linkModel: linkModelRef.current,
+                // Collapsed drawers whose restored focus has not arrived yet are still
+                // collapsed as far as the reader is concerned.
+                closedFocusDrawers: [...new Set([...focusedGeneKeys, ...resumeClosedDrawersRef.current.focus])],
+                closedLocationDrawers: [...new Set([...focusedLocationKeys, ...resumeClosedDrawersRef.current.location])],
+                openAssemblyDrawers: keysWhere(state.assemblyDrawerOpenByPanel, true),
+            }
+        })
+    }, [])
 
     const handleGenomePillClick = useCallback((panelKey) => {
         setAssemblyDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: !prev[panelKey] }))
@@ -3519,6 +3578,7 @@ export default function GenomeBrowserView({
                 cyclePreview={cyclePreview}
                 isActive={isActive && !screenshotMode && hasPanels}
                 isLight={isLight}
+                balanced
             />
 
             <div

@@ -3,6 +3,7 @@ import FileBrowserModal from './FileBrowserModal'
 
 import { API_BASE } from '../backendRuntime'
 import { mergeTranscriptFeatureAvailability } from '../utils/transcriptSequenceFeatures'
+import FeatureSectionHeader, { featureSectionClass } from './FeatureSection'
 
 // radio inputs are forced to w-4 (16px); gap-2 = 8px → text starts at 24px = ml-6
 const RADIO_INDENT = 'ml-6'
@@ -255,18 +256,12 @@ export default function ExportSequencesPanel({
   const allCount    = orderedTranscripts.length
 
   // ── Styling shorthands ────────────────────────────────────────────────────
-  const sectionClass      = isLight ? 'bg-white border-gray-200' : 'bg-gray-800/80 border-gray-700'
-  const headerBorderClass = isLight ? 'border-gray-200' : 'border-gray-700'
-  const titleClass        = isLight ? 'text-gray-800' : 'text-gray-100'
   const subLabelClass     = `text-xs font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`
   const bodyTextClass     = isLight ? 'text-gray-700' : 'text-gray-300'
   const dimTextClass      = isLight ? 'text-gray-400' : 'text-gray-600'
   const inputClass        = isLight
     ? 'bg-white border-gray-300 text-gray-800 placeholder-gray-400 focus:border-[#559dc8] focus:ring-[#63acd8]/20'
     : 'bg-gray-900/50 border-gray-600 text-gray-100 placeholder-gray-500 focus:border-sky-400 focus:ring-sky-400/20'
-  const btnCollapseClass  = isLight
-    ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-    : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
   const accentClass       = isLight ? 'accent-[#63acd8]' : 'accent-sky-400'
   const segActiveClass    = isLight ? 'bg-[#63acd8] text-white border-[#559dc8]' : 'bg-sky-500/80 text-white border-sky-400/80'
   const segInactiveClass  = isLight ? 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50' : 'bg-gray-800 text-gray-300 border-gray-600 hover:bg-gray-700'
@@ -279,38 +274,18 @@ export default function ExportSequencesPanel({
 
   return (
     <>
-      <div className={`rounded-xl border overflow-hidden ${sectionClass}`}>
-        {/* ── Section header ─────────────────────────────────────────────────── */}
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={togglePanelCollapsed}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              togglePanelCollapsed()
-            }
-          }}
-          className={`px-4 py-3 flex items-center justify-between border-b cursor-pointer select-none ${headerBorderClass}`}
-        >
-          <div className={`text-sm font-semibold ${titleClass}`}>Export Sequences</div>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation()
-              togglePanelCollapsed()
-            }}
-            className={`w-7 h-7 rounded border flex items-center justify-center transition-colors ${btnCollapseClass}`}
-            title={collapsed ? 'Expand export panel' : 'Collapse export panel'}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              {collapsed ? <polyline points="6 9 12 15 18 9" /> : <polyline points="18 15 12 9 6 15" />}
-            </svg>
-          </button>
-        </div>
+      <div className={featureSectionClass(isLight)}>
+        <FeatureSectionHeader
+          isLight={isLight}
+          title="Export Sequences"
+          collapsed={collapsed}
+          onToggle={togglePanelCollapsed}
+          expandTitle="Expand export panel"
+          collapseTitle="Collapse export panel"
+        />
 
         {!collapsed && (
-          <div className="px-4 py-4 space-y-5">
+          <div className="px-4 pt-2 pb-4 space-y-5">
 
             {seededFasta && (
               <div className={`rounded-lg border p-3 ${isLight ? 'bg-sky-50 border-sky-200' : 'bg-sky-500/10 border-sky-400/40'}`}>

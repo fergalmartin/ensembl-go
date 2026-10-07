@@ -38,3 +38,18 @@ export function GenomeBrowserMark({ size = 16, strokeWidth = 2 }) {
         </svg>
     )
 }
+
+/** Three matching arrows connect the Homology mark's nodes. */
+export function HomologyMark({ size = 30 }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {[0, 120, 240].map(angle => (
+                <g key={angle} transform={`rotate(${angle} 16 16)`}>
+                    <path d="M16 4.5a11.5 11.5 0 0 1 9.96 5.75" />
+                    <path d="m22.73 8.65 3.23 1.6.23-3.6" />
+                    <circle cx="27.5" cy="16" r="3.5" fill="currentColor" stroke="none" />
+                </g>
+            ))}
+        </svg>
+    )
+}

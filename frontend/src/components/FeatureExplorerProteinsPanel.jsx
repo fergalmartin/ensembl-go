@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE } from '../backendRuntime'
+import FeatureSectionHeader, { featureSectionClass, quietIconButtonClass } from './FeatureSection'
 
 const AA_CELL_WIDTH = 14          // px per amino acid cell
 const MIN_AAS_PER_WINDOW = 40
@@ -952,15 +953,14 @@ export default function FeatureExplorerProteinsPanel({
   }, [resolvedGene?.id, sequenceGenome, copyToClipboard])
 
   // ── Styling shorthands ────────────────────────────────────────────────────
-  const panelBorderClass = isLight ? 'bg-white border-gray-200' : 'bg-gray-800/80 border-gray-700'
   const headerBorderClass = isLight ? 'border-gray-200' : 'border-gray-700'
-  const titleClass = isLight ? 'text-gray-800' : 'text-gray-100'
   const emptyTextClass = isLight ? 'text-gray-500' : 'text-gray-400'
-  const btnActive = isLight ? 'bg-[#63acd8] text-white border-[#559dc8]' : 'bg-sky-500/75 text-white border-sky-400/80'
-  const btnInactive = isLight ? 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200' : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
+  // Toggles drawn without a box, as in the drawers: tinted when on, plain text when off.
+  const btnActive = isLight ? 'bg-blue-50 text-[#0077cc] border-transparent' : 'bg-[#2b3a55] text-sky-300 border-transparent'
+  const btnInactive = isLight ? 'text-gray-600 border-transparent hover:bg-gray-100' : 'text-gray-300 border-transparent hover:bg-[#273449]'
   const collapseToggleClass = isLight
-    ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-    : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
+    ? 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-100'
+    : 'text-gray-400 border-transparent hover:text-gray-100 hover:bg-[#273449]'
   const togglePanelCollapsed = useCallback(() => {
     setCollapsed((prev) => !prev)
   }, [])
@@ -968,35 +968,15 @@ export default function FeatureExplorerProteinsPanel({
   if (!resolvedGene) return null
 
   return (
-    <div className={`rounded-xl border overflow-hidden ${panelBorderClass}`}>
-      {/* ── Section header ──────────────────────────────────────────────── */}
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={togglePanelCollapsed}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            togglePanelCollapsed()
-          }
-        }}
-        className={`px-4 py-3 flex items-center justify-between border-b cursor-pointer select-none ${headerBorderClass}`}
-      >
-        <div className={`text-sm font-semibold ${titleClass}`}>Proteins</div>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            togglePanelCollapsed()
-          }}
-          className={`w-7 h-7 rounded border flex items-center justify-center transition-colors ${collapseToggleClass}`}
-          title={collapsed ? 'Expand proteins panel' : 'Collapse proteins panel'}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-            {collapsed ? <polyline points="6 9 12 15 18 9" /> : <polyline points="18 15 12 9 6 15" />}
-          </svg>
-        </button>
-      </div>
+    <div className={featureSectionClass(isLight)}>
+      <FeatureSectionHeader
+        isLight={isLight}
+        title="Proteins"
+        collapsed={collapsed}
+        onToggle={togglePanelCollapsed}
+        expandTitle="Expand proteins panel"
+        collapseTitle="Collapse proteins panel"
+      />
 
       {!collapsed && (
         <div
@@ -1246,10 +1226,7 @@ export default function FeatureExplorerProteinsPanel({
                             event.stopPropagation()
                             copyFullProteinSequence(txId)
                           }}
-                          className={`w-6 h-6 shrink-0 rounded border flex items-center justify-center transition-colors ${isLight
-                            ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                            : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-                            }`}
+                          className={`w-6 h-6 shrink-0 ${quietIconButtonClass(isLight)}`}
                           title="Copy full protein sequence"
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1634,18 +1611,18 @@ export default function FeatureExplorerProteinsPanel({
                   <button
                     type="button"
                     onClick={() => toggleTranscript?.(txId)}
-                    className={`w-full h-[34px] mt-0 rounded px-2 text-left text-xs border transition-colors ${isActive
+                    className={`w-full h-[34px] mt-0 rounded px-2 text-left text-xs transition-colors ${isActive
                       ? (isLight
-                        ? 'bg-[#63acd8]/12 text-[#3f7696] border-[#559dc8] hover:bg-[#63acd8]/20'
-                        : 'bg-sky-400/14 text-sky-100 border-sky-300/60 hover:bg-sky-400/22')
+                        ? 'bg-[#63acd8]/12 text-[#3f7696] hover:bg-[#63acd8]/20'
+                        : 'bg-sky-400/14 text-sky-100 hover:bg-sky-400/22')
                       : (isLight
-                        ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                        : 'bg-gray-900/50 text-gray-300 border-gray-600 hover:bg-gray-700')
+                        ? 'text-gray-500 hover:bg-gray-100'
+                        : 'text-gray-400 hover:bg-[#273449]')
                       }`}
                     style={{
                       boxShadow: isDragSource
                         ? (isLight ? '0 0 0 2px rgba(59,130,246,0.8) inset' : '0 0 0 2px rgba(125,211,252,0.8) inset')
-                        : 'none',
+                        : (isActive ? `inset 3px 0 0 ${isLight ? '#559dc8' : 'rgba(125,211,252,0.7)'}` : 'none'),
                     }}
                     title={`${tx.id}${proteinId ? `\n${proteinId}` : ''}`}
                   >

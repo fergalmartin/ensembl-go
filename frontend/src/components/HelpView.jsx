@@ -1,5 +1,5 @@
-import { useState } from 'react'
 import AppButtonIcon from './AppButtonIcon'
+import { useResumableState } from '../hooks/useResumableState.js'
 
 function ActionButtonRow({ buttonId, label, theme, children }) {
   const isLight = theme === 'light'
@@ -74,7 +74,7 @@ function HelpGlyph() {
 
 export default function HelpView({ theme = 'dark' }) {
   const isLight = theme === 'light'
-  const [openSections, setOpenSections] = useState(['summary', 'getting_started'])
+  const [openSections, setOpenSections] = useResumableState('help.openSections', ['summary', 'getting_started'], { isValid: Array.isArray })
   const cardProps = { openSections, setOpenSections, theme }
 
   return (

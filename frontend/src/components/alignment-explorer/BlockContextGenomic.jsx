@@ -214,13 +214,13 @@ export default function BlockContextGenomic({ dataset, detail, rowsById, rowLabe
   return <div className="al-genomic" ref={host} style={height ? { height } : undefined}>
     <div className="al-genomic-bar">
       <strong>Genomic context</strong>
-      <small>{pair ? `${rowLabel(pair[0])} and ${rowLabel(pair[1])}` : shown.length ? rowLabel(shown[0]) : 'No placed row to show'}</small>
+      <small>{pair ? `${rowLabel(pair[0])} and ${rowLabel(pair[1])}` : shown.length ? rowLabel(shown[0]) : 'No sequences with genomic coordinates to show'}</small>
       <label>Context
         <input type="number" min={0} max={CONTEXT_MAX_BP} step={500} value={context}
-          aria-label="Genomic context either side, in bases"
+          aria-label="Flanking sequence on each side, in bases"
           onChange={e => setContext(e.target.value)} /> bp
       </label>
-      <small>{Math.round(bpPerPx * 100) / 100} bp per pixel, the same on both tracks</small>
+      <small>{Math.round(bpPerPx * 100) / 100} bp per pixel on both tracks</small>
       <span className="al-genomic-spacer" />
       <button onClick={() => onChange(d => ({ ...d, genomic: { ...d.genomic, selection: null, columns: null } }))}>Fit block</button>
       {!!onOpenGenome && <button onClick={() => onOpenGenome(shown,Object.fromEntries(shown.map((id,index)=>[id,windows[index]])))}>Open Genome Browser</button>}
@@ -233,7 +233,7 @@ export default function BlockContextGenomic({ dataset, detail, rowsById, rowLabe
       }} />
     </div>
     <p className="al-context-note">
-      Shading marks regions outside this alignment block. Click a genomic track to centre it independently; select a feature above to map both tracks.
+      Shading marks regions outside this alignment block. Click a track to centre it at that genomic position. Select a feature above to show its location on both tracks.
     </p>
   </div>
 }

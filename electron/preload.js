@@ -8,6 +8,14 @@ try {
   backendRuntimeSnapshot = null;
 }
 
+let launchId = '';
+
+try {
+  launchId = String(ipcRenderer.sendSync('app:getLaunchIdSync') || '');
+} catch {
+  launchId = '';
+}
+
 let electronConfigSnapshot = null;
 
 try {
@@ -58,6 +66,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => {
       ipcRenderer.removeListener('backend:status', listener);
     };
+  },
+  // Which launch of the app this page belongs to. A reload keeps it; a relaunch does not.
+  getLaunchId: () => launchId,
+  // The machine is about to sleep or the screen is locking: the moment to note where
+  // the reader is, in case the page reloads before they are back.
+  onSystemSuspend: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = () => callback();
+    ipcRenderer.on('system:suspend', listener);
+    return () => ipcRenderer.removeListener('system:suspend', listener);
   },
   isElectron: true,
   getElectronConfig: () => electronConfigSnapshot,

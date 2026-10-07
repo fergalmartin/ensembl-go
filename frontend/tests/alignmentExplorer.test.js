@@ -709,7 +709,7 @@ test('a wheel over the name list scrolls the rows, not the track',async()=>{
 test('the name list only claims the wheel when it has somewhere to scroll',async()=>{
   const {rowListScrolls}=await import('../src/components/alignment-explorer/layers.js')
   const camera={x:0,y:0,scale:1,plane:1},size={width:1000,height:400}
-  // MARGIN_Y and the bottom margin come off the window: 400 leaves 322 for rows.
+  // MARGIN_Y and the bottom margin come off the window: 400 leaves 340 for rows.
   const sheet=rows=>({id:'original',extent:1000,rowExtent:rows,fragments:[]})
   assert.equal(rowListScrolls(sheet(4),camera,size),false)
   assert.equal(rowListScrolls(sheet(40),camera,size),true)
@@ -1229,31 +1229,36 @@ test('a wide block carries a full header however crowded the view around it is',
   assert.equal(blockHeaderPlan({...headerArgs(140),compact:true}).text,'Block 1')
 })
 
+// Where Original's first row is drawn: the sheet's top margin (MARGIN_Y), which is
+// one block header down so a header at the top sits under the control bar.
+const SHEET_TOP=48
+
 /** Original with two compact blocks side by side, each packing only the
  *  sequences it holds: the left one three of them, the right one all six. */
 function compactBlocks(){
+  const top=SHEET_TOP
   const order=['a','b','c','d','e','f']
   const left={...createFragment(65,0,100,['a','c','e'],{x:0}),compact:true,slots:null,layoutRows:3,y:0}
   const right={...createFragment(66,0,100,order,{x:200}),compact:true,slots:null,layoutRows:6,y:0}
   return {order,left,right,camera:{x:0,y:0,scale:2,plane:1},
     // What the gutter publishes while the left block is the one the view is over.
-    gutterRows:left.rowIds.map((rowId,i)=>({kind:'label',rowId,anchor:65,y:66+i*26,height:26}))}
+    gutterRows:left.rowIds.map((rowId,i)=>({kind:'label',rowId,anchor:65,y:top+i*26,height:26})),top}
 }
 
 test('a row dropped into a compact block lands between that block\'s own rows',async()=>{
   const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
-  const {order,left,right,camera,gutterRows}=compactBlocks()
+  const {order,left,right,camera,gutterRows,top}=compactBlocks()
   const into=(x,y)=>originalRowDropTarget({point:{x,y},fragments:[left,right],camera,gutterRows,gutterAnchor:65,order})
   // The right block draws a, b, c, d, e, f down its own rows. Aiming between
   // the third and fourth means before d, whatever the gutter says at that height.
   const rightX=156+200*2+5
-  assert.equal(into(rightX,66+3*26+2).beforeId,'d')
-  assert.equal(into(rightX,66+0).beforeId,'a')
-  assert.equal(into(rightX,66+5*26+2).beforeId,'f')
+  assert.equal(into(rightX,top+3*26+2).beforeId,'d')
+  assert.equal(into(rightX,top+0).beforeId,'a')
+  assert.equal(into(rightX,top+5*26+2).beforeId,'f')
   // The bug this replaced: the gutter was showing the left block's three rows,
   // so the same drop offered a, c or e and inserted before whichever sat at
   // that height — a sequence the reader was not pointing at.
-  const gutterAnswer=[...gutterRows].sort((p,q)=>p.y-q.y).find(row=>66+3*26+2<row.y+13)
+  const gutterAnswer=[...gutterRows].sort((p,q)=>p.y-q.y).find(row=>SHEET_TOP+3*26+2<row.y+13)
   assert.equal(gutterAnswer,undefined,'the old list did not even reach that far down')
 })
 
@@ -1262,7 +1267,7 @@ test('every gap between the rows of the block being dragged into is offered',asy
   const {order,left,right,camera,gutterRows}=compactBlocks()
   const rightX=156+200*2+5
   const landings=new Set()
-  for(let y=60;y<66+7*26;y+=2)
+  for(let y=SHEET_TOP-6;y<SHEET_TOP+7*26;y+=2)
     landings.add(originalRowDropTarget({point:{x:rightX,y},fragments:[left,right],camera,gutterRows,gutterAnchor:65,order}).beforeId)
   // Six rows, so six places to land before one of them, plus the end.
   assert.deepEqual([...landings].sort(),['a','b','c','d','e','f',null].sort())
@@ -1273,12 +1278,12 @@ test('a jump marker dropped in the channel aims at the block it names',async()=>
   const {order,left,right,camera,gutterRows}=compactBlocks()
   // The marker sits in the gap between the blocks, over neither of them.
   const channelX=156+150*2
-  const target=originalRowDropTarget({point:{x:channelX,y:66+3*26+2},fragments:[left,right],
+  const target=originalRowDropTarget({point:{x:channelX,y:SHEET_TOP+3*26+2},fragments:[left,right],
     camera,gutterRows,gutterAnchor:65,order,jumpBlock:66})
   assert.equal(target.beforeId,'d','the block the marker points into decides')
   // Below the last row of that block the row follows it, rather than being sent
   // to the end of a file-wide order the block does not show.
-  const past=originalRowDropTarget({point:{x:channelX,y:66+9*26},fragments:[left,right],
+  const past=originalRowDropTarget({point:{x:channelX,y:SHEET_TOP+9*26},fragments:[left,right],
     camera,gutterRows,gutterAnchor:65,order:[...order,'g'],jumpBlock:66})
   assert.equal(past.beforeId,'g')
 })
@@ -1289,19 +1294,19 @@ test('an aligned block still reads its drop off the file-wide gutter',async()=>{
   // Aligned blocks sit on the file-wide slots, and the gutter offers the empty
   // ones too: b and c belong to sequences this block does not hold.
   const aligned={...createFragment(1,0,100,['a','d'],{x:0}),compact:false,slots:[0,3],layoutRows:4,y:0}
-  const gutterRows=order.map((rowId,i)=>({kind:'label',rowId,anchor:null,y:66+i*26,height:26}))
+  const gutterRows=order.map((rowId,i)=>({kind:'label',rowId,anchor:null,y:SHEET_TOP+i*26,height:26}))
   const camera={x:0,y:0,scale:2,plane:1}
   const at=y=>originalRowDropTarget({point:{x:300,y},fragments:[aligned],camera,gutterRows,gutterAnchor:null,order}).beforeId
-  assert.equal(at(66+26+2),'b','an empty slot is still a place to land')
-  assert.equal(at(66+2),'a')
-  assert.equal(at(66+4*26),null,'past the last row of the file-wide list is the end')
+  assert.equal(at(SHEET_TOP+26+2),'b','an empty slot is still a place to land')
+  assert.equal(at(SHEET_TOP+2),'a')
+  assert.equal(at(SHEET_TOP+4*26),null,'past the last row of the file-wide list is the end')
 })
 
 test('the drop indicator marks the blocks the answer was read against',async()=>{
   const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
   const {order,left,right,camera,gutterRows}=compactBlocks()
   const rightX=156+200*2+5
-  const into=originalRowDropTarget({point:{x:rightX,y:66+3*26+2},fragments:[left,right],camera,gutterRows,gutterAnchor:65,order})
+  const into=originalRowDropTarget({point:{x:rightX,y:SHEET_TOP+3*26+2},fragments:[left,right],camera,gutterRows,gutterAnchor:65,order})
   const primary=into.spans.find(span=>span.primary)
   assert.ok(primary,'a block-relative drop names the block it was read against')
   assert.ok(primary.x<=rightX&&rightX<=primary.x+primary.width,'and the span covers the cursor')
@@ -1309,8 +1314,8 @@ test('the drop indicator marks the blocks the answer was read against',async()=>
   // Read off the file-wide gutter there is no one block to point at, and the
   // line belongs across the window as before.
   const aligned={...createFragment(1,0,100,order,{x:0}),compact:false,slots:order.map((_,i)=>i),layoutRows:6,y:0}
-  const wide=order.map((rowId,i)=>({kind:'label',rowId,anchor:null,y:66+i*26,height:26}))
-  const fromGutter=originalRowDropTarget({point:{x:300,y:66+2*26+2},fragments:[aligned],camera,gutterRows:wide,gutterAnchor:null,order})
+  const wide=order.map((rowId,i)=>({kind:'label',rowId,anchor:null,y:SHEET_TOP+i*26,height:26}))
+  const fromGutter=originalRowDropTarget({point:{x:300,y:SHEET_TOP+2*26+2},fragments:[aligned],camera,gutterRows:wide,gutterAnchor:null,order})
   assert.equal(fromGutter.spans,null)
   assert.equal(fromGutter.beforeId,'c')
 })
@@ -1318,7 +1323,7 @@ test('the drop indicator marks the blocks the answer was read against',async()=>
 test('a dragged marker keeps its own block wherever the cursor goes',async()=>{
   const {originalRowDropTarget}=await import('../src/components/alignment-explorer/rowDrop.js')
   const {order,left,right,camera,gutterRows}=compactBlocks()
-  const aim=x=>originalRowDropTarget({point:{x,y:66+3*26+2},fragments:[left,right],
+  const aim=x=>originalRowDropTarget({point:{x,y:SHEET_TOP+3*26+2},fragments:[left,right],
     camera,gutterRows,gutterAnchor:65,order,jumpBlock:66,rowId:'a'})
   // Over the left block, in the channel, over the right block, off to the side:
   // the height picks the gap and the marker picks the block, every time.
@@ -1338,16 +1343,16 @@ test('the blocks a move shows in are marked at their own heights',async()=>{
   const two={...createFragment(2,0,100,['b','c','d','e','f'],{x:200}),compact:true,slots:null,layoutRows:5,y:0}
   const three={...createFragment(3,0,100,['d','f'],{x:400}),compact:true,slots:null,layoutRows:2,y:0}
   const camera={x:0,y:0,scale:2,plane:1}
-  const gutterRows=one.rowIds.map((rowId,i)=>({kind:'label',rowId,anchor:1,y:66+i*26,height:26}))
+  const gutterRows=one.rowIds.map((rowId,i)=>({kind:'label',rowId,anchor:1,y:SHEET_TOP+i*26,height:26}))
   // Dragging f into block 2, to the gap before d — its third row there.
-  const drop=originalRowDropTarget({point:{x:156+250*2,y:66+2*26+2},fragments:[one,two,three],
+  const drop=originalRowDropTarget({point:{x:156+250*2,y:SHEET_TOP+2*26+2},fragments:[one,two,three],
     camera,gutterRows,gutterAnchor:1,order,jumpBlock:2,rowId:'f'})
   assert.equal(drop.beforeId,'d')
   // Block 1 is upstream and is left alone; block 3 carries f too and is marked
   // where f will sit in it, which is not the height block 2 is marked at.
   assert.deepEqual(drop.spans.map(s=>s.primary),[true,false])
-  assert.equal(drop.spans[0].y,66+2*26,'before d, block 2\'s third row')
-  assert.equal(drop.spans[1].y,66+0,'before d, block 3\'s first row')
+  assert.equal(drop.spans[0].y,SHEET_TOP+2*26,'before d, block 2\'s third row')
+  assert.equal(drop.spans[1].y,SHEET_TOP+0,'before d, block 3\'s first row')
 })
 
 test('a marker for a block that is not on screen never lands on a passing block',async()=>{
@@ -1358,8 +1363,8 @@ test('a marker for a block that is not on screen never lands on a passing block'
   const one={...createFragment(1,0,100,['a','c','f'],{x:0}),compact:true,slots:null,layoutRows:3,y:0}
   const two={...createFragment(2,0,100,['b','d','e'],{x:200}),compact:true,slots:null,layoutRows:3,y:0}
   const camera={x:0,y:0,scale:2,plane:1}
-  const gutterRows=one.rowIds.map((rowId,i)=>({kind:'label',rowId,anchor:1,y:66+i*26,height:26}))
-  const drag=x=>originalRowDropTarget({point:{x,y:66+1*26+2},fragments:[one,two],camera,
+  const gutterRows=one.rowIds.map((rowId,i)=>({kind:'label',rowId,anchor:1,y:SHEET_TOP+i*26,height:26}))
+  const drag=x=>originalRowDropTarget({point:{x,y:SHEET_TOP+1*26+2},fragments:[one,two],camera,
     gutterRows,gutterAnchor:1,order,jumpBlock:9,fragmentId:one.id,rowId:'f'})
   // Block 2 holds none of block 1's sequences. Wandering the cursor over it,
   // or anywhere else, must not hand it the insertion.

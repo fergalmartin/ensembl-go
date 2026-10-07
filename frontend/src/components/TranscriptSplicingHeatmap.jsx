@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { trackAchievement } from '../achievements/tracker.js'
 import { makeExonStateKey } from './featureExplorerExonUtils'
 import { heatColorFromFraction } from '../utils/heatColour.js'
+import { quietIconButtonClass } from './FeatureSection'
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -1423,13 +1424,13 @@ export default function TranscriptSplicingHeatmap({
   const edgeBaseStroke = isLight ? '#64748b' : '#94a3b8'
 
   return (
-    <div data-splice-heatmap-root="true" className={`mt-3 rounded-xl border ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-800'}`}>
+    <div data-splice-heatmap-root="true" className="mt-1">
       {!collapsed && (
-        <div className="px-3 py-3">
+        <div className="px-3 pb-3">
           <div
             ref={viewportRef}
             data-splice-heatmap-viewport="true"
-            className={`rounded-lg border min-h-[220px] ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-900/35'}`}
+            className={`rounded-lg min-h-[220px] ${isLight ? 'bg-gray-50' : 'bg-gray-900/35'}`}
           >
             {!hasData ? (
               <div className={`h-[220px] flex items-center justify-center text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
@@ -1682,14 +1683,10 @@ export default function TranscriptSplicingHeatmap({
               handleResetLayout()
             }}
             disabled={!hasManualLayout}
-            className={`min-w-[92px] px-2.5 h-7 rounded border inline-flex items-center justify-center whitespace-nowrap text-[11px] font-semibold transition-colors ${
+            className={`min-w-[92px] px-2.5 h-7 rounded inline-flex items-center justify-center whitespace-nowrap text-[11px] font-semibold transition-colors ${
               hasManualLayout
-                ? (isLight
-                  ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-                  : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600')
-                : (isLight
-                  ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
-                  : 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed')
+                ? (isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-300 hover:bg-[#273449]')
+                : (isLight ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 cursor-not-allowed')
             }`}
             title={hasManualLayout ? 'Reset manual exon/connector layout for this gene context' : 'No manual layout adjustments to reset'}
           >
@@ -1701,10 +1698,7 @@ export default function TranscriptSplicingHeatmap({
               event.stopPropagation()
               toggleCollapsed()
             }}
-            className={`w-7 h-7 mb-0.5 rounded border flex items-center justify-center transition-colors shrink-0 ${isLight
-              ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-              : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'
-              }`}
+            className={`w-7 h-7 mb-0.5 shrink-0 ${quietIconButtonClass(isLight)}`}
             title={collapsed ? 'Expand splicing heatmap' : 'Collapse splicing heatmap'}
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">

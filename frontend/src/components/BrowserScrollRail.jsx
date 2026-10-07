@@ -30,7 +30,9 @@ function layoutSignature(layout) {
     return [
         Math.round(geometry.top), Math.round(geometry.left), Math.round(geometry.height),
         Math.round(geometry.minScroll), Math.round(geometry.maxScroll),
-        ...stops.map((stop) => `${stop.key}:${Math.round(stop.offset)}`),
+        // Scroll positions too: balanced dots stay put while the genomes under
+        // them grow, and the ring has to follow the new extents.
+        ...stops.map((stop) => `${stop.key}:${Math.round(stop.offset)}:${Math.round(stop.scrollTop)}`),
     ].join('|')
 }
 
@@ -72,6 +74,9 @@ export default function BrowserScrollRail({
     ariaLabel = 'Browser position',
     tourId = 'browser-scroll-rail',
     stopTourPrefix = 'browser-scroll-rail-genome-',
+    // Every stop an equal share of the rail rather than a share proportional to
+    // the page above it; see placeScrollRailStops.
+    balanced = false,
 }) {
     const railRef = useRef(null)
     const indicatorRef = useRef(null)
@@ -127,11 +132,11 @@ export default function BrowserScrollRail({
             setLayout((prev) => (prev ? null : prev))
             return
         }
-        const stops = placeScrollRailStops(measured, geometry)
+        const stops = placeScrollRailStops(measured, geometry, { balanced })
         const next = { geometry, stops }
         setLayout((prev) => (layoutSignature(prev) === layoutSignature(next) ? prev : next))
         layoutRef.current = next
-    }, [hostRef, overlayRef, isActive, panels, resolveAnchor, anchorGap, resolveRailLeft])
+    }, [hostRef, overlayRef, isActive, panels, resolveAnchor, anchorGap, resolveRailLeft, balanced])
 
     // Panels grow for a while after they mount as their tracks lay out, which
     // moves every dot below them, so the rail is remeasured from the page rather
@@ -169,7 +174,7 @@ export default function BrowserScrollRail({
         if (!current || !scroller) return
         const top = scroller.scrollTop
         scrollTopRef.current = top
-        const offset = railOffsetForScroll(top, current.geometry)
+        const offset = railOffsetForScroll(top, current.geometry, current.stops)
         if (indicatorRef.current) indicatorRef.current.style.top = `${offset}px`
         const index = activeScrollRailStop(top, current.stops)
         const percent = current.geometry.maxScroll > 0
@@ -234,7 +239,7 @@ export default function BrowserScrollRail({
         if (event.button !== 0 || !current || !rail) return
         const stopKey = event.target?.closest?.('[data-rail-stop]')?.getAttribute('data-rail-stop') || null
         const offset = event.clientY - rail.getBoundingClientRect().top
-        const ring = railOffsetForScroll(scrollTopRef.current, current.geometry)
+        const ring = railOffsetForScroll(scrollTopRef.current, current.geometry, current.stops)
         // Pressing the ring picks it up where it stands; pressing bare track
         // throws the page to that position and then drags from there.
         const grabbing = !stopKey && Math.abs(offset - ring) <= SCROLL_RAIL_GRAB
@@ -248,7 +253,7 @@ export default function BrowserScrollRail({
             delta: grabbing ? ring - offset : 0,
         }
         setEngaged(true)
-        if (!stopKey && !grabbing) scrollTo(scrollForRailOffset(offset, current.geometry))
+        if (!stopKey && !grabbing) scrollTo(scrollForRailOffset(offset, current.geometry, current.stops))
     }, [scrollTo])
 
     const handlePointerMove = useCallback((event) => {
@@ -263,7 +268,7 @@ export default function BrowserScrollRail({
             drag.stopKey = null
         }
         if (drag.stopKey) return
-        scrollTo(scrollForRailOffset(event.clientY - rail.getBoundingClientRect().top + drag.delta, current.geometry))
+        scrollTo(scrollForRailOffset(event.clientY - rail.getBoundingClientRect().top + drag.delta, current.geometry, current.stops))
     }, [scrollTo])
 
     const endDrag = useCallback((event, commit) => {

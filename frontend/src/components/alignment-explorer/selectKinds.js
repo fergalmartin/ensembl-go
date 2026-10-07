@@ -7,9 +7,9 @@
  */
 export const SELECT_KINDS = [
   { mode: 'rectangle', label: 'Free select',
-    hint: 'Drag a rectangle over the cells it should cover. Over the names it picks the sequences inside it.' },
+    hint: 'Drag a rectangle to select cells. Drag over sequence names to select those sequences.' },
   { mode: 'columns', label: 'Columns',
-    hint: 'Drag sideways to take whole columns, through every sequence in view. Over the names it takes every name on screen.' },
+    hint: 'Drag horizontally to select columns across all visible sequences. Drag over the names to select all visible sequences.' },
 ]
 
 export const isSelectMode = mode => SELECT_KINDS.some(kind => kind.mode === mode)
@@ -26,7 +26,7 @@ export const selectKind = (mode, fallback) =>
  */
 export const PAN_MODE = {
   mode: 'pan', label: 'Move view',
-  hint: 'Drag to move the sheet. Space does this from any mode, whichever is chosen here.',
+  hint: 'Drag to pan the alignment. Hold Space to pan from any cursor mode.',
 }
 export const CURSOR_MODES = [PAN_MODE, ...SELECT_KINDS]
 export const cursorMode = mode => CURSOR_MODES.find(item => item.mode === mode) || PAN_MODE
