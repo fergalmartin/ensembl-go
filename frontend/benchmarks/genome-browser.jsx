@@ -10,6 +10,9 @@ import { describeBrowserViewport } from '../src/utils/browserTutorialControls.js
 import '../src/index.css'
 
 const params = new URLSearchParams(location.search)
+if (params.has('navigation')) {
+    document.getElementById('root').style.cssText = 'height:100vh; overflow-y:auto; padding:24px'
+}
 const count = Number(params.get('n') || 4)
 const species = Array.from({ length: count }, (_, i) => ({
     species_key: `test_${i}`, species: `Test ${i}`, assembly: `ASM${i}`,
@@ -17,7 +20,7 @@ const species = Array.from({ length: count }, (_, i) => ({
 }))
 const config = { active_species: species, ref_gff: species[0].files.gff3, remember_browser_tracks: false }
 const genes = Array.from({ length: 1500 }, (_, i) => ({
-    id: `gene${i}`, name: `GENE${i}`, chrom: '1', start: 1000 + i * 1800,
+    id: `gene${i}`, name: `GENE${i}`, chrom: params.has('navigation') && i < 150 ? '2' : '1', start: 1000 + i * 1800,
     end: 2400 + i * 1800, strand: i % 2 ? '+' : '-', biotype: 'protein_coding',
 }))
 window.requests = []
@@ -25,9 +28,17 @@ window.fetch = async (input) => {
     const url = new URL(String(input), location.href)
     window.requests.push(url.pathname)
     let data = []
+    let status = 200
     if (url.pathname.endsWith('/regions')) data = [{ chrom: '1', start: 1, end: 3000000, length: 3000000, gene_count: genes.length }]
+    if (url.pathname.endsWith('/regions') && params.has('navigation')) data.push({ ...data[0], chrom: '2' })
     if (url.pathname.endsWith('/index-status')) data = { state: 'ready' }
     if (url.pathname.endsWith('/default_locus')) data = { chrom: '1', start: 900000, end: 1100000, chrom_length: 3000000 }
+    if (url.pathname.endsWith('/resolve_id')) data = { gene: genes.find((gene) => gene.id === url.searchParams.get('query')) || null }
+    if (url.pathname.endsWith('/resolve_id') && window.buildingGeneId === url.searchParams.get('query') && window.buildingResponses > 0) {
+        window.buildingResponses--
+        status = 425
+        data = {}
+    }
     if (url.pathname.endsWith('/genes')) data = genes
     if (url.pathname.endsWith('/tracks')) data = { tracks: [], groups: [] }
     if (url.pathname.endsWith('/session-tracks')) data = { genomes: {} }
@@ -44,8 +55,11 @@ window.fetch = async (input) => {
         data = { start, end, sequence: 'ACGT'.repeat(Math.ceil((end - start) / 4)).slice(0, end - start) }
     }
     // Model asynchronous I/O rather than an unlimited chain of resolved promises.
+    if (url.pathname.endsWith('/regions') && window.navigationRegionDelay) await new Promise((resolve) => setTimeout(resolve, window.navigationRegionDelay))
+    if (url.pathname.endsWith('/default_locus') && window.navigationDefaultDelay) await new Promise((resolve) => setTimeout(resolve, window.navigationDefaultDelay))
+    if (url.pathname.endsWith('/resolve_id') && url.searchParams.get('query') === window.slowGeneId) await new Promise((resolve) => setTimeout(resolve, 500))
     if (!params.has('instant')) await new Promise((resolve) => setTimeout(resolve, 2))
-    return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
 }
 if (params.has('no-observer')) window.IntersectionObserver = undefined
 const resetMetrics = () => { window.metrics = { commits: [], paints: {} }; window.requests = [] }
@@ -96,7 +110,11 @@ function App() {
             onScreenshotTargetChange={(target) => { window.exportTarget = target }} {...options} />
         <div style={{ height: 1500 }} />
     </> : <Profiler id="browser" onRender={(_id, _phase, duration) => window.metrics.commits.push(duration)}>
-        <GenomeBrowserView config={config} onRefViewportChange={setViewport} {...options} />
+        <GenomeBrowserView config={config} onRefViewportChange={setViewport}
+            onIncomingGeneConsumed={(entry) => {
+                window.consumedGeneEntry = entry
+                setOptions((previous) => previous.incomingGene === entry ? { ...previous, incomingGene: null } : previous)
+            }} {...options} />
     </Profiler>
 }
 const tree = <TutorialProvider><NoteStoreProvider><App /></NoteStoreProvider></TutorialProvider>
@@ -104,6 +122,75 @@ const tree = <TutorialProvider><NoteStoreProvider><App /></NoteStoreProvider></T
 createRoot(document.getElementById('root')).render(params.has('strict') ? <StrictMode>{tree}</StrictMode> : tree)
 window.fixtureReady = () => surfaces().length === (params.has('export') ? 1 : count)
     && positions().every((p) => p?.ready)
+window.runNavigationChecks = async () => {
+    const { getGenomeKey } = await import('../src/utils/genomeIdentity.js')
+    const { findScrollHost, panelAlignmentAnchor, stickyControlsInset } = await import('../src/utils/browserScrollRail.js')
+    const waitFor = async (predicate, message) => {
+        for (let i = 0; i < 150; i++) {
+            if (predicate()) return
+            await wait(50)
+        }
+        throw new Error(message)
+    }
+    const focus = async (genome, id) => {
+        const entry = { genomeKey: getGenomeKey(genome), gene: { id } }
+        window.updatePanel({ incomingGene: entry, isActive: true })
+        await waitFor(() => window.consumedGeneEntry === entry, 'Gene request was not consumed')
+        await waitFor(() => {
+            const view = describeBrowserViewport(entry.genomeKey)
+            const gene = genes.find((gene) => gene.id === id)
+            return view?.focus === gene.name && view.chrom === gene.chrom
+                && view.start <= gene.start && view.end >= gene.end
+        }, 'Gene was not focused and framed')
+        await waitFor(() => {
+            const anchor = panelAlignmentAnchor(document, entry.genomeKey)
+            const scroller = findScrollHost(anchor)
+            const root = document.querySelector('[data-browser-global-controls]')?.parentElement
+            return anchor && scroller && Math.abs(anchor.getBoundingClientRect().top
+                - scroller.getBoundingClientRect().top - stickyControlsInset(root)) <= 2
+        }, 'Target genome did not align at the top')
+    }
+    await focus(species[count - 1], 'gene20')
+    wheel(count - 1, 300)
+    await wait(150)
+    await focus(species[count - 1], 'gene20')
+
+    // Add a panel while hidden and let resolution beat its own regions fetch.
+    const added = { species_key: 'added', assembly: 'ADDED', files: { gff3: '/synthetic/added.gff3' } }
+    window.navigationRegionDelay = 350
+    window.updatePanel({ isActive: false, config: { ...config, active_species: [...species, added] } })
+    await wait(50)
+    await focus(added, 'gene40')
+    window.navigationRegionDelay = 0
+
+    // A default-locus request already in flight must also yield to navigation.
+    const later = { species_key: 'later', assembly: 'LATER', files: { gff3: '/synthetic/later.gff3' } }
+    window.navigationDefaultDelay = 700
+    window.updatePanel({ config: { ...config, active_species: [...species, added, later] } })
+    await waitFor(() => surfaces().length === count + 2, 'New panel did not mount')
+    await wait(100)
+    await focus(later, 'gene60')
+    await wait(800)
+    check(describeBrowserViewport(getGenomeKey(later)).focus === 'GENE60', 'Default locus displaced focus')
+    const view = describeBrowserViewport(getGenomeKey(later))
+    check(view.start <= genes[60].start && view.end >= genes[60].end, 'Default locus displaced gene viewport')
+    window.navigationDefaultDelay = 0
+    window.buildingGeneId = 'gene80'
+    window.buildingResponses = 1
+    await focus(later, 'gene80')
+    window.slowGeneId = 'gene100'
+    window.updatePanel({ incomingGene: { genomeKey: getGenomeKey(later), gene: { id: 'gene100' } } })
+    await wait(50)
+    await focus(later, 'gene120')
+    await wait(600)
+    check(describeBrowserViewport(getGenomeKey(later)).focus === 'GENE120', 'An older lookup displaced the latest request')
+    const missing = { genomeKey: getGenomeKey(later), gene: { id: 'missing' } }
+    window.updatePanel({ incomingGene: missing })
+    await waitFor(() => window.consumedGeneEntry === missing, 'Failed lookup stayed pending')
+    check(document.querySelector('[role="alert"]')?.textContent.includes('missing'), 'Missing gene error was not shown')
+    check(describeBrowserViewport(getGenomeKey(later)).focus === 'GENE120', 'Missing gene displaced existing focus')
+    return 'PASS chromosome switch, scroll alignment, repeat click, activation, startup races, index build, stale lookup, missing gene'
+}
 window.runBenchmark = async (linked = false) => {
     await setLinks(linked)
     resetMetrics()

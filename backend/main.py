@@ -155,6 +155,7 @@ from manual_genome_config import (
 import notes_transfer
 import protein_structure
 import removal_rules
+from homology_search import HomologySearchStore
 from translation import (
     MOLECULE_NUCLEAR,
     TABLE_STANDARD,
@@ -4399,6 +4400,124 @@ def get_homologs(transcript_id: str):
     return homology_map.lookup(transcript_id)
 
 
+class HomologySearchRequest(BaseModel):
+    genome_key: str
+    gene_query: str
+    min_identity: Optional[float] = None
+    min_coverage: Optional[float] = None
+    types: Optional[List[str]] = None
+    target_assemblies: Optional[List[str]] = None
+    offset: int = 0
+    limit: int = 100
+    query_gene_id: str = ""
+    target_key: str = ""
+    sort_key: str = "score"
+    direction: str = "desc"
+    include_evidence: bool = True
+    focus_query_gene_id: str = ""
+    focus_target_key: str = ""
+
+
+homology_search_store = HomologySearchStore(CACHE_DIR / "homology_search")
+
+
+def _homology_source_path(species: Dict[str, Any], cfg: Dict[str, Any]) -> str:
+    """Find newly downloaded evidence for the selected release, without changing config."""
+    configured = str((species.get("files") or {}).get("homology") or "").strip()
+    if configured:
+        return configured
+    output_dir = str(cfg.get("output_dir") or "").strip()
+    if not output_dir or species.get("is_manual"):
+        return ""
+    assembly = str(species.get("assembly") or species.get("gca") or "").strip()
+    local_dir = _resolve_species_assembly_dir(output_dir, species.get("species_key") or "", assembly,
+                                            provider=species.get("provider") or DEFAULT_PROVIDER)
+    release = str(species.get("dataset_release_key") or "").strip()
+    if not release:
+        selected = selection_key_from_record(species)
+        release = selected.split("::dataset::", 1)[1] if "::dataset::" in selected else ""
+    if release and release != LEGACY_DATASET_RELEASE_KEY:
+        parts = release.split("/")
+        if len(parts) != 2:
+            return ""
+        directory = local_dir / "datasets"
+        for part in parts:
+            directory = directory / _validate_path_segment("dataset release", part)
+    else:
+        # Older session records may identify their release only through the annotation.
+        directory = local_dir
+        annotation = str((species.get("files") or {}).get("gff3") or "").strip()
+        if not release and annotation:
+            parent = Path(annotation).expanduser().resolve().parent
+            try:
+                parent.relative_to(local_dir / "datasets")
+                directory = parent
+            except ValueError:
+                pass
+    directory = directory.resolve()
+    try:
+        directory.relative_to(local_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid homology dataset path")
+    _, files = _scan_local_release_dir(directory)
+    return str(files.get("homology") or "")
+
+
+@app.get("/api/homology/sources")
+def homology_search_sources():
+    sources = {}
+    cfg = load_config()
+    for species in _browsable_active_species(cfg):
+        key = _active_species_item_key(species)
+        path = ""
+        try:
+            path = _homology_source_path(species, cfg)
+            if not path:
+                sources[key] = {"status": "missing", "path": "", "source_token": ""}
+                continue
+            allowed = _resolve_allowed_homology_path(path)
+            fingerprint = homology_search_store.fingerprint(allowed)
+            token = hashlib.sha256((str(allowed) + str(fingerprint)).encode()).hexdigest()
+            sources[key] = {"status": "ready", "path": str(allowed), "source_token": token}
+        except (HTTPException, OSError) as exc:
+            sources[key] = {"status": "missing", "path": path, "source_token": "",
+                            "detail": str(getattr(exc, "detail", exc))}
+    return {"sources": sources}
+
+
+@app.post("/api/homology/search")
+def search_homology_table(request: HomologySearchRequest):
+    # Selection keys include the release. Never resolve a release-specific request
+    # to the first genome sharing its assembly accession.
+    cfg = load_config()
+    species = next((item for item in _browsable_active_species(cfg)
+                    if _active_species_item_key(item) == request.genome_key), None)
+    if species is None:
+        raise HTTPException(status_code=404, detail="Genome is not part of the configured session.")
+    path = _homology_source_path(species, cfg)
+    if not path:
+        raise HTTPException(status_code=404, detail="No homology file configured for this genome.")
+    allowed = _resolve_allowed_homology_path(path)
+    for threshold in (request.min_identity, request.min_coverage):
+        if threshold is not None and (not math.isfinite(threshold) or not 0 <= threshold <= 100):
+            raise HTTPException(status_code=400, detail="Identity and coverage thresholds must be between 0 and 100.")
+    try:
+        result = homology_search_store.search(
+            allowed, request.gene_query,
+            filters={"min_identity": request.min_identity, "min_coverage": request.min_coverage,
+                     "types": request.types, "target_assemblies": request.target_assemblies},
+            offset=request.offset, limit=request.limit, query_gene_id=request.query_gene_id,
+            target_key=request.target_key, sort_key=request.sort_key, direction=request.direction,
+            include_evidence=request.include_evidence,
+            focus_query_gene_id=request.focus_query_gene_id, focus_target_key=request.focus_target_key,
+        )
+        return {**result, "genome_key": request.genome_key}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"Cannot read homology file: {exc}") from exc
+
+
 @app.get("/api/homology/query")
 async def query_homology_table(path: str = "", gene_query: str = "", limit: int = 5000):
     """Query a homology TSV(.gz) table for rows linked to a gene symbol/stable ID."""
@@ -7334,7 +7453,7 @@ async def get_remote_files(
     if normalize_provider(provider) == DEFAULT_PROVIDER:
         download_manager.schedule_catalog_refresh_if_stale()
     requested_types = [part.strip() for part in str(file_types or "").split(",") if part.strip()]
-    return download_manager.get_download_urls(
+    return await asyncio.to_thread(download_manager.get_download_urls,
         key,
         assembly,
         file_types=requested_types or None,

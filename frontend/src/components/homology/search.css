@@ -1,0 +1,34 @@
+.homology-shared-search {
+    display: grid;
+    grid-template-rows: 0fr;
+    margin-top: 0;
+    opacity: 0;
+    transition: grid-template-rows 320ms ease, margin-top 320ms ease, opacity 220ms ease;
+}
+
+.homology-shared-search-open {
+    grid-template-rows: 1fr;
+    margin-top: 1rem;
+    opacity: 1;
+}
+
+.homology-shared-search-clip {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.homology-shared-search-form {
+    transform: translateY(100%);
+    transition: transform 320ms ease;
+}
+
+.homology-shared-search-open .homology-shared-search-form {
+    transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .homology-shared-search,
+    .homology-shared-search-form {
+        transition: none;
+    }
+}

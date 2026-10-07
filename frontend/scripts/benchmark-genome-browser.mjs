@@ -70,25 +70,33 @@ try {
         assert.ok(ready, 'Fixture failed to become ready')
         await pause(1000)
     }
-    for (const count of [1, 4, 8, 12]) {
-        await open(`n=${count}`)
-        // Warm both modes before measuring: cold JIT and transcript arrivals can
-        // dominate short measurements and are reported separately by request count.
-        await evaluate('window.runBenchmark(false)')
-        await evaluate('window.runBenchmark(true)')
-        for (const linked of [false, true]) console.log(JSON.stringify(await evaluate(`window.runBenchmark(${linked})`)))
-        console.log(`CHECK ${count}: ${await evaluate('window.runChecks()')}`)
-        if (count === 12) console.log(`STRESS: ${await evaluate('window.runLinkedStress()')}`)
-        assert.deepEqual(errors, [], 'Browser reported runtime errors')
-    }
-    await open('n=12&instant')
-    console.log(`STRESS (immediate responses): ${await evaluate('window.runLinkedStress()')}`)
-    assert.deepEqual(errors, [], 'Immediate-response stress fixture reported runtime errors')
-    await send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 900, deviceScaleFactor: 2, mobile: false })
-    for (const fallback of [false, true]) {
-        await open(`export${fallback ? '&no-observer' : ''}`)
-        console.log(`CHECK export${fallback ? ' (no IntersectionObserver)' : ''}: ${await evaluate('window.runExportChecks()')}`)
-        assert.deepEqual(errors, [], 'Export fixture reported runtime errors')
+    if (process.argv.includes('--navigation')) {
+        for (const query of ['n=4&navigation', 'n=4&navigation&strict&instant']) {
+            await open(query)
+            console.log(`NAVIGATION (${query}): ${await evaluate('window.runNavigationChecks()')}`)
+            assert.deepEqual(errors, [], 'Navigation fixture reported runtime errors')
+        }
+    } else {
+        for (const count of [1, 4, 8, 12]) {
+            await open(`n=${count}`)
+            // Warm both modes before measuring: cold JIT and transcript arrivals can
+            // dominate short measurements and are reported separately by request count.
+            await evaluate('window.runBenchmark(false)')
+            await evaluate('window.runBenchmark(true)')
+            for (const linked of [false, true]) console.log(JSON.stringify(await evaluate(`window.runBenchmark(${linked})`)))
+            console.log(`CHECK ${count}: ${await evaluate('window.runChecks()')}`)
+            if (count === 12) console.log(`STRESS: ${await evaluate('window.runLinkedStress()')}`)
+            assert.deepEqual(errors, [], 'Browser reported runtime errors')
+        }
+        await open('n=12&instant')
+        console.log(`STRESS (immediate responses): ${await evaluate('window.runLinkedStress()')}`)
+        assert.deepEqual(errors, [], 'Immediate-response stress fixture reported runtime errors')
+        await send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 900, deviceScaleFactor: 2, mobile: false })
+        for (const fallback of [false, true]) {
+            await open(`export${fallback ? '&no-observer' : ''}`)
+            console.log(`CHECK export${fallback ? ' (no IntersectionObserver)' : ''}: ${await evaluate('window.runExportChecks()')}`)
+            assert.deepEqual(errors, [], 'Export fixture reported runtime errors')
+        }
     }
 } finally {
     socket?.close()

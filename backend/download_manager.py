@@ -2787,12 +2787,49 @@ class DownloadManager:
                 return url.rsplit("/", 1)[0] + "/"
         return ""
 
+    def _discover_release_homologies(
+        self, release_files: List[FileInfo], provider_key: str, release_date: str,
+    ) -> List[FileInfo]:
+        """Discover dated exports omitted from the species catalogue.
+
+        Homology export dates belong to the annotation release; they are not
+        annotation release dates themselves. Keep that release's metadata when
+        constructing downloads from its sibling homology directory.
+        """
+        release_url = self._release_directory_url_from_files(release_files, provider_key, release_date)
+        marker = f"/{provider_key}/{release_date}/"
+        if not release_url or marker not in release_url:
+            return release_files
+        root = f"{release_url}homology/"
+        try:
+            entries = self._fetch_ftp_directory_entries(root)
+        except Exception:
+            return release_files
+        dated_dirs = sorted((entry for entry in entries if re.fullmatch(r"\d{4}[_-]\d{2}[_-]\d{2}/", entry)), reverse=True)
+        directories = [root + entry for entry in dated_dirs] + [root]
+        for directory in directories:
+            try:
+                names = entries if directory == root else self._fetch_ftp_directory_files(directory)
+            except Exception:
+                continue
+            filenames = sorted(name for name in names if name.lower().endswith((".tsv.gz", ".tsv")))
+            if not filenames:
+                continue
+            discovered = [self._file_info_from_path(
+                directory.removeprefix(ENSEMBL_FTP_BASE) + filename,
+                file_type="homology", provider=DEFAULT_PROVIDER, scope="dataset",
+                dataset_release_source=provider_key, dataset_release_date=release_date,
+            ) for filename in filenames]
+            return [item for item in release_files if item.type != "homology"] + discovered
+        return release_files
+
     def get_file_availability(
         self,
         species_key: str,
         assembly: str,
         provider: str = DEFAULT_PROVIDER,
         include_directory_listing: bool = False,
+        include_homology_listing: bool = False,
     ) -> Dict[str, Any]:
         normalized_provider = str(provider or DEFAULT_PROVIDER).strip().lower() or DEFAULT_PROVIDER
         if normalized_provider == NCBI_PROVIDER:
@@ -2908,6 +2945,8 @@ class DownloadManager:
                         ))
                 if include_directory_listing:
                     release_files = self._augment_release_with_directory_listing(release_files)
+                if include_directory_listing or (include_homology_listing and not any(item.type == "homology" for item in release_files)):
+                    release_files = self._discover_release_homologies(release_files, provider_key, release_date)
 
                 default_gff = self._default_gff3_filename(release_files)
                 for item in release_files:
@@ -2963,7 +3002,8 @@ class DownloadManager:
         file_types: subset of available file types. None = default core types.
         """
         want = set(file_types) if file_types else {"fasta", "gff3", "homology", "metadata"}
-        availability = self.get_file_availability(species_key, assembly, provider=DEFAULT_PROVIDER)
+        availability = self.get_file_availability(species_key, assembly, provider=DEFAULT_PROVIDER,
+                                                 include_homology_listing="homology" in want)
         selected: List[FileInfo] = []
 
         for raw in availability.get("assembly_files") or []:

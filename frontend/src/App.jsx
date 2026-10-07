@@ -43,6 +43,7 @@ import ConfigurationView from './components/ConfigurationView'
 import NeighbourhoodView from './components/NeighbourhoodView'
 import StructuralVariationView from './components/StructuralVariationView'
 import HomologyView from './components/HomologyView'
+import useHomologyWorkspace from './components/homology/useHomologyWorkspace'
 import StatsView from './components/StatsView'
 import FeatureExplorerView from './components/FeatureExplorerView'
 import DownloadView from './components/DownloadView'
@@ -679,7 +680,6 @@ function getCoveredAlignmentColumnRange(genomicToAlign, requestedWindow) {
 }
 
 
-const TWO_GENOME_VIEWS = new Set(['homology'])
 const NEIGHBOURHOOD_FLANK_WINDOW_SIZE = 100
 
 const SV_REF_GRCH38_ALIASES = [
@@ -752,6 +752,7 @@ function resolveStructuralVariationTrioSpecies(activeSpecies) {
 }
 
 function getViewActiveCapacity(viewId) {
+  if (viewId === 'homology') return Number.POSITIVE_INFINITY
   if (viewId === 'genome_browser') return Number.POSITIVE_INFINITY
   if (viewId === 'alignment') return Number.POSITIVE_INFINITY
   if (viewId === 'stats') return Number.POSITIVE_INFINITY
@@ -765,7 +766,6 @@ function getViewActiveCapacity(viewId) {
   // genome away instead of promoting it. Drawing one at a time is the view's
   // business; how many are available to draw is not.
   if (viewId === 'sequence') return Number.POSITIVE_INFINITY
-  if (TWO_GENOME_VIEWS.has(viewId)) return 2
   return 0
 }
 
@@ -894,6 +894,10 @@ function App() {
   // Genes selected in the genome browser (shared across views)
   const [browserRefGene, setBrowserRefGene] = useState(null)
   const [browserTgtGene, setBrowserTgtGene] = useState(null)
+  const [browserGeneEntry, setBrowserGeneEntry] = useState(null)
+  const handleBrowserGeneEntryConsumed = useCallback((entry) => {
+    setBrowserGeneEntry((current) => current === entry ? null : current)
+  }, [])
   const [browserRefViewport, commitBrowserRefViewport] = useState(null)
   // The browser reports its primary viewport on every frame of a pan, but only
   // the Structural Variation view reads it, and that view is not mounted while
@@ -4080,8 +4084,6 @@ function App() {
     if (viewId === 'structural_variation') {
       primary = activeSpecies[0] || primary
       secondary = activeSpecies[1] || null
-    } else if (TWO_GENOME_VIEWS.has(viewId)) {
-      secondary = focusSecondary || null
     } else {
       secondary = secondary || focusSecondary || currentSecondary || null
     }
@@ -4654,12 +4656,6 @@ function App() {
       if (viewCapacity === 1) {
         nextFocus.primaryKey = key
         nextFocus.secondaryKey = ''
-      } else if (TWO_GENOME_VIEWS.has(currentView)) {
-        if (!nextFocus.primaryKey) {
-          nextFocus.primaryKey = key
-        } else if (!nextFocus.secondaryKey && nextFocus.primaryKey !== key) {
-          nextFocus.secondaryKey = key
-        }
       } else if (!nextFocus.primaryKey && nextActive.length > 0) {
         nextFocus.primaryKey = speciesItemKey(nextActive[0])
       }
@@ -6476,6 +6472,9 @@ function App() {
     }
   }, [buildFocusFromActive, config, currentView, getAlignedGenomeConfigForView])
 
+  const homologyGenomes = useMemo(() => dedupeSpeciesList(config?.active_species || []), [config?.active_species])
+  const homologyWorkspace = useHomologyWorkspace({ genomes: homologyGenomes, localGenomes: topBarSpecies, outputDir: config?.output_dir, enabled: currentView === 'homology' })
+
   return (
     <div className={`h-screen flex flex-col ${themeStyles.bg} ${themeStyles.text}`}>
       {config.show_fps_counter && <FpsCounter />}
@@ -7076,18 +7075,17 @@ function App() {
               <HomologyView
                 theme={theme}
                 config={config}
-                refSpecies={refSpecies}
-                tgtSpecies={tgtSpecies}
-                refPillLabel={g1PillLabel}
-                tgtPillLabel={g2PillLabel}
-                refResolved={refResolved}
-                tgtResolved={tgtResolved}
-                browserRefGene={browserRefGene}
-                browserTgtGene={browserTgtGene}
-                onRefPillClick={() => refSpecies ? handleSpeciesPillToggle(refSpecies) : null}
-                onTgtPillClick={() => tgtSpecies ? handleSpeciesPillToggle(tgtSpecies) : null}
-                onRefGeneFocus={(gene) => handleRefGeneSelect(gene)}
-                onTgtGeneFocus={(gene) => handleTgtGeneSelect(gene)}
+                genomes={homologyGenomes}
+                localGenomes={homologyWorkspace.availableGenomes}
+                workspace={homologyWorkspace}
+                onToggleGenome={handleSpeciesPillToggle}
+                onOpenGene={async (genome, gene) => {
+                  const key = speciesItemKey(genome)
+                  if (!key || !gene?.id) return
+                  await handleGenomeWheelPromote(key, 'add', genome)
+                  setBrowserGeneEntry({ genomeKey: key, gene })
+                  setCurrentView('genome_browser')
+                }}
               />
             </div>
           ) : currentView === 'feature_explorer' ? (
@@ -7273,6 +7271,8 @@ function App() {
                 externalTgtGene={browserTgtGene}
                 externalFocusGenesByGenome={focusGeneByGenome}
                 externalFocusLocationsByGenome={browserLocationFocusByGenome}
+                incomingGene={browserGeneEntry}
+                onIncomingGeneConsumed={handleBrowserGeneEntryConsumed}
                 onGeneFocusByGenomeChange={setBrowserFocusByGenome}
                 onClearFocusedGenes={handleClearAllFocusedGenes}
                 screenshotMode={currentView === 'genome_browser' ? screenshotMode : false}

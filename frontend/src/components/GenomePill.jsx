@@ -44,10 +44,15 @@ export default function GenomePill({
     minWidth,
     maxWidth,
     paddingLeft,
+    as = 'div',
     onClick = null,
+    role,
+    tabIndex,
+    ariaLabel,
+    ariaSelected,
     children = null,
 }) {
-    const Tag = onClick ? 'button' : 'div'
+    const Tag = onClick ? 'button' : as
     return (
         <>
             {badge ? (
@@ -62,6 +67,10 @@ export default function GenomePill({
                 </span>
             ) : null}
             <Tag
+                role={role}
+                tabIndex={tabIndex}
+                aria-label={ariaLabel}
+                aria-selected={ariaSelected}
                 data-tutorial-pill={tutorialDatasetId || undefined}
                 data-tutorial-engaged={tutorialDatasetId ? String(Boolean(tutorialEngaged)) : undefined}
                 {...(onClick ? { onClick, onMouseDown: (event) => event.stopPropagation() } : {})}

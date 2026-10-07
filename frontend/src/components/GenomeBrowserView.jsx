@@ -25,6 +25,7 @@ import { rasterizeSvgMarkup } from '../utils/screenshotExport'
 import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch, trackAssemblyKey } from '../utils/genomeIdentity'
 import { cycleBottomSpacer } from '../utils/genomeWheel'
 import { findScrollHost, stickyControlsInset, panelAlignmentAnchor } from '../utils/browserScrollRail'
+import { resolveBrowserGene } from '../utils/browserGeneNavigation.js'
 import { LOCKED_ICON_PATH, UNLOCKED_ICON_PATH } from '../utils/lockIcons'
 import {
     DEFAULT_NOTE_SORT_MODE,
@@ -277,6 +278,8 @@ export default function GenomeBrowserView({
     // genomeKey -> { chrom, start, end } a location note asked the browser to
     // go to. Handed straight to the panel, which focuses it on arrival.
     externalFocusLocationsByGenome = null,
+    incomingGene = null,
+    onIncomingGeneConsumed = null,
     onGeneFocusByGenomeChange = null,
     onClearFocusedGenes = null,
     screenshotMode = false,
@@ -334,6 +337,7 @@ export default function GenomeBrowserView({
     // bottom edge of a panel sized for two rows of genes.
     const [locationDrawerFitByPanel, setLocationDrawerFitByPanel] = useState({})
     const [navigateGenes, setNavigateGenes] = useState({})
+    const [incomingGeneError, setIncomingGeneError] = useState(null)
     const [panelPositions, setPanelPositions] = useState({})
     const [linkedPanelKeys, setLinkedPanelKeys] = useState([])
     const [linkingGene, setLinkingGene] = useState(false)
@@ -908,6 +912,48 @@ export default function GenomeBrowserView({
         // so the scroll is the whole of what the jump does.
         alignPanelToTop(panelKey)
     }, [onPromoteGenome, alignPanelToTop])
+
+    const incomingPanel = panels.find((panel) => panel.key === incomingGene?.genomeKey)
+    const incomingPanelReady = browserReadyState?.[incomingPanel?.key]?.state === 'ready'
+
+    useEffect(() => {
+        if (!isActive || !incomingGene) return
+        setIncomingGeneError(null)
+        alignPanelToTop(incomingGene.genomeKey)
+    }, [isActive, incomingGene, alignPanelToTop])
+
+    useEffect(() => {
+        if (!isActive) stopCycleScroll()
+    }, [isActive, stopCycleScroll])
+
+    useEffect(() => {
+        if (!isActive || !incomingGene || !incomingPanel || !incomingPanelReady) return
+        const controller = new AbortController()
+        const openGene = async () => {
+            try {
+                const gene = await resolveBrowserGene({
+                    apiBase: API_BASE,
+                    genomeKey: incomingPanel.genomeParam,
+                    gene: incomingGene.gene,
+                    signal: controller.signal,
+                })
+                if (controller.signal.aborted) return
+                handlePanelGeneSelect(incomingPanel.key, gene)
+                // A fresh navigation object also re-centres a gene that was
+                // already focused before the reader panned away from it.
+                handleLocationFocusGene(incomingPanel.key, gene)
+                alignPanelToTop(incomingPanel.key)
+                onIncomingGeneConsumed?.(incomingGene)
+            } catch (error) {
+                if (controller.signal.aborted) return
+                setIncomingGeneError({ genomeKey: incomingPanel.key, message: error.message })
+                onIncomingGeneConsumed?.(incomingGene)
+            }
+        }
+        openGene()
+        return () => controller.abort()
+    }, [isActive, incomingGene, incomingPanel, incomingPanelReady, handlePanelGeneSelect,
+        handleLocationFocusGene, alignPanelToTop, onIncomingGeneConsumed])
 
     // What the left-hand scroll rail draws: one dot per genome actually on the
     // page, in page order. Genomes that are merely listed in the top bar are
@@ -3551,6 +3597,17 @@ export default function GenomeBrowserView({
                                 className="relative w-full flex flex-col"
                                 style={fillSinglePanelHeight ? growingPanelStyle : undefined}
                             >
+                                {incomingGene?.genomeKey === panelKey && (
+                                    <div role="status" className={`absolute top-12 left-14 z-30 rounded px-3 py-2 text-sm ${isLight ? 'bg-white text-gray-700' : 'bg-gray-800 text-gray-200'}`}>
+                                        Opening {incomingGene.gene.id}…
+                                    </div>
+                                )}
+                                {incomingGeneError?.genomeKey === panelKey && (
+                                    <div role="alert" className={`absolute top-12 left-14 right-4 z-30 rounded border p-3 text-sm flex items-center justify-between gap-3 ${isLight ? 'bg-red-50 border-red-200 text-red-800' : 'bg-red-950 border-red-800 text-red-200'}`}>
+                                        <span>{incomingGeneError.message}</span>
+                                        <button type="button" className="underline shrink-0" onClick={() => setIncomingGeneError(null)}>Dismiss</button>
+                                    </div>
+                                )}
                                 {idx > 0 && (
                                     <div className="w-full flex-none" style={{ height: '2px', backgroundColor: isLight ? '#adb5bd' : '#373a40' }} />
                                 )}

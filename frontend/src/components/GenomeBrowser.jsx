@@ -4549,6 +4549,8 @@ function GenomeBrowser({
     // ============ Data Fetching ============
 
     const regionsRetryTimerRef = useRef(null)
+    const geneNavigationRef = useRef(navigateToGene)
+    geneNavigationRef.current = navigateToGene
 
     // Fetch available regions on mount
     useEffect(() => {
@@ -4576,7 +4578,7 @@ function GenomeBrowser({
                     // Auto-select informative default locus for initial view —
                     // unless the panel was opened on a region someone asked for,
                     // which is about to frame itself and must not be overruled.
-                    if (data.length > 0 && !selectedChrom && !pendingLocationNavigateRef.current) {
+                    if (data.length > 0 && !selectedChrom && !pendingLocationNavigateRef.current && !geneNavigationRef.current) {
                         let initialized = false
 
                         try {
@@ -4584,7 +4586,7 @@ function GenomeBrowser({
                             if (prefRes.ok) {
                                 const pref = await prefRes.json()
                                 if (controller.signal.aborted) return
-                                if (pref?.chrom) {
+                                if (pref?.chrom && !geneNavigationRef.current) {
                                     setSelectedChrom(pref.chrom)
                                     setChromLength(pref.chrom_length || pref.end || 0)
                                     setViewStart(pref.start)
@@ -4598,7 +4600,7 @@ function GenomeBrowser({
                             }
                         }
 
-                        if (!initialized) {
+                        if (!initialized && !geneNavigationRef.current) {
                             const candidates = data.filter((r) => r.gene_count > 0)
                             const best = (candidates.length ? candidates : data)
                                 .slice()
@@ -6413,6 +6415,9 @@ function GenomeBrowser({
     const lastNavigateRef = useRef(null)
     useEffect(() => {
         if (!navigateToGene || navigateToGene === lastNavigateRef.current) return
+        // A newly activated panel still has to load its regions. Keep the
+        // request pending so its initial locus cannot replace the gene view.
+        if (!regions.length) return
         lastNavigateRef.current = navigateToGene
         const {
             chrom,
