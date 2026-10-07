@@ -4,7 +4,7 @@ import AppButtonIcon from './AppButtonIcon'
 import { getGenomeKey } from '../utils/genomeIdentity.js'
 import { genomeColorResolver } from '../genomeColorSchemes.js'
 import { genomePillColors } from '../utils/genomePillColors.js'
-import { buildComparison, cellState, detailTableColumns, effectiveQuery, genomeLabel, hasHomologySource, PAGE_SIZE, targetCandidates } from './homology/model.js'
+import { buildComparison, cellState, detailTableColumns, effectiveQuery, genomeLabel, hasHomologySource, homologyResultTab, PAGE_SIZE, targetCandidates } from './homology/model.js'
 import useResultsViewport from './homology/useResultsViewport.js'
 import useRowFocus from './homology/useRowFocus.js'
 import './homology/search.css'
@@ -38,11 +38,11 @@ function Badge({ genome, color, isLight, onClick, compact = false, selected }) {
     </span>
 }
 
-function ResultTab({ selected, isLight, color = '#3b82f6', label, onClick, children }) {
+function ResultTab({ selected, disabled = false, title, isLight, color = '#3b82f6', label, onClick, children }) {
     const appearance = selected
         ? isLight ? 'bg-white border-gray-300 text-gray-900' : 'bg-gray-800 border-gray-600 text-white'
         : isLight ? 'border-transparent text-gray-600 hover:bg-gray-200/70' : 'border-transparent text-gray-400 hover:bg-gray-700/60'
-    return <button type="button" role="tab" tabIndex={selected ? 0 : -1} aria-selected={selected} aria-controls="homology-result-panel" aria-label={label} onClick={onClick} className={`relative shrink-0 inline-flex items-center justify-center rounded-t-lg border border-b-0 px-3 pt-2 pb-3 cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-[-3px] ${appearance}`}>
+    return <button type="button" role="tab" disabled={disabled} title={title} tabIndex={selected && !disabled ? 0 : -1} aria-selected={selected} aria-disabled={disabled} aria-controls="homology-result-panel" aria-label={label} onClick={onClick} className={`relative shrink-0 inline-flex items-center justify-center rounded-t-lg border border-b-0 px-3 pt-2 pb-3 ${disabled ? 'cursor-default opacity-40' : 'cursor-pointer'} transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-[-3px] ${appearance}`}>
         {children}
         {selected && <span className="absolute bottom-0 inset-x-2 h-0.5 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" />}
     </button>
@@ -112,16 +112,20 @@ function MatrixRow({ row, showGroup, comparison, openEvidence, surface, muted, b
 
 function ResultsTable({ genome, panel, state, dispatch, localGenomes, activeGenomes, onOpenGene, isLight, muted, border }) {
     const key = getGenomeKey(genome)
-    const data = panel.data
-    const detail = panel.detail
+    const data = panel?.data
+    const detail = panel?.detail
     const page = detail?.data
-    const rowsRef = useRowFocus(key, panel.navigation, detail)
+    const rowsRef = useRowFocus(key, panel?.navigation, detail)
+    if (panel?.status !== 'ready') {
+        const message = panel?.error || ({ missing: 'No homology file available for this genome.', stale: 'The homology file changed. Search this genome again.', queued: 'Search queued…', loading: 'Searching / preparing index…', error: 'Search failed.' }[panel?.status] || 'Search this genome to see its homology hits.')
+        return <div data-homology-stage className={`shrink-0 h-[var(--homology-rows-height,70vh)] min-h-[200px] flex items-center justify-center p-8 text-center ${panel?.status === 'error' ? 'text-red-500' : muted}`} role={panel?.status === 'error' ? 'alert' : 'status'}>{message}</div>
+    }
     const columns = detailTableColumns(data.columns, state.visibleColumns)
     const canonical = data.canonical_columns
     const read = (entry, name) => entry.values[canonical[name]] || ''
     return <>
         <div data-homology-stage className="shrink-0 flex flex-col h-[var(--homology-rows-height,70vh)] min-h-[200px]">
-        {detail?.status === 'loading' ? <div className={`flex-1 min-h-0 flex items-center justify-center p-8 text-center ${muted}`} role="status">Loading rows…</div> : detail?.status === 'error' ? <div className={`flex-1 min-h-0 overflow-auto p-8 text-red-500 ${scrollbarClass(isLight)}`} role="alert">{detail.error}</div> : !columns.length ? <div className={`flex-1 min-h-0 flex items-center justify-center p-8 text-center ${muted}`}>Select columns in Filters and display.</div> : !page?.rows.length ? <div className={`flex-1 min-h-0 flex items-center justify-center p-8 text-center ${muted}`}>No rows pass these filters.</div> : <div ref={rowsRef} data-homology-rows role="region" aria-label="Individual hit rows" tabIndex={0} className={`flex-1 min-h-0 overflow-auto focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-[-2px] ${scrollbarClass(isLight)}`}>
+        {detail?.status === 'loading' ? <div className={`flex-1 min-h-0 flex items-center justify-center p-8 text-center ${muted}`} role="status">Loading rows…</div> : detail?.status === 'error' ? <div className={`flex-1 min-h-0 overflow-auto p-8 text-red-500 ${scrollbarClass(isLight)}`} role="alert">{detail.error}</div> : !data.resolved_genes.length ? <div className={`flex-1 min-h-0 flex items-center justify-center p-8 text-center ${muted}`}>No matching genes.</div> : !columns.length ? <div className={`flex-1 min-h-0 flex items-center justify-center p-8 text-center ${muted}`}>Select columns in Filters and display.</div> : !page?.rows.length ? <div className={`flex-1 min-h-0 flex items-center justify-center p-8 text-center ${muted}`}>No rows pass these filters.</div> : <div ref={rowsRef} data-homology-rows role="region" aria-label="Individual hit rows" tabIndex={0} className={`flex-1 min-h-0 overflow-auto focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:outline-offset-[-2px] ${scrollbarClass(isLight)}`}>
             <table className="w-full min-w-max text-sm border-separate border-spacing-0"><caption className="sr-only">Original homology TSV rows for {genomeLabel(genome)}</caption><thead className="sticky top-0 z-10"><tr>{columns.map(column => <th key={column} scope="col" className={`text-left whitespace-nowrap px-3 py-2 border-b ${isLight ? 'bg-gray-100 text-gray-600' : 'bg-gray-900 text-gray-300'} ${border}`}>{columnLabel(column)}</th>)}</tr></thead>
                 <tbody>{page.rows.map((entry, i) => {
                     const hit = { species: read(entry, 'ref_species'), assembly: read(entry, 'ref_assembly'), gene_id: read(entry, 'ref_gene_stable_id'), symbol: read(entry, 'ref_gene_name') }
@@ -188,15 +192,15 @@ export default function HomologyView({ theme = 'dark', config, genomes, localGen
     const allColumns = [...new Set(readyPanels.flatMap(panel => panel.data.columns))]
     const visibleColumns = detailTableColumns(allColumns, state.visibleColumns)
     const targets = new Map(readyPanels.flatMap(panel => panel.data.evidence.map(hit => [hit.target_assembly_key, `${hit.species.replaceAll('_', ' ')} · ${hit.assembly || 'unspecified assembly'}`])))
-    const activeGenome = genomes.find(genome => getGenomeKey(genome) === state.activeTab)
-    const activePanel = activeGenome && state.panels[state.activeTab]
-    const detailVisible = activePanel?.status === 'ready' && activePanel.data.resolved_genes.length > 0
-    const tab = detailVisible ? state.activeTab : 'summary'
+    const tab = homologyResultTab(genomes, state)
+    const activeGenome = genomes.find(genome => getGenomeKey(genome) === tab)
+    const activePanel = activeGenome && state.panels[tab]
     const setFilter = value => dispatch({ type: 'filters', value })
     const handleTabKey = event => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || event.target.getAttribute('role') !== 'tab') return
         event.preventDefault()
-        const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')]
+        const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]:not(:disabled)')]
+        if (!tabs.length) return
         const current = tabs.indexOf(event.target)
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
         tabs[next].focus({ preventScroll: true })
@@ -249,9 +253,10 @@ export default function HomologyView({ theme = 'dark', config, genomes, localGen
             </div>}
         </section>
         <section ref={resultsRef} className={`flex flex-col min-h-[320px] rounded-xl border overflow-hidden ${surface} ${border}`} aria-label="Homology results">
-            <div className={`shrink-0 flex items-stretch gap-1 overflow-x-auto px-3 pt-2 border-b ${border} ${scrollbarClass(light)} ${light ? 'bg-gray-100/80' : 'bg-gray-900/40'}`} role="tablist" aria-label="Homology result tables" onKeyDown={handleTabKey}><ResultTab selected={tab === 'summary'} isLight={light} onClick={() => dispatch({ type: 'tab', key: 'summary' })}><span className="px-1 py-1.5 text-xs whitespace-nowrap font-semibold">Summary matrix</span></ResultTab>{genomes.filter(genome => { const panel = state.panels[getGenomeKey(genome)]; return panel?.status === 'ready' && panel.data.resolved_genes.length }).map(genome => {
+            <div className={`shrink-0 flex items-stretch gap-1 overflow-x-auto px-3 pt-2 border-b ${border} ${scrollbarClass(light)} ${light ? 'bg-gray-100/80' : 'bg-gray-900/40'}`} role="tablist" aria-label="Homology result tables" onKeyDown={handleTabKey}><ResultTab selected={multipleGenomes && tab === 'summary'} disabled={!multipleGenomes} title={!multipleGenomes ? 'Summary becomes active with two or more genomes.' : undefined} isLight={light} onClick={() => dispatch({ type: 'tab', key: 'summary' })}><span className="px-1 py-1.5 text-xs whitespace-nowrap font-semibold">Summary matrix</span></ResultTab>{genomes.filter(genome => { const panel = state.panels[getGenomeKey(genome)]; return genomes.length === 1 || panel?.status === 'ready' && panel.data.resolved_genes.length }).map(genome => {
                 const key = getGenomeKey(genome)
-                return <ResultTab key={key} selected={tab === key} isLight={light} color={colors(genome)} label={`${genomeLabel(genome)} (${state.panels[key].data.total_rows.toLocaleString()})`} onClick={() => dispatch({ type: 'tab', key })}><Badge genome={genome} color={colors(genome)} isLight={light} compact selected={tab === key} /></ResultTab>
+                const panel = state.panels[key]
+                return <ResultTab key={key} selected={tab === key} isLight={light} color={colors(genome)} label={`${genomeLabel(genome)}${panel?.data ? ` (${panel.data.total_rows.toLocaleString()})` : ''}`} onClick={() => dispatch({ type: 'tab', key })}><Badge genome={genome} color={colors(genome)} isLight={light} compact selected={tab === key} /></ResultTab>
             })}</div>
             {/* Every tab reserves the same row viewport, including loading/empty states. */}
             <div id="homology-result-panel" role="tabpanel" className="flex flex-col flex-1 min-h-0" aria-label={tab === 'summary' ? 'Summary matrix' : genomeLabel(activeGenome)}>{tab === 'summary' ? <ComparisonMatrix comparison={comparison} state={state} dispatch={dispatch} openEvidence={openEvidence} colors={colors} isLight={light} surface={surface} muted={muted} border={border} /> : <ResultsTable genome={activeGenome} panel={activePanel} state={state} dispatch={dispatch} localGenomes={localGenomes} activeGenomes={genomes} onOpenGene={onOpenGene} isLight={light} muted={muted} border={border} />}</div>

@@ -13,6 +13,13 @@ export const genomeLabel = genome => [genome.display_name || genome.common_name 
 export const columnKey = (genomeKey, geneId) => JSON.stringify([genomeKey, String(geneId || '').toLowerCase()])
 export const effectiveQuery = (state, key) => (state.panels[key]?.override ?? state.sharedQuery).trim()
 export const hasHomologySource = panel => Boolean(panel?.sourcePath) && panel.status !== 'missing'
+export function homologyResultTab(genomes, state) {
+    if (genomes.length === 1) return getGenomeKey(genomes[0])
+    const panel = state.panels[state.activeTab]
+    return genomes.some(genome => getGenomeKey(genome) === state.activeTab)
+        && panel?.status === 'ready' && panel.data.resolved_genes.length
+        ? state.activeTab : 'summary'
+}
 export function detailTableColumns(columns, selected = null) {
     const queryContext = new Set(['query_species', 'query_assembly', 'query_gene_stable_id', 'query_gene_name'])
     return columns.filter(column => selected === null ? !queryContext.has(column.toLowerCase()) : selected.includes(column))

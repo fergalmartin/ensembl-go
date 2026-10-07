@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import { API_BASE } from '../../backendRuntime'
 import { getGenomeKey } from '../../utils/genomeIdentity.js'
-import { allowedTargets, effectiveQuery, hasHomologySource, initialWorkspace, PAGE_SIZE, SearchQueue, workspaceReducer } from './model.js'
+import { allowedTargets, effectiveQuery, hasHomologySource, homologyResultTab, initialWorkspace, PAGE_SIZE, SearchQueue, workspaceReducer } from './model.js'
 
 async function search(body, signal) {
     const response = await fetch(`${API_BASE}/api/homology/search`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })
@@ -101,10 +101,11 @@ export default function useHomologyWorkspace({ genomes, localGenomes, outputDir,
         }
     }, [genomes, state, run])
 
-    const activePanel = state.panels[state.activeTab]
+    const activeTab = homologyResultTab(genomes, state)
+    const activePanel = state.panels[activeTab]
     const targetAssemblies = useMemo(() => allowedTargets(state.filters, genomes, availableGenomes), [state.filters, genomes, availableGenomes])
     const detailBody = activePanel?.status === 'ready' ? {
-        genome_key: state.activeTab, gene_query: activePanel.submittedQuery,
+        genome_key: activeTab, gene_query: activePanel.submittedQuery,
         min_identity: state.filters.minIdentity === '' ? null : Number(state.filters.minIdentity),
         min_coverage: state.filters.minCoverage === '' ? null : Number(state.filters.minCoverage),
         types: state.filters.types, target_assemblies: targetAssemblies,

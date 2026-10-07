@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { getGenomeKey } from '../src/utils/genomeIdentity.js'
-import { allowedTargets, assemblyKey, buildComparison, cellState, columnKey, defaultFilters, detailTableColumns, effectiveQuery, hasHomologySource, initialWorkspace, SearchQueue, targetCandidates, workspaceReducer } from '../src/components/homology/model.js'
+import { allowedTargets, assemblyKey, buildComparison, cellState, columnKey, defaultFilters, detailTableColumns, effectiveQuery, hasHomologySource, homologyResultTab, initialWorkspace, SearchQueue, targetCandidates, workspaceReducer } from '../src/components/homology/model.js'
 
 const genome = (name, release = '2025_12', path = `/${name}.tsv.gz`) => ({ species_key: name, scientific_name: name, assembly: `${name}_accession`, assembly_name: `${name}_assembly`, provider: 'ensembl', dataset_release_key: `ensembl/${release}`, files: { homology: path, gff3: `/${name}.gff3` } })
 const A = genome('human'), B = genome('mouse'), C = genome('fox')
@@ -11,6 +11,26 @@ const hit = (gene, target, variants = [variant()], assembly = 'Dog1') => ({ quer
 const panel = (genes, hits, status = 'ready') => ({ status, submittedQuery: 'BRCA2', data: { resolved_genes: genes.map(id => ({ id, name: id })), evidence: hits } })
 const panels = () => ({ [key(A)]: panel(['A1'], [hit('A1', 'D1'), hit('A1', 'D2', [variant(95, false, 'homolog_bbh')])]), [key(B)]: panel(['B1'], [hit('B1', 'D1'), hit('B1', 'D3', [variant(80, false)])]), [key(C)]: panel(['C1'], [hit('C1', 'D2')]) })
 const sync = (state, genomes, sources) => workspaceReducer(state, { type: 'sync', genomes, sources })
+
+test('one active genome always selects its individual results, including before and during searches', () => {
+    for (const status of ['idle', 'queued', 'loading', 'missing', 'error', 'stale', 'ready']) {
+        const state = { ...initialWorkspace(), panels: { [key(A)]: panel(['A1'], [], status) } }
+        assert.equal(homologyResultTab([A], state), key(A))
+        assert.equal(homologyResultTab([A], { ...state, activeTab: key(B) }), key(A))
+    }
+    assert.equal(homologyResultTab([A], initialWorkspace()), key(A))
+    assert.equal(homologyResultTab([A], { ...initialWorkspace(), panels: { [key(A)]: panel([], []) } }), key(A))
+})
+
+test('two or more active genomes restore the summary and retain valid individual tab choices', () => {
+    const state = { ...initialWorkspace(), panels: panels() }
+    assert.equal(homologyResultTab([A, B], state), 'summary')
+    const selected = { ...state, activeTab: key(A) }
+    assert.equal(homologyResultTab([A, B], selected), key(A))
+    assert.equal(homologyResultTab([B], selected), key(B))
+    assert.equal(homologyResultTab([B, C], selected), 'summary')
+    assert.equal(homologyResultTab([], selected), 'summary')
+})
 
 test('compact table defaults hide repeated query context while every TSV column stays selectable', () => {
     const columns = ['ref_species', 'query_species', 'query_assembly', 'QUERY_GENE_STABLE_ID', 'query_gene_name', 'ref_gene_stable_id', 'custom_field', 'query_perc_id']
