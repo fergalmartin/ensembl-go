@@ -65,6 +65,16 @@ try:
 except Exception:
     pyBigWig = None
 
+# Configure logging before importing this application's own modules, so that what
+# they log while being imported (the download manager loading its catalogue, say)
+# is not lost.
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
 from bed_index import get_plain_bed_index, is_gff_path, is_plain_bed_path, looks_like_gene_models, open_plain_bed
 from download_manager import DownloadManager, SpeciesSummary, FileInfo, DownloadTask, GroupCount
 from assembly_report import (
@@ -196,14 +206,6 @@ from security_utils import (
     validate_trackhub_data_url,
 )
 import app_paths
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S'
-)
-logger = logging.getLogger(__name__)
 
 def log_progress(msg: str):
     """Print progress message with flush for immediate output."""
