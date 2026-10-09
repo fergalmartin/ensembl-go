@@ -2,13 +2,45 @@ import { useEffect, useMemo, useState } from 'react'
 import { DEFAULT_GENOME_COLOR } from '../genomeColorSchemes'
 import { genomePillColors } from '../utils/genomePillColors'
 import DrawerChevron from './DrawerChevron'
-import { CogGlyph, DrawerIconButton, DrawerSectionHeading, LockGlyph, VerticalChevronGlyph } from './focusDrawerChrome'
+import { CloseGlyph, CogGlyph, DrawerIconButton, DrawerSectionHeading, LockGlyph, VerticalChevronGlyph } from './focusDrawerChrome'
 import { focusDrawerPalette } from './focusDrawerStyle'
 
 // Feature Alignment's controls, as a drawer on the right of the view in the same
 // chrome as the browser's and the sequence view's drawers: a band with the collapse
 // arrow, a search across every genome, then each genome as a row rather than a card,
-// with its options folding open underneath it.
+// with its options folding open underneath it. Under the run button, what the last
+// run reported: notes that fade on their own, and warnings that stay until closed.
+
+// Messages that only report what a run did, as opposed to warnings that want
+// acting on. They fade after a few seconds; warnings stay until closed.
+const NOTICE_PATTERNS = [
+    /^MSA completed in\s+/i,
+    /^Trimmed to the selected transcripts/i,
+    /^Reused a stored alignment/i,
+]
+const NOTICE_SECONDS = 6
+
+function isNotice(message) {
+    return NOTICE_PATTERNS.some((pattern) => pattern.test(message))
+}
+
+/** One message in the box under the run button, with the way to close it. */
+function RunMessage({ message, onDismiss, closeClass }) {
+    return (
+        <div className="flex items-start gap-2">
+            <span className="flex-1 min-w-0">{message}</span>
+            <button
+                type="button"
+                onClick={onDismiss}
+                title="Dismiss"
+                aria-label="Dismiss"
+                className={`flex-none -mr-1 rounded p-0.5 transition-colors ${closeClass}`}
+            >
+                <CloseGlyph size={12} />
+            </button>
+        </div>
+    )
+}
 
 function clampMin(value, min, fallback) {
     const num = Number(value)
@@ -133,7 +165,6 @@ export default function MultiAlignmentSidebar({
     const [settingsOpen, setSettingsOpen] = useState(false)
     const [genomesOpen, setGenomesOpen] = useState(true)
     const [sharedQuery, setSharedQuery] = useState('')
-    const [visibleCompletionNotices, setVisibleCompletionNotices] = useState([])
 
     const inputClass = isLight
         ? 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400 focus:ring-blue-500 focus:border-blue-500'
@@ -175,24 +206,29 @@ export default function MultiAlignmentSidebar({
         [warnings]
     )
 
-    const completionNoticeMessages = useMemo(
-        () => warningMessages.filter((msg) => /^MSA completed in\s+/i.test(msg)),
-        [warningMessages]
-    )
-
-    const persistentWarningMessages = useMemo(
-        () => warningMessages.filter((msg) => !/^MSA completed in\s+/i.test(msg)),
-        [warningMessages]
-    )
+    // What has been closed, for this run's messages only: a new run's messages
+    // start out showing again.
+    const warningsKey = warningMessages.join('\n')
+    const [dismissed, setDismissed] = useState({ key: '', messages: [] })
+    const dismissedMessages = dismissed.key === warningsKey ? dismissed.messages : []
+    const dismissMessages = (messages) => setDismissed((prev) => ({
+        key: warningsKey,
+        messages: [...(prev.key === warningsKey ? prev.messages : []), ...messages],
+    }))
+    const visibleNotices = warningMessages.filter((msg) => isNotice(msg) && !dismissedMessages.includes(msg))
+    const visibleWarnings = warningMessages.filter((msg) => !isNotice(msg) && !dismissedMessages.includes(msg))
 
     useEffect(() => {
-        setVisibleCompletionNotices(completionNoticeMessages)
-        if (completionNoticeMessages.length === 0) return
+        const notices = warningsKey ? warningsKey.split('\n').filter(isNotice) : []
+        if (!notices.length) return undefined
         const timer = window.setTimeout(() => {
-            setVisibleCompletionNotices([])
-        }, 5000)
+            setDismissed((prev) => ({
+                key: warningsKey,
+                messages: [...(prev.key === warningsKey ? prev.messages : []), ...notices],
+            }))
+        }, NOTICE_SECONDS * 1000)
         return () => window.clearTimeout(timer)
-    }, [completionNoticeMessages])
+    }, [warningsKey])
 
     const toggleButton = (
         <DrawerIconButton
@@ -526,17 +562,27 @@ export default function MultiAlignmentSidebar({
             </div>
 
             <div className="px-3 pt-3 pb-3 space-y-2 border-t" style={{ borderColor: palette.divider }}>
-                {visibleCompletionNotices.length > 0 && (
-                    <div className={`rounded-md px-3 py-2 text-xs ${isLight ? 'bg-blue-50 text-blue-800' : 'bg-blue-900/20 text-blue-200'}`}>
-                        {visibleCompletionNotices.map((msg, idx) => (
-                            <div key={`${idx}-${msg}`}>{msg}</div>
+                {visibleNotices.length > 0 && (
+                    <div className={`rounded-md px-3 py-2 text-xs space-y-1 ${isLight ? 'bg-blue-50 text-blue-800' : 'bg-blue-900/20 text-blue-200'}`}>
+                        {visibleNotices.map((msg, idx) => (
+                            <RunMessage
+                                key={`${idx}-${msg}`}
+                                message={msg}
+                                onDismiss={() => dismissMessages([msg])}
+                                closeClass={isLight ? 'hover:bg-blue-100' : 'hover:bg-blue-900/40'}
+                            />
                         ))}
                     </div>
                 )}
-                {persistentWarningMessages.length > 0 && (
-                    <div className={`rounded-md px-3 py-2 text-xs ${isLight ? 'bg-yellow-50 text-yellow-800' : 'bg-yellow-900/20 text-yellow-300'}`}>
-                        {persistentWarningMessages.map((msg, idx) => (
-                            <div key={`${idx}-${msg}`}>{msg}</div>
+                {visibleWarnings.length > 0 && (
+                    <div className={`rounded-md px-3 py-2 text-xs space-y-1 ${isLight ? 'bg-yellow-50 text-yellow-800' : 'bg-yellow-900/20 text-yellow-300'}`}>
+                        {visibleWarnings.map((msg, idx) => (
+                            <RunMessage
+                                key={`${idx}-${msg}`}
+                                message={msg}
+                                onDismiss={() => dismissMessages([msg])}
+                                closeClass={isLight ? 'hover:bg-yellow-100' : 'hover:bg-yellow-900/40'}
+                            />
                         ))}
                     </div>
                 )}

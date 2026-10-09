@@ -3,7 +3,6 @@ import { trackAchievement } from '../achievements/tracker.js'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
 import { getGenomeKey } from '../utils/genomeIdentity'
 import { genomeColorResolver } from '../genomeColorSchemes'
-import { genomePillColors } from '../utils/genomePillColors'
 import {
   markWheelHandled,
   readWheelEvent,
@@ -11,6 +10,7 @@ import {
   resolveWheelAction,
 } from '../utils/browsingControls'
 import { useResumableState } from '../hooks/useResumableState.js'
+import NeighbourhoodControls from './NeighbourhoodControls'
 
 /**
  * The track is panned in raw pixels, so the genome browser's 2x wheel
@@ -24,8 +24,9 @@ const GENE_HEIGHT = 20
 const GENE_GAP = 12
 const GENE_FULL_WIDTH = GENE_WIDTH + GENE_GAP
 const ROW_HEIGHT = 118
-const CONTROL_ROW_HEIGHT = 106
-const CONTROL_ROW_GAP = 12
+// The bar across the top of the track, and the drawer's band beside it: one height,
+// so the two read as a single band across the view.
+const CONTROL_BAR_HEIGHT = 48
 const DISPLAY_FLANK_GENES_PER_SIDE = Number.POSITIVE_INFINITY
 const TOP_PADDING = 34
 const BOTTOM_PADDING = 28
@@ -286,27 +287,6 @@ function toFocusGene(gene) {
   }
 }
 
-function renderFlipIcon(isFlipped) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 9a9 9 0 0 0-14.8-4.2L3 8" />
-      <path d="M3 3v5h5" />
-      <path d="M3 15a9 9 0 0 0 14.8 4.2l3.2-3.2" />
-      <path d="M21 21v-5h-5" />
-      {isFlipped && <line x1="2" y1="2" x2="22" y2="22" stroke="currentColor" strokeWidth="2.6" />}
-    </svg>
-  )
-}
-
 class NeighbourhoodErrorBoundary extends Component {
   constructor(props) {
     super(props)
@@ -337,6 +317,13 @@ class NeighbourhoodErrorBoundary extends Component {
   }
 }
 
+const BIOTYPE_FILTER_OPTIONS = [
+  { key: 'proteinCoding', label: 'Protein-coding' },
+  { key: 'longNonCoding', label: 'Long non-coding' },
+  { key: 'pseudogene', label: 'Pseudogene' },
+  { key: 'smallNonCoding', label: 'Small non-coding' },
+]
+
 const DEFAULT_HOMOLOGY_FILTERS = { showRbh: true, showRegular: true, types: [], minIdentity: 0, minCoverage: 0 }
 
 function NeighbourhoodView({
@@ -356,6 +343,7 @@ function NeighbourhoodView({
   onFlipGenome = () => { },
   onSwapAdjacent = () => { },
   onToggleGenome = () => { },
+  onSearchAll = () => { },
   useHomology = false,
   homologyLinksByPair = {},
   homologyAvailabilityByGenome = {},
@@ -368,7 +356,6 @@ function NeighbourhoodView({
 }) {
   const isLight = theme === 'light'
   const resolveGenomeColor = useMemo(() => genomeColorResolver(config), [config])
-  const sidePanelRef = useRef(null)
   const trackAreaRef = useRef(null)
   const trackWheelHandlerRef = useRef(null)
   const browsingSchemeId = config?.browsing_control_scheme
@@ -383,7 +370,7 @@ function NeighbourhoodView({
   const [trackWidth, setTrackWidth] = useState(0)
   const [trackOffsetByGenome, setTrackOffsetByGenome] = useState({})
   const [flippedByGenome, setFlippedByGenome] = useState({})
-  const [controlsCollapsed, setControlsCollapsed] = useState(false)
+  const [controlsCollapsed, setControlsCollapsed] = useResumableState('neighbourhood.controlsCollapsed', false, { isValid: (value) => typeof value === 'boolean' })
   const [biotypeFilters, setBiotypeFilters] = useResumableState('neighbourhood.biotypeFilters', {
     proteinCoding: true,
     longNonCoding: true,
@@ -402,7 +389,7 @@ function NeighbourhoodView({
         index,
         genomeKey: speciesItemKey(species),
         species,
-        tag: `G${index + 1}`,
+        label: formatSpeciesLabel(species),
         isDisabled: Boolean(disabledByGenome?.[speciesItemKey(species)]),
       })).filter((row) => row.genomeKey)
       : []
@@ -573,7 +560,7 @@ function NeighbourhoodView({
     if (!keySet.size) return []
     return rows
       .filter((row) => keySet.has(row.genomeKey))
-      .map((row) => formatSpeciesLabel(row.species))
+      .map((row) => row.label)
   }, [rows, noHitGenomeKeys])
 
   useEffect(() => {
@@ -1091,6 +1078,17 @@ function NeighbourhoodView({
     onFlipGenome(key)
   }, [onFlipGenome])
 
+  const handleSwapAdjacent = useCallback((upperGenomeKey, lowerGenomeKey) => {
+    if (!upperGenomeKey || !lowerGenomeKey) return
+    trackAchievement('neighbourhood.swap')
+    onSwapAdjacent(upperGenomeKey, lowerGenomeKey)
+  }, [onSwapAdjacent])
+
+  const loadedRowCount = useMemo(
+    () => rowLayouts.rows.filter((row) => !row.isDisabled && row.genes.length > 0).length,
+    [rowLayouts.rows]
+  )
+
   const handleRecenterFocused = useCallback(() => {
     setTrackOffsetByGenome((prev) => {
       const next = { ...(prev || {}) }
@@ -1114,7 +1112,7 @@ function NeighbourhoodView({
     setBiotypeFilters((prev) => ({ ...prev, [key]: !prev?.[key] }))
     setSelectedGeneIdsByGenome({})
     setSelectDimArmed(false)
-  }, [])
+  }, [setBiotypeFilters])
 
   const handleToggleHomologyShowFlag = useCallback((flagKey) => {
     const next = { ...homologyFilters, [flagKey]: !homologyFilters?.[flagKey] }
@@ -1142,14 +1140,14 @@ function NeighbourhoodView({
     }
     if (useHomology) onToggleUseHomology()
     setSymbolModeActive(true)
-  }, [symbolModeActive, useHomology, onToggleUseHomology])
+  }, [symbolModeActive, useHomology, onToggleUseHomology, setSymbolModeActive])
 
   const handleHomologyModeClick = useCallback(() => {
     if (!useHomology && symbolModeActive) {
       setSymbolModeActive(false)
     }
     onToggleUseHomology()
-  }, [useHomology, symbolModeActive, onToggleUseHomology])
+  }, [useHomology, symbolModeActive, onToggleUseHomology, setSymbolModeActive])
 
   const handleToggleSelectDim = useCallback(() => {
     if (selectDimArmed || hasDimSelection) {
@@ -1169,12 +1167,6 @@ function NeighbourhoodView({
   const baselineColor = isLight ? '#9ca3af' : '#4b5563'
   const textPrimaryClass = isLight ? 'text-gray-900' : 'text-gray-100'
   const textMutedClass = isLight ? 'text-gray-500' : 'text-gray-400'
-  const collapseButtonClass = `w-7 h-7 rounded border flex items-center justify-center transition-colors ${isLight
-    ? 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
-    : 'bg-gray-700 text-gray-200 border-gray-600 hover:bg-gray-600'}`
-  const interRowButtonClass = `absolute left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 transition-opacity flex items-center justify-center rounded-md hover:opacity-80 ${isLight
-    ? 'text-white'
-    : 'text-white'}`
   const biotypeCheckboxStyle = {
     accentColor: isLight ? '#0099ff' : '#0077cc',
     cursor: 'pointer',
@@ -1228,143 +1220,9 @@ function NeighbourhoodView({
   }
 
   return (
-    <div className="h-full w-full overflow-hidden flex gap-3">
-      <div
-        ref={sidePanelRef}
-        className={`rounded-lg ${panelBgClass} overflow-hidden flex flex-col transition-[width] duration-200 ${controlsCollapsed ? 'w-[44px] min-w-[44px] max-w-[44px]' : 'w-[276px] min-w-[268px] max-w-[292px]'}`}
-      >
-        <div className={`px-3 py-2 border-b ${toolbarBgClass} flex items-center ${controlsCollapsed ? 'justify-end' : 'justify-between'}`}>
-          {!controlsCollapsed && <div className={`text-sm font-semibold ${textPrimaryClass}`}>Neighbourhood controls</div>}
-          <button
-            type="button"
-            onClick={() => setControlsCollapsed((prev) => !prev)}
-            className={collapseButtonClass}
-            title={controlsCollapsed ? 'Expand controls' : 'Collapse controls'}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              {controlsCollapsed
-                ? <polyline points="9 6 15 12 9 18" />
-                : <polyline points="15 6 9 12 15 18" />}
-            </svg>
-          </button>
-        </div>
-        {!controlsCollapsed && (
-          <div className="flex-1 overflow-y-auto px-3 py-0">
-          {rows.map((row) => {
-            const key = row.genomeKey
-            const query = String(queryByGenome?.[key] || '')
-            const isLoading = Boolean(loadingByGenome?.[key])
-            const rowError = String(errorByGenome?.[key] || '')
-            const isDisabled = Boolean(row.isDisabled)
-            const pillColors = genomePillColors(resolveGenomeColor(row.species), {
-              isLight,
-              state: isDisabled ? 'inactive' : 'active',
-            })
-            return (
-              <div
-                key={key}
-                className="relative pt-0"
-                style={{ marginBottom: `${row.index === rows.length - 1 ? 0 : CONTROL_ROW_GAP}px` }}
-              >
-                <div
-                  className={`rounded-md border px-2.5 ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-800/70'} ${isDisabled ? 'opacity-55' : ''}`}
-                  style={{ height: `${CONTROL_ROW_HEIGHT}px` }}
-                >
-                <div className="h-full flex flex-col justify-center gap-2">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="inline-flex h-6 w-[190px] min-w-[190px] max-w-[190px] items-center rounded-full border px-2.5 text-xs font-medium truncate"
-                    style={{
-                      backgroundColor: pillColors.backgroundColor,
-                      color: pillColors.textColor,
-                      borderColor: pillColors.borderColor,
-                    }}
-                    title={formatSpeciesLabel(row.species)}
-                    onClick={() => onToggleGenome(key)}
-                  >
-                    <span className="block min-w-0 w-full truncate text-left">
-                      {formatSpeciesLabel(row.species)}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleFlip(key)}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded text-white shrink-0"
-                    style={{ backgroundColor: isLight ? '#0099ff' : '#0077cc' }}
-                    title={flippedByGenome?.[key] ? "Restore 5' to 3'" : "Flip 3' to 5'"}
-                    disabled={isDisabled}
-                  >
-                    {renderFlipIcon(Boolean(flippedByGenome?.[key]))}
-                  </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    value={query}
-                    onChange={(event) => onQueryChange(key, event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') onResolveGenome(key)
-                    }}
-                    placeholder="Gene symbol or gene/transcript ID"
-                    className={`h-8 flex-1 min-w-0 px-2 py-1.5 rounded text-xs border focus:outline-none ${isLight
-                      ? 'bg-white border-gray-300 text-gray-800 focus:border-blue-500'
-                      : 'bg-gray-700 border-gray-600 text-gray-100 focus:border-blue-500'
-                      }`}
-                    disabled={isDisabled}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => onResolveGenome(key)}
-                    disabled={isDisabled || isLoading || !query.trim()}
-                    className="h-8 w-8 rounded text-xs font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                    style={{ backgroundColor: isLight ? '#0099ff' : '#0077cc' }}
-                  >
-                    {isLoading ? '...' : 'Go'}
-                  </button>
-                </div>
-                {rowError && <div className="mt-1 text-[11px] text-red-400">{rowError}</div>}
-                {useHomology && homologyAvailabilityByGenome?.[key] === 'unavailable' && (
-                  <div className={`mt-1 text-[11px] ${isLight ? 'text-amber-600' : 'text-amber-400'}`}>No homology data published for this genome</div>
-                )}
-                </div>
-                </div>
-                {row.index < rows.length - 1 && (
-                  <button
-                    type="button"
-                    className={interRowButtonClass}
-                    style={{
-                      top: `calc(100% + ${CONTROL_ROW_GAP / 2}px)`,
-                      width: 44,
-                      height: 24,
-                      backgroundColor: isLight ? '#0099ff' : '#0077cc',
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      const nextRow = rows[row.index + 1]
-                      if (!nextRow?.genomeKey) return
-                      trackAchievement('neighbourhood.swap')
-                      onSwapAdjacent(row.genomeKey, nextRow.genomeKey)
-                    }}
-                    title="Swap adjacent genomes"
-                  >
-                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M8 20V5" />
-                      <path d="M4.5 8.5L8 5l3.5 3.5" />
-                      <path d="M16 4v15" />
-                      <path d="M12.5 15.5L16 19l3.5-3.5" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            )
-          })}
-          </div>
-        )}
-      </div>
-
-      <div className={`flex-1 min-w-0 rounded-lg ${panelBgClass} overflow-hidden flex flex-col`}>
-        <div className={`px-3 py-2 border-b ${toolbarBgClass} flex items-center gap-2`}>
+    <div className={`h-full w-full overflow-hidden flex rounded-lg ${panelBgClass}`}>
+      <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+        <div className={`flex-none px-3 border-b ${toolbarBgClass} flex items-center gap-2`} style={{ height: CONTROL_BAR_HEIGHT }}>
           <button
             type="button"
             onClick={handleRecenterFocused}
@@ -1395,42 +1253,17 @@ function NeighbourhoodView({
           </button>
           <div className="h-4 w-px flex-shrink-0 ml-1 mr-1" style={{ backgroundColor: isLight ? '#dee2e6' : '#495057' }} />
           <div className="grid gap-x-4 gap-y-0.5" style={{ gridTemplateColumns: 'auto auto', fontSize: '10px', lineHeight: '1.35' }}>
-            <label className="flex items-center gap-1" style={biotypeLabelStyle}>
-              <input
-                type="checkbox"
-                checked={biotypeFilters.proteinCoding}
-                onChange={() => handleToggleBiotypeFilter('proteinCoding')}
-                style={biotypeCheckboxStyle}
-              />
-              Protein-coding
-            </label>
-            <label className="flex items-center gap-1" style={biotypeLabelStyle}>
-              <input
-                type="checkbox"
-                checked={biotypeFilters.longNonCoding}
-                onChange={() => handleToggleBiotypeFilter('longNonCoding')}
-                style={biotypeCheckboxStyle}
-              />
-              Long non-coding
-            </label>
-            <label className="flex items-center gap-1" style={biotypeLabelStyle}>
-              <input
-                type="checkbox"
-                checked={biotypeFilters.pseudogene}
-                onChange={() => handleToggleBiotypeFilter('pseudogene')}
-                style={biotypeCheckboxStyle}
-              />
-              Pseudogene
-            </label>
-            <label className="flex items-center gap-1" style={biotypeLabelStyle}>
-              <input
-                type="checkbox"
-                checked={biotypeFilters.smallNonCoding}
-                onChange={() => handleToggleBiotypeFilter('smallNonCoding')}
-                style={biotypeCheckboxStyle}
-              />
-              Small non-coding
-            </label>
+            {BIOTYPE_FILTER_OPTIONS.map(({ key, label }) => (
+              <label key={key} className="flex items-center gap-1" style={biotypeLabelStyle}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(biotypeFilters?.[key])}
+                  onChange={() => handleToggleBiotypeFilter(key)}
+                  style={biotypeCheckboxStyle}
+                />
+                {label}
+              </label>
+            ))}
           </div>
           <div className="h-4 w-px flex-shrink-0 ml-1 mr-1" style={{ backgroundColor: isLight ? '#dee2e6' : '#495057' }} />
           <div className="relative flex items-center gap-1">
@@ -1786,6 +1619,34 @@ function NeighbourhoodView({
             No hit found for genome{noHitGenomeLabels.length > 1 ? 's' : ''}: {noHitGenomeLabels.join(', ')}
           </div>
         )}
+      </div>
+
+      {/* Controls, on the right like the other views' drawers and flush against the track */}
+      <div
+        className="flex-shrink-0 h-full min-h-0 flex flex-col transition-[width] duration-300 ease-out"
+        style={{ width: controlsCollapsed ? '42px' : '360px' }}
+      >
+        <NeighbourhoodControls
+          theme={theme}
+          bandHeight={CONTROL_BAR_HEIGHT}
+          rows={rows}
+          resolveGenomeColor={resolveGenomeColor}
+          queryByGenome={queryByGenome}
+          loadingByGenome={loadingByGenome}
+          errorByGenome={errorByGenome}
+          flippedByGenome={flippedByGenome}
+          loadedCount={loadedRowCount}
+          useHomology={useHomology}
+          homologyAvailabilityByGenome={homologyAvailabilityByGenome}
+          collapsed={controlsCollapsed}
+          onToggleCollapsed={() => setControlsCollapsed((prev) => !prev)}
+          onSearchAll={onSearchAll}
+          onQueryChange={onQueryChange}
+          onResolveGenome={onResolveGenome}
+          onToggleGenome={onToggleGenome}
+          onToggleFlip={handleToggleFlip}
+          onSwapAdjacent={handleSwapAdjacent}
+        />
       </div>
     </div>
   )

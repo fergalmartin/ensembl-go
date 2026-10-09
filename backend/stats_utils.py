@@ -6,10 +6,11 @@ import os
 import re
 import sqlite3
 import statistics
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pysam
 import requests
@@ -535,9 +536,75 @@ def load_stats_cache(path: Path) -> Dict[str, Any]:
 
 
 def save_stats_cache(path: Path, payload: Dict[str, Any]):
+    """Write the cache whole, so nothing reading it ever sees half a file.
+
+    Writing in place truncated the file first, and a reader that arrived mid-write
+    got a parse error, which ``load_stats_cache`` reads as "no cache". Whatever it
+    then saved had none of the sections it could not see: structural stats that
+    had taken minutes to generate disappeared that way.
+    """
+    path = Path(path)
     ensure_parent_dir(path)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+_STATS_CACHE_LOCKS: Dict[str, threading.Lock] = {}
+_STATS_CACHE_LOCKS_GUARD = threading.Lock()
+
+
+def _stats_cache_lock(path: Path) -> threading.Lock:
+    key = str(Path(path).expanduser().resolve())
+    with _STATS_CACHE_LOCKS_GUARD:
+        lock = _STATS_CACHE_LOCKS.get(key)
+        if lock is None:
+            lock = _STATS_CACHE_LOCKS[key] = threading.Lock()
+        return lock
+
+
+def update_stats_cache(
+    path: Path,
+    species: Optional[Dict[str, Any]],
+    fingerprints: Optional[Dict[str, Any]],
+    sections: Optional[Dict[str, Any]] = None,
+    computed_at: Optional[Dict[str, str]] = None,
+    drop: Iterable[str] = (),
+) -> Dict[str, Any]:
+    """Write these sections into the cache as it is on disk now, keeping the rest.
+
+    Several requests work on one genome's cache at once -- the genome browser, the
+    overview and the Stats view all ask for summaries, and a structural run saves
+    as it goes -- and each used to save the copy it had loaded at the start, so
+    whichever saved last threw away what the others had added. Re-reading under a
+    lock and merging in only what this caller computed keeps every section.
+
+    With no ``species`` the genome details and source fingerprints on disk are kept
+    as they are, which is what removing a section wants.
+    """
+    with _stats_cache_lock(path):
+        merged = load_stats_cache(path)
+        if species is not None:
+            merged = ensure_stats_cache_base(merged, species, fingerprints or {})
+        merged_sections = dict(merged.get("sections") or {})
+        merged_computed = dict(merged.get("computed_at") or {})
+        for name in drop:
+            merged_sections.pop(name, None)
+            merged_computed.pop(name, None)
+        merged_sections.update(sections or {})
+        merged_computed.update(computed_at or {})
+        merged["sections"] = merged_sections
+        merged["computed_at"] = merged_computed
+        save_stats_cache(path, merged)
+        return merged
 
 
 def ensure_stats_cache_base(existing: Dict[str, Any], species: Dict[str, Any], fingerprints: Dict[str, Any]) -> Dict[str, Any]:
@@ -790,7 +857,14 @@ def compute_structural_stats(
     fasta_path: str,
     structural_profile: str = STRUCTURAL_PROFILE,
     include_sequence_checks: bool = True,
+    on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
+    """Structural metrics over each protein-coding gene's canonical transcript.
+
+    ``on_progress(done, total)`` is called as the transcripts are worked through
+    (about every 1%, and once at the end), so a caller can report real progress.
+    It may raise to abandon the run, which is how a cancel takes effect mid-pass.
+    """
     if structural_profile != STRUCTURAL_PROFILE:
         raise ValueError(f"Unsupported structural profile: {structural_profile}")
 
@@ -875,8 +949,14 @@ def compute_structural_stats(
         tx_count = 0
         regular_cds_count: Optional[int] = 0 if include_sequence_checks else None
         non_canonical_splice_count: Optional[int] = 0 if include_sequence_checks else None
+        tx_total = len(by_gene)
+        progress_step = max(1, tx_total // 100)
+        if on_progress:
+            on_progress(0, tx_total)
         for row in by_gene.values():
             tx_count += 1
+            if on_progress and tx_count % progress_step == 0:
+                on_progress(tx_count, tx_total)
             chrom = str(row["chrom"] or "")
             strand = str(row["strand"] or "+")
             try:
@@ -929,6 +1009,9 @@ def compute_structural_stats(
                 if regular_eval.get("is_regular"):
                     regular_cds_count = int(regular_cds_count or 0) + 1
                 non_canonical_splice_count = int(non_canonical_splice_count or 0) + int(regular_eval.get("non_canonical_splice_count") or 0)
+
+        if on_progress:
+            on_progress(tx_total, tx_total)
 
         metric_values = {
             "avg_exon_count": safe_mean(exon_counts),

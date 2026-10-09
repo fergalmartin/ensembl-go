@@ -135,7 +135,7 @@ from stats_utils import (
     fingerprints_equal,
     load_stats_cache,
     now_iso,
-    save_stats_cache,
+    update_stats_cache,
 )
 from trackhub_registry import list_tracks_for_genomes
 from annotation import (
@@ -3702,7 +3702,7 @@ def _trim_multi_to_transcripts(result: "MultiAlignmentResult", prepared_rows: Li
     return result.model_copy(update={
         "alignment_length": len(consensus), "consensus": consensus, "rows": new_rows,
         "average_identity": float(sum(r.identity_to_consensus for r in new_rows) / max(1, len(new_rows))),
-        "warnings": [*(result.warnings or []), f"Trimmed to the selected transcripts and their flanks: {left_out:,} columns of gene sequence beyond them left out."]})
+        "warnings": [*(result.warnings or []), f"Trimmed to the selected transcripts and their flanks: {left_out:,} column{'' if left_out == 1 else 's'} of gene sequence beyond them left out."]})
 
 
 @app.post("/api/align/multi", response_model=MultiAlignmentResult)
@@ -10276,8 +10276,54 @@ def _update_stats_task_result(
         if mark_complete or terminal_transition:
             task["completed"] = int(task.get("completed", 0)) + 1
         total = max(1, int(task.get("total", 1)))
-        task["progress"] = min(1.0, float(task["completed"]) / total)
+        # Count the genome still running by how far it has got, so moving it on to
+        # its next pass does not drop the task back to its finished genomes alone.
+        running = sum(
+            float(r.get("progress") or 0.0)
+            for r in results.values()
+            if str((r or {}).get("status") or "") == "running"
+        )
+        task["progress"] = min(1.0, (float(task.get("completed", 0)) + running) / total)
         task["updated_at"] = now_iso()
+
+
+# A genome's structural run is two passes over its canonical coding transcripts: a
+# quick one over the annotation alone, then one that reads the genome sequence to check
+# every CDS and splice site, which takes about three times as long. Progress is split
+# between them in that proportion so the bar moves at a steady rate.
+_STRUCTURAL_QUICK_PASS_SHARE = 0.25
+_STRUCTURAL_QUICK_PASS_MESSAGE = "Measuring exons, introns, CDS and UTRs"
+_STRUCTURAL_SEQUENCE_PASS_MESSAGE = "Checking CDS and splice sites against the genome sequence"
+
+
+class _StructuralRunCancelled(Exception):
+    """Raised from a progress report to stop a pass the user has cancelled."""
+
+
+def _set_stats_task_genome_progress(task_id: str, genome_key_value: str, fraction: float, message: str):
+    """Record how far one genome's run has got, and the task's progress with it."""
+    fraction = max(0.0, min(1.0, float(fraction)))
+    with _stats_tasks_guard:
+        task = _stats_tasks.get(task_id)
+        if task is None:
+            return
+        result = task.setdefault("results", {}).setdefault(genome_key_value, {})
+        result["progress"] = fraction
+        result["message"] = message
+        total = max(1, int(task.get("total", 1)))
+        task["progress"] = min(1.0, (int(task.get("completed", 0)) + fraction) / total)
+        task["message"] = message
+        task["updated_at"] = now_iso()
+
+
+def _structural_progress_reporter(task_id: str, genome_key_value: str, start: float, share: float, message: str):
+    """An ``on_progress`` for ``compute_structural_stats`` covering one pass."""
+    def report(done: int, total: int):
+        if _is_task_genome_cancelled(task_id, genome_key_value):
+            raise _StructuralRunCancelled()
+        pass_fraction = (float(done) / total) if total else 1.0
+        _set_stats_task_genome_progress(task_id, genome_key_value, start + (share * pass_fraction), message)
+    return report
 
 
 def _is_task_genome_cancelled(task_id: str, genome_key_value: str) -> bool:
@@ -10327,20 +10373,9 @@ def _cancel_stats_task_genome(task_id: str, genome_key_value: str) -> bool:
 def _clear_structural_cache_for_species(species: Dict[str, Any], output_dir: str):
     try:
         cache_path = choose_stats_cache_path(species, output_dir, CACHE_DIR)
-        cache = load_stats_cache(cache_path)
-        sections = cache.get("sections") or {}
-        computed_at = cache.get("computed_at") or {}
-        changed = False
-        if "structural" in sections:
-            sections.pop("structural", None)
-            changed = True
-        if "structural" in computed_at:
-            computed_at.pop("structural", None)
-            changed = True
-        if changed:
-            cache["sections"] = sections
-            cache["computed_at"] = computed_at
-            save_stats_cache(cache_path, cache)
+        if not cache_path.exists():
+            return
+        update_stats_cache(cache_path, None, None, drop=("structural",))
     except Exception:
         return
 
@@ -10487,6 +10522,7 @@ def _compute_stats_summary_sync(
         )
         cache_path = choose_stats_cache_path(species, output_dir, CACHE_DIR)
         existing_cache = load_stats_cache(cache_path)
+        loaded_sections = dict(existing_cache.get("sections") or {})
         previous_fingerprints = existing_cache.get("source_fingerprints") or {}
         fingerprints = compute_source_fingerprints(files)
         cache = ensure_stats_cache_base(existing_cache, species, fingerprints)
@@ -10639,7 +10675,18 @@ def _compute_stats_summary_sync(
                     record["statuses"]["structural"] = "missing"
 
         if cache_dirty:
-            save_stats_cache(cache_path, cache)
+            # Only what this request computed: a structural run may have saved since
+            # this cache was loaded, and saving the old copy would throw that away.
+            cached_sections = cache.get("sections") or {}
+            cached_computed = cache.get("computed_at") or {}
+            written = [name for name, value in cached_sections.items() if loaded_sections.get(name) is not value]
+            update_stats_cache(
+                cache_path,
+                species,
+                fingerprints,
+                sections={name: cached_sections[name] for name in written},
+                computed_at={name: cached_computed[name] for name in written if name in cached_computed},
+            )
 
         records.append(record)
 
@@ -10728,7 +10775,7 @@ async def _run_structural_stats_task(
             _update_stats_task_result(
                 task_id,
                 genome_key_value,
-                {"status": "running", "message": "Computing core structural metrics..."},
+                {"status": "running", "message": _STRUCTURAL_QUICK_PASS_MESSAGE, "progress": 0.0},
                 mark_complete=False,
             )
 
@@ -10738,6 +10785,9 @@ async def _run_structural_stats_task(
                 str(fasta.get("path")),
                 structural_profile,
                 False,
+                _structural_progress_reporter(
+                    task_id, genome_key_value, 0.0, _STRUCTURAL_QUICK_PASS_SHARE, _STRUCTURAL_QUICK_PASS_MESSAGE,
+                ),
             )
             if _is_task_genome_cancelled(task_id, genome_key_value):
                 _clear_structural_cache_for_species(species, output_dir)
@@ -10747,13 +10797,16 @@ async def _run_structural_stats_task(
                     {"status": "canceled", "message": "Canceled by user."},
                 )
                 continue
-            cache.setdefault("sections", {})["structural"] = quick
-            cache.setdefault("computed_at", {})["structural"] = now_iso()
-            save_stats_cache(cache_path, cache)
+            update_stats_cache(cache_path, species, fingerprints, {"structural": quick}, {"structural": now_iso()})
             _update_stats_task_result(
                 task_id,
                 genome_key_value,
-                {"status": "running", "message": "Core metrics ready. Calculating sequence checks...", "cache_path": str(cache_path)},
+                {
+                    "status": "running",
+                    "message": _STRUCTURAL_SEQUENCE_PASS_MESSAGE,
+                    "progress": _STRUCTURAL_QUICK_PASS_SHARE,
+                    "cache_path": str(cache_path),
+                },
                 mark_complete=False,
             )
 
@@ -10763,6 +10816,13 @@ async def _run_structural_stats_task(
                 str(fasta.get("path")),
                 structural_profile,
                 True,
+                _structural_progress_reporter(
+                    task_id,
+                    genome_key_value,
+                    _STRUCTURAL_QUICK_PASS_SHARE,
+                    1.0 - _STRUCTURAL_QUICK_PASS_SHARE,
+                    _STRUCTURAL_SEQUENCE_PASS_MESSAGE,
+                ),
             )
             if _is_task_genome_cancelled(task_id, genome_key_value):
                 _clear_structural_cache_for_species(species, output_dir)
@@ -10772,9 +10832,7 @@ async def _run_structural_stats_task(
                     {"status": "canceled", "message": "Canceled by user."},
                 )
                 continue
-            cache.setdefault("sections", {})["structural"] = computed
-            cache.setdefault("computed_at", {})["structural"] = now_iso()
-            save_stats_cache(cache_path, cache)
+            update_stats_cache(cache_path, species, fingerprints, {"structural": computed}, {"structural": now_iso()})
             _update_stats_task_result(
                 task_id,
                 genome_key_value,

@@ -2419,6 +2419,8 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/api/resolve_id?genome=${encodeURIComponent(key)}&query=${encodeURIComponent(query)}`)
       if (!res.ok) {
+        // The row already says which genome it is, so a miss needs no genome key.
+        if (res.status === 404) throw new Error(`'${query}' not found in this genome`)
         const err = await res.json().catch(() => ({}))
         throw new Error(err?.detail || 'Not found')
       }
@@ -5616,6 +5618,24 @@ function App() {
     [config?.active_species, neighbourhoodGenomeOrderKeys]
   )
 
+  // One gene for every genome shown in Neighbourhood, from the search across the top
+  // of its controls. Each genome resolves the same symbol or ID on its own, as its Go
+  // button would, so a genome without it reports that in its own row.
+  const handleNeighbourhoodSearchAll = useCallback((query) => {
+    const token = String(query || '').trim()
+    if (!token) return
+    const keys = neighbourhoodGenomes
+      .map((species) => speciesItemKey(species))
+      .filter((key) => key && !neighbourhoodDisabledByGenome?.[key])
+    if (!keys.length) return
+    setNeighbourhoodQueryByGenome((prev) => {
+      const next = { ...(prev || {}) }
+      for (const key of keys) next[key] = token
+      return next
+    })
+    for (const key of keys) handleNeighbourhoodResolveGenome(key, token)
+  }, [neighbourhoodGenomes, neighbourhoodDisabledByGenome, handleNeighbourhoodResolveGenome])
+
   // Pre-check homology-TSV availability for every genome currently in the Neighbourhood
   // view, so the "Use Homology" button's enabled/disabled state and tooltip are correct
   // before the user ever clicks it. Genomes with a local file are 'local' immediately
@@ -7423,6 +7443,7 @@ function App() {
                   setNeighbourhoodErrorByGenome((prev) => ({ ...prev, [key]: null }))
                 }}
                 onResolveGenome={handleNeighbourhoodResolveGenome}
+                onSearchAll={handleNeighbourhoodSearchAll}
                 onLinkSelect={handleNeighbourhoodLinkSelect}
                 onFlipGenome={handleNeighbourhoodFlipGenome}
                 onSwapAdjacent={handleNeighbourhoodSwapAdjacent}

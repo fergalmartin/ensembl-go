@@ -123,6 +123,7 @@ function truncateText(value, maxLen = 22) {
 }
 
 function structuralDisplayStatus(status) {
+  if (status === 'loading') return 'Loading…'
   if (status === 'computing') return 'Generating'
   if (status === 'ready') return 'Ready'
   return 'Select to generate'
@@ -199,11 +200,13 @@ function buildPlaceholderRecord(genome) {
     source_database: genome?.source_database || '',
     gca: genome?.gca || '',
     files: genome?.files || {},
+    // Waiting on this genome's summary, which is a different thing from its
+    // structural stats being generated ('computing').
     statuses: {
-      annotation: 'computing',
-      structural: 'computing',
-      homology: 'computing',
-      assembly: 'computing',
+      annotation: 'loading',
+      structural: 'loading',
+      homology: 'loading',
+      assembly: 'loading',
     },
     annotation: null,
     structural: null,
@@ -535,7 +538,7 @@ function AnnotationChart({ records, basis, isLight, yZoom, onYZoom }) {
             const x = xCenter - (barW / 2)
 
             if (!item.ready) {
-              const status = (item.record?.statuses || {}).annotation || 'computing'
+              const status = (item.record?.statuses || {}).annotation || 'loading'
               return (
                 <g key={item.record.genome_key}>
                   <rect
@@ -554,7 +557,7 @@ function AnnotationChart({ records, basis, isLight, yZoom, onYZoom }) {
                     fontSize="9"
                     fill={isLight ? '#64748b' : '#94a3b8'}
                   >
-                    {status === 'computing' ? 'calculating' : status}
+                    {status === 'loading' ? 'loading…' : (status === 'computing' ? 'calculating' : status)}
                   </text>
                   <text
                     x={xCenter}
@@ -1213,7 +1216,7 @@ function AnnotationDetails({ records, isLight }) {
   )
 }
 
-function StructuralHeatmap({ records, isLight, structuralRuntimeStatusByKey, onToggleGenerateForKey }) {
+function StructuralHeatmap({ records, isLight, generatingLabel = 'Generating', structuralRuntimeStatusByKey, onToggleGenerateForKey }) {
   const [hoveredColumnKey, setHoveredColumnKey] = useState('')
   const [referenceColumnKey, setReferenceColumnKey] = useState('')
   const [columnOrder, setColumnOrder] = useState([])
@@ -1423,7 +1426,7 @@ function StructuralHeatmap({ records, isLight, structuralRuntimeStatusByKey, onT
     && typeof onToggleGenerateForKey === 'function'
   )
   const placeholderLabel = (record) => {
-    if (isGeneratingRecord(record)) return 'Generating'
+    if (isGeneratingRecord(record)) return generatingLabel
     if (isQueuedRecord(record)) return 'Queued'
     if (canGenerateRecord(record)) return 'Click to generate'
     return structuralDisplayStatus(structuralStatus(record))
@@ -1518,7 +1521,7 @@ function StructuralHeatmap({ records, isLight, structuralRuntimeStatusByKey, onT
                             : 'bg-gray-800 text-gray-400 border-gray-700')
                           }`}
                       >
-                        {showRuntimeControl ? (runtime === 'running' ? 'Generating' : 'Queued') : placeholderLabel(record)}
+                        {showRuntimeControl ? (runtime === 'running' ? generatingLabel : 'Queued') : placeholderLabel(record)}
                       </button>
                     )}
                   </th>
@@ -2459,8 +2462,11 @@ export default function StatsView({
   const [annotationBasis, setAnnotationBasis] = useResumableState('stats.annotationBasis', 'genes', { isValid: (value) => typeof value === 'string' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [summary, setSummary] = useState({ records: [], aggregates: {} })
+  const [records, setRecords] = useState([])
   const [loadProgress, setLoadProgress] = useState({ done: 0, total: 0 })
+  // A summary read from saved stats is back in a few milliseconds; the note only
+  // appears once it has taken long enough to be worth explaining.
+  const [loadingIsSlow, setLoadingIsSlow] = useState(false)
   const [selectedStructuralKeys, setSelectedStructuralKeys] = useState(new Set())
   const [structuralTaskId, setStructuralTaskId] = useState('')
   const [structuralRunningGenomeKey, setStructuralRunningGenomeKey] = useState('')
@@ -2473,9 +2479,14 @@ export default function StatsView({
   // ever needs the sections the remaining tabs plot.
   const summarySections = SUMMARY_CORE_SECTIONS
 
-  const genomes = useMemo(() => {
-    return (config?.active_species || []).map((item) => normalizeGenomeInput(item))
-  }, [config?.active_species])
+  // Keyed on what the genomes are rather than on the config object, which is
+  // replaced several times as the app starts up and settles. Each replacement used
+  // to fetch the summary again, and a genome whose stats are being calculated for
+  // the first time would be calculated once per fetch.
+  const genomesSignature = JSON.stringify(
+    (config?.active_species || []).map((item) => normalizeGenomeInput(item))
+  )
+  const genomes = useMemo(() => JSON.parse(genomesSignature), [genomesSignature])
 
   const genomeOrder = useMemo(() => genomes.map((g) => genomeKeyFromInput(g)), [genomes])
   const placeholdersByKey = useMemo(() => {
@@ -2487,12 +2498,16 @@ export default function StatsView({
     return m
   }, [genomes])
 
+  // One request per genome rather than one for them all, so each genome's sections
+  // fill in as soon as its own stats are back, and the count of genomes ready is a
+  // real count. A genome reads its saved stats, or calculates them from its files
+  // the first time (or after they change), which is what can take a while.
   const fetchSummary = useCallback(async (silent = false) => {
     const requestSeq = requestSeqRef.current + 1
     requestSeqRef.current = requestSeq
 
     if (!genomes.length) {
-      setSummary({ records: [], aggregates: {} })
+      setRecords([])
       setError('')
       setLoading(false)
       setLoadProgress({ done: 0, total: 0 })
@@ -2502,71 +2517,63 @@ export default function StatsView({
     setError('')
     if (!silent) {
       setLoading(true)
-      setLoadProgress({ done: 0, total: 1 })
-      setSummary({
-        sections: summarySections,
-        structural_profile: 'canonical_coding',
-        records: genomes.map((g) => buildPlaceholderRecord(g)),
-        aggregates: { annotation: {}, structural: {}, homology: {}, assembly: {} },
-      })
+      setLoadProgress({ done: 0, total: genomes.length })
+      setRecords(genomes.map((g) => buildPlaceholderRecord(g)))
     }
 
-    try {
-      const res = await fetch(`${API_BASE}/api/stats/summary`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          genomes,
-          sections: summarySections,
-          structural_profile: 'canonical_coding',
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data?.detail || 'Failed to load stats summary.')
+    let done = 0
+    let anyReady = false
+    let firstError = ''
+    await Promise.all(genomes.map(async (genome) => {
+      const key = genomeKeyFromInput(genome)
+      let record
+      try {
+        const res = await fetch(`${API_BASE}/api/stats/summary`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            genomes: [genome],
+            sections: summarySections,
+            structural_profile: 'canonical_coding',
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data?.detail || 'Failed to load stats summary.')
+        const returned = (Array.isArray(data?.records) ? data.records : []).filter((r) => r && r.genome_key)
+        record = returned.find((r) => r.genome_key === key) || returned[0] || buildErrorRecord(genome, 'Missing stats record.')
+        anyReady = anyReady || returned.length > 0
+      } catch (e) {
+        firstError = firstError || e?.message || 'Failed to load stats summary.'
+        record = buildErrorRecord(genome, e?.message || 'Failed to load stats for genome.')
       }
       if (requestSeqRef.current !== requestSeq) return
-      if (Array.isArray(data?.records) && data.records.length) trackAchievement('stats.summary')
-
-      const recordsByKey = new Map(
-        (Array.isArray(data?.records) ? data.records : [])
-          .filter((record) => record && record.genome_key)
-          .map((record) => [record.genome_key, record])
-      )
-      const mergedRecords = genomeOrder.map((key) => (
-        recordsByKey.get(key)
-        || placeholdersByKey.get(key)
-        || buildErrorRecord(genomes.find((genome) => genomeKeyFromInput(genome) === key) || {}, 'Missing stats record.')
-      ))
-
-      setSummary({
-        sections: summarySections,
-        structural_profile: 'canonical_coding',
-        records: mergedRecords,
-        aggregates: data?.aggregates || { annotation: {}, structural: {}, homology: {}, assembly: {} },
+      done += 1
+      setRecords((prev) => {
+        const byKey = new Map(prev.map((r) => [r.genome_key, r]))
+        byKey.set(key, record)
+        return genomeOrder.map((k) => byKey.get(k) || placeholdersByKey.get(k)).filter(Boolean)
       })
-      setLoadProgress({ done: 1, total: 1 })
-    } catch (e) {
-      if (requestSeqRef.current !== requestSeq) return
-      setSummary({
-        sections: summarySections,
-        structural_profile: 'canonical_coding',
-        records: genomes.map((genome) => buildErrorRecord(genome, e?.message || 'Failed to load stats for genome.')),
-        aggregates: { annotation: {}, structural: {}, homology: {}, assembly: {} },
-      })
-      setError(e?.message || 'Failed to load stats summary.')
-      setLoadProgress({ done: 1, total: 1 })
-    } finally {
-      if (requestSeqRef.current !== requestSeq) return
-      setLoading(false)
-    }
+      if (!silent) setLoadProgress({ done, total: genomes.length })
+    }))
+
+    if (requestSeqRef.current !== requestSeq) return
+    if (anyReady) trackAchievement('stats.summary')
+    if (firstError) setError(firstError)
+    setLoading(false)
   }, [genomes, genomeOrder, placeholdersByKey, summarySections])
+
+  useEffect(() => {
+    if (!loading) {
+      setLoadingIsSlow(false)
+      return undefined
+    }
+    const timer = window.setTimeout(() => setLoadingIsSlow(true), 400)
+    return () => window.clearTimeout(timer)
+  }, [loading])
 
   useEffect(() => {
     fetchSummary(false)
   }, [fetchSummary])
-
-  const records = summary?.records || []
 
   useEffect(() => {
     const structuralTargets = records
@@ -2671,6 +2678,19 @@ export default function StatsView({
     return out
   }, [structuralRunningGenomeKey, structuralQueue])
   const isGenerating = Boolean(structuralRunningGenomeKey || structuralTaskId)
+  // How far the running genome has got, from the backend's own count of transcripts
+  // worked through. Null until the run has actually started on it.
+  const runningResult = structuralRunningGenomeKey ? (taskState?.results || {})[structuralRunningGenomeKey] : null
+  const runningProgress = Number.isFinite(Number(runningResult?.progress)) && runningResult?.progress != null
+    ? Math.max(0, Math.min(1, Number(runningResult.progress)))
+    : null
+  const runningRecord = structuralRunningGenomeKey
+    ? records.find((r) => r.genome_key === structuralRunningGenomeKey)
+    : null
+  const generatingLabel = runningProgress == null ? 'Generating' : `Generating ${Math.round(runningProgress * 100)}%`
+  const summaryPendingLabels = records
+    .filter((r) => Object.values(r?.statuses || {}).includes('loading'))
+    .map((r) => genomeLabel(r))
 
   const handleToggleStructuralKey = (key) => {
     setSelectedStructuralKeys((prev) => {
@@ -2800,24 +2820,50 @@ export default function StatsView({
           </div>
         )}
 
-        {loading && (
+        {/* Only on the tabs that read the summary: the overview reads the stored
+            analysis reports, so a note about the summary there explains nothing. */}
+        {loading && loadingIsSlow && mode !== 'overview' && summaryPendingLabels.length > 0 && (
           <div className={`rounded-lg border px-3 py-2 text-xs ${isLight ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-blue-900/20 text-blue-300 border-blue-700/40'}`}>
-            <span className="font-semibold mr-2">Stats summary:</span>
-            Loading selected genomes ({loadProgress.done}/{loadProgress.total})
+            <div>
+              <span className="font-semibold">Working on {summaryPendingLabels.join(', ')}</span>
+              <span className="ml-2 opacity-80">{loadProgress.done} of {loadProgress.total} genomes ready</span>
+            </div>
+            <div className="mt-0.5 opacity-80">
+              Reading their saved annotation and homology stats, or calculating them from the genome&apos;s files
+              if this is the first time it has been opened here. Their sections fill in as each one finishes.
+            </div>
           </div>
         )}
 
         {(isGenerating || structuralQueue.length > 0) && (
           <div className={`rounded-lg border px-3 py-2 text-xs ${isLight ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-blue-900/20 text-blue-300 border-blue-700/40'}`}>
-            <span className="font-semibold mr-2">Structural stats:</span>
-            {structuralRunningGenomeKey
-              ? `${taskState?.message || 'Generating...'} [${structuralRunningGenomeKey}]`
-              : 'Waiting to start queued genomes...'}
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className="font-semibold flex-none">Structural stats:</span>
+              <span className="truncate">
+                {structuralRunningGenomeKey
+                  ? `${runningRecord ? genomeLabel(runningRecord) : 'Genome'} — ${runningResult?.message || 'Starting…'}`
+                  : 'Starting the next genome in the queue…'}
+              </span>
+              {runningProgress != null && (
+                <span className="flex-none tabular-nums font-semibold">{Math.round(runningProgress * 100)}%</span>
+              )}
+              {structuralQueue.length > 0 && (
+                <span className="flex-none ml-auto opacity-80">{structuralQueue.length} more queued</span>
+              )}
+            </div>
             {structuralRunningGenomeKey && (
-              <span className="ml-2">({Math.round((Number(taskState?.progress) || 0) * 100)}%)</span>
-            )}
-            {structuralQueue.length > 0 && (
-              <span className="ml-2">Queue: {structuralQueue.length}</span>
+              <div className={`mt-1.5 h-1 rounded-full overflow-hidden ${isLight ? 'bg-blue-100' : 'bg-blue-950/60'}`}>
+                {runningProgress == null ? (
+                  // Before the first count arrives: say it is working, without
+                  // pretending to know how far it has got.
+                  <div className={`h-full w-1/4 rounded-full animate-pulse ${isLight ? 'bg-[#0099ff]' : 'bg-blue-500'}`} />
+                ) : (
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-500 ${isLight ? 'bg-[#0099ff]' : 'bg-blue-500'}`}
+                    style={{ width: `${Math.max(2, runningProgress * 100)}%` }}
+                  />
+                )}
+              </div>
             )}
           </div>
         )}
@@ -2901,6 +2947,7 @@ export default function StatsView({
               <StructuralHeatmap
                 records={records}
                 isLight={isLight}
+                generatingLabel={generatingLabel}
                 structuralRuntimeStatusByKey={structuralRuntimeStatusByKey}
                 onToggleGenerateForKey={handleGenerateStructuralForKey}
               />
@@ -2926,7 +2973,7 @@ export default function StatsView({
                         <span className={`uppercase ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
                           {(() => {
                             const runtime = structuralRuntimeStatusByKey.get(record.genome_key) || ''
-                            if (runtime === 'running') return 'Generating'
+                            if (runtime === 'running') return generatingLabel
                             if (runtime === 'queued') return 'Queued'
                             return structuralDisplayStatus((record.statuses || {}).structural)
                           })()}
