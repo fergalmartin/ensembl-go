@@ -3117,11 +3117,7 @@ def get_alignment_cache_path(output_dir: str, ref_id: str, tgt_id: str, ref_flan
 
 def find_compatible_cache(output_dir: str, ref_id: str, tgt_id: str, req_ref: int, req_tgt: int) -> Tuple[Optional[str], int, int]:
     """Find a cache file that covers at least the requested flanking regions."""
-    try:
-        with open("debug_backend.txt", "a") as dbg:
-            dbg.write(f"Searching cache: dir={output_dir}, ref={ref_id}, tgt={tgt_id}, req=({req_ref},{req_tgt})\n")
-    except:
-        pass
+    logger.debug("Searching alignment cache: dir=%s, ref=%s, tgt=%s, req=(%s,%s)", output_dir, ref_id, tgt_id, req_ref, req_tgt)
 
     if not output_dir:
         return None, 0, 0
@@ -3150,11 +3146,7 @@ def find_compatible_cache(output_dir: str, ref_id: str, tgt_id: str, req_ref: in
                     c_tgt_flank = int(parts[-1])
                     c_ref_flank = int(parts[-2])
                     
-                    try:
-                        with open("debug_backend.txt", "a") as dbg:
-                            dbg.write(f"  Checking candidate: {f.name} -> ({c_ref_flank}, {c_tgt_flank})\n")
-                    except:
-                        pass
+                    logger.debug("  Checking alignment cache candidate: %s -> (%s, %s)", f.name, c_ref_flank, c_tgt_flank)
                     
                     if c_ref_flank >= req_ref and c_tgt_flank >= req_tgt:
                         # Found compatible cache
@@ -3351,9 +3343,7 @@ def align_transcripts(request: AlignmentRequest):
     
     if cache_path and os.path.exists(cache_path):
         try:
-            with open("debug_backend.txt", "a") as dbg:
-                dbg.write(f"Attempting to load cache: {cache_path}\n")
-                
+            logger.debug("Attempting to load alignment cache: %s", cache_path)
             log_progress(f"Found compatible cache: {Path(cache_path).name} ({c_ref}/{c_tgt} vs {ref_flank}/{tgt_flank})")
             with open(cache_path, 'r') as f:
                 data = json.load(f)
@@ -3367,16 +3357,7 @@ def align_transcripts(request: AlignmentRequest):
             
         except Exception as e:
             import traceback
-            error_msg = f"ERROR processing cache: {e}"
             trace_msg = traceback.format_exc()
-            
-            # Log to file
-            try:
-                with open("debug_backend.txt", "a") as dbg:
-                    dbg.write(f"{error_msg}\n")
-                    dbg.write(trace_msg)
-            except:
-                pass
             
             # Log to console/logger
             logger.error(f"Failed to load/adapt cache: {e}")
