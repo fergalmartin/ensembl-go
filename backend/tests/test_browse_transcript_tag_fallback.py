@@ -44,7 +44,7 @@ class TranscriptTagFallbackTests(unittest.TestCase):
         conn.close()
 
     def _run_both(self, db: Path, fallback):
-        with patch("main._get_browse_db", return_value=str(db)), \
+        with patch("genome_context._get_browse_db", return_value=str(db)), \
                 patch("main._resolve_transcript_tags_for_db", side_effect=fallback) as spy:
             asyncio.run(resolve_id(genome="reference", query="GENE1"))
             asyncio.run(browse_transcripts(genome="reference", gene_id="gene1", include_tags_fallback=True))

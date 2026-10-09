@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import genome_context  # noqa: E402
 import local_inventory  # noqa: E402
 import config_store  # noqa: E402
 from genome_identity import iter_local_assembly_dirs  # noqa: E402
@@ -337,5 +338,5 @@ class TutorialSessionTests(unittest.TestCase):
                 "files": status["files"],
             }
             demo_genome.set_tutorial_session_genome(record)
-            resolved = main._browsable_active_species({"active_species": []})
+            resolved = genome_context._browsable_active_species({"active_species": []})
             self.assertEqual([s["species_key"] for s in resolved], [demo_genome.DEMO_SPECIES_KEY])

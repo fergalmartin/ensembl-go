@@ -62,7 +62,7 @@ class SpliceSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sj = Path(tmpdir) / "test.SJ.out.tab"
             sj.write_text(content, encoding="utf-8")
-            with patch("main._get_browse_db", side_effect=HTTPException(status_code=404, detail="no db")):
+            with patch("genome_context._get_browse_db", side_effect=HTTPException(status_code=404, detail="no db")):
                 payload = asyncio.run(
                     browse_splice_junctions(
                         path=str(sj),
@@ -126,7 +126,7 @@ class SpliceSettingsTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            with patch("main._get_browse_db", return_value=str(db)):
+            with patch("genome_context._get_browse_db", return_value=str(db)):
                 payload = asyncio.run(
                     browse_splice_junctions(
                         path=str(sj),
@@ -158,7 +158,7 @@ class SpliceSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sj = Path(tmpdir) / "test.SJ.out.tab"
             sj.write_text(content, encoding="utf-8")
-            with patch("main._get_browse_db", side_effect=HTTPException(status_code=404, detail="no db")):
+            with patch("genome_context._get_browse_db", side_effect=HTTPException(status_code=404, detail="no db")):
                 payload = asyncio.run(
                     browse_splice_junctions_block_tiles(
                         SpliceBlockTilesRequest(
@@ -190,7 +190,7 @@ class SpliceSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             sj = Path(tmpdir) / "test.SJ.out.tab"
             sj.write_text(content, encoding="utf-8")
-            with patch("main._get_browse_db", side_effect=HTTPException(status_code=404, detail="no db")):
+            with patch("genome_context._get_browse_db", side_effect=HTTPException(status_code=404, detail="no db")):
                 payload = asyncio.run(
                     browse_splice_junctions_block_tiles(
                         SpliceBlockTilesRequest(

@@ -95,6 +95,7 @@ class RegionTests(unittest.TestCase):
 class FeatureTests(unittest.TestCase):
     def test_matches_the_msa_views_mapper_for_one_genomic_window(self):
         import main
+        import genome_context  # noqa: E402
         import gff_index  # noqa: E402
         for strand in '+-':
             with self.subTest(strand=strand):
@@ -241,11 +242,12 @@ class MsaViewSharingTests(unittest.TestCase):
 
     def test_an_msa_row_and_a_gene_tree_row_of_one_transcript_share_a_signature(self):
         import main
+        import genome_context  # noqa: E402
         import gff_index  # noqa: E402
         from dataclasses import asdict
         from unittest.mock import patch
         items = self._items(main)
-        with patch.object(main, '_resolve_browse_genome_context', lambda g: {'species': {'assembly': f'GCA_{g}'}}):
+        with patch.object(genome_context, '_resolve_browse_genome_context', lambda g: {'species': {'assembly': f'GCA_{g}'}}):
             shared = main._msa_shared_rows(items)
         for item, row in zip(items, shared):
             tx = {**asdict(item['tx']), 'id': item['transcript_id'], 'gene_start': 950, 'gene_end': 2200}
@@ -254,10 +256,11 @@ class MsaViewSharingTests(unittest.TestCase):
 
     def test_an_msa_run_is_saved_and_reused(self):
         import main
+        import genome_context  # noqa: E402
         import gff_index  # noqa: E402
         from unittest.mock import patch
         items = self._items(main)
-        with patch.object(main, '_resolve_browse_genome_context', lambda g: {'species': {'assembly': f'GCA_{g}'}}):
+        with patch.object(genome_context, '_resolve_browse_genome_context', lambda g: {'species': {'assembly': f'GCA_{g}'}}):
             shared = main._msa_shared_rows(items)
         width = max(len(i['raw_seq']) for i in items)
         ordered = [(item, gapped(item['raw_seq'].upper()).ljust(width + 400, '-')) for item in items]
@@ -279,6 +282,7 @@ class MsaTrimTests(unittest.TestCase):
 
     def test_a_gene_running_past_its_selected_transcript_is_cut_back(self):
         import main
+        import genome_context  # noqa: E402
         import gff_index  # noqa: E402
         tx = lambda strand, start, end: gff_index.SimpleTranscript('t', '1', start, end, strand, [gff_index.SimpleFeature('exon', start, end, strand)], [], [])  # noqa: E731
         # Row A: a gene window 101-160 whose selected transcript is 111-120 (flanks 5 and 3,

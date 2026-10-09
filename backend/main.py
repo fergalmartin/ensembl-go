@@ -96,7 +96,6 @@ from demo_genome import (
     is_inside_tutorial_workspace,
     reset_tutorial_workspace,
     set_tutorial_session_genome,
-    tutorial_session_species,
     tutorial_session_workspace,
     tutorial_workspace,
 )
@@ -200,6 +199,7 @@ from security_utils import (
     validate_remote_download_url,
     validate_trackhub_data_url,
 )
+import genome_context
 import local_inventory
 import gff_index
 import config_store
@@ -252,10 +252,10 @@ app.include_router(create_gene_trees_router(
 # than as the name, which does not exist yet at this line.
 from sequence_view import create_router as create_sequence_view_router
 app.include_router(create_sequence_view_router(
-    db_provider=lambda *args, **kwargs: _get_browse_db(*args, **kwargs),
-    db_optional_provider=lambda *args, **kwargs: _get_browse_db_optional(*args, **kwargs),
-    fasta_provider=lambda *args, **kwargs: _get_browse_fasta(*args, **kwargs),
-    chrom_resolver=lambda *args, **kwargs: _resolve_browse_chrom_name(*args, **kwargs),
+    db_provider=lambda *args, **kwargs: genome_context._get_browse_db(*args, **kwargs),
+    db_optional_provider=lambda *args, **kwargs: genome_context._get_browse_db_optional(*args, **kwargs),
+    fasta_provider=lambda *args, **kwargs: genome_context._get_browse_fasta(*args, **kwargs),
+    chrom_resolver=lambda *args, **kwargs: genome_context._resolve_browse_chrom_name(*args, **kwargs),
     tx_feature_intervals=lambda *args, **kwargs: _build_tx_feature_intervals(*args, **kwargs),
     mode_segments=lambda *args, **kwargs: _build_mode_segments(*args, **kwargs),
     # The one translation in this application. It is the Feature Explorer's, and
@@ -1197,7 +1197,7 @@ def _find_parent_gene_boundaries(genome: str, transcript_id: str) -> Tuple[Optio
     Returns (gene_start, gene_end) or (None, None) if not found.
     """
     try:
-        context = _resolve_browse_genome_context(genome)
+        context = genome_context._resolve_browse_genome_context(genome)
     except Exception:
         return None, None
     db_path = str(context.get("db_path") or "").strip()
@@ -1232,7 +1232,7 @@ def _find_parent_gene_boundaries(genome: str, transcript_id: str) -> Tuple[Optio
 
 
 def _find_transcript_for_genome(genome: str, transcript_id: str) -> Optional[gff_index.SimpleTranscript]:
-    context = _resolve_browse_genome_context(genome)
+    context = genome_context._resolve_browse_genome_context(genome)
     db_path = str(context.get("db_path") or "").strip()
     gff_path = str(context.get("gff_path") or "").strip()
 
@@ -1249,7 +1249,7 @@ def _resolve_transcript_id_for_genome_query(genome: str, query: str) -> str:
     if not q:
         return ""
     try:
-        context = _resolve_browse_genome_context(genome)
+        context = genome_context._resolve_browse_genome_context(genome)
     except Exception:
         return ""
     db_path = str(context.get("db_path") or "").strip()
@@ -1351,7 +1351,7 @@ def _extract_sequence_for_alignment_row(
 
         _add(requested_chrom)
         try:
-            resolved = _resolve_browse_chrom_name(genome, requested_chrom, known_regions)
+            resolved = genome_context._resolve_browse_chrom_name(genome, requested_chrom, known_regions)
         except Exception:
             resolved = ""
         _add(resolved)
@@ -1395,7 +1395,7 @@ def _extract_sequence_for_alignment_row(
 
     def _stream_fetch_fallback(candidates: List[str]) -> Optional[Tuple[str, str, int, int]]:
         try:
-            context = _resolve_browse_genome_context(genome)
+            context = genome_context._resolve_browse_genome_context(genome)
             source_path = str(context.get("fasta_path") or "").strip()
         except Exception:
             source_path = ""
@@ -2249,7 +2249,7 @@ def _msa_shared_rows(prepared_rows: List[Dict[str, Any]]) -> Optional[List[Dict[
     out = []
     for item in prepared_rows:
         try:
-            species = _resolve_browse_genome_context(item["genome"]).get("species") or {}
+            species = genome_context._resolve_browse_genome_context(item["genome"]).get("species") or {}
         except Exception:
             return None
         assembly = str(species.get("assembly") or species.get("gca") or "").strip()
@@ -2483,7 +2483,7 @@ def align_multi(request: MultiAlignmentRequest):
             continue
 
         try:
-            fasta = _get_browse_fasta(row_genome)
+            fasta = genome_context._get_browse_fasta(row_genome)
         except HTTPException as e:
             excluded_rows.append(MultiAlignmentExcludedRow(
                 genome=row_genome,
@@ -3149,8 +3149,8 @@ def _homology_source_path(species: Dict[str, Any], cfg: Dict[str, Any]) -> str:
 def homology_search_sources():
     sources = {}
     cfg = config_store.load_config()
-    for species in _browsable_active_species(cfg):
-        key = _active_species_item_key(species)
+    for species in genome_context._browsable_active_species(cfg):
+        key = genome_context._active_species_item_key(species)
         path = ""
         try:
             path = _homology_source_path(species, cfg)
@@ -3172,8 +3172,8 @@ def search_homology_table(request: HomologySearchRequest):
     # Selection keys include the release. Never resolve a release-specific request
     # to the first genome sharing its assembly accession.
     cfg = config_store.load_config()
-    species = next((item for item in _browsable_active_species(cfg)
-                    if _active_species_item_key(item) == request.genome_key), None)
+    species = next((item for item in genome_context._browsable_active_species(cfg)
+                    if genome_context._active_species_item_key(item) == request.genome_key), None)
     if species is None:
         raise HTTPException(status_code=404, detail="Genome is not part of the configured session.")
     path = _homology_source_path(species, cfg)
@@ -3650,8 +3650,8 @@ async def get_neighbourhood(
     window_size = max(1, min(600, int(window_size)))
     req_started = time.perf_counter()
 
-    ref_context = _resolve_browse_genome_context(ref_genome)
-    target_context = _resolve_browse_genome_context(target_genome)
+    ref_context = genome_context._resolve_browse_genome_context(ref_genome)
+    target_context = genome_context._resolve_browse_genome_context(target_genome)
     ref_gff = str(ref_context.get("gff_path") or "").strip()
     target_gff = str(target_context.get("gff_path") or "").strip()
     ref_index = str(ref_context.get("db_path") or "").strip()
@@ -3977,7 +3977,7 @@ async def get_neighbourhood_homology_anchor(
     if not gid:
         raise HTTPException(status_code=400, detail="gene_id is required")
 
-    primary_context = _resolve_browse_genome_context(genome)
+    primary_context = genome_context._resolve_browse_genome_context(genome)
     primary_species = primary_context.get("species") or {}
     primary_homology_path = str((primary_species.get("files") or {}).get("homology") or "").strip()
     primary_available = bool(primary_homology_path and os.path.exists(primary_homology_path))
@@ -3987,7 +3987,7 @@ async def get_neighbourhood_homology_anchor(
 
     if primary_available:
         for target_key in target_keys:
-            target_context = _resolve_browse_genome_context(target_key)
+            target_context = genome_context._resolve_browse_genome_context(target_key)
             target_species = target_context.get("species") or {}
             target_assembly_name = str(target_species.get("assembly_name") or target_species.get("assembly") or "").strip()
             if not target_assembly_name:
@@ -6119,7 +6119,7 @@ async def post_tutorial_session(request: TutorialSessionRequest):
         registered = set_tutorial_session_genome(request.genome)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"registered": True, "genome": _active_species_item_key(registered)}
+    return {"registered": True, "genome": genome_context._active_species_item_key(registered)}
 
 
 # ── Editing a tutorial's wording from inside the app ─────────────────────────
@@ -7289,7 +7289,7 @@ def _stats_species_with_index(species: Dict[str, Any], cfg: Dict[str, Any]) -> D
     saved = str(files.get("index") or "").strip()
     if saved and os.path.exists(saved):
         return species
-    resolved = _resolve_annotation_index(
+    resolved = genome_context._resolve_annotation_index(
         gff,
         cfg,
         str(species.get("assembly") or species.get("gca") or "").strip(),
@@ -7814,190 +7814,6 @@ async def stats_get_task(task_id: str):
 
 # ============ Genome Browser API ============
 
-_ASSEMBLY_REPORT_ROWS_CACHE: Dict[str, Dict[str, Any]] = {}
-_ASSEMBLY_REPORT_ROWS_CACHE_GUARD = threading.Lock()
-
-
-def _load_cached_assembly_report_rows(path: str) -> List[Any]:
-    fp = Path(path).expanduser().resolve()
-    if not fp.exists() or not fp.is_file():
-        return []
-    try:
-        st = fp.stat()
-    except Exception:
-        return []
-
-    key = str(fp)
-    with _ASSEMBLY_REPORT_ROWS_CACHE_GUARD:
-        cached = _ASSEMBLY_REPORT_ROWS_CACHE.get(key)
-        if cached and int(cached.get("mtime_ns") or 0) == int(st.st_mtime_ns) and int(cached.get("size") or 0) == int(st.st_size):
-            return list(cached.get("rows") or [])
-
-    rows = load_assembly_synonym_rows(str(fp))
-    with _ASSEMBLY_REPORT_ROWS_CACHE_GUARD:
-        _ASSEMBLY_REPORT_ROWS_CACHE[key] = {
-            "mtime_ns": int(st.st_mtime_ns),
-            "size": int(st.st_size),
-            "rows": rows,
-        }
-    return rows
-
-
-def _active_species_item_key(species: Optional[Dict[str, Any]]) -> str:
-    raw = species or {}
-    return selection_key_from_record(raw) or build_provider_aware_genome_key(
-        str(raw.get("species_key") or "").strip(),
-        str(raw.get("assembly") or raw.get("gca") or "").strip(),
-        raw.get("provider"),
-        bool(raw.get("is_manual")),
-    )
-
-
-def _dedupe_active_species(species_list: Any) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    seen: Set[str] = set()
-    for species in list(species_list or []):
-        if not isinstance(species, dict):
-            continue
-        key = _active_species_item_key(species)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        out.append(species)
-    return out
-
-
-def _find_species_for_gff(cfg: Dict[str, Any], gff_path: str) -> Optional[Dict[str, Any]]:
-    target = str(gff_path or "").strip()
-    if not target:
-        return None
-    for species in _dedupe_active_species(cfg.get("active_species") or []):
-        files = species.get("files") or {}
-        if str(files.get("gff3") or "").strip() == target:
-            return species
-    return None
-
-
-def _browse_index_for(gff_path: str, db_path: str, cfg: Dict[str, Any], species: Optional[Dict[str, Any]]) -> str:
-    """The index to browse ``gff_path`` with: the saved one, or one from disk."""
-    saved = str(db_path or "").strip()
-    if saved and os.path.exists(saved):
-        return saved
-    assembly = str((species or {}).get("assembly") or (species or {}).get("gca") or "").strip()
-    return _resolve_annotation_index(gff_path, cfg, assembly) or saved
-
-
-def _browsable_active_species(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The genomes the browser may be asked to resolve.
-
-    Include the selected session pool so Cycle can preview an inactive genome without
-    changing the active selection. Active records win over saved session snapshots.
-    Tutorial genomes remain registered separately from the user's configuration.
-    """
-    return _dedupe_active_species(
-        list(cfg.get("active_species") or []) + tutorial_session_species()
-        + list(cfg.get("next_previous_session_genomes") or [])
-    )
-
-
-def _resolve_browse_genome_context(genome: str) -> Dict[str, Any]:
-    cfg = config_store.load_config()
-    token = str(genome or "reference").strip() or "reference"
-    legacy = token.lower()
-    active_species = _browsable_active_species(cfg)
-
-    if legacy in {"reference", "target"}:
-        if legacy == "reference":
-            gff_path = str(cfg.get("ref_gff") or "").strip()
-            species = _find_species_for_gff(cfg, gff_path)
-            return {
-                "request": token,
-                "cache_key": "reference",
-                "db_path": _browse_index_for(gff_path, str(cfg.get("ref_index") or "").strip(), cfg, species),
-                "gff_path": gff_path,
-                "fasta_path": str(cfg.get("ref_fasta") or "").strip(),
-                "species": species,
-            }
-        gff_path = str(cfg.get("target_gff") or "").strip()
-        species = _find_species_for_gff(cfg, gff_path)
-        return {
-            "request": token,
-            "cache_key": "target",
-            "db_path": _browse_index_for(gff_path, str(cfg.get("target_index") or "").strip(), cfg, species),
-            "gff_path": gff_path,
-            "fasta_path": str(cfg.get("target_fasta") or "").strip(),
-            "species": species,
-        }
-
-    species = next((s for s in active_species if _active_species_item_key(s) == token), None)
-    if not species:
-        assembly_token = strip_dataset_release_from_selection_key(token)
-        species = next(
-            (
-                s for s in active_species
-                if str(s.get("assembly_key") or "").strip() == assembly_token
-                or build_provider_aware_genome_key(
-                    s.get("species_key"),
-                    s.get("assembly") or s.get("gca"),
-                    s.get("provider"),
-                    bool(s.get("is_manual")),
-                ) == assembly_token
-            ),
-            None,
-        )
-    if not species:
-        species = next(
-            (
-                s for s in active_species
-                if legacy_genome_key(s.get("species_key"), s.get("assembly") or s.get("gca")) == token
-            ),
-            None,
-        )
-    if not species:
-        # Alignment genome-link files use the assembly accession itself as the
-        # stable identity. Resolve that compact public identifier to the full
-        # local genome record only at the browser/annotation boundary.
-        assembly_token = token.upper()
-        species = next(
-            (
-                s for s in active_species
-                if str(s.get("assembly") or s.get("gca") or s.get("assembly_accession") or "").strip().upper() == assembly_token
-            ),
-            None,
-        )
-    if not species:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid genome: {genome}. Use 'reference', 'target', an assembly accession, or a genome key such as '<provider>::<species_key>::<assembly>'."
-        )
-
-    files = species.get("files") or {}
-    gff_path = str(files.get("gff3") or "").strip()
-    db_path = str(files.get("index") or "").strip()
-    fasta_path = str(files.get("fasta") or "").strip()
-
-    ref_gff = str(cfg.get("ref_gff") or "").strip()
-    tgt_gff = str(cfg.get("target_gff") or "").strip()
-    if not db_path and gff_path:
-        if gff_path == ref_gff:
-            db_path = str(cfg.get("ref_index") or "").strip()
-        elif gff_path == tgt_gff:
-            db_path = str(cfg.get("target_index") or "").strip()
-    if not fasta_path and gff_path:
-        if gff_path == ref_gff:
-            fasta_path = str(cfg.get("ref_fasta") or "").strip()
-        elif gff_path == tgt_gff:
-            fasta_path = str(cfg.get("target_fasta") or "").strip()
-
-    return {
-        "request": token,
-        "cache_key": token,
-        "db_path": _browse_index_for(gff_path, db_path, cfg, species),
-        "gff_path": gff_path,
-        "fasta_path": fasta_path,
-        "species": species,
-    }
-
 
 def _genome_browsable_ranges(genome: str) -> Dict[str, Any]:
     """Per-region browsable windows a genome's manifest declares, if any.
@@ -8008,7 +7824,7 @@ def _genome_browsable_ranges(genome: str) -> Dict[str, Any]:
     tutorial's chromosome-1 slice.
     """
     try:
-        context = _resolve_browse_genome_context(genome)
+        context = genome_context._resolve_browse_genome_context(genome)
         fasta_path = str(context.get("fasta_path") or "").strip()
         if not fasta_path:
             return {}
@@ -8021,123 +7837,6 @@ def _genome_browsable_ranges(genome: str) -> Dict[str, Any]:
         pass
     return {}
 
-
-def _get_genome_metadata_path(genome: str) -> Optional[str]:
-    context = _resolve_browse_genome_context(genome)
-    species = context.get("species") or {}
-    files = species.get("files") or {}
-
-    metadata_path = str(files.get("metadata") or "").strip()
-    if metadata_path:
-        mp = Path(metadata_path).expanduser().resolve()
-        if mp.exists() and mp.is_file():
-            return str(mp)
-
-    gff_path = str(context.get("gff_path") or "").strip()
-    if not gff_path:
-        return None
-
-    assembly_dir = Path(gff_path).expanduser().resolve().parent
-    fallback = data_paths._find_assembly_report_file(assembly_dir)
-    if fallback:
-        return str(fallback.resolve())
-    return None
-
-
-#: Prepared region-name lookups and synonym indexes, keyed by the exact region
-#: list they describe. Small: a handful of entries, one per genome being browsed.
-_KNOWN_REGIONS_CACHE: "OrderedDict[Tuple[str, ...], KnownRegions]" = OrderedDict()
-_KNOWN_REGIONS_CACHE_GUARD = threading.Lock()
-_SYNONYM_INDEX_CACHE: "OrderedDict[Tuple[Any, ...], Dict[str, Dict[str, List]]]" = OrderedDict()
-_SYNONYM_INDEX_CACHE_GUARD = threading.Lock()
-_REGION_CACHE_LIMIT = 8
-
-
-def _trim_region_cache(cache: "OrderedDict[Any, Any]", key: Any, value: Any) -> None:
-    cache[key] = value
-    cache.move_to_end(key)
-    while len(cache) > _REGION_CACHE_LIMIT:
-        cache.popitem(last=False)
-
-
-def _known_regions_lookup(known_regions: Iterable[str]) -> KnownRegions:
-    """Prepared name lookups for a genome's regions, reused across requests.
-
-    Preparing these walks every sequence in the assembly. Each browse request
-    resolves the chromosome it was asked for, so on a genome with hundreds of
-    thousands of scaffolds that walk was being repeated on every pan and zoom.
-    """
-    regions = tuple(known_regions)
-    with _KNOWN_REGIONS_CACHE_GUARD:
-        cached = _KNOWN_REGIONS_CACHE.get(regions)
-        if cached is not None:
-            _KNOWN_REGIONS_CACHE.move_to_end(regions)
-            return cached
-
-    prepared = KnownRegions(regions)
-    with _KNOWN_REGIONS_CACHE_GUARD:
-        _trim_region_cache(_KNOWN_REGIONS_CACHE, regions, prepared)
-    return prepared
-
-
-def _synonym_index_cache_key(metadata_path: str, known_regions: Iterable[str]) -> Optional[Tuple[Any, ...]]:
-    try:
-        st = Path(metadata_path).stat()
-    except OSError:
-        return None
-    return (metadata_path, int(st.st_mtime_ns), int(st.st_size), tuple(known_regions))
-
-
-def _build_genome_synonym_index(genome: str, known_regions: List[str]) -> Dict[str, Dict[str, List]]:
-    """Alias/canonical name mapping for a genome's regions.
-
-    Cached, because building it pairs every sequence in the assembly with every
-    row of its assembly report. A scaffold-level genome has hundreds of
-    thousands of both, and /api/browse/regions and /api/browse/genes would
-    otherwise rebuild it on every single request — including the browser's
-    readiness poll, which repeats every 1.5 seconds until the view loads, so the
-    backend ran out of request threads before the first one ever finished.
-
-    The cached value is shared between callers and must be treated as read-only.
-    """
-    metadata_path = _get_genome_metadata_path(genome)
-    if not metadata_path:
-        return {"canonical_to_synonyms": {}, "alias_to_candidates": {}}
-
-    cache_key = _synonym_index_cache_key(metadata_path, known_regions)
-    if cache_key is not None:
-        with _SYNONYM_INDEX_CACHE_GUARD:
-            cached = _SYNONYM_INDEX_CACHE.get(cache_key)
-            if cached is not None:
-                _SYNONYM_INDEX_CACHE.move_to_end(cache_key)
-                return cached
-
-    rows = _load_cached_assembly_report_rows(metadata_path)
-    # Built outside the lock: it is slow, and two callers racing to build the
-    # same index is far cheaper than every other genome waiting behind one.
-    index = (
-        build_synonym_index(rows, _known_regions_lookup(known_regions))
-        if rows
-        else {"canonical_to_synonyms": {}, "alias_to_candidates": {}}
-    )
-
-    if cache_key is not None:
-        with _SYNONYM_INDEX_CACHE_GUARD:
-            _trim_region_cache(_SYNONYM_INDEX_CACHE, cache_key, index)
-    return index
-
-
-def _resolve_browse_chrom_name(genome: str, requested: str, known_regions: List[str]) -> str:
-    token = str(requested or "").strip()
-    if not token:
-        return token
-    synonym_index = _build_genome_synonym_index(genome, known_regions)
-    resolved = resolve_region_name(
-        token,
-        _known_regions_lookup(known_regions),
-        synonym_index.get("alias_to_candidates"),
-    )
-    return resolved or token
 
 class RegionInfo(BaseModel):
     chrom: str
@@ -8799,173 +8498,6 @@ def _resolve_gene_description_for_db(db_path: str, gene_id: str, current_descrip
     return desc
 
 
-#: "Too Early" — the annotation index this request needs is still being built.
-#: Distinct from 404 so callers can tell "come back shortly" from "there is no
-#: annotation at all", and so the browser keeps polling instead of giving up.
-INDEX_BUILDING_STATUS = 425
-
-
-#: Index paths recovered from disk for annotations whose saved entry has none,
-#: keyed by annotation path. Only successful lookups are remembered: a genome
-#: that has no index yet must keep looking, or it would never notice the build
-#: landing next to its GFF.
-_RECOVERED_INDEX_PATHS: Dict[str, str] = {}
-_RECOVERED_INDEX_GUARD = threading.Lock()
-
-
-def _index_build_error_for(gff_path: str, db_path: str) -> str:
-    """The error from the last finished build of this annotation, if it failed.
-
-    Browsing queues a build for an annotation that has no index, and the browser
-    polls until it lands. An annotation the indexer cannot read would turn that
-    into an endless rebuild loop, so a failure has to be reported rather than
-    retried on every poll.
-
-    A failure is tied to the exact bytes that caused it. Replace the annotation —
-    re-download a truncated file, repair a malformed one — and the recorded
-    signature no longer matches, so the genome starts building again by itself
-    instead of holding on to an error about a file that is no longer there.
-    :func:`forget_index_failures` is the manual way out for everything else.
-    """
-    normalized_gff = gff_index._normalize_fs_path(gff_path)
-    normalized_db = gff_index._normalize_fs_path(db_path)
-    latest: Optional[Dict[str, Any]] = None
-    with gff_index._index_tasks_guard:
-        for task in gff_index._index_tasks.values():
-            if task.get("status") not in {"success", "failed"}:
-                continue
-            if task.get("gff_path") != normalized_gff and task.get("db_path") != normalized_db:
-                continue
-            completed = str(task.get("completed_at") or "")
-            if latest is None or completed >= str(latest.get("completed_at") or ""):
-                latest = task
-    if latest is None or latest.get("status") != "failed":
-        return ""
-
-    recorded_signature = str(latest.get("gff_signature") or "")
-    if recorded_signature and recorded_signature != gff_index._annotation_signature(normalized_gff):
-        gff_index.forget_index_failures(normalized_gff, normalized_db)
-        return ""
-    return str(latest.get("error") or "The annotation index could not be built.")
-
-
-def _resolve_annotation_index(gff_path: str, cfg: Dict[str, Any], assembly: str = "") -> str:
-    """Find, or name, the index for an annotation whose saved entry has none.
-
-    A genome's ``files`` block is a snapshot taken when it was registered, so a
-    genome activated before its index existed carries an empty ``index`` for
-    ever: the build finishes, the file lands beside the GFF, and browsing still
-    reports a genome with no genes. RefSeq downloads hit this every time, since
-    the annotation arrives with no index and the browser is usually the next
-    place the user goes.
-
-    Reading the directory keeps browsing honest about what is actually on disk.
-    When nothing is there yet, naming the path the build would write lets
-    :func:`_get_browse_db` queue it and answer "still building" — which the
-    browser already polls on — instead of "no annotation".
-    """
-    # Guard on the raw value: _normalize_fs_path("") resolves to the working
-    # directory, which exists, and would send everything below off hunting for
-    # an index for a genome that has no annotation at all.
-    if not str(gff_path or "").strip():
-        return ""
-    normalized_gff = gff_index._normalize_fs_path(gff_path)
-    if not os.path.exists(normalized_gff):
-        return ""
-
-    with _RECOVERED_INDEX_GUARD:
-        remembered = _RECOVERED_INDEX_PATHS.get(normalized_gff, "")
-    if remembered and os.path.exists(remembered):
-        return remembered
-
-    found = local_inventory._resolve_local_gff_index(normalized_gff, assembly)
-    if found:
-        with _RECOVERED_INDEX_GUARD:
-            _RECOVERED_INDEX_PATHS[normalized_gff] = found
-        return found
-
-    # Nothing built yet. Point at whatever build is already in flight for this
-    # annotation, so a build started from the selector and one queued by the
-    # browser converge on the same file.
-    with gff_index._index_tasks_guard:
-        for task in gff_index._index_tasks.values():
-            if task.get("status") in {"queued", "running"} and task.get("gff_path") == normalized_gff:
-                return str(task.get("db_path") or "")
-
-    try:
-        return str(gff_index._resolve_index_path(
-            normalized_gff,
-            str(cfg.get("output_dir") or ""),
-            gff_index._index_basename_for_annotation(normalized_gff),
-        ))
-    except Exception:
-        return ""
-
-
-def _get_browse_db(genome: str) -> str:
-    """Resolve the SQLite index path for a given genome from config.
-
-    Validates that the index was built from the currently configured GFF.
-
-    Browsing never builds the index itself. Building one takes minutes on a
-    large annotation, and doing it inside a request blocked every other request
-    behind it: the selector could not list genomes, and the browser's own
-    readiness poll — which is what would have shown the build finishing — could
-    not be answered either. A missing or stale index is handed to the background
-    index worker and reported as :data:`INDEX_BUILDING_STATUS`.
-    """
-    context = _resolve_browse_genome_context(genome)
-    db = str(context.get("db_path") or "")
-    gff = str(context.get("gff_path") or "")
-    if not db:
-        raise HTTPException(status_code=404, detail=f"Index not found for {genome} genome. Generate indexes first.")
-
-    if gff and os.path.exists(gff):
-        if gff_index._is_existing_index_usable(db, gff):
-            return gff_index._normalize_fs_path(db)
-        build_error = _index_build_error_for(gff, db)
-        if build_error:
-            raise HTTPException(
-                status_code=500,
-                detail=f"The annotation index for the {genome} genome could not be built: {build_error}",
-            )
-        try:
-            gff_index.queue_index_build(gff, db)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to prepare index for {genome} genome: {exc}",
-            )
-        raise HTTPException(
-            status_code=INDEX_BUILDING_STATUS,
-            detail=f"The annotation index for the {genome} genome is still being built.",
-        )
-
-    if not os.path.exists(db):
-        raise HTTPException(status_code=404, detail=f"Index not found for {genome} genome. Generate indexes first.")
-    return db
-
-
-def _get_browse_db_optional(genome: str) -> str:
-    """Like :func:`_get_browse_db` but returns ``''`` when there is no annotation.
-
-    A genome may be loaded with a FASTA alone, in which case the sequence track
-    and any attached data tracks still work and only the gene track is empty.
-    Callers that can render without genes use this instead of 404ing.
-
-    A genome that *does* have an annotation whose index is not built yet still
-    raises :data:`INDEX_BUILDING_STATUS`. Returning "" there would render the
-    genome as though it had no genes and never correct itself once the build
-    finished; the status keeps the caller polling.
-    """
-    try:
-        return _get_browse_db(genome)
-    except HTTPException as exc:
-        if exc.status_code == 404:
-            return ""
-        raise
-
-
 #: What a genome's gene track can expect of its annotation index. The browser
 #: renders from the assembly the moment it has one, so these describe what is
 #: still missing rather than whether the genome can be shown at all.
@@ -8999,7 +8531,7 @@ def _index_status_for_genome(genome: str) -> Dict[str, Any]:
     per panel while a build runs, and it must never be the thing that queues a
     build, or a view that merely watches progress would start one.
     """
-    context = _resolve_browse_genome_context(genome)
+    context = genome_context._resolve_browse_genome_context(genome)
     gff_path = str(context.get("gff_path") or "")
     db_path = str(context.get("db_path") or "")
 
@@ -9054,7 +8586,7 @@ def _index_status_for_genome(genome: str) -> Dict[str, Any]:
             status["detail"] = "Waiting for the current index build to finish."
         return status
 
-    build_error = _index_build_error_for(gff_path, db_path)
+    build_error = genome_context._index_build_error_for(gff_path, db_path)
     if build_error:
         status["state"] = INDEX_STATE_FAILED
         status["error"] = build_error
@@ -9085,7 +8617,7 @@ async def browse_index_retry(request: IndexRetryRequest):
     not left restarting the backend to retry a build that failed once.
     """
     def _retry() -> Dict[str, Any]:
-        context = _resolve_browse_genome_context(request.genome)
+        context = genome_context._resolve_browse_genome_context(request.genome)
         gff_path = str(context.get("gff_path") or "")
         db_path = str(context.get("db_path") or "")
         if not gff_path or not os.path.exists(gff_path):
@@ -9105,48 +8637,16 @@ async def browse_index_retry(request: IndexRetryRequest):
     return await run_in_threadpool(_retry)
 
 
-_fasta_cache = {}  # genome -> (config_path, pysam.FastaFile)
-
-
-def _get_browse_fasta(genome: str):
-    """Resolve and load FASTA for a given genome from config. Caches the file handle."""
-    context = _resolve_browse_genome_context(genome)
-    cache_key = str(context.get("cache_key") or str(genome or "").strip() or "reference")
-    fasta_path = str(context.get("fasta_path") or "")
-    if not fasta_path or not os.path.exists(fasta_path):
-        species = context.get("species") or {}
-        label = (
-            str(species.get("assembly_name") or "").strip()
-            or str(species.get("assembly") or species.get("gca") or "").strip()
-            or cache_key
-        )
-        if not fasta_path:
-            detail = f"FASTA not configured for {label} ({genome}) genome."
-        else:
-            detail = f"FASTA not found for {label} ({genome}) genome: {fasta_path}"
-        raise HTTPException(status_code=404, detail=detail)
-
-    # Return cached handle if path hasn't changed
-    cached = _fasta_cache.get(cache_key)
-    if cached and cached[0] == fasta_path:
-        return cached[1]
-
-    # ensure_fasta_index may return a decompressed path if the original was gzip (not bgzip)
-    fasta = file_io.open_indexed_fasta(fasta_path)
-    _fasta_cache[cache_key] = (fasta_path, fasta)
-    return fasta
-
-
 def _force_refresh_browse_fasta_index(genome: str, current_fasta: Optional["ThreadSafeFasta"] = None):
     """Force FASTA re-index + handle refresh for a genome cache entry."""
-    context = _resolve_browse_genome_context(genome)
+    context = genome_context._resolve_browse_genome_context(genome)
     cache_key = str(context.get("cache_key") or str(genome or "").strip() or "reference")
     fasta_path = str(context.get("fasta_path") or "")
     if not fasta_path or not os.path.exists(fasta_path):
         raise HTTPException(status_code=404, detail=f"FASTA not found for {genome} genome.")
 
     refreshed = file_io.open_indexed_fasta(fasta_path, force_reindex=True)
-    _fasta_cache[cache_key] = (fasta_path, refreshed)
+    genome_context._fasta_cache[cache_key] = (fasta_path, refreshed)
 
     try:
         if current_fasta is not None and current_fasta is not refreshed:
@@ -9169,11 +8669,11 @@ def _get_browse_db_for_regions(genome: str) -> Tuple[str, bool]:
     fill the gene track in when the build lands.
     """
     try:
-        return _get_browse_db(genome), False
+        return genome_context._get_browse_db(genome), False
     except HTTPException as exc:
         if exc.status_code == 404:
             return "", False
-        if exc.status_code == INDEX_BUILDING_STATUS:
+        if exc.status_code == genome_context.INDEX_BUILDING_STATUS:
             return "", True
         raise
 
@@ -9221,7 +8721,7 @@ async def browse_regions(genome: str = "reference", min_length: int = 0):
         # Use FASTA as canonical region bounds where available, and also
         # complement with FASTA sequences not present in the GFF.
         try:
-            fasta = _get_browse_fasta(genome)
+            fasta = genome_context._get_browse_fasta(genome)
             for seq in fasta.references:
                 length = int(fasta.get_reference_length(seq))
                 existing = results_by_chrom.get(seq)
@@ -9260,7 +8760,7 @@ async def browse_regions(genome: str = "reference", min_length: int = 0):
                 # index lands. Keep the caller polling rather than reporting a
                 # genome with nothing in it.
                 raise HTTPException(
-                    status_code=INDEX_BUILDING_STATUS,
+                    status_code=genome_context.INDEX_BUILDING_STATUS,
                     detail=f"The annotation index for the {genome} genome is still being built.",
                 )
             # Neither an annotation nor a readable FASTA: there is genuinely
@@ -9271,7 +8771,7 @@ async def browse_regions(genome: str = "reference", min_length: int = 0):
             )
 
         known_regions = [str(r.chrom or "").strip() for r in results if str(r.chrom or "").strip()]
-        synonym_index = _build_genome_synonym_index(genome, known_regions)
+        synonym_index = genome_context._build_genome_synonym_index(genome, known_regions)
         canonical_to_synonyms = synonym_index.get("canonical_to_synonyms") or {}
         for region in results:
             region.synonyms = list(canonical_to_synonyms.get(region.chrom, []))
@@ -9279,9 +8779,9 @@ async def browse_regions(genome: str = "reference", min_length: int = 0):
         # Populate display_name: for regions named by accession (e.g. NC_000001.11),
         # prefer the human-readable sequence_name (e.g. "1", "X", "MT") from the
         # assembly/sequence report for assembled molecules.
-        metadata_path = _get_genome_metadata_path(genome)
+        metadata_path = genome_context._get_genome_metadata_path(genome)
         if metadata_path:
-            report_rows = _load_cached_assembly_report_rows(metadata_path)
+            report_rows = genome_context._load_cached_assembly_report_rows(metadata_path)
             accession_to_display: Dict[str, str] = {}
             for row in report_rows:
                 if not row.is_assembled_molecule:
@@ -9316,7 +8816,7 @@ async def browse_genes(
 
     # Genome-only load: no annotation means no genes, which is an empty track
     # rather than an error.
-    db_path = await run_in_threadpool(_get_browse_db_optional, genome)
+    db_path = await run_in_threadpool(genome_context._get_browse_db_optional, genome)
     if not db_path:
         return []
     requested_chrom = str(chrom or "").strip()
@@ -9339,7 +8839,7 @@ async def browse_genes(
             else:
                 c.execute("SELECT DISTINCT chrom FROM genes")
                 known_regions = [str(r["chrom"] or "").strip() for r in c.fetchall() if str(r["chrom"] or "").strip()]
-                resolved_chrom = _resolve_browse_chrom_name(genome, requested_chrom, known_regions)
+                resolved_chrom = genome_context._resolve_browse_chrom_name(genome, requested_chrom, known_regions)
 
         if include_description:
             try:
@@ -9412,7 +8912,7 @@ async def browse_default_locus(genome: str = "reference"):
     2) prefer genes away from first/last 20% of region
     3) prioritize protein_coding + multi-transcript + named(symbol) genes
     """
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+    db_path = await run_in_threadpool(genome_context._get_browse_db, genome)
 
     def _query():
         conn = sqlite3.connect(db_path)
@@ -9547,7 +9047,7 @@ async def browse_default_locus(genome: str = "reference"):
 
         chrom_length = region_end
         try:
-            fasta = _get_browse_fasta(genome)
+            fasta = genome_context._get_browse_fasta(genome)
             chrom_length = int(fasta.get_reference_length(chrom))
         except Exception:
             chrom_length = max(chrom_length, region_end)
@@ -9594,7 +9094,7 @@ async def browse_search_gene(genome: str = "reference", query: str = ""):
     if not query:
         raise HTTPException(status_code=400, detail="query parameter is required.")
 
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+    db_path = await run_in_threadpool(genome_context._get_browse_db, genome)
     q = query.strip()
 
     def _query():
@@ -9669,7 +9169,7 @@ async def resolve_id(genome: str = "reference", query: str = ""):
     # Index discovery can validate or (for an outdated/missing index) rebuild a
     # local SQLite database. Do not block the asyncio event loop while that work
     # is in progress; other browse endpoints use the same threadpool pattern.
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+    db_path = await run_in_threadpool(genome_context._get_browse_db, genome)
     q = query.strip()
 
     def _query():
@@ -9815,7 +9315,7 @@ async def browse_transcripts(
     if not gene_id:
         raise HTTPException(status_code=400, detail="gene_id parameter is required.")
     
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+    db_path = await run_in_threadpool(genome_context._get_browse_db, genome)
     
     def _query():
         conn = sqlite3.connect(db_path)
@@ -9885,7 +9385,7 @@ async def browse_canonical_transcripts(
     if not chrom or end <= start:
         raise HTTPException(status_code=400, detail="Valid chrom, start, and end required.")
 
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+    db_path = await run_in_threadpool(genome_context._get_browse_db, genome)
 
     def _query():
         requested_chrom = str(chrom or "").strip()
@@ -10018,7 +9518,7 @@ def alignment_explorer_block_genes(genome, chrom, start, end, expand=(), gene_li
     ``start``/``end`` are one-based inclusive, matching the GFF3 index this
     reads. Everything returned is zero-based half-open.
     """
-    db_path = _get_browse_db(genome)
+    db_path = genome_context._get_browse_db(genome)
     resolved = _resolve_db_chrom_name_for_genome(db_path, chrom, genome) or chrom
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -10092,11 +9592,11 @@ def alignment_explorer_genome_availability(assembly, region):
     identically would read as biological absence.
     """
     try:
-        _resolve_browse_genome_context(assembly)
+        genome_context._resolve_browse_genome_context(assembly)
     except Exception:
         return 'unavailable'
     try:
-        db_path = _get_browse_db_optional(assembly)
+        db_path = genome_context._get_browse_db_optional(assembly)
     except Exception:
         db_path = None
     if not db_path:
@@ -10148,8 +9648,8 @@ def gene_trees_local_genomes() -> List[Dict[str, Any]]:
     """
     cfg = config_store.load_config()
     output_dir = str(cfg.get("output_dir") or "").strip()
-    registered = _browsable_active_species(cfg)
-    key = (output_dir, tuple(_active_species_item_key(s) for s in registered))
+    registered = genome_context._browsable_active_species(cfg)
+    key = (output_dir, tuple(genome_context._active_species_item_key(s) for s in registered))
     now = time.time()
     if _GENE_TREE_GENOMES["key"] == key and now - _GENE_TREE_GENOMES["at"] < _GENE_TREE_GENOMES_TTL:
         return _GENE_TREE_GENOMES["genomes"]
@@ -10224,18 +9724,18 @@ def gene_trees_fetcher(genome: Dict[str, Any]):
     if not fasta_path or not os.path.exists(fasta_path):
         raise LookupError("Its genome has no sequence (FASTA) downloaded")
     cache_key = f"path:{fasta_path}"
-    cached = _fasta_cache.get(cache_key)
+    cached = genome_context._fasta_cache.get(cache_key)
     fasta = cached[1] if cached and cached[0] == fasta_path else None
     if fasta is None:
         fasta = file_io.open_indexed_fasta(fasta_path)
-        _fasta_cache[cache_key] = (fasta_path, fasta)
+        genome_context._fasta_cache[cache_key] = (fasta_path, fasta)
     known = set(fasta.references or [])
 
     def fetch(chrom: str, start: int, end: int):
         name = chrom if chrom in known else next((v for v in chrom_token_variants(chrom) if v in known), None)
         if name is None:
             try:
-                name = _resolve_browse_chrom_name(str(genome.get("assembly") or ""), chrom, list(known)) or None
+                name = genome_context._resolve_browse_chrom_name(str(genome.get("assembly") or ""), chrom, list(known)) or None
             except Exception:
                 name = None
         if name is None or name not in known:
@@ -10270,7 +9770,7 @@ def gene_trees_alignments_root() -> Optional[Path]:
 
 def alignment_explorer_annotation_features(genome, chrom, start, end, sequence, strand, transcript_id=None):
     """Project indexed GFF3 transcript features using the existing MSA annotation mapper."""
-    db_path = _get_browse_db(genome)
+    db_path = genome_context._get_browse_db(genome)
     resolved = _resolve_db_chrom_name_for_genome(db_path, chrom, genome) or chrom
     conn = sqlite3.connect(db_path)
     try:
@@ -10309,7 +9809,7 @@ async def browse_sequence(genome: str = "reference", chrom: str = "", start: int
         raise HTTPException(status_code=400, detail=f"Requested range too large. Max {max_len}bp.")
 
     def _query():
-        fasta = _get_browse_fasta(genome)
+        fasta = genome_context._get_browse_fasta(genome)
         requested_chrom = str(chrom or "").strip()
         try:
             seq = fasta.fetch(requested_chrom, start, end)
@@ -10317,7 +9817,7 @@ async def browse_sequence(genome: str = "reference", chrom: str = "", start: int
             return {"sequence": seq_upper, "chrom": requested_chrom, "start": start, "end": end, "length": len(seq_upper)}
         except (ValueError, KeyError) as first_err:
             known_regions = [str(r or "").strip() for r in list(fasta.references or []) if str(r or "").strip()]
-            fallback = _resolve_browse_chrom_name(genome, requested_chrom, known_regions)
+            fallback = genome_context._resolve_browse_chrom_name(genome, requested_chrom, known_regions)
             if fallback and fallback != requested_chrom:
                 try:
                     seq = fasta.fetch(fallback, start, end)
@@ -11151,14 +10651,14 @@ def _feature_explorer_collect_exon_dataset(
     include_inactive: bool = False,
     include_sequence_fields: bool = False,
 ) -> Dict[str, Any]:
-    db_path = _get_browse_db(genome)
+    db_path = genome_context._get_browse_db(genome)
     gene, transcripts = _feature_explorer_load_gene_and_transcripts(db_path, gene_id)
     if not gene:
         raise HTTPException(status_code=404, detail=f"Gene '{gene_id}' not found in {genome} genome.")
 
     ordered_transcripts, active_set = _feature_explorer_order_transcripts(transcripts, transcript_ids, include_inactive)
     total_transcripts = len(ordered_transcripts)
-    fasta = _get_browse_fasta(genome) if include_sequence_fields else None
+    fasta = genome_context._get_browse_fasta(genome) if include_sequence_fields else None
 
     records_by_key: Dict[str, Dict[str, Any]] = {}
     instances_by_key: Dict[str, List[Dict[str, Any]]] = {}
@@ -11478,7 +10978,7 @@ async def feature_explorer_exons_detail(payload: FeatureExplorerExonsDetailReque
         strand = str(selected.strand or "+")
         exon_start = int(selected.start)
         exon_end = int(selected.end)
-        fasta = _get_browse_fasta(genome)
+        fasta = genome_context._get_browse_fasta(genome)
         try:
             chrom_len = int(fasta.get_reference_length(chrom))
         except Exception:
@@ -11642,10 +11142,10 @@ async def feature_explorer_sequences(payload: FeatureExplorerSequencesRequest):
         raise HTTPException(status_code=400, detail="rows limit exceeded (max 50)")
 
     genome = str(payload.genome or "reference").strip() or "reference"
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+    db_path = await run_in_threadpool(genome_context._get_browse_db, genome)
 
     def _query():
-        fasta = _get_browse_fasta(genome)
+        fasta = genome_context._get_browse_fasta(genome)
         tx_ids = []
         for row in payload.rows:
             tx_id = str(row.transcript_id or "").strip()
@@ -12020,7 +11520,7 @@ def _genome_taxid(genome: str, species: Dict[str, Any]) -> int:
 
     metadata_path = None
     try:
-        metadata_path = _get_genome_metadata_path(genome)
+        metadata_path = genome_context._get_genome_metadata_path(genome)
     except Exception:
         metadata_path = None
     if metadata_path:
@@ -12048,10 +11548,10 @@ def _translation_context(genome: str) -> Dict[str, Any]:
     Cached per genome because it reads the assembly report and the taxonomy
     artifact, and the answer is the same for every transcript of that genome.
     """
-    context = _resolve_browse_genome_context(genome)
+    context = genome_context._resolve_browse_genome_context(genome)
     species = context.get("species") or {}
     try:
-        metadata_path = _get_genome_metadata_path(genome)
+        metadata_path = genome_context._get_genome_metadata_path(genome)
     except Exception:
         metadata_path = None
 
@@ -12069,7 +11569,7 @@ def _translation_context(genome: str) -> Dict[str, Any]:
 
     molecules: Dict[str, str] = {}
     if metadata_path:
-        for row in _load_cached_assembly_report_rows(metadata_path):
+        for row in genome_context._load_cached_assembly_report_rows(metadata_path):
             molecule = classify_contig_molecule(row.sequence_name, getattr(row, "molecule_type", ""))
             if molecule == MOLECULE_NUCLEAR:
                 continue
@@ -12238,10 +11738,10 @@ async def feature_explorer_proteins(payload: FeatureExplorerProteinsRequest):
         raise HTTPException(status_code=400, detail="rows limit exceeded (max 50)")
 
     genome = str(payload.genome or "reference").strip() or "reference"
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+    db_path = await run_in_threadpool(genome_context._get_browse_db, genome)
 
     def _query():
-        fasta = _get_browse_fasta(genome)
+        fasta = genome_context._get_browse_fasta(genome)
 
         tx_ids: List[str] = []
         for row in payload.rows:
@@ -12696,7 +12196,7 @@ def _genome_xref_mapping(genome: str) -> Optional["protein_structure.UniProtMapp
     knows how to fetch. Finding one makes the lookup fully local.
     """
     try:
-        context = _resolve_browse_genome_context(genome)
+        context = genome_context._resolve_browse_genome_context(genome)
     except Exception:
         return None
     gff_path = str(context.get("gff_path") or "")
@@ -12863,8 +12363,8 @@ def _structure_transcript_contexts(
     if not wanted:
         return {}
 
-    db_path = _get_browse_db(genome)
-    fasta = _get_browse_fasta(genome)
+    db_path = genome_context._get_browse_db(genome)
+    fasta = genome_context._get_browse_fasta(genome)
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -13476,7 +12976,7 @@ async def structure_variants(payload: StructureVariantsRequest):
         layout = context.get("layout")
         chrom = str(context.get("chrom") or "")
         strand = str(context.get("strand") or "+")
-        dna = _cds_dna_from_layout(_get_browse_fasta(genome), chrom, strand, layout)
+        dna = _cds_dna_from_layout(genome_context._get_browse_fasta(genome), chrom, strand, layout)
 
         # Tutorial-aware, like every other reader of the registry: during a tutorial the
         # only VCF tracks in scope are the tutorial's own.
@@ -13948,7 +13448,7 @@ async def browse_bigwig(
         raise HTTPException(status_code=400, detail="end must be greater than start.")
 
     # Ensure selected genome is valid/configured (same guardrails as other browse APIs).
-    await run_in_threadpool(_get_browse_db, genome)
+    await run_in_threadpool(genome_context._get_browse_db, genome)
 
     bw_path = Path(path).expanduser()
     if not bw_path.exists() or not bw_path.is_file():
@@ -13957,7 +13457,7 @@ async def browse_bigwig(
     bins = max(20, min(4000, int(bins)))
     requested_chrom_len: Optional[int] = None
     try:
-        fasta = _get_browse_fasta(genome)
+        fasta = genome_context._get_browse_fasta(genome)
         requested_chrom_len = int(fasta.get_reference_length(chrom))
     except Exception:
         requested_chrom_len = None
@@ -15237,7 +14737,7 @@ def _resolve_db_chrom_name_for_genome(db_path: str, chrom: str, genome: str) -> 
     if not token:
         return None
     known_regions = _get_db_gene_chrom_names(db_path)
-    resolved = _resolve_browse_chrom_name(genome, token, known_regions)
+    resolved = genome_context._resolve_browse_chrom_name(genome, token, known_regions)
     if resolved and resolved in known_regions:
         return resolved
     if resolved:
@@ -15247,7 +14747,7 @@ def _resolve_db_chrom_name_for_genome(db_path: str, chrom: str, genome: str) -> 
 
 def _resolve_genome_chrom_length(genome: str, *tokens: Optional[str]) -> Tuple[Optional[str], int]:
     try:
-        fasta = _get_browse_fasta(genome)
+        fasta = genome_context._get_browse_fasta(genome)
     except Exception:
         return None, 0
 
@@ -16334,8 +15834,8 @@ async def structural_variation_view(
         try:
             resolved_ref_browse_genome = str(ref_browse_genome or "reference").strip() or "reference"
             resolved_tgt_browse_genome = str(tgt_browse_genome or "target").strip() or "target"
-            ref_db_path = _get_browse_db(resolved_ref_browse_genome)
-            tgt_db_path = _get_browse_db(resolved_tgt_browse_genome)
+            ref_db_path = genome_context._get_browse_db(resolved_ref_browse_genome)
+            tgt_db_path = genome_context._get_browse_db(resolved_tgt_browse_genome)
         except HTTPException as e:
             return {"supported": False, "detail": e.detail}
 
@@ -17443,7 +16943,7 @@ async def transcript_sequences(payload: TranscriptSequencesRequest):
     if not requested:
         raise HTTPException(status_code=400, detail="feature_types must name at least one known type")
 
-    db_path = await run_in_threadpool(_get_browse_db, genome)
+    db_path = await run_in_threadpool(genome_context._get_browse_db, genome)
 
     def _run():
         conn = sqlite3.connect(db_path)
@@ -17485,7 +16985,7 @@ async def transcript_sequences(payload: TranscriptSequencesRequest):
             "length": True, "biotype": True, "canonical_status": True,
         }
         tx_span = (tx_start, tx_end) if tx_start and tx_end else None
-        fasta = _get_browse_fasta(genome)
+        fasta = genome_context._get_browse_fasta(genome)
 
         records: List[TranscriptSequenceRecord] = []
         errors: List[str] = []
@@ -17567,8 +17067,8 @@ async def export_sequences(payload: ExportSequencesRequest):
     output_dir = Path(str(payload.output_dir)).expanduser().resolve()
 
     def _run():
-        db_path = _get_browse_db(genome)
-        fasta   = _get_browse_fasta(genome)
+        db_path = genome_context._get_browse_db(genome)
+        fasta   = genome_context._get_browse_fasta(genome)
 
         # ── Fetch transcript records from DB ──────────────────────────────────
         conn = sqlite3.connect(db_path)
@@ -21108,7 +20608,7 @@ def _load_vcf_gene_intervals(genome: Optional[str], chrom: str, start: int, end:
     if not g:
         return []
     try:
-        db_path = _get_browse_db(g)
+        db_path = genome_context._get_browse_db(g)
     except Exception:
         return []
     conn = sqlite3.connect(db_path)
@@ -22413,7 +21913,7 @@ def _resolve_track_chrom_with_aliases(requested: str, available: List[str], geno
         return variant_matches[0]
 
     # Assembly-report aware resolver (RefSeq/GenBank/UCSC/canonical aliases).
-    resolved = _resolve_browse_chrom_name(genome, token, known)
+    resolved = genome_context._resolve_browse_chrom_name(genome, token, known)
     if resolved in known:
         return resolved
     resolved_l = str(resolved or "").lower()
@@ -22479,7 +21979,7 @@ def _resolve_splice_annotation_chrom(genome: str, db_path: str, requested: str) 
     if len(variant_matches) == 1:
         return variant_matches[0]
 
-    resolved = _resolve_browse_chrom_name(genome, token, known)
+    resolved = genome_context._resolve_browse_chrom_name(genome, token, known)
     if resolved in known:
         return resolved
     resolved_l = str(resolved or "").lower()
@@ -22583,7 +22083,7 @@ def _resolve_splice_applied_settings(
 def _load_splice_local_annotation_pairs(genome: str, resolved_chrom: str, requested_chrom: str) -> Optional[Set[Tuple[int, int]]]:
     local_annotated_pairs: Optional[Set[Tuple[int, int]]] = None
     try:
-        db_path = _get_browse_db(genome)
+        db_path = genome_context._get_browse_db(genome)
         db_chrom = _resolve_splice_annotation_chrom(genome, db_path, resolved_chrom)
         if not db_chrom:
             db_chrom = _resolve_splice_annotation_chrom(genome, db_path, requested_chrom)
@@ -23647,14 +23147,14 @@ async def browse_bigwig_batch(payload: BigWigBatchRequest):
     if not chrom:
         raise HTTPException(status_code=400, detail="chrom is required.")
 
-    await run_in_threadpool(_get_browse_db, genome)
+    await run_in_threadpool(genome_context._get_browse_db, genome)
     p = Path(path).expanduser()
     if not p.exists() or not p.is_file():
         raise HTTPException(status_code=404, detail=f"BigWig not found: {p}")
 
     requested_chrom_len: Optional[int] = None
     try:
-        fasta = _get_browse_fasta(genome)
+        fasta = genome_context._get_browse_fasta(genome)
         requested_chrom_len = int(fasta.get_reference_length(chrom))
     except Exception:
         requested_chrom_len = None

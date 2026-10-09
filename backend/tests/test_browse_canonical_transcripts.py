@@ -66,7 +66,7 @@ class BrowseCanonicalTranscriptsTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            with patch("main._get_browse_db", return_value=str(db)):
+            with patch("genome_context._get_browse_db", return_value=str(db)):
                 payload = asyncio.run(
                     browse_canonical_transcripts(
                         genome="reference",
@@ -102,7 +102,7 @@ class BrowseCanonicalTranscriptsTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            with patch("main._get_browse_db", return_value=str(db)):
+            with patch("genome_context._get_browse_db", return_value=str(db)):
                 payload = asyncio.run(
                     browse_canonical_transcripts(
                         genome="target",
@@ -128,7 +128,7 @@ class BrowseCanonicalTranscriptsTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            with patch("main._get_browse_db", return_value=str(db)):
+            with patch("genome_context._get_browse_db", return_value=str(db)):
                 payload = asyncio.run(
                     browse_canonical_transcripts(
                         genome="reference",

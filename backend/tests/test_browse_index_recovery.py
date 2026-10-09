@@ -26,6 +26,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import genome_context  # noqa: E402
 import gff_index  # noqa: E402
 import config_store  # noqa: E402
 
@@ -61,8 +62,8 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
     def _reset_state(self):
         with gff_index._index_tasks_guard:
             gff_index._index_tasks.clear()
-        with main._RECOVERED_INDEX_GUARD:
-            main._RECOVERED_INDEX_PATHS.clear()
+        with genome_context._RECOVERED_INDEX_GUARD:
+            genome_context._RECOVERED_INDEX_PATHS.clear()
 
     def _await_quiet_worker(self, timeout=60.0):
         deadline = time.time() + timeout
@@ -86,7 +87,7 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
 
     def test_an_index_built_after_registration_is_found_on_disk(self):
         db = self._build_index("GCF_000001405.40.genomic.gff3.index.db")
-        resolved = main._resolve_annotation_index(str(self.gff), self.cfg, "GCF_000001405.40")
+        resolved = genome_context._resolve_annotation_index(str(self.gff), self.cfg, "GCF_000001405.40")
         self.assertEqual(
             gff_index._normalize_fs_path(resolved),
             gff_index._normalize_fs_path(str(db)),
@@ -101,17 +102,17 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
         cfg = dict(self.cfg, active_species=[species], ref_gff="", target_gff="")
 
         with patch.object(config_store, "load_config", return_value=cfg):
-            with patch.object(main, "_dedupe_active_species", return_value=[species]):
-                with patch.object(main, "_active_species_item_key", return_value="genome-key"):
+            with patch.object(genome_context, "_dedupe_active_species", return_value=[species]):
+                with patch.object(genome_context, "_active_species_item_key", return_value="genome-key"):
                     self.assertEqual(
-                        main._get_browse_db("genome-key"),
+                        genome_context._get_browse_db("genome-key"),
                         gff_index._normalize_fs_path(str(db)),
                     )
 
     def test_a_stale_saved_index_path_does_not_hide_the_real_one(self):
         db = self._build_index("GCF_000001405.40.genomic.gff3.index.db")
         removed = self.release_dir / "gone.gff3.index.db"
-        resolved = main._browse_index_for(
+        resolved = genome_context._browse_index_for(
             str(self.gff), str(removed), self.cfg, {"assembly": "GCF_000001405.40"}
         )
         self.assertEqual(
@@ -120,16 +121,16 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
         )
 
     def test_a_genome_with_no_annotation_resolves_to_no_index(self):
-        self.assertEqual(main._resolve_annotation_index("", self.cfg), "")
+        self.assertEqual(genome_context._resolve_annotation_index("", self.cfg), "")
         self.assertEqual(
-            main._resolve_annotation_index(str(self.release_dir / "absent.gff"), self.cfg),
+            genome_context._resolve_annotation_index(str(self.release_dir / "absent.gff"), self.cfg),
             "",
         )
 
     # ── nothing built yet: build it, do not report an absent annotation ──────
 
     def test_an_unindexed_annotation_names_a_target_so_the_build_can_be_queued(self):
-        resolved = main._resolve_annotation_index(str(self.gff), self.cfg, "GCF_000001405.40")
+        resolved = genome_context._resolve_annotation_index(str(self.gff), self.cfg, "GCF_000001405.40")
         self.assertTrue(resolved, "an unindexed annotation must still name its index")
         self.assertFalse(Path(resolved).exists())
         self.assertEqual(Path(resolved).parent, self.release_dir.resolve())
@@ -139,19 +140,19 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
         cfg = dict(self.cfg, active_species=[species], ref_gff="", target_gff="")
 
         with patch.object(config_store, "load_config", return_value=cfg):
-            with patch.object(main, "_dedupe_active_species", return_value=[species]):
-                with patch.object(main, "_active_species_item_key", return_value="genome-key"):
+            with patch.object(genome_context, "_dedupe_active_species", return_value=[species]):
+                with patch.object(genome_context, "_active_species_item_key", return_value="genome-key"):
                     with self.assertRaises(HTTPException) as caught:
                         # _optional is what the region list uses: it must not turn
                         # this into "" and render a genome with an empty gene track.
-                        main._get_browse_db_optional("genome-key")
-                    self.assertEqual(caught.exception.status_code, main.INDEX_BUILDING_STATUS)
+                        genome_context._get_browse_db_optional("genome-key")
+                    self.assertEqual(caught.exception.status_code, genome_context.INDEX_BUILDING_STATUS)
 
                     self._await_quiet_worker()
                     self.assertEqual(
-                        main._get_browse_db("genome-key"),
+                        genome_context._get_browse_db("genome-key"),
                         gff_index._normalize_fs_path(
-                            main._resolve_annotation_index(str(self.gff), cfg, "GCF_000001405.40")
+                            genome_context._resolve_annotation_index(str(self.gff), cfg, "GCF_000001405.40")
                         ),
                     )
 
@@ -165,7 +166,7 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
                 "db_path": gff_index._normalize_fs_path(str(self.release_dir / "selector.index.db")),
                 "gff_path": gff_index._normalize_fs_path(str(self.gff)),
             }
-        resolved = main._resolve_annotation_index(str(self.gff), self.cfg, "GCF_000001405.40")
+        resolved = genome_context._resolve_annotation_index(str(self.gff), self.cfg, "GCF_000001405.40")
         self.assertEqual(Path(resolved).name, "selector.index.db")
 
     def test_queueing_the_same_annotation_under_another_name_reuses_the_build(self):
@@ -187,10 +188,10 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
             }
 
         context = {"db_path": str(db), "gff_path": str(self.gff)}
-        with patch.object(main, "_resolve_browse_genome_context", return_value=context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=context):
             with patch.object(gff_index, "queue_index_build", side_effect=AssertionError("requeued")):
                 with self.assertRaises(HTTPException) as caught:
-                    main._get_browse_db("genome-key")
+                    genome_context._get_browse_db("genome-key")
 
         self.assertEqual(caught.exception.status_code, 500)
         self.assertIn("unreadable attributes", caught.exception.detail)
@@ -212,7 +213,7 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
                 "error": None,
                 "completed_at": "2030-01-01T00:00:00Z",
             }
-        self.assertEqual(main._index_build_error_for(str(self.gff), str(db)), "")
+        self.assertEqual(genome_context._index_build_error_for(str(self.gff), str(db)), "")
 
 
 if __name__ == "__main__":

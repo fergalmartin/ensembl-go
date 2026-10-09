@@ -50,8 +50,8 @@ class BigWigBatchEndpointTests(unittest.TestCase):
             )
             with (
                 patch("main.pyBigWig", SimpleNamespace(open=fake_open)),
-                patch("main._get_browse_db", return_value=object()),
-                patch("main._get_browse_fasta", side_effect=RuntimeError("no fasta")),
+                patch("genome_context._get_browse_db", return_value=object()),
+                patch("genome_context._get_browse_fasta", side_effect=RuntimeError("no fasta")),
             ):
                 result = asyncio.run(browse_bigwig_batch(payload))
 
@@ -83,8 +83,8 @@ class BigWigBatchEndpointTests(unittest.TestCase):
             )
             with (
                 patch("main.pyBigWig", SimpleNamespace(open=lambda _path: fake_bigwig)),
-                patch("main._get_browse_db", return_value=object()),
-                patch("main._get_browse_fasta", side_effect=RuntimeError("no fasta")),
+                patch("genome_context._get_browse_db", return_value=object()),
+                patch("genome_context._get_browse_fasta", side_effect=RuntimeError("no fasta")),
             ):
                 result = asyncio.run(browse_bigwig_batch(payload))
 
@@ -109,8 +109,8 @@ class BigWigBatchEndpointTests(unittest.TestCase):
             )
             with (
                 patch("main.pyBigWig", SimpleNamespace(open=lambda _path: fake_bigwig)),
-                patch("main._get_browse_db", return_value=object()),
-                patch("main._get_browse_fasta", side_effect=RuntimeError("no fasta")),
+                patch("genome_context._get_browse_db", return_value=object()),
+                patch("genome_context._get_browse_fasta", side_effect=RuntimeError("no fasta")),
             ):
                 result = asyncio.run(browse_bigwig_batch(payload))
 

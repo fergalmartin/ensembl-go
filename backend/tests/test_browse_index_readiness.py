@@ -22,6 +22,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import genome_context  # noqa: E402
 import gff_index  # noqa: E402
 
 
@@ -67,31 +68,31 @@ class BrowseIndexReadinessTests(unittest.TestCase):
         return False
 
     def test_missing_index_is_reported_rather_than_built_inline(self):
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             with patch.object(gff_index, "ensure_gff_index", side_effect=AssertionError("built inline")):
                 with self.assertRaises(HTTPException) as caught:
-                    main._get_browse_db("reference")
+                    genome_context._get_browse_db("reference")
 
-        self.assertEqual(caught.exception.status_code, main.INDEX_BUILDING_STATUS)
+        self.assertEqual(caught.exception.status_code, genome_context.INDEX_BUILDING_STATUS)
         self.assertFalse(self.db.exists(), "the request must not have produced the index itself")
 
     def test_the_build_is_handed_to_the_background_worker(self):
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             with self.assertRaises(HTTPException):
-                main._get_browse_db("reference")
+                genome_context._get_browse_db("reference")
 
             self.assertTrue(self._await_index(), "the queued build never completed")
             self.assertEqual(
-                main._get_browse_db("reference"),
+                genome_context._get_browse_db("reference"),
                 gff_index._normalize_fs_path(str(self.db)),
             )
 
     def test_a_second_request_reuses_the_queued_build(self):
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             task_ids = set()
             for _ in range(3):
                 with self.assertRaises(HTTPException):
-                    main._get_browse_db("reference")
+                    genome_context._get_browse_db("reference")
                 with gff_index._index_tasks_guard:
                     task_ids |= set(gff_index._index_tasks)
             self.assertEqual(len(task_ids), 1, "each poll queued another build of the same index")
@@ -100,28 +101,28 @@ class BrowseIndexReadinessTests(unittest.TestCase):
         # _get_browse_db_optional turns "no annotation" into "", which renders the
         # genome without a gene track. A build in progress must not look like that,
         # or the view would settle on an empty track and never correct itself.
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             with self.assertRaises(HTTPException) as caught:
-                main._get_browse_db_optional("reference")
-        self.assertEqual(caught.exception.status_code, main.INDEX_BUILDING_STATUS)
+                genome_context._get_browse_db_optional("reference")
+        self.assertEqual(caught.exception.status_code, genome_context.INDEX_BUILDING_STATUS)
 
     def test_a_genome_without_an_annotation_still_reports_no_index(self):
         with patch.object(
-            main,
+            genome_context,
             "_resolve_browse_genome_context",
             return_value={"db_path": "", "gff_path": ""},
         ):
-            self.assertEqual(main._get_browse_db_optional("reference"), "")
+            self.assertEqual(genome_context._get_browse_db_optional("reference"), "")
 
     def test_resolving_an_index_does_not_block_on_a_running_build(self):
         # The lock a build holds must never be waited on by a request. A build is
         # simulated by holding the rebuild guard while resolving the index.
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             gff_index._index_rebuild_guard.acquire()
             try:
                 started = time.time()
                 with self.assertRaises(HTTPException):
-                    main._get_browse_db("reference")
+                    genome_context._get_browse_db("reference")
                 self.assertLess(time.time() - started, 2.0)
             finally:
                 gff_index._index_rebuild_guard.release()

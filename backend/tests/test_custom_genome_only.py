@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi import HTTPException  # noqa: E402
 
 import main  # noqa: E402
+import genome_context  # noqa: E402
 import local_inventory  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "annotation"
@@ -73,26 +74,26 @@ class OptionalIndexResolutionTests(unittest.TestCase):
         def _raise_404(_genome):
             raise HTTPException(status_code=404, detail="Index not found")
 
-        with patch.object(main, "_get_browse_db", _raise_404):
-            self.assertEqual(main._get_browse_db_optional("reference"), "")
+        with patch.object(genome_context, "_get_browse_db", _raise_404):
+            self.assertEqual(genome_context._get_browse_db_optional("reference"), "")
 
     def test_non_404_errors_still_propagate(self):
         def _raise_500(_genome):
             raise HTTPException(status_code=500, detail="broken index")
 
-        with patch.object(main, "_get_browse_db", _raise_500):
+        with patch.object(genome_context, "_get_browse_db", _raise_500):
             with self.assertRaises(HTTPException) as ctx:
-                main._get_browse_db_optional("reference")
+                genome_context._get_browse_db_optional("reference")
             self.assertEqual(ctx.exception.status_code, 500)
 
     def test_existing_index_is_passed_through(self):
-        with patch.object(main, "_get_browse_db", lambda _g: "/path/to.db"):
-            self.assertEqual(main._get_browse_db_optional("reference"), "/path/to.db")
+        with patch.object(genome_context, "_get_browse_db", lambda _g: "/path/to.db"):
+            self.assertEqual(genome_context._get_browse_db_optional("reference"), "/path/to.db")
 
 
 class GenomeOnlyBrowsingTests(unittest.TestCase):
     def test_genes_endpoint_returns_empty_without_an_annotation(self):
-        with patch.object(main, "_get_browse_db_optional", lambda _g: ""):
+        with patch.object(genome_context, "_get_browse_db_optional", lambda _g: ""):
             result = asyncio.run(main.browse_genes(genome="reference", chrom="chr1"))
         self.assertEqual(result, [])
 
@@ -109,9 +110,9 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
                 return {"chr1": 244, "chr2": 120}[name]
 
         with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", False)), \
-                patch.object(main, "_get_browse_fasta", lambda _g: _FakeFasta()), \
-                patch.object(main, "_build_genome_synonym_index", lambda _g, _r: {}), \
-                patch.object(main, "_get_genome_metadata_path", lambda _g: ""):
+                patch.object(genome_context, "_get_browse_fasta", lambda _g: _FakeFasta()), \
+                patch.object(genome_context, "_build_genome_synonym_index", lambda _g, _r: {}), \
+                patch.object(genome_context, "_get_genome_metadata_path", lambda _g: ""):
             regions = asyncio.run(main.browse_regions(genome="reference"))
 
         by_name = {r.chrom: r for r in regions}
@@ -125,7 +126,7 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
             raise HTTPException(status_code=404, detail="FASTA not configured")
 
         with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", False)), \
-                patch.object(main, "_get_browse_fasta", _no_fasta):
+                patch.object(genome_context, "_get_browse_fasta", _no_fasta):
             with self.assertRaises(HTTPException) as ctx:
                 asyncio.run(main.browse_regions(genome="reference"))
         self.assertEqual(ctx.exception.status_code, 404)
@@ -138,10 +139,10 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
             raise HTTPException(status_code=404, detail="FASTA not configured")
 
         with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", True)), \
-                patch.object(main, "_get_browse_fasta", _no_fasta):
+                patch.object(genome_context, "_get_browse_fasta", _no_fasta):
             with self.assertRaises(HTTPException) as ctx:
                 asyncio.run(main.browse_regions(genome="reference"))
-        self.assertEqual(ctx.exception.status_code, main.INDEX_BUILDING_STATUS)
+        self.assertEqual(ctx.exception.status_code, genome_context.INDEX_BUILDING_STATUS)
 
     def test_an_assembly_is_browsable_while_its_genes_are_still_indexing(self):
         # The whole point of the change: regions come from the FASTA, which is
@@ -154,9 +155,9 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
                 return 1000
 
         with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", True)), \
-                patch.object(main, "_get_browse_fasta", lambda _g: _FakeFasta()), \
-                patch.object(main, "_build_genome_synonym_index", lambda _g, _r: {}), \
-                patch.object(main, "_get_genome_metadata_path", lambda _g: ""):
+                patch.object(genome_context, "_get_browse_fasta", lambda _g: _FakeFasta()), \
+                patch.object(genome_context, "_build_genome_synonym_index", lambda _g, _r: {}), \
+                patch.object(genome_context, "_get_genome_metadata_path", lambda _g: ""):
             regions = asyncio.run(main.browse_regions(genome="reference"))
 
         self.assertEqual([r.chrom for r in regions], ["chr1"])

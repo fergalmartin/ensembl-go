@@ -29,6 +29,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import genome_context  # noqa: E402
 import gff_index  # noqa: E402
 import config_store  # noqa: E402
 
@@ -89,7 +90,7 @@ class IndexProgressTests(unittest.TestCase):
     def test_regions_do_not_wait_for_the_gene_index(self):
         # The assembly is in the FASTA and is ready at once. Holding the whole
         # panel back for a build that takes minutes was the entire complaint.
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             db_path, pending = main._get_browse_db_for_regions("reference")
         self.assertEqual(db_path, "")
         self.assertTrue(pending, "the caller was not told genes are still coming")
@@ -98,7 +99,7 @@ class IndexProgressTests(unittest.TestCase):
         # "There are no genes" and "the genes are not here yet" must stay
         # distinguishable, or the browser waits for ever on an empty track.
         with patch.object(
-            main,
+            genome_context,
             "_resolve_browse_genome_context",
             return_value={"db_path": "", "gff_path": ""},
         ):
@@ -106,7 +107,7 @@ class IndexProgressTests(unittest.TestCase):
 
     def test_a_built_index_is_handed_over_with_nothing_outstanding(self):
         gff_index.ensure_gff_index(str(self.gff), str(self.db))
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             db_path, pending = main._get_browse_db_for_regions("reference")
         self.assertEqual(db_path, gff_index._normalize_fs_path(str(self.db)))
         self.assertFalse(pending)
@@ -114,10 +115,10 @@ class IndexProgressTests(unittest.TestCase):
     def test_gene_queries_still_refuse_to_answer_without_an_index(self):
         # Regions may be served early; genes may not. An empty gene list would be
         # cached by the browser as "nothing here" and never corrected.
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             with self.assertRaises(HTTPException) as caught:
-                main._get_browse_db("reference")
-        self.assertEqual(caught.exception.status_code, main.INDEX_BUILDING_STATUS)
+                genome_context._get_browse_db("reference")
+        self.assertEqual(caught.exception.status_code, genome_context.INDEX_BUILDING_STATUS)
 
     # -- what the meter is drawn from --------------------------------------
 
@@ -129,7 +130,7 @@ class IndexProgressTests(unittest.TestCase):
             "genes": 12,
             "transcripts": 30,
         })
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             status = main._index_status_for_genome("reference")
 
         self.assertEqual(status["state"], main.INDEX_STATE_BUILDING)
@@ -147,7 +148,7 @@ class IndexProgressTests(unittest.TestCase):
             "genes": 900,
             "transcripts": 2000,
         })
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             status = main._index_status_for_genome("reference")
         self.assertEqual(status["percent"], 96.0)
         self.assertLess(status["percent"], 100.0)
@@ -163,7 +164,7 @@ class IndexProgressTests(unittest.TestCase):
         )
         self._record_task("waiting", status="queued")
 
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             status = main._index_status_for_genome("reference")
 
         self.assertEqual(status["state"], main.INDEX_STATE_QUEUED)
@@ -172,14 +173,14 @@ class IndexProgressTests(unittest.TestCase):
 
     def test_status_reports_a_built_index_as_ready(self):
         gff_index.ensure_gff_index(str(self.gff), str(self.db))
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             status = main._index_status_for_genome("reference")
         self.assertEqual(status["state"], main.INDEX_STATE_READY)
         self.assertEqual(status["percent"], 100.0)
 
     def test_a_genome_without_an_annotation_reports_no_gene_track(self):
         with patch.object(
-            main,
+            genome_context,
             "_resolve_browse_genome_context",
             return_value={"db_path": "", "gff_path": ""},
         ):
@@ -188,7 +189,7 @@ class IndexProgressTests(unittest.TestCase):
 
     def test_asking_for_status_never_starts_a_build(self):
         # Views that only watch progress must not be the thing that begins work.
-        with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
+        with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             with patch.object(gff_index, "queue_index_build", side_effect=AssertionError("queued")):
                 status = main._index_status_for_genome("reference")
         self.assertEqual(status["state"], main.INDEX_STATE_ABSENT)
@@ -197,25 +198,25 @@ class IndexProgressTests(unittest.TestCase):
 
     def test_a_remembered_failure_can_be_discarded(self):
         self._record_task("failed", status="failed", error="bad line 4", completed_at=main.now_iso())
-        self.assertEqual(main._index_build_error_for(str(self.gff), str(self.db)), "bad line 4")
+        self.assertEqual(genome_context._index_build_error_for(str(self.gff), str(self.db)), "bad line 4")
 
         self.assertEqual(gff_index.forget_index_failures(str(self.gff), str(self.db)), 1)
-        self.assertEqual(main._index_build_error_for(str(self.gff), str(self.db)), "")
+        self.assertEqual(genome_context._index_build_error_for(str(self.gff), str(self.db)), "")
 
     def test_replacing_the_annotation_clears_the_failure_by_itself(self):
         # The failure belongs to the bytes that caused it. Re-download a
         # truncated file and the genome must start building again unaided.
         self._record_task("failed", status="failed", error="unexpected end of file",
                           completed_at=main.now_iso())
-        self.assertNotEqual(main._index_build_error_for(str(self.gff), str(self.db)), "")
+        self.assertNotEqual(genome_context._index_build_error_for(str(self.gff), str(self.db)), "")
 
         self.gff.write_text(TOY_GFF + "chr1\ttest\tgene\t200\t300\t.\t-\t.\tID=g2;Name=G2\n")
-        self.assertEqual(main._index_build_error_for(str(self.gff), str(self.db)), "")
+        self.assertEqual(genome_context._index_build_error_for(str(self.gff), str(self.db)), "")
 
     def test_a_failure_survives_a_poll_of_the_same_unchanged_file(self):
         self._record_task("failed", status="failed", error="bad line 4", completed_at=main.now_iso())
         for _ in range(3):
-            self.assertEqual(main._index_build_error_for(str(self.gff), str(self.db)), "bad line 4")
+            self.assertEqual(genome_context._index_build_error_for(str(self.gff), str(self.db)), "bad line 4")
 
     def test_the_task_registry_does_not_grow_without_limit(self):
         for n in range(gff_index.MAX_FINISHED_INDEX_TASKS + 15):

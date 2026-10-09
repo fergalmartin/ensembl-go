@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import genome_context  # noqa: E402
 import gff_index  # noqa: E402
 import app_paths  # noqa: E402
 from stats_utils import choose_stats_cache_path  # noqa: E402
@@ -41,12 +42,12 @@ class StatsIndexRecoveryTests(unittest.TestCase):
         self.gff = self.release_dir / "GCF_000001405.40.genomic.gff"
         self.gff.write_text(TOY_GFF)
         self.cfg = {"output_dir": str(self.root)}
-        with main._RECOVERED_INDEX_GUARD:
-            main._RECOVERED_INDEX_PATHS.clear()
+        with genome_context._RECOVERED_INDEX_GUARD:
+            genome_context._RECOVERED_INDEX_PATHS.clear()
 
     def tearDown(self):
-        with main._RECOVERED_INDEX_GUARD:
-            main._RECOVERED_INDEX_PATHS.clear()
+        with genome_context._RECOVERED_INDEX_GUARD:
+            genome_context._RECOVERED_INDEX_PATHS.clear()
         shutil.rmtree(self.root, ignore_errors=True)
 
     def _species(self, **files):
