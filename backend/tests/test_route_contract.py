@@ -27,6 +27,16 @@ import main
 SNAPSHOT = Path(__file__).resolve().parent / "fixtures" / "route_contract.json"
 
 
+def _describe_type(annotation):
+    """A type by class name, e.g. List[RecentItem]: which module defines it is not part of the API."""
+    args = typing.get_args(annotation)
+    origin = typing.get_origin(annotation)
+    if origin is not None and args:
+        name = getattr(origin, "__name__", None) or str(origin).replace("typing.", "")
+        return f"{name.capitalize() if name in ('list', 'dict', 'set', 'tuple') else name}[{', '.join(_describe_type(a) for a in args)}]"
+    return getattr(annotation, "__name__", None) or str(annotation).replace("typing.", "")
+
+
 def _route_table():
     rows = []
     for route in main.app.routes:
@@ -38,7 +48,7 @@ def _route_table():
             "name": getattr(route, "name", None),
             "endpoint": getattr(endpoint, "__name__", None),
             "async": bool(endpoint and inspect.iscoroutinefunction(endpoint)),
-            "response_model": getattr(response_model, "__name__", None) or (str(response_model) if response_model else None),
+            "response_model": _describe_type(response_model) if response_model else None,
         })
     return rows
 

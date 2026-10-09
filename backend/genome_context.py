@@ -546,3 +546,22 @@ def _get_browse_fasta(genome: str):
     fasta = file_io.open_indexed_fasta(fasta_path)
     _fasta_cache[cache_key] = (fasta_path, fasta)
     return fasta
+
+
+def _force_refresh_browse_fasta_index(genome: str, current_fasta: Optional["ThreadSafeFasta"] = None):
+    """Force FASTA re-index + handle refresh for a genome cache entry."""
+    context = _resolve_browse_genome_context(genome)
+    cache_key = str(context.get("cache_key") or str(genome or "").strip() or "reference")
+    fasta_path = str(context.get("fasta_path") or "")
+    if not fasta_path or not os.path.exists(fasta_path):
+        raise HTTPException(status_code=404, detail=f"FASTA not found for {genome} genome.")
+
+    refreshed = file_io.open_indexed_fasta(fasta_path, force_reindex=True)
+    _fasta_cache[cache_key] = (fasta_path, refreshed)
+
+    try:
+        if current_fasta is not None and current_fasta is not refreshed:
+            current_fasta.close()
+    except Exception:
+        pass
+    return refreshed

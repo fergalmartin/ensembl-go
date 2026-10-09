@@ -95,6 +95,7 @@ class RegionTests(unittest.TestCase):
 class FeatureTests(unittest.TestCase):
     def test_matches_the_msa_views_mapper_for_one_genomic_window(self):
         import main
+        import routes.alignment  # noqa: E402
         import genome_context  # noqa: E402
         import gff_index  # noqa: E402
         for strand in '+-':
@@ -110,7 +111,7 @@ class FeatureTests(unittest.TestCase):
                     [gff_index.SimpleFeature(u['feature_type'], u['start'], u['end'], strand) for u in t['utrs']])
                 seg = region['segments'][0]
                 theirs = [f.model_dump(exclude={'codon_phase'}) for f in
-                          main.map_features_to_alignment(simple, seg['start'], seg['end'], aligned, strand, seq)]
+                          routes.alignment.map_features_to_alignment(simple, seg['start'], seg['end'], aligned, strand, seq)]
                 self.assertEqual(ours, theirs)
 
     def test_trimmed_introns_map_and_leave_cut_marks(self):
@@ -223,6 +224,7 @@ class MsaViewSharingTests(unittest.TestCase):
 
     def _items(self, main):
         import gff_index  # noqa: E402
+        import routes.alignment  # noqa: E402
         items = []
         for i, strand in enumerate('+-'):
             t = transcript(strand)
@@ -232,7 +234,7 @@ class MsaViewSharingTests(unittest.TestCase):
                 [gff_index.SimpleFeature('CDS', c['start'], c['end'], strand) for c in t['cds']],
                 [gff_index.SimpleFeature(u['feature_type'], u['start'], u['end'], strand) for u in t['utrs']])
             # The MSA view's default window: the gene (here 950-2200), with oriented flanks.
-            start, end = main._interval_window_with_oriented_flanks(950, 2200, strand, 100, 60)
+            start, end = routes.alignment._interval_window_with_oriented_flanks(950, 2200, strand, 100, 60)
             seq, _, _ = fetch('1', start, end)
             raw = seq if strand == '+' else reverse_complement(seq)
             items.append({'genome': f'G{i}', 'genome_key': f'G{i}', 'tag': f'g{i}', 'query': f'gene{i}', 'transcript_id': f'tx{i}',
@@ -242,13 +244,14 @@ class MsaViewSharingTests(unittest.TestCase):
 
     def test_an_msa_row_and_a_gene_tree_row_of_one_transcript_share_a_signature(self):
         import main
+        import routes.alignment  # noqa: E402
         import genome_context  # noqa: E402
         import gff_index  # noqa: E402
         from dataclasses import asdict
         from unittest.mock import patch
         items = self._items(main)
         with patch.object(genome_context, '_resolve_browse_genome_context', lambda g: {'species': {'assembly': f'GCA_{g}'}}):
-            shared = main._msa_shared_rows(items)
+            shared = routes.alignment._msa_shared_rows(items)
         for item, row in zip(items, shared):
             tx = {**asdict(item['tx']), 'id': item['transcript_id'], 'gene_start': 950, 'gene_end': 2200}
             tree_row = prepare_row(row['row_key'], tx, fetch, settings_params({'region': 'genomic', 'flank_5': 100, 'flank_3': 60}))
@@ -256,20 +259,21 @@ class MsaViewSharingTests(unittest.TestCase):
 
     def test_an_msa_run_is_saved_and_reused(self):
         import main
+        import routes.alignment  # noqa: E402
         import genome_context  # noqa: E402
         import gff_index  # noqa: E402
         from unittest.mock import patch
         items = self._items(main)
         with patch.object(genome_context, '_resolve_browse_genome_context', lambda g: {'species': {'assembly': f'GCA_{g}'}}):
-            shared = main._msa_shared_rows(items)
+            shared = routes.alignment._msa_shared_rows(items)
         width = max(len(i['raw_seq']) for i in items)
         ordered = [(item, gapped(item['raw_seq'].upper()).ljust(width + 400, '-')) for item in items]
         with tempfile.TemporaryDirectory() as root:
             store = AlignmentStore(Path(root))
-            main._msa_save_shared(store, items, shared, ordered, 'test', '')
+            routes.alignment._msa_save_shared(store, items, shared, ordered, 'test', '')
             stem = store.find_covering(r['signature'] for r in shared)
             self.assertTrue(stem and stem.startswith('msa_g0_g1'))
-            result = main._msa_result_from_store(store, stem, items, shared, items, [], [], 'balanced')
+            result = routes.alignment._msa_result_from_store(store, stem, items, shared, items, [], [], 'balanced')
         self.assertTrue(result.cache_hit)
         self.assertEqual([r.transcript_id for r in result.rows], ['tx0', 'tx1'])
         for (item, aligned), row in zip(ordered, result.rows):
@@ -282,6 +286,7 @@ class MsaTrimTests(unittest.TestCase):
 
     def test_a_gene_running_past_its_selected_transcript_is_cut_back(self):
         import main
+        import routes.alignment  # noqa: E402
         import genome_context  # noqa: E402
         import gff_index  # noqa: E402
         tx = lambda strand, start, end: gff_index.SimpleTranscript('t', '1', start, end, strand, [gff_index.SimpleFeature('exon', start, end, strand)], [], [])  # noqa: E731
@@ -289,18 +294,18 @@ class MsaTrimTests(unittest.TestCase):
         # so 106-123 is kept); row B: a window that is its transcript plus flanks.
         a_seq, b_seq = 'A' * 60, 'C' * 20
         rows = [
-            main.MultiAlignedRow(genome='A', genome_key='A', transcript_id='t', chrom='1', genomic_start=101, genomic_end=160, strand='+',
+            routes.alignment.MultiAlignedRow(genome='A', genome_key='A', transcript_id='t', chrom='1', genomic_start=101, genomic_end=160, strand='+',
                                  aligned_sequence=a_seq, raw_length=60, flank_5_bp=5, flank_3_bp=3,
-                                 features=[main.Feature(type='exon', start=10, end=19, original_start=111, original_end=120),
-                                           main.Feature(type='exon', start=40, end=50, original_start=141, original_end=151)]),
-            main.MultiAlignedRow(genome='B', genome_key='B', transcript_id='u', chrom='2', genomic_start=500, genomic_end=519, strand='-',
+                                 features=[routes.alignment.Feature(type='exon', start=10, end=19, original_start=111, original_end=120),
+                                           routes.alignment.Feature(type='exon', start=40, end=50, original_start=141, original_end=151)]),
+            routes.alignment.MultiAlignedRow(genome='B', genome_key='B', transcript_id='u', chrom='2', genomic_start=500, genomic_end=519, strand='-',
                                  aligned_sequence='-' * 3 + b_seq + '-' * 37, raw_length=20, flank_5_bp=0, flank_3_bp=0),
         ]
-        result = main.MultiAlignmentResult(timestamp='', alignment_length=60, requested_count=2, included_count=2, profile='balanced',
+        result = routes.alignment.MultiAlignmentResult(timestamp='', alignment_length=60, requested_count=2, included_count=2, profile='balanced',
                                            strategy='x', consensus='', rows=rows)
         items = [{'genome_key': 'A', 'transcript_id': 't', 'tx': tx('+', 111, 120)},
                  {'genome_key': 'B', 'transcript_id': 'u', 'tx': tx('-', 500, 519)}]
-        out = main._trim_multi_to_transcripts(result, items)
+        out = routes.alignment._trim_multi_to_transcripts(result, items)
         # A keeps 106-123 (columns 5-22); B reaches columns 3-22: the union is 3-22.
         self.assertEqual(out.alignment_length, 20)
         a, b = out.rows
@@ -309,4 +314,4 @@ class MsaTrimTests(unittest.TestCase):
         self.assertEqual([(f.start, f.end) for f in a.features], [(7, 16)])  # the far exon is gone
         self.assertIn('Trimmed', out.warnings[-1])
         # Trimming again changes nothing.
-        self.assertEqual(main._trim_multi_to_transcripts(out, items).alignment_length, 20)
+        self.assertEqual(routes.alignment._trim_multi_to_transcripts(out, items).alignment_length, 20)

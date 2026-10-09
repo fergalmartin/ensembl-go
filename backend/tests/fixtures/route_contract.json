@@ -20575,552 +20575,272 @@
   },
   {
    "async": true,
-   "endpoint": "health",
+   "endpoint": "get_achievements",
    "methods": [
     "GET"
    ],
-   "name": "health",
-   "path": "/api/health",
+   "name": "get_achievements",
+   "path": "/api/achievements",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "sync_achievements",
+   "methods": [
+    "POST"
+   ],
+   "name": "sync_achievements",
+   "path": "/api/achievements/sync",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "reset_achievements",
+   "methods": [
+    "POST"
+   ],
+   "name": "reset_achievements",
+   "path": "/api/achievements/reset",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "list_user_notes",
+   "methods": [
+    "GET"
+   ],
+   "name": "list_user_notes",
+   "path": "/api/notes",
+   "response_model": "UserNotesResponse"
+  },
+  {
+   "async": true,
+   "endpoint": "user_notes_index",
+   "methods": [
+    "GET"
+   ],
+   "name": "user_notes_index",
+   "path": "/api/notes/index",
+   "response_model": "UserNotesIndexResponse"
+  },
+  {
+   "async": true,
+   "endpoint": "create_user_note",
+   "methods": [
+    "POST"
+   ],
+   "name": "create_user_note",
+   "path": "/api/notes",
+   "response_model": "UserNoteModel"
+  },
+  {
+   "async": true,
+   "endpoint": "set_user_note_archived",
+   "methods": [
+    "PUT"
+   ],
+   "name": "set_user_note_archived",
+   "path": "/api/notes/{note_id}/archive",
+   "response_model": "UserNoteModel"
+  },
+  {
+   "async": true,
+   "endpoint": "bulk_delete_user_notes",
+   "methods": [
+    "POST"
+   ],
+   "name": "bulk_delete_user_notes",
+   "path": "/api/notes/bulk-delete",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "update_user_note",
+   "methods": [
+    "PUT"
+   ],
+   "name": "update_user_note",
+   "path": "/api/notes/{note_id}",
+   "response_model": "UserNoteModel"
+  },
+  {
+   "async": true,
+   "endpoint": "delete_user_note",
+   "methods": [
+    "DELETE"
+   ],
+   "name": "delete_user_note",
+   "path": "/api/notes/{note_id}",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "export_user_notes",
+   "methods": [
+    "POST"
+   ],
+   "name": "export_user_notes",
+   "path": "/api/notes/export",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "scan_user_notes_import",
+   "methods": [
+    "POST"
+   ],
+   "name": "scan_user_notes_import",
+   "path": "/api/notes/import/scan",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "apply_user_notes_import",
+   "methods": [
+    "POST"
+   ],
+   "name": "apply_user_notes_import",
+   "path": "/api/notes/import/apply",
    "response_model": null
   },
   {
    "async": false,
-   "endpoint": "align_transcripts",
-   "methods": [
-    "POST"
-   ],
-   "name": "align_transcripts",
-   "path": "/api/align",
-   "response_model": "AlignmentResult"
-  },
-  {
-   "async": false,
-   "endpoint": "align_multi",
-   "methods": [
-    "POST"
-   ],
-   "name": "align_multi",
-   "path": "/api/align/multi",
-   "response_model": "MultiAlignmentResult"
-  },
-  {
-   "async": false,
-   "endpoint": "check_alignment_status",
+   "endpoint": "list_tracks",
    "methods": [
     "GET"
    ],
-   "name": "check_alignment_status",
-   "path": "/api/align/check",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "save_alignment",
-   "methods": [
-    "POST"
-   ],
-   "name": "save_alignment",
-   "path": "/api/alignments/save",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "list_alignments",
-   "methods": [
-    "GET"
-   ],
-   "name": "list_alignments",
-   "path": "/api/alignments/list",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "load_alignment",
-   "methods": [
-    "POST"
-   ],
-   "name": "load_alignment",
-   "path": "/api/alignments/load",
+   "name": "list_tracks",
+   "path": "/api/tracks",
    "response_model": null
   },
   {
    "async": true,
-   "endpoint": "get_recent",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_recent",
-   "path": "/api/recent",
-   "response_model": "typing.List[main.RecentItem]"
-  },
-  {
-   "async": true,
-   "endpoint": "clear_recent",
+   "endpoint": "discover_trackhub_tracks",
    "methods": [
     "POST"
    ],
-   "name": "clear_recent",
-   "path": "/api/recent/clear",
+   "name": "discover_trackhub_tracks",
+   "path": "/api/tracks/trackhub/discover",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "import_trackhub_tracks",
+   "methods": [
+    "POST"
+   ],
+   "name": "import_trackhub_tracks",
+   "path": "/api/tracks/trackhub/import",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "list_trackhub_import_tasks",
+   "methods": [
+    "GET"
+   ],
+   "name": "list_trackhub_import_tasks",
+   "path": "/api/tracks/trackhub/import_tasks",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "register_track",
+   "methods": [
+    "POST"
+   ],
+   "name": "register_track",
+   "path": "/api/tracks",
    "response_model": null
   },
   {
    "async": false,
-   "endpoint": "get_homologs",
+   "endpoint": "update_track",
    "methods": [
-    "GET"
+    "PUT"
    ],
-   "name": "get_homologs",
-   "path": "/api/homologs",
+   "name": "update_track",
+   "path": "/api/tracks/{track_id}",
    "response_model": null
   },
   {
    "async": false,
-   "endpoint": "homology_search_sources",
+   "endpoint": "delete_track",
    "methods": [
-    "GET"
+    "DELETE"
    ],
-   "name": "homology_search_sources",
-   "path": "/api/homology/sources",
+   "name": "delete_track",
+   "path": "/api/tracks/{track_id}",
    "response_model": null
   },
   {
    "async": false,
-   "endpoint": "search_homology_table",
+   "endpoint": "create_track_group",
    "methods": [
     "POST"
    ],
-   "name": "search_homology_table",
-   "path": "/api/homology/search",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "query_homology_table",
-   "methods": [
-    "GET"
-   ],
-   "name": "query_homology_table",
-   "path": "/api/homology/query",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "get_neighbourhood",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_neighbourhood",
-   "path": "/api/neighbourhood",
-   "response_model": "NeighbourhoodResponse"
-  },
-  {
-   "async": true,
-   "endpoint": "get_neighbourhood_homology_anchor",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_neighbourhood_homology_anchor",
-   "path": "/api/neighbourhood/homology_anchor",
-   "response_model": "HomologyAnchorResponse"
-  },
-  {
-   "async": false,
-   "endpoint": "generate_index_for_genome",
-   "methods": [
-    "POST"
-   ],
-   "name": "generate_index_for_genome",
-   "path": "/api/index/generate-for-genome",
+   "name": "create_track_group",
+   "path": "/api/track-groups",
    "response_model": null
   },
   {
    "async": false,
-   "endpoint": "index_task_status",
+   "endpoint": "update_track_group",
    "methods": [
-    "GET"
+    "PUT"
    ],
-   "name": "index_task_status",
-   "path": "/api/index/task-status/{task_id}",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "validate_custom_genome",
-   "methods": [
-    "POST"
-   ],
-   "name": "validate_custom_genome",
-   "path": "/api/custom/validate-genome",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "validate_custom_annotation",
-   "methods": [
-    "POST"
-   ],
-   "name": "validate_custom_annotation",
-   "path": "/api/custom/validate-annotation",
+   "name": "update_track_group",
+   "path": "/api/track-groups/{group_id}",
    "response_model": null
   },
   {
    "async": false,
-   "endpoint": "custom_validation_status",
+   "endpoint": "delete_track_group",
    "methods": [
-    "GET"
+    "DELETE"
    ],
-   "name": "custom_validation_status",
-   "path": "/api/custom/validation/{task_id}",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "convert_custom_annotation",
-   "methods": [
-    "POST"
-   ],
-   "name": "convert_custom_annotation",
-   "path": "/api/custom/convert-annotation",
+   "name": "delete_track_group",
+   "path": "/api/track-groups/{group_id}",
    "response_model": null
   },
   {
    "async": false,
-   "endpoint": "custom_conversion_status",
+   "endpoint": "get_browser_session_tracks",
    "methods": [
     "GET"
    ],
-   "name": "custom_conversion_status",
-   "path": "/api/custom/conversion/{task_id}",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "prepare_custom_annotation",
-   "methods": [
-    "POST"
-   ],
-   "name": "prepare_custom_annotation",
-   "path": "/api/custom/prepare-annotation",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "read_manual_genome_config",
-   "methods": [
-    "POST"
-   ],
-   "name": "read_manual_genome_config",
-   "path": "/api/custom/genome-config/read",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "write_manual_genome_config",
-   "methods": [
-    "POST"
-   ],
-   "name": "write_manual_genome_config",
-   "path": "/api/custom/genome-config/save",
+   "name": "get_browser_session_tracks",
+   "path": "/api/browser/session-tracks",
    "response_model": null
   },
   {
    "async": false,
-   "endpoint": "custom_sniff_annotation",
+   "endpoint": "put_browser_session_tracks",
    "methods": [
-    "GET"
+    "PUT"
    ],
-   "name": "custom_sniff_annotation",
-   "path": "/api/custom/sniff-annotation",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "generate_indexes",
-   "methods": [
-    "POST"
-   ],
-   "name": "generate_indexes",
-   "path": "/api/index/generate",
+   "name": "put_browser_session_tracks",
+   "path": "/api/browser/session-tracks",
    "response_model": null
   },
   {
    "async": false,
-   "endpoint": "get_config",
+   "endpoint": "clear_browser_session_tracks",
+   "methods": [
+    "DELETE"
+   ],
+   "name": "clear_browser_session_tracks",
+   "path": "/api/browser/session-tracks",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "track_type_info",
    "methods": [
     "GET"
    ],
-   "name": "get_config",
-   "path": "/api/config",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "get_config_warnings_endpoint",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_config_warnings_endpoint",
-   "path": "/api/config/warnings",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "get_output_dir_config",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_output_dir_config",
-   "path": "/api/config/output-dir",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "get_config_playlists",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_config_playlists",
-   "path": "/api/config/playlists",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "update_config",
-   "methods": [
-    "POST"
-   ],
-   "name": "update_config",
-   "path": "/api/config",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "load_custom_config",
-   "methods": [
-    "POST"
-   ],
-   "name": "load_custom_config",
-   "path": "/api/config/load",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "clear_cache",
-   "methods": [
-    "POST"
-   ],
-   "name": "clear_cache",
-   "path": "/api/cache/clear",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "clear_local_data",
-   "methods": [
-    "POST"
-   ],
-   "name": "clear_local_data",
-   "path": "/api/data/clear",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "list_files",
-   "methods": [
-    "GET"
-   ],
-   "name": "list_files",
-   "path": "/api/files/list",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "create_directory",
-   "methods": [
-    "POST"
-   ],
-   "name": "create_directory",
-   "path": "/api/files/mkdir",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "list_remote_groups",
-   "methods": [
-    "GET"
-   ],
-   "name": "list_remote_groups",
-   "path": "/api/remote/groups",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "list_remote_species",
-   "methods": [
-    "GET"
-   ],
-   "name": "list_remote_species",
-   "path": "/api/remote/species",
-   "response_model": "typing.List[download_manager.SpeciesSummary]"
-  },
-  {
-   "async": true,
-   "endpoint": "get_remote_species_details",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_remote_species_details",
-   "path": "/api/remote/species/{key}",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "get_remote_file_availability",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_remote_file_availability",
-   "path": "/api/remote/files/{key}/{assembly}/availability",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "get_remote_files",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_remote_files",
-   "path": "/api/remote/files/{key}/{assembly}",
-   "response_model": "typing.List[download_manager.FileInfo]"
-  },
-  {
-   "async": true,
-   "endpoint": "search_remote_ncbi_species",
-   "methods": [
-    "GET"
-   ],
-   "name": "search_remote_ncbi_species",
-   "path": "/api/remote/ncbi/search",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "list_featured_remote_ncbi_species",
-   "methods": [
-    "GET"
-   ],
-   "name": "list_featured_remote_ncbi_species",
-   "path": "/api/remote/ncbi/featured",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "refresh_remote_ncbi_cache",
-   "methods": [
-    "POST"
-   ],
-   "name": "refresh_remote_ncbi_cache",
-   "path": "/api/remote/ncbi/refresh",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "browse_remote_ncbi_group",
-   "methods": [
-    "GET"
-   ],
-   "name": "browse_remote_ncbi_group",
-   "path": "/api/remote/ncbi/browse",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "get_remote_catalog_status",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_remote_catalog_status",
-   "path": "/api/remote/catalog/status",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "refresh_remote_catalog",
-   "methods": [
-    "POST"
-   ],
-   "name": "refresh_remote_catalog",
-   "path": "/api/remote/catalog/refresh",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "acknowledge_remote_catalog_change",
-   "methods": [
-    "POST"
-   ],
-   "name": "acknowledge_remote_catalog_change",
-   "path": "/api/remote/catalog/acknowledge",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "start_download",
-   "methods": [
-    "POST"
-   ],
-   "name": "start_download",
-   "path": "/api/remote/download",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "import_custom_annotation",
-   "methods": [
-    "POST"
-   ],
-   "name": "import_custom_annotation",
-   "path": "/api/remote/custom-annotation",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "set_dataset_default",
-   "methods": [
-    "POST"
-   ],
-   "name": "set_dataset_default",
-   "path": "/api/remote/dataset-default",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "cancel_downloads",
-   "methods": [
-    "POST"
-   ],
-   "name": "cancel_downloads",
-   "path": "/api/remote/download/cancel",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "cancel_download_tasks",
-   "methods": [
-    "POST"
-   ],
-   "name": "cancel_download_tasks",
-   "path": "/api/remote/tasks/cancel",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "check_local_files",
-   "methods": [
-    "GET"
-   ],
-   "name": "check_local_files",
-   "path": "/api/remote/local-files",
+   "name": "track_type_info",
+   "path": "/api/tracks/type_info",
    "response_model": null
   },
   {
@@ -21365,12 +21085,472 @@
   },
   {
    "async": false,
-   "endpoint": "list_local_assemblies",
+   "endpoint": "get_homologs",
    "methods": [
     "GET"
    ],
-   "name": "list_local_assemblies",
-   "path": "/api/remote/local-assemblies",
+   "name": "get_homologs",
+   "path": "/api/homologs",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "homology_search_sources",
+   "methods": [
+    "GET"
+   ],
+   "name": "homology_search_sources",
+   "path": "/api/homology/sources",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "search_homology_table",
+   "methods": [
+    "POST"
+   ],
+   "name": "search_homology_table",
+   "path": "/api/homology/search",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "query_homology_table",
+   "methods": [
+    "GET"
+   ],
+   "name": "query_homology_table",
+   "path": "/api/homology/query",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "get_neighbourhood",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_neighbourhood",
+   "path": "/api/neighbourhood",
+   "response_model": "NeighbourhoodResponse"
+  },
+  {
+   "async": true,
+   "endpoint": "get_neighbourhood_homology_anchor",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_neighbourhood_homology_anchor",
+   "path": "/api/neighbourhood/homology_anchor",
+   "response_model": "HomologyAnchorResponse"
+  },
+  {
+   "async": false,
+   "endpoint": "get_config",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_config",
+   "path": "/api/config",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "get_config_warnings_endpoint",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_config_warnings_endpoint",
+   "path": "/api/config/warnings",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "get_output_dir_config",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_output_dir_config",
+   "path": "/api/config/output-dir",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "get_config_playlists",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_config_playlists",
+   "path": "/api/config/playlists",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "update_config",
+   "methods": [
+    "POST"
+   ],
+   "name": "update_config",
+   "path": "/api/config",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "load_custom_config",
+   "methods": [
+    "POST"
+   ],
+   "name": "load_custom_config",
+   "path": "/api/config/load",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "clear_cache",
+   "methods": [
+    "POST"
+   ],
+   "name": "clear_cache",
+   "path": "/api/cache/clear",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "clear_local_data",
+   "methods": [
+    "POST"
+   ],
+   "name": "clear_local_data",
+   "path": "/api/data/clear",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "list_files",
+   "methods": [
+    "GET"
+   ],
+   "name": "list_files",
+   "path": "/api/files/list",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "create_directory",
+   "methods": [
+    "POST"
+   ],
+   "name": "create_directory",
+   "path": "/api/files/mkdir",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "generate_index_for_genome",
+   "methods": [
+    "POST"
+   ],
+   "name": "generate_index_for_genome",
+   "path": "/api/index/generate-for-genome",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "index_task_status",
+   "methods": [
+    "GET"
+   ],
+   "name": "index_task_status",
+   "path": "/api/index/task-status/{task_id}",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "validate_custom_genome",
+   "methods": [
+    "POST"
+   ],
+   "name": "validate_custom_genome",
+   "path": "/api/custom/validate-genome",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "validate_custom_annotation",
+   "methods": [
+    "POST"
+   ],
+   "name": "validate_custom_annotation",
+   "path": "/api/custom/validate-annotation",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "custom_validation_status",
+   "methods": [
+    "GET"
+   ],
+   "name": "custom_validation_status",
+   "path": "/api/custom/validation/{task_id}",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "convert_custom_annotation",
+   "methods": [
+    "POST"
+   ],
+   "name": "convert_custom_annotation",
+   "path": "/api/custom/convert-annotation",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "custom_conversion_status",
+   "methods": [
+    "GET"
+   ],
+   "name": "custom_conversion_status",
+   "path": "/api/custom/conversion/{task_id}",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "prepare_custom_annotation",
+   "methods": [
+    "POST"
+   ],
+   "name": "prepare_custom_annotation",
+   "path": "/api/custom/prepare-annotation",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "read_manual_genome_config",
+   "methods": [
+    "POST"
+   ],
+   "name": "read_manual_genome_config",
+   "path": "/api/custom/genome-config/read",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "write_manual_genome_config",
+   "methods": [
+    "POST"
+   ],
+   "name": "write_manual_genome_config",
+   "path": "/api/custom/genome-config/save",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "custom_sniff_annotation",
+   "methods": [
+    "GET"
+   ],
+   "name": "custom_sniff_annotation",
+   "path": "/api/custom/sniff-annotation",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "generate_indexes",
+   "methods": [
+    "POST"
+   ],
+   "name": "generate_indexes",
+   "path": "/api/index/generate",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "list_remote_groups",
+   "methods": [
+    "GET"
+   ],
+   "name": "list_remote_groups",
+   "path": "/api/remote/groups",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "list_remote_species",
+   "methods": [
+    "GET"
+   ],
+   "name": "list_remote_species",
+   "path": "/api/remote/species",
+   "response_model": "List[SpeciesSummary]"
+  },
+  {
+   "async": true,
+   "endpoint": "get_remote_species_details",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_remote_species_details",
+   "path": "/api/remote/species/{key}",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "get_remote_file_availability",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_remote_file_availability",
+   "path": "/api/remote/files/{key}/{assembly}/availability",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "get_remote_files",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_remote_files",
+   "path": "/api/remote/files/{key}/{assembly}",
+   "response_model": "List[FileInfo]"
+  },
+  {
+   "async": true,
+   "endpoint": "search_remote_ncbi_species",
+   "methods": [
+    "GET"
+   ],
+   "name": "search_remote_ncbi_species",
+   "path": "/api/remote/ncbi/search",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "list_featured_remote_ncbi_species",
+   "methods": [
+    "GET"
+   ],
+   "name": "list_featured_remote_ncbi_species",
+   "path": "/api/remote/ncbi/featured",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "refresh_remote_ncbi_cache",
+   "methods": [
+    "POST"
+   ],
+   "name": "refresh_remote_ncbi_cache",
+   "path": "/api/remote/ncbi/refresh",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "browse_remote_ncbi_group",
+   "methods": [
+    "GET"
+   ],
+   "name": "browse_remote_ncbi_group",
+   "path": "/api/remote/ncbi/browse",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "get_remote_catalog_status",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_remote_catalog_status",
+   "path": "/api/remote/catalog/status",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "refresh_remote_catalog",
+   "methods": [
+    "POST"
+   ],
+   "name": "refresh_remote_catalog",
+   "path": "/api/remote/catalog/refresh",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "acknowledge_remote_catalog_change",
+   "methods": [
+    "POST"
+   ],
+   "name": "acknowledge_remote_catalog_change",
+   "path": "/api/remote/catalog/acknowledge",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "start_download",
+   "methods": [
+    "POST"
+   ],
+   "name": "start_download",
+   "path": "/api/remote/download",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "import_custom_annotation",
+   "methods": [
+    "POST"
+   ],
+   "name": "import_custom_annotation",
+   "path": "/api/remote/custom-annotation",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "set_dataset_default",
+   "methods": [
+    "POST"
+   ],
+   "name": "set_dataset_default",
+   "path": "/api/remote/dataset-default",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "cancel_downloads",
+   "methods": [
+    "POST"
+   ],
+   "name": "cancel_downloads",
+   "path": "/api/remote/download/cancel",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "cancel_download_tasks",
+   "methods": [
+    "POST"
+   ],
+   "name": "cancel_download_tasks",
+   "path": "/api/remote/tasks/cancel",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "list_download_tasks",
+   "methods": [
+    "GET"
+   ],
+   "name": "list_download_tasks",
+   "path": "/api/remote/tasks",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "check_local_files",
+   "methods": [
+    "GET"
+   ],
+   "name": "check_local_files",
+   "path": "/api/remote/local-files",
    "response_model": null
   },
   {
@@ -21411,16 +21591,6 @@
    ],
    "name": "remove_genome_data",
    "path": "/api/genomes/remove-data",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "list_download_tasks",
-   "methods": [
-    "GET"
-   ],
-   "name": "list_download_tasks",
-   "path": "/api/remote/tasks",
    "response_model": null
   },
   {
@@ -21471,6 +21641,106 @@
    ],
    "name": "stats_get_task",
    "path": "/api/stats/tasks/{task_id}",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "align_transcripts",
+   "methods": [
+    "POST"
+   ],
+   "name": "align_transcripts",
+   "path": "/api/align",
+   "response_model": "AlignmentResult"
+  },
+  {
+   "async": false,
+   "endpoint": "align_multi",
+   "methods": [
+    "POST"
+   ],
+   "name": "align_multi",
+   "path": "/api/align/multi",
+   "response_model": "MultiAlignmentResult"
+  },
+  {
+   "async": false,
+   "endpoint": "check_alignment_status",
+   "methods": [
+    "GET"
+   ],
+   "name": "check_alignment_status",
+   "path": "/api/align/check",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "save_alignment",
+   "methods": [
+    "POST"
+   ],
+   "name": "save_alignment",
+   "path": "/api/alignments/save",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "list_alignments",
+   "methods": [
+    "GET"
+   ],
+   "name": "list_alignments",
+   "path": "/api/alignments/list",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "load_alignment",
+   "methods": [
+    "POST"
+   ],
+   "name": "load_alignment",
+   "path": "/api/alignments/load",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "get_recent",
+   "methods": [
+    "GET"
+   ],
+   "name": "get_recent",
+   "path": "/api/recent",
+   "response_model": "List[RecentItem]"
+  },
+  {
+   "async": true,
+   "endpoint": "clear_recent",
+   "methods": [
+    "POST"
+   ],
+   "name": "clear_recent",
+   "path": "/api/recent/clear",
+   "response_model": null
+  },
+  {
+   "async": true,
+   "endpoint": "health",
+   "methods": [
+    "GET"
+   ],
+   "name": "health",
+   "path": "/api/health",
+   "response_model": null
+  },
+  {
+   "async": false,
+   "endpoint": "list_local_assemblies",
+   "methods": [
+    "GET"
+   ],
+   "name": "list_local_assemblies",
+   "path": "/api/remote/local-assemblies",
    "response_model": null
   },
   {
@@ -21892,276 +22162,6 @@
    "name": "save_export_file",
    "path": "/api/exports/save",
    "response_model": "SaveExportResponse"
-  },
-  {
-   "async": true,
-   "endpoint": "list_user_notes",
-   "methods": [
-    "GET"
-   ],
-   "name": "list_user_notes",
-   "path": "/api/notes",
-   "response_model": "UserNotesResponse"
-  },
-  {
-   "async": true,
-   "endpoint": "user_notes_index",
-   "methods": [
-    "GET"
-   ],
-   "name": "user_notes_index",
-   "path": "/api/notes/index",
-   "response_model": "UserNotesIndexResponse"
-  },
-  {
-   "async": true,
-   "endpoint": "create_user_note",
-   "methods": [
-    "POST"
-   ],
-   "name": "create_user_note",
-   "path": "/api/notes",
-   "response_model": "UserNoteModel"
-  },
-  {
-   "async": true,
-   "endpoint": "set_user_note_archived",
-   "methods": [
-    "PUT"
-   ],
-   "name": "set_user_note_archived",
-   "path": "/api/notes/{note_id}/archive",
-   "response_model": "UserNoteModel"
-  },
-  {
-   "async": true,
-   "endpoint": "bulk_delete_user_notes",
-   "methods": [
-    "POST"
-   ],
-   "name": "bulk_delete_user_notes",
-   "path": "/api/notes/bulk-delete",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "update_user_note",
-   "methods": [
-    "PUT"
-   ],
-   "name": "update_user_note",
-   "path": "/api/notes/{note_id}",
-   "response_model": "UserNoteModel"
-  },
-  {
-   "async": true,
-   "endpoint": "delete_user_note",
-   "methods": [
-    "DELETE"
-   ],
-   "name": "delete_user_note",
-   "path": "/api/notes/{note_id}",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "export_user_notes",
-   "methods": [
-    "POST"
-   ],
-   "name": "export_user_notes",
-   "path": "/api/notes/export",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "scan_user_notes_import",
-   "methods": [
-    "POST"
-   ],
-   "name": "scan_user_notes_import",
-   "path": "/api/notes/import/scan",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "apply_user_notes_import",
-   "methods": [
-    "POST"
-   ],
-   "name": "apply_user_notes_import",
-   "path": "/api/notes/import/apply",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "get_achievements",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_achievements",
-   "path": "/api/achievements",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "sync_achievements",
-   "methods": [
-    "POST"
-   ],
-   "name": "sync_achievements",
-   "path": "/api/achievements/sync",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "reset_achievements",
-   "methods": [
-    "POST"
-   ],
-   "name": "reset_achievements",
-   "path": "/api/achievements/reset",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "list_tracks",
-   "methods": [
-    "GET"
-   ],
-   "name": "list_tracks",
-   "path": "/api/tracks",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "discover_trackhub_tracks",
-   "methods": [
-    "POST"
-   ],
-   "name": "discover_trackhub_tracks",
-   "path": "/api/tracks/trackhub/discover",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "import_trackhub_tracks",
-   "methods": [
-    "POST"
-   ],
-   "name": "import_trackhub_tracks",
-   "path": "/api/tracks/trackhub/import",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "list_trackhub_import_tasks",
-   "methods": [
-    "GET"
-   ],
-   "name": "list_trackhub_import_tasks",
-   "path": "/api/tracks/trackhub/import_tasks",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "register_track",
-   "methods": [
-    "POST"
-   ],
-   "name": "register_track",
-   "path": "/api/tracks",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "update_track",
-   "methods": [
-    "PUT"
-   ],
-   "name": "update_track",
-   "path": "/api/tracks/{track_id}",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "delete_track",
-   "methods": [
-    "DELETE"
-   ],
-   "name": "delete_track",
-   "path": "/api/tracks/{track_id}",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "create_track_group",
-   "methods": [
-    "POST"
-   ],
-   "name": "create_track_group",
-   "path": "/api/track-groups",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "update_track_group",
-   "methods": [
-    "PUT"
-   ],
-   "name": "update_track_group",
-   "path": "/api/track-groups/{group_id}",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "delete_track_group",
-   "methods": [
-    "DELETE"
-   ],
-   "name": "delete_track_group",
-   "path": "/api/track-groups/{group_id}",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "get_browser_session_tracks",
-   "methods": [
-    "GET"
-   ],
-   "name": "get_browser_session_tracks",
-   "path": "/api/browser/session-tracks",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "put_browser_session_tracks",
-   "methods": [
-    "PUT"
-   ],
-   "name": "put_browser_session_tracks",
-   "path": "/api/browser/session-tracks",
-   "response_model": null
-  },
-  {
-   "async": false,
-   "endpoint": "clear_browser_session_tracks",
-   "methods": [
-    "DELETE"
-   ],
-   "name": "clear_browser_session_tracks",
-   "path": "/api/browser/session-tracks",
-   "response_model": null
-  },
-  {
-   "async": true,
-   "endpoint": "track_type_info",
-   "methods": [
-    "GET"
-   ],
-   "name": "track_type_info",
-   "path": "/api/tracks/type_info",
-   "response_model": null
   },
   {
    "async": true,
