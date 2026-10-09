@@ -6,12 +6,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import pyBigWig  # noqa: E402
 from routes.bigwig import (  # noqa: E402
     BigWigZoneScaleRequest,
     _bigwig_zone_edges,
     browse_bigwig_zone_scale,
     browse_bigwig_zone_scale_shared,
+    pyBigWig,
 )
 from routes.tracks import _normalize_bigwig_settings  # noqa: E402
 

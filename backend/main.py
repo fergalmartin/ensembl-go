@@ -42,11 +42,6 @@ from pydantic import BaseModel
 
 from Bio.Seq import Seq
 
-try:
-    import pyBigWig  # type: ignore
-except Exception:
-    pyBigWig = None
-
 # Configure logging before importing this application's own modules, so that what
 # they log while being imported (the download manager loading its catalogue, say)
 # is not lost.
