@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import routes.tutorial  # noqa: E402
 import genome_context  # noqa: E402
 import local_inventory  # noqa: E402
 import config_store  # noqa: E402
@@ -93,8 +94,8 @@ class DemoGenomeInstallTests(unittest.TestCase):
         # It is not in any remote catalogue and never will be, so the usual
         # "we could not find this upstream" warning is just noise.
         with tempfile.TemporaryDirectory() as tmpdir:
-            asyncio.run(main.post_demo_genome_install(
-                main.DemoGenomeInstallRequest(output_dir=tmpdir)
+            asyncio.run(routes.tutorial.post_demo_genome_install(
+                routes.tutorial.DemoGenomeInstallRequest(output_dir=tmpdir)
             ))
             listed = local_inventory.list_local_assemblies(output_dir=tmpdir)
             demo = next(x for x in listed if x["species_key"] == demo_genome.DEMO_SPECIES_KEY)
@@ -151,8 +152,8 @@ class DemoGenomeInstallTests(unittest.TestCase):
 class DemoGenomeEndpointTests(unittest.TestCase):
     def test_listing_shows_the_demo_genome_once_installed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            asyncio.run(main.post_demo_genome_install(
-                main.DemoGenomeInstallRequest(output_dir=tmpdir)
+            asyncio.run(routes.tutorial.post_demo_genome_install(
+                routes.tutorial.DemoGenomeInstallRequest(output_dir=tmpdir)
             ))
             listed = local_inventory.list_local_assemblies(output_dir=tmpdir)
             keys = [(item.get("species_key"), item.get("assembly")) for item in listed]
@@ -160,8 +161,8 @@ class DemoGenomeEndpointTests(unittest.TestCase):
 
     def test_install_builds_a_usable_annotation_index(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            status = asyncio.run(main.post_demo_genome_install(
-                main.DemoGenomeInstallRequest(output_dir=tmpdir)
+            status = asyncio.run(routes.tutorial.post_demo_genome_install(
+                routes.tutorial.DemoGenomeInstallRequest(output_dir=tmpdir)
             ))
             self.assertNotIn("index_error", status, status.get("index_error", ""))
             index_path = Path(status["index"])
@@ -170,8 +171,8 @@ class DemoGenomeEndpointTests(unittest.TestCase):
 
     def test_the_indexed_genes_are_the_ones_the_tutorial_points_at(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            status = asyncio.run(main.post_demo_genome_install(
-                main.DemoGenomeInstallRequest(output_dir=tmpdir)
+            status = asyncio.run(routes.tutorial.post_demo_genome_install(
+                routes.tutorial.DemoGenomeInstallRequest(output_dir=tmpdir)
             ))
             import sqlite3
             conn = sqlite3.connect(status["index"])
@@ -185,14 +186,14 @@ class DemoGenomeEndpointTests(unittest.TestCase):
 
     def test_install_without_an_output_dir_is_a_bad_request(self):
         with self.assertRaises(main.HTTPException) as caught:
-            asyncio.run(main.post_demo_genome_install(
-                main.DemoGenomeInstallRequest(output_dir="  ")
+            asyncio.run(routes.tutorial.post_demo_genome_install(
+                routes.tutorial.DemoGenomeInstallRequest(output_dir="  ")
             ))
         self.assertEqual(caught.exception.status_code, 400)
 
     def test_status_endpoint_describes_the_catalogue_entry(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            status = asyncio.run(main.get_demo_genome(output_dir=tmpdir))
+            status = asyncio.run(routes.tutorial.get_demo_genome(output_dir=tmpdir))
             species = status["species"]
             self.assertEqual(species["key"], demo_genome.DEMO_SPECIES_KEY)
             self.assertEqual(len(species["assemblies"]), 1)

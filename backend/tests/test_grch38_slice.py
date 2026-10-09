@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import routes.tutorial  # noqa: E402
 import routes.notes  # noqa: E402
 import config_store  # noqa: E402
 
@@ -153,8 +154,8 @@ class SliceIndexTests(unittest.TestCase):
         workspace.mkdir(parents=True, exist_ok=True)
         cls.workspace = str(workspace)
         cls.status = asyncio.new_event_loop().run_until_complete(
-            main.post_demo_genome_install(
-                main.DemoGenomeInstallRequest(output_dir=cls.workspace, genome_id=SLICE.genome_id)
+            routes.tutorial.post_demo_genome_install(
+                routes.tutorial.DemoGenomeInstallRequest(output_dir=cls.workspace, genome_id=SLICE.genome_id)
             )
         )
 
