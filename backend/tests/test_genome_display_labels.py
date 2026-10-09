@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import download_manager  # noqa: E402
 import routes.tracks  # noqa: E402
 import local_inventory  # noqa: E402
 import config_store  # noqa: E402
@@ -78,7 +79,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
 
     def test_local_assemblies_include_policy_display_name(self):
         accession = "GCA_923061745.1"
-        summary = main.SpeciesSummary(
+        summary = download_manager.SpeciesSummary(
             key="Acleris_sparsana",
             scientific_name="Acleris sparsana",
             common_name="Moths",
@@ -137,7 +138,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
 
     def test_local_assemblies_replace_accession_assembly_name_from_catalog(self):
         accession = "GCA_000001405.29"
-        summary = main.SpeciesSummary(
+        summary = download_manager.SpeciesSummary(
             key="Homo_sapiens",
             scientific_name="Homo sapiens",
             common_name="Human",

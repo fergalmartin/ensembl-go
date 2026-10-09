@@ -138,7 +138,7 @@ class TrackHubIntegrationTests(unittest.TestCase):
             return None
 
         try:
-            with patch("main.asyncio.create_task", side_effect=_capture_task):
+            with patch("asyncio.create_task", side_effect=_capture_task):
                 response = asyncio.run(import_trackhub_tracks(request))
 
             self.assertEqual(response.get("status"), "started")

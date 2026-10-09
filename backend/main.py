@@ -46,7 +46,6 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 import pysam
-import requests
 from Bio.Seq import Seq
 import asyncio
 
@@ -66,7 +65,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from bed_index import get_plain_bed_index, is_gff_path, is_plain_bed_path, open_plain_bed
-from download_manager import SpeciesSummary, FileInfo, DownloadTask
+from download_manager import DownloadTask
 from assembly_report import chrom_token_variants
 from genome_identity import (
     DEFAULT_PROVIDER,
@@ -138,6 +137,7 @@ from security_utils import (
     validate_backend_bind_host,
     validate_config_export_path,
 )
+import routes.remote_catalog
 import routes.custom_genomes
 import routes.config
 import routes.neighbourhood
@@ -225,6 +225,7 @@ app.include_router(routes.homology.router)
 app.include_router(routes.neighbourhood.router)
 app.include_router(routes.config.router)
 app.include_router(routes.custom_genomes.router)
+app.include_router(routes.remote_catalog.router)
 API_TOKEN = os.environ.get("ENSEMBL_LOCAL_API_TOKEN", "").strip()
 API_TOKEN_HEADER = "x-ensembl-local-token"
 # Routes serving the sandboxed 3D structure viewer. Kept off /api because these
@@ -2708,171 +2709,6 @@ async def clear_recent():
     recent_transcripts.clear()
     return {"status": "ok", "message": "Recent transcripts cleared"}
 
-
-# ============ Download / Remote Data API ============
-
-@app.get("/api/remote/groups")
-async def list_remote_groups(provider: str = DEFAULT_PROVIDER):
-    """Return taxonomic groups with species counts."""
-    if normalize_provider(provider) == DEFAULT_PROVIDER:
-        app_state.download_manager.schedule_catalog_refresh_if_stale()
-    return app_state.download_manager.list_groups(provider=provider)
-
-@app.get("/api/remote/species", response_model=List[SpeciesSummary])
-async def list_remote_species(
-    group: Optional[str] = None,
-    sub_group: Optional[str] = None,
-    provider: str = DEFAULT_PROVIDER,
-):
-    """List species, optionally filtered by group/sub_group."""
-    if normalize_provider(provider) == DEFAULT_PROVIDER:
-        app_state.download_manager.schedule_catalog_refresh_if_stale()
-    return app_state.download_manager.list_species(provider=provider, group=group, sub_group=sub_group)
-
-@app.get("/api/remote/species/{key}")
-async def get_remote_species_details(key: str, provider: str = DEFAULT_PROVIDER):
-    """Get full details for a specific species."""
-    if normalize_provider(provider) == DEFAULT_PROVIDER:
-        app_state.download_manager.schedule_catalog_refresh_if_stale()
-    return app_state.download_manager.get_species_details(key, provider=provider)
-
-
-@app.get("/api/remote/files/{key}/{assembly}/availability")
-async def get_remote_file_availability(
-    key: str,
-    assembly: str,
-    provider: str = DEFAULT_PROVIDER,
-    include_directory_listing: bool = False,
-):
-    """Return assembly files plus dated dataset release file groups."""
-    if normalize_provider(provider) == DEFAULT_PROVIDER:
-        app_state.download_manager.schedule_catalog_refresh_if_stale()
-    return await asyncio.to_thread(
-        app_state.download_manager.get_file_availability,
-        key,
-        assembly,
-        provider,
-        include_directory_listing,
-    )
-
-
-@app.get("/api/remote/files/{key}/{assembly}", response_model=List[FileInfo])
-async def get_remote_files(
-    key: str,
-    assembly: str,
-    provider: str = DEFAULT_PROVIDER,
-    file_types: str = "",
-):
-    """Get download URLs for a specific species assembly."""
-    if normalize_provider(provider) == DEFAULT_PROVIDER:
-        app_state.download_manager.schedule_catalog_refresh_if_stale()
-    requested_types = [part.strip() for part in str(file_types or "").split(",") if part.strip()]
-    return await asyncio.to_thread(app_state.download_manager.get_download_urls,
-        key,
-        assembly,
-        file_types=requested_types or None,
-        provider=provider,
-    )
-
-
-@app.get("/api/remote/ncbi/search")
-async def search_remote_ncbi_species(
-    query: str,
-    assembly_source: str = "all",
-    page_size: int = 100,
-):
-    """Search NCBI genome assemblies via the Datasets API."""
-    try:
-        result = await asyncio.to_thread(
-            app_state.download_manager.search_ncbi_species,
-            query,
-            assembly_source,
-            page_size,
-        )
-        return {
-            **result,
-            "species": [
-                item.model_dump() if hasattr(item, "model_dump") else item
-                for item in (result.get("species") or [])
-            ],
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to search NCBI genomes: {exc}")
-
-
-@app.get("/api/remote/ncbi/featured")
-async def list_featured_remote_ncbi_species(assembly_source: str = "all"):
-    """Return a curated set of NCBI genomes, preferring paired RefSeq accessions where possible."""
-    try:
-        result = await asyncio.to_thread(
-            app_state.download_manager.list_featured_ncbi_species,
-            assembly_source,
-        )
-        return {
-            **result,
-            "species": [
-                item.model_dump() if hasattr(item, "model_dump") else item
-                for item in (result.get("species") or [])
-            ],
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to load featured NCBI genomes: {exc}")
-
-
-@app.post("/api/remote/ncbi/refresh")
-async def refresh_remote_ncbi_cache():
-    """Clear cached RefSeq browse metadata so the next requests fetch fresh NCBI results."""
-    try:
-        return await asyncio.to_thread(app_state.download_manager.refresh_ncbi_cache)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to refresh RefSeq browse cache: {exc}")
-
-
-@app.get("/api/remote/ncbi/browse")
-async def browse_remote_ncbi_group(group: str = "Featured", page_token: Optional[str] = None, page_size: int = 100):
-    """Return a paginated list of RefSeq species for the given taxonomic group."""
-    try:
-        result = await asyncio.to_thread(
-            app_state.download_manager.browse_ncbi_group,
-            group,
-            page_token,
-            page_size,
-        )
-        return {
-            **result,
-            "species": [
-                item.model_dump() if hasattr(item, "model_dump") else item
-                for item in (result.get("species") or [])
-            ],
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to browse RefSeq group '{group}': {exc}")
-
-
-class CatalogAcknowledgeRequest(BaseModel):
-    token: str = ""
-
-
-@app.get("/api/remote/catalog/status")
-async def get_remote_catalog_status():
-    """Return the current remote catalogue refresh status and latest change summary."""
-    app_state.download_manager.schedule_catalog_refresh_if_stale()
-    return app_state.download_manager.get_catalog_status()
-
-
-@app.post("/api/remote/catalog/refresh")
-async def refresh_remote_catalog():
-    """Force a remote catalogue refresh now."""
-    try:
-        return await asyncio.to_thread(app_state.download_manager.refresh_catalog, True)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to refresh remote catalogue: {exc}")
-
-
-@app.post("/api/remote/catalog/acknowledge")
-async def acknowledge_remote_catalog_change(request: CatalogAcknowledgeRequest):
-    """Mark the latest catalogue change notification as seen."""
-    return app_state.download_manager.acknowledge_catalog_change(request.token)
 
 class DownloadRequest(BaseModel):
     url: str
