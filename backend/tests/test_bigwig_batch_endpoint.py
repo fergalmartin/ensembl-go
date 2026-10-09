@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import BigWigBatchRequest, BigWigBatchTile, browse_bigwig_batch  # noqa: E402
+from routes.bigwig import BigWigBatchRequest, BigWigBatchTile, browse_bigwig_batch  # noqa: E402
 
 
 class _FakeBigWig:
@@ -49,7 +49,7 @@ class BigWigBatchEndpointTests(unittest.TestCase):
                 ],
             )
             with (
-                patch("main.pyBigWig", SimpleNamespace(open=fake_open)),
+                patch("routes.bigwig.pyBigWig", SimpleNamespace(open=fake_open)),
                 patch("genome_context._get_browse_db", return_value=object()),
                 patch("genome_context._get_browse_fasta", side_effect=RuntimeError("no fasta")),
             ):
@@ -82,7 +82,7 @@ class BigWigBatchEndpointTests(unittest.TestCase):
                 tiles=[BigWigBatchTile(start=995_000, end=1_005_000, bins=100)],  # 100 bp bins
             )
             with (
-                patch("main.pyBigWig", SimpleNamespace(open=lambda _path: fake_bigwig)),
+                patch("routes.bigwig.pyBigWig", SimpleNamespace(open=lambda _path: fake_bigwig)),
                 patch("genome_context._get_browse_db", return_value=object()),
                 patch("genome_context._get_browse_fasta", side_effect=RuntimeError("no fasta")),
             ):
@@ -108,7 +108,7 @@ class BigWigBatchEndpointTests(unittest.TestCase):
                 tiles=[BigWigBatchTile(start=999_000, end=1_001_000, bins=20)],
             )
             with (
-                patch("main.pyBigWig", SimpleNamespace(open=lambda _path: fake_bigwig)),
+                patch("routes.bigwig.pyBigWig", SimpleNamespace(open=lambda _path: fake_bigwig)),
                 patch("genome_context._get_browse_db", return_value=object()),
                 patch("genome_context._get_browse_fasta", side_effect=RuntimeError("no fasta")),
             ):
