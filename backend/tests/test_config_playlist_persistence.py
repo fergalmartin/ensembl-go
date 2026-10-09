@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -36,7 +37,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
     def test_cache_dir_can_use_electron_user_data_override(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            with patch.dict(main.os.environ, {"ENSEMBL_GO_USER_DATA_DIR": str(root)}):
+            with patch.dict(os.environ, {"ENSEMBL_GO_USER_DATA_DIR": str(root)}):
                 self.assertEqual(app_paths.get_cache_dir(), (root / "cache").resolve())
 
     def test_track_registry_is_persisted_with_output_directory(self):
