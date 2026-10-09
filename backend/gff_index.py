@@ -1226,3 +1226,75 @@ def queue_index_build(gff_path: str, db_path: str) -> Tuple[str, str]:
     _ensure_index_worker_started()
     _index_task_queue.put((task_id, str(gff_path), str(db_path)))
     return task_id, "queued"
+
+
+def _parse_gff_attributes(attr_str: str) -> dict:
+    attrs = {}
+    for piece in str(attr_str or "").split(';'):
+        if '=' not in piece:
+            continue
+        k, v = piece.split('=', 1)
+        key = str(k).strip()
+        if not key:
+            continue
+        attrs[key] = str(v).strip()
+    return attrs
+
+
+def _extract_protein_ids_from_gff(
+    gff_path: str,
+    transcript_ids: set,
+    transcript_to_gene: Optional[Dict[str, str]] = None,
+) -> dict:
+    """Returns {transcript_id: protein_id} by scanning CDS lines in the GFF."""
+    result: dict = {}
+    remaining = {str(tid).strip() for tid in (transcript_ids or set()) if str(tid).strip()}
+    gene_to_tx_ids: Dict[str, List[str]] = {}
+    for tx_id, gene_id in (transcript_to_gene or {}).items():
+        clean_tx = str(tx_id or "").strip()
+        clean_gene = str(gene_id or "").strip()
+        if not clean_tx or not clean_gene:
+            continue
+        gene_to_tx_ids.setdefault(clean_gene, []).append(clean_tx)
+    if not remaining or not gff_path or not os.path.exists(gff_path):
+        return result
+    try:
+        with file_io.open_maybe_gz(gff_path, 'r') as f:
+            for line in f:
+                if not remaining:
+                    break
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) < 9 or parts[2] != 'CDS':
+                    continue
+                attrs = _parse_gff_attributes(parts[8])
+                protein_id = attrs.get('protein_id', '')
+                if not protein_id:
+                    continue
+
+                matched_tx_ids: List[str] = []
+                parent_values = [p.strip() for p in str(attrs.get('Parent', '')).split(',') if p.strip()]
+                for raw_parent in parent_values:
+                    tx_id = re.sub(r'^(?:transcript|mapped_transcript|rna)[:\-]', '', raw_parent)
+                    if tx_id and tx_id in remaining:
+                        matched_tx_ids.append(tx_id)
+                        continue
+                    gene_id = re.sub(r'^gene[:\-]', '', raw_parent)
+                    for linked_tx_id in gene_to_tx_ids.get(gene_id, []):
+                        if linked_tx_id in remaining:
+                            matched_tx_ids.append(linked_tx_id)
+
+                if not matched_tx_ids:
+                    tx_id = attrs.get('transcript_id', '')
+                    if tx_id and tx_id in remaining:
+                        matched_tx_ids.append(tx_id)
+
+                for matched_tx_id in matched_tx_ids:
+                    if matched_tx_id in result:
+                        continue
+                    result[matched_tx_id] = protein_id
+                    remaining.discard(matched_tx_id)
+    except Exception:
+        pass
+    return result

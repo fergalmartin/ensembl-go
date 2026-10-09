@@ -117,6 +117,7 @@ class RouterHarness:
 
     def __init__(self, db_path, cache_root, annotation=True):
         import main
+        import transcript_translation  # noqa: E402
         import sequence_windows  # noqa: E402
 
         self.db_path = str(db_path) if annotation else ""
@@ -129,7 +130,7 @@ class RouterHarness:
             chrom_resolver=lambda genome, requested, known: requested,
             tx_feature_intervals=sequence_windows._build_tx_feature_intervals,
             mode_segments=sequence_windows._build_mode_segments,
-            translate_transcript=main._sequence_view_protein,
+            translate_transcript=transcript_translation._sequence_view_protein,
             normalize_intervals=sequence_windows._normalize_interval_list,
             ordered_five_to_three=sequence_windows._ordered_five_to_three,
         )
@@ -764,6 +765,7 @@ class SequenceViewApiTest(unittest.TestCase):
         # retries on this status rather than treating it as a failure, which is
         # why it has to reach it unchanged.
         import main
+        import transcript_translation  # noqa: E402
         import sequence_windows  # noqa: E402
 
         def building(genome):
@@ -777,7 +779,7 @@ class SequenceViewApiTest(unittest.TestCase):
             chrom_resolver=lambda genome, requested, known: requested,
             tx_feature_intervals=sequence_windows._build_tx_feature_intervals,
             mode_segments=sequence_windows._build_mode_segments,
-            translate_transcript=main._sequence_view_protein,
+            translate_transcript=transcript_translation._sequence_view_protein,
             normalize_intervals=sequence_windows._normalize_interval_list,
             ordered_five_to_three=sequence_windows._ordered_five_to_three,
         )

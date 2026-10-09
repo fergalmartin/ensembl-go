@@ -115,10 +115,11 @@ def load_gff_protein_ids(gff_path: Path) -> Dict[str, str]:
 def resolve_from_config(genome: str) -> Tuple[str, str, str, Tuple[int, ...], Dict[str, str]]:
     """(index_db, fasta, gff, lineage, molecule_by_contig) for a configured genome."""
     import main  # imports FastAPI app; only needed for the config-driven path
+    import transcript_translation  # noqa: E402
     import genome_context  # noqa: E402
 
     context = genome_context._resolve_browse_genome_context(genome)
-    translation_context = main._translation_context(genome)
+    translation_context = transcript_translation._translation_context(genome)
     return (
         str(context.get("db_path") or ""),
         str(context.get("fasta_path") or ""),

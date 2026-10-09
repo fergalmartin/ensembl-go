@@ -44,6 +44,7 @@ from translation import (  # noqa: E402
 )
 
 import main  # noqa: E402
+import transcript_translation  # noqa: E402
 import gff_index  # noqa: E402
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -117,7 +118,7 @@ class TranslationFixtureTestCase(unittest.TestCase):
     def _translate(self, case, **kwargs):
         record = self._indexed(case)
         table, molecule = self._table_for(case, record)
-        protein, layout, used_table = main._translate_transcript(
+        protein, layout, used_table = transcript_translation._translate_transcript(
             self.fasta,
             record["chrom"],
             record["strand"],
@@ -187,7 +188,7 @@ class TestPhaseRegression(TranslationFixtureTestCase):
         for case in partials:
             with self.subTest(case=case["case_id"]):
                 record, protein, layout, table = self._translate(case)
-                dna = main._cds_dna_from_layout(self.fasta, record["chrom"], record["strand"], layout)
+                dna = transcript_translation._cds_dna_from_layout(self.fasta, record["chrom"], record["strand"], layout)
                 unphased = translate_cds_dna(dna, start_phase=0, table=table)
                 self.assertNotEqual(
                     unphased, protein,
@@ -216,7 +217,7 @@ class TestMitochondrialCode(TranslationFixtureTestCase):
                 continue
             with self.subTest(case=case["case_id"]):
                 record = self._indexed(case)
-                protein, _layout, _table = main._translate_transcript(
+                protein, _layout, _table = transcript_translation._translate_transcript(
                     self.fasta, record["chrom"], record["strand"], record["cds_list"],
                     table=TABLE_STANDARD,
                 )
@@ -233,7 +234,7 @@ class TestMitochondrialCode(TranslationFixtureTestCase):
                 continue
             with self.subTest(case=case["case_id"]):
                 record = self._indexed(case)
-                protein, _layout, table = main._translate_transcript(
+                protein, _layout, table = transcript_translation._translate_transcript(
                     self.fasta, record["chrom"], record["strand"], record["cds_list"],
                     table=TABLE_STANDARD,
                     molecule=MOLECULE_MITOCHONDRION,
@@ -324,7 +325,7 @@ class TestManualAnnotationRobustness(TranslationFixtureTestCase):
             {key: value for key, value in cds.items() if key != "phase"}
             for cds in record["cds_list"]
         ]
-        protein, _layout, _table = main._translate_transcript(
+        protein, _layout, _table = transcript_translation._translate_transcript(
             self.fasta, record["chrom"], record["strand"], stripped, table=TABLE_STANDARD
         )
         self.assertEqual(protein, case["protein"])
@@ -333,7 +334,7 @@ class TestManualAnnotationRobustness(TranslationFixtureTestCase):
         case = self._case("ensembl_complete_minus")
         record = self._indexed(case)
         duplicated = list(record["cds_list"]) + list(record["cds_list"])
-        protein, _layout, _table = main._translate_transcript(
+        protein, _layout, _table = transcript_translation._translate_transcript(
             self.fasta, record["chrom"], record["strand"], duplicated, table=TABLE_STANDARD
         )
         self.assertEqual(protein, case["protein"])
@@ -343,7 +344,7 @@ class TestManualAnnotationRobustness(TranslationFixtureTestCase):
         _record, expected, _layout, _table = self._translate(case)
         record = self._indexed(case)
         shuffled = list(reversed(record["cds_list"]))
-        protein, _layout, _table = main._translate_transcript(
+        protein, _layout, _table = transcript_translation._translate_transcript(
             self.fasta, record["chrom"], record["strand"], shuffled, table=TABLE_STANDARD
         )
         self.assertEqual(protein, expected)
@@ -358,7 +359,7 @@ class TestManualAnnotationRobustness(TranslationFixtureTestCase):
         cds_list = list(record["cds_list"]) + [{
             "feature_type": "CDS", "start": length - 2, "end": length + 30, "strand": "+",
         }]
-        protein, _layout, _table = main._translate_transcript(
+        protein, _layout, _table = transcript_translation._translate_transcript(
             self.fasta, record["chrom"], record["strand"], cds_list, table=TABLE_STANDARD
         )
         # The real CDS ended with a stop codon, which is now internal.
