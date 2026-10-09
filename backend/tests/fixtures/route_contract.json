@@ -1509,17 +1509,6 @@
        ],
        "title": "Dim Non Selected Genes"
       },
-      "enable_sv_rust_render_bar": {
-       "anyOf": [
-        {
-         "type": "boolean"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "title": "Enable Sv Rust Render Bar"
-      },
       "genome_analysis_reports": {
        "anyOf": [
         {

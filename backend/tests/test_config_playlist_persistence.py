@@ -167,7 +167,6 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                     "genome_browser_colors": colors,
                     "show_fps_counter": True,
                     "sv_hide_inactive_tracks": True,
-                    "enable_sv_rust_render_bar": True,
                 })
 
                 sidecar = output_dir / "local_data" / main.OUTPUT_DIR_CONFIG_FILENAME
@@ -176,7 +175,6 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                 self.assertEqual(saved_sidecar["config"]["genome_browser_colors"], colors)
                 self.assertTrue(saved_sidecar["config"]["show_fps_counter"])
                 self.assertTrue(saved_sidecar["config"]["sv_hide_inactive_tracks"])
-                self.assertTrue(saved_sidecar["config"]["enable_sv_rust_render_bar"])
 
                 cache_file.write_text(json.dumps({
                     **main.DEFAULT_CONFIG,
@@ -184,14 +182,12 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                     "genome_browser_colors": main.DEFAULT_CONFIG["genome_browser_colors"],
                     "show_fps_counter": False,
                     "sv_hide_inactive_tracks": False,
-                    "enable_sv_rust_render_bar": False,
                 }), encoding="utf-8")
 
                 loaded = main.load_config()
                 self.assertEqual(loaded["genome_browser_colors"], colors)
                 self.assertTrue(loaded["show_fps_counter"])
                 self.assertTrue(loaded["sv_hide_inactive_tracks"])
-                self.assertTrue(loaded["enable_sv_rust_render_bar"])
 
     def test_output_dir_config_endpoint_reads_sidecar(self):
         with tempfile.TemporaryDirectory() as tmpdir:

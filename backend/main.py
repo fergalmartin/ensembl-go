@@ -6093,7 +6093,6 @@ DEFAULT_CONFIG = {
     # Reopen each genome's custom tracks and track groups in the Genome Browser as they
     # were left. What was open is kept beside the track registry, not in here.
     "remember_browser_tracks": True,
-    "enable_sv_rust_render_bar": False,
     # Paths of SV alignment config files the user has attached. Persisted so a
     # loaded config survives a restart rather than having to be re-opened.
     "sv_config_paths": [],
@@ -7074,7 +7073,6 @@ class ConfigUpdate(BaseModel):
     browsing_control_scheme: Optional[str] = None
     sv_hide_inactive_tracks: Optional[bool] = None
     remember_browser_tracks: Optional[bool] = None
-    enable_sv_rust_render_bar: Optional[bool] = None
     active_species: Optional[List[Dict[str, Any]]] = None
     next_previous_session_genomes: Optional[List[Dict[str, Any]]] = None
     manual_species: Optional[List[Dict[str, Any]]] = None

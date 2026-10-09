@@ -29,3 +29,11 @@ test('ensureScreenshotFilename appends or replaces extensions', () => {
   assert.equal(ensureScreenshotFilename('capture.jpeg', 'png'), 'capture.png')
   assert.equal(ensureScreenshotFilename('capture.jpg', 'jpeg'), 'capture.jpg')
 })
+
+test('the page policy allows no WebAssembly eval and screenshots keep their raster proxy', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const csp = await readFile(new URL('../index.html', import.meta.url), 'utf8')
+  const screenshot = await readFile(new URL('../src/utils/screenshotExport.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(csp, /wasm-unsafe-eval/)
+  assert.match(screenshot, /data-screenshot-raster-proxy/)
+})

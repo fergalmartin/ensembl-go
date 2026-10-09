@@ -9,10 +9,10 @@ export default defineConfig([
     'dist',
     'node_modules',
     'src/lib/ensembl-sv/**',
+    // Local build output of the removed Rust SV renderer, if still on disk.
     'rust/sv_renderer/pkg/**',
     'rust/sv_renderer/target/**',
     '**/*~',
-    'test_crash.cjs',
   ]),
   {
     files: ['**/*.{js,jsx}'],
