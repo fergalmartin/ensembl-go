@@ -23,14 +23,13 @@ from fastapi import HTTPException  # noqa: E402
 
 import main  # noqa: E402
 import routes.sv  # noqa: E402
+import sv_datasets  # noqa: E402
 import config_store  # noqa: E402
 from routes.sv import (  # noqa: E402
     SvAlignmentDeleteRequest,
-    SvAlignmentRegisterRequest,
     SvConfigAttachRequest,
     SvConfigSaveRequest,
     SvConfigValidateRequest,
-    _sv_registry_cache,
     attach_sv_config,
     delete_sv_alignment,
     detach_sv_config,
@@ -40,6 +39,7 @@ from routes.sv import (  # noqa: E402
     sv_catalog,
     validate_sv_config,
 )
+from sv_datasets import SvAlignmentRegisterRequest, _sv_registry_cache  # noqa: E402
 
 
 class SvConfigEndpointTestCase(unittest.TestCase):
@@ -396,10 +396,10 @@ class LegacyRegistryTests(SvConfigEndpointTestCase):
         ref_map, _tgt_map = self.write_legacy()
         self.register(label="GRCh38 to HG00733.mat")
         _sv_registry_cache["signature"] = None
-        datasets, _incomplete = routes.sv._list_sv_datasets(str(self.root))
+        datasets, _incomplete = sv_datasets._list_sv_datasets(str(self.root))
         legacy = [d for d in datasets if d["id"] == "sv_3cf227af32a17ab8"][0]
         self.assertEqual(str(legacy["ref_mapping_path"]), str(ref_map))
-        mapping = routes.sv._sv_side_mapping(legacy, "target")
+        mapping = sv_datasets._sv_side_mapping(legacy, "target")
         self.assertEqual(mapping["hal_to_assembly"]["CM089167.1"], "1")
 
     def test_a_legacy_entry_whose_tsv_vanished_reports_it_missing(self):

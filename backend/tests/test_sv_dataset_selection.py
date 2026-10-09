@@ -9,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
 import routes.sv  # noqa: E402
-from routes.sv import (  # noqa: E402
+import sv_datasets  # noqa: E402
+from sv_datasets import (  # noqa: E402
     _list_sv_datasets,
     _select_sv_dataset,
     _sv_public_dataset,
@@ -29,7 +30,7 @@ class StructuralVariationDatasetSelectionTests(unittest.TestCase):
     """
 
     def setUp(self):
-        patcher = patch.object(routes.sv, "SV_BUILTIN_DATASETS_ENABLED", True)
+        patcher = patch.object(sv_datasets, "SV_BUILTIN_DATASETS_ENABLED", True)
         patcher.start()
         self.addCleanup(patcher.stop)
         # The registry cache is module-global; clear it on the way in and out so
