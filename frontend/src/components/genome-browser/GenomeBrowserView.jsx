@@ -1,34 +1,22 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { isHedgehogShh } from '../../achievements/geneFocus.js'
-import { browserControlKey } from '../../achievements/browserControls.js'
 import { trackAchievement } from '../../achievements/tracker.js'
-import { flushSync } from 'react-dom'
 import useTutorial from '../../hooks/useTutorial'
-import { registerBrowserNotes, describeBrowserViewport, browserViewportControls } from '../../utils/browserTutorialControls'
-import { linkedGeneFraming } from '../../utils/linkedGeneFraming'
-import GenomeBrowser from './GenomeBrowser'
-import GenomeWheel from '../GenomeWheel'
-import BrowserScrollRail from '../BrowserScrollRail'
+import { registerBrowserNotes } from '../../utils/browserTutorialControls'
 import { registerTutorialBrowserHost } from '../../utils/tutorialBrowserScene.js'
-import FocusGeneDrawer, { FOCUS_DRAWER_DETAIL_WIDTH, FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from '../FocusGeneDrawer'
-import FocusLocationDrawer, { LOCATION_DRAWER_DETAIL_WIDTH } from '../FocusLocationDrawer'
-import AssemblyInfoDrawer from '../AssemblyInfoDrawer'
+import { FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from '../FocusGeneDrawer'
 import { hasAssemblyMetadata } from '../../utils/assemblyMetadataRows'
-import ScreenshotExportModal from '../ScreenshotExportModal'
-import ScreenshotSelectionOverlay from '../ScreenshotSelectionOverlay'
 
 import { API_BASE } from '../../backendRuntime'
-import { classifyReadiness, readinessRetryDelay } from '../../utils/browserReadiness'
+import { readinessRetryDelay } from '../../utils/browserReadiness'
 import { genomeColorResolver } from '../../genomeColorSchemes'
 import useScreenshotTargets from '../../hooks/useScreenshotTargets'
 import { rasterizeSvgMarkup } from '../../utils/screenshotExport'
-import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch, trackAssemblyKey } from '../../utils/genomeIdentity'
+import { getAssemblyGenomeKey, genomeKeysMatch, trackAssemblyKey } from '../../utils/genomeIdentity'
 import { cycleBottomSpacer } from '../../utils/genomeWheel'
 import { findScrollHost, stickyControlsInset, panelAlignmentAnchor } from '../../utils/browserScrollRail'
 import { resolveBrowserGene } from '../../utils/browserGeneNavigation.js'
-import { LOCKED_ICON_PATH, UNLOCKED_ICON_PATH } from '../../utils/lockIcons'
 import {
-    DEFAULT_NOTE_SORT_MODE,
     NOTE_TARGET_KIND_LOCATION,
     buildGeneNoteTarget,
     buildLocationNoteTarget,
@@ -55,200 +43,26 @@ import {
 } from '../../utils/browsingControls'
 import { speciesItemKey } from '../../app/genomeLists.js'
 import { hasFiniteGeneCoords } from '../../app/geneFocus.js'
-
-/** Shared empties keep absent notes and track registries stable across frames. */
-const EMPTY_NOTE_COUNTS = Object.freeze({})
-const EMPTY_NOTE_LIST = Object.freeze([])
-const EMPTY_TRACK_LIST = Object.freeze([])
-const EMPTY_FAR_PANELS = new Set()
-/** How often a linked panel parked off screen catches up with the pan. */
-const OFFSCREEN_LINK_INTERVAL_MS = 200
-
-/**
- * Things a drag must not be stolen from: controls that expect a click, and text
- * a user may legitimately want to select.
- */
-const DRAG_SCROLL_EXCLUDED_SELECTOR = [
-    'button',
-    'a',
-    'input',
-    'textarea',
-    'select',
-    'label',
-    'summary',
-    'option',
-    '[role="button"]',
-    '[role="radio"]',
-    '[role="tab"]',
-    '[role="checkbox"]',
-    '[role="slider"]',
-    '[contenteditable="true"]',
-    '[data-no-drag-scroll="true"]',
-].join(',')
-
-const IndexPreparingNotice = ({ isLight, state, detail, onRetry }) => {
-    const isError = state === 'error'
-    const title = isError ? 'Index Not Ready' : 'Building Index'
-    const message = isError
-        ? (detail || 'The index is not ready for display. Please finish indexing, then try again.')
-        : 'Preparing regions for display. This view will refresh automatically when the index is ready.'
-
-    return (
-        <div className={`h-full w-full flex flex-col items-center justify-center p-6 ${isLight ? 'bg-blue-50/50' : 'bg-blue-900/10'}`}>
-            {!isError ? (
-                <div className={`w-8 h-8 border-4 border-t-transparent rounded-full animate-spin mb-3 ${isLight ? 'border-blue-500' : 'border-blue-400'}`} />
-            ) : (
-                <svg className={`w-12 h-12 mb-3 ${isLight ? 'text-amber-500' : 'text-amber-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-            )}
-            <p className={`text-sm font-semibold ${isLight ? (isError ? 'text-amber-800' : 'text-blue-800') : (isError ? 'text-amber-300' : 'text-blue-300')}`}>
-                {title}
-            </p>
-            <p className={`text-xs text-center max-w-sm mt-1 ${isLight ? (isError ? 'text-amber-700/80' : 'text-blue-700/80') : (isError ? 'text-amber-300/90' : 'text-blue-300/80')}`}>
-                {message}
-            </p>
-            {/* A build that failed is remembered, so polling alone will never
-                clear it — without a way to ask again the only way out was to
-                restart the backend. */}
-            {isError && onRetry && (
-                <button
-                    type="button"
-                    onClick={onRetry}
-                    className={`mt-3 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${isLight
-                        ? 'border-amber-300 bg-white text-amber-800 hover:bg-amber-50'
-                        : 'border-amber-400/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/20'}`}
-                >
-                    Build the index again
-                </button>
-            )}
-        </div>
-    )
-}
-
-function dirnameFromPath(filepath) {
-    if (!filepath || typeof filepath !== 'string') return ''
-    const normalized = filepath.replace(/\/+$/, '')
-    const idx = normalized.lastIndexOf('/')
-    if (idx <= 0) return ''
-    return normalized.slice(0, idx)
-}
-
-function formatSpeciesForPill(species) {
-    if (!species) return ''
-    if (species.display_name) return species.display_name
-    if (species.common_name) return species.common_name
-    const name = species.scientific_name || ''
-    if (!name) return ''
-    const parts = name.split(' ')
-    if (parts.length < 2) return name
-    return `${parts[0][0]}. ${parts.slice(1).join(' ')}`
-}
-
-function buildGenomePillLabel(species) {
-    if (!species) return ''
-    const name = formatSpeciesForPill(species)
-    const assembly = species?.assembly_name || species?.assembly || ''
-    return assembly ? `${name} — ${assembly}` : name
-}
-
-// `findScrollHost`, `stickyControlsInset` and `panelAlignmentAnchor` are shared
-// with the left-hand scroll rail, which has to put a genome's dot at exactly the
-// scroll position this file's alignment scrolls to.
-
-function dedupeSpeciesList(speciesList) {
-    const out = []
-    const seen = new Set()
-    for (const species of Array.isArray(speciesList) ? speciesList : []) {
-        if (!species) continue
-        const key = speciesItemKey(species)
-        if (!key || seen.has(key)) continue
-        seen.add(key)
-        out.push(species)
-    }
-    return out
-}
-
-function geneFivePrime(gene) {
-    return gene?.strand === '+' ? Number(gene.start) : Number(gene.end)
-}
-
-function sameArrayMembers(a, b) {
-    if (a === b) return true
-    if (!Array.isArray(a) || !Array.isArray(b)) return false
-    if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i += 1) {
-        if (a[i] !== b[i]) return false
-    }
-    return true
-}
-
-function samePanelPosition(a, b) {
-    if (a === b) return true
-    if (!a || !b) return false
-    return (
-        String(a.chrom || '') === String(b.chrom || '') &&
-        Number(a.start) === Number(b.start) &&
-        Number(a.end) === Number(b.end) &&
-        String(a.targetTrack || '') === String(b.targetTrack || '') &&
-        Object.is(Number(a.anchorRatio), Number(b.anchorRatio))
-    )
-}
-
-function chromosomeTokenVariants(value) {
-    const raw = String(value || '').trim()
-    if (!raw) return new Set()
-    const lower = raw.toLowerCase()
-    const variants = new Set([lower])
-    if (lower.startsWith('chr') && lower.length > 3) variants.add(lower.slice(3))
-    else variants.add(`chr${lower}`)
-    if (['m', 'mt', 'chrm', 'chrmt'].includes(lower)) {
-        variants.add('m')
-        variants.add('mt')
-        variants.add('chrm')
-        variants.add('chrmt')
-    }
-    return variants
-}
-
-function chromosomeTokensForRegion(region, fallbackChrom = '') {
-    const tokens = new Set()
-    for (const value of [fallbackChrom, region?.chrom, ...(Array.isArray(region?.synonyms) ? region.synonyms : [])]) {
-        for (const token of chromosomeTokenVariants(value)) tokens.add(token)
-    }
-    return tokens
-}
-
-function regionMatchesTokens(region, tokens) {
-    if (!region || !tokens?.size) return false
-    for (const token of chromosomeTokensForRegion(region)) {
-        if (tokens.has(token)) return true
-    }
-    return false
-}
-
-function resolveRegionByChromTokens(regions, chromOrTokens) {
-    const tokens = chromOrTokens instanceof Set ? chromOrTokens : chromosomeTokenVariants(chromOrTokens)
-    if (!tokens.size || !Array.isArray(regions)) return null
-    return regions.find((region) => regionMatchesTokens(region, tokens)) || null
-}
-
-function clampWindowToRegion(chrom, start, end, region) {
-    const requestedStart = Number(start)
-    const requestedEnd = Number(end)
-    if (!chrom || !Number.isFinite(requestedStart) || !Number.isFinite(requestedEnd) || requestedEnd <= requestedStart) {
-        return null
-    }
-    const minStart = Math.max(1, Math.floor(Number(region?.start) || 1))
-    const maxEnd = Math.max(minStart + 1, Math.floor(Number(region?.end || region?.length) || requestedEnd))
-    const requestedSpan = requestedEnd - requestedStart
-    const maxSpan = maxEnd - minStart
-    if (requestedSpan >= maxSpan) {
-        return { chrom, start: minStart, end: maxEnd }
-    }
-    const nextStart = Math.min(Math.max(requestedStart, minStart), maxEnd - requestedSpan)
-    return { chrom, start: nextStart, end: nextStart + requestedSpan }
-}
+import {
+  DRAG_SCROLL_EXCLUDED_SELECTOR,
+  EMPTY_FAR_PANELS,
+  EMPTY_NOTE_COUNTS,
+  EMPTY_NOTE_LIST,
+  OFFSCREEN_LINK_INTERVAL_MS,
+  buildGenomePillLabel,
+  dedupeSpeciesList,
+  dirnameFromPath,
+} from './view/browserViewModel.js'
+import { renderBrowserView } from './view/BrowserViewLayout.jsx'
+import { flushLinkedPanelPositions } from './view/panelLinking.js'
+import { applyLinkedGeneViewToPanels } from './view/panelLinking.js'
+import { linkPanelsByGene } from './view/panelLinking.js'
+import { linkPanelsByRegion } from './view/panelLinking.js'
+import { checkGenomeReadiness } from './view/genomeReadiness.js'
+import { movePinnedAlignment } from './view/panelFocus.js'
+import { changeDetailTranscript } from './view/panelFocus.js'
+import { alignPanelToTopOfView } from './view/panelFocus.js'
+import { selectPanelGene } from './view/panelFocus.js'
 
 export default function GenomeBrowserView({
     theme = 'dark',
@@ -676,45 +490,15 @@ export default function GenomeBrowserView({
         }))
     }, [])
 
-    const handlePanelGeneSelect = useCallback((panelKey, gene) => {
-        setSelectedGenes((prev) => ({ ...prev, [panelKey]: gene || null }))
-        const geneId = String(gene?.id || '').trim()
-        setFocusTranscriptViews((prev) => {
-            const current = prev[panelKey]
-            if (!geneId) {
-                if (!current) return prev
-                const next = { ...prev }
-                delete next[panelKey]
-                return next
-            }
-            if (current?.geneId === geneId) return prev
-            const remembered = geneTranscriptViews[panelKey]?.[geneId]
-            return {
-                ...prev,
-                [panelKey]: {
-                    geneId,
-                    order: remembered?.order ?? null,
-                    hidden: remembered?.hidden ?? [],
-                    // null defers to whatever the panel already had expanded, so
-                    // focusing an already-expanded gene does not collapse it.
-                    expanded: remembered?.expanded ?? null,
-                    ghostId: null,
-                    hoverId: null,
-                    pinnedId: null,
-                },
-            }
-        })
-        setFocusPanelOrder((prev) => {
-            const without = prev.filter((key) => key !== panelKey)
-            return geneId ? [panelKey, ...without] : without
-        })
-        // A fresh focus always presents that panel's drawer open, whatever the
-        // user did with its collapse arrow last time.
-        if (geneId) {
-            const resumeClosed = resumeClosedDrawersRef.current.focus.delete(panelKey)
-            setFocusDrawerOpenByPanel((prev) => ({ ...prev, [panelKey]: !resumeClosed }))
-        } else setDetailTranscriptByPanel((prev) => ({ ...prev, [panelKey]: '' }))
-    }, [geneTranscriptViews])
+    const handlePanelGeneSelect = useCallback((...args) => selectPanelGene({
+        geneTranscriptViews,
+        resumeClosedDrawersRef,
+        setDetailTranscriptByPanel,
+        setFocusDrawerOpenByPanel,
+        setFocusPanelOrder,
+        setFocusTranscriptViews,
+        setSelectedGenes,
+    }, ...args), [geneTranscriptViews])
 
     // Addressed by gene id rather than "whatever is focused", so the canvas
     // controls can act on any gene. Keeps the live drawer view in step when the
@@ -871,48 +655,7 @@ export default function GenomeBrowserView({
     }, [])
     useEffect(() => stopCycleScroll, [stopCycleScroll])
 
-    const alignPanelToTop = useCallback((panelKey) => {
-        if (!panelKey) return
-        stopCycleScroll()
-        const abandon = () => stopCycleScroll()
-        window.addEventListener('wheel', abandon, true)
-        window.addEventListener('pointerdown', abandon, true)
-        // A genome that has just been added is not on the page yet, and once it
-        // is its tracks keep laying out for a while afterwards. So the target is
-        // remeasured every frame instead of being resolved once: the follow
-        // waits for the panel to appear and then keeps closing on its control
-        // bar while the panel grows underneath it.
-        const deadline = performance.now() + 3000
-        let previous = performance.now()
-        let arrived = null
-        const step = (now) => {
-            const host = screenshotPanelsRef.current
-            const scroller = host ? findScrollHost(host) : null
-            const anchor = panelAlignmentAnchor(host, panelKey)
-            if (scroller && anchor) {
-                const inset = stickyControlsInset(screenshotOverlayRootRef.current)
-                const gap = anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top - inset
-                const eased = gap * (1 - Math.exp(-Math.min(64, now - previous) / 70))
-                // The last few pixels go in one move. `scrollTop` is quantised, so
-                // a step under a pixel is rounded away and the easing stalls just
-                // short — leaving the genome resting under the top bar for good.
-                const travel = Math.abs(eased) < 1 ? gap : eased
-                scroller.scrollTop = Math.max(0, Math.min(
-                    scroller.scrollHeight - scroller.clientHeight,
-                    scroller.scrollTop + travel,
-                ))
-                // Held briefly after arriving, so a panel that is still laying its
-                // tracks out cannot walk the bar back off the top; then the page is
-                // the reader's again, well before the deadline.
-                arrived = Math.abs(gap) <= 1 ? (arrived ?? now) : null
-                if (arrived !== null && now - arrived > 250) return stopCycleScroll()
-            }
-            previous = now
-            if (now >= deadline) return stopCycleScroll()
-            cycleScrollRef.current = { frame: requestAnimationFrame(step), abandon }
-        }
-        cycleScrollRef.current = { frame: requestAnimationFrame(step), abandon }
-    }, [stopCycleScroll])
+    const alignPanelToTop = useCallback((...args) => alignPanelToTopOfView({ cycleScrollRef, screenshotOverlayRootRef, screenshotPanelsRef, stopCycleScroll }, ...args), [stopCycleScroll])
 
     // What the Cycle wheel is currently offering, so the scroll rail can stay on
     // top of the wheel's overlay and light the genome standing at the front of the
@@ -1044,54 +787,15 @@ export default function GenomeBrowserView({
     // wherever the reader happened to be, which for a transcript low in the list
     // means landing in the middle of a sequence with no idea what it belongs to.
     // Closing it puts them back where they were, on the highlighted transcript.
-    const handleDetailTranscriptChange = useCallback((panelKey, transcriptId) => {
-        const wasOpen = Boolean(detailTranscriptRef.current[panelKey])
-        const willOpen = Boolean(transcriptId)
-        setDetailTranscriptByPanel((prev) => ({ ...prev, [panelKey]: transcriptId }))
-        // The detail and the notes share one wide slot. If both were ever open
-        // the drawer's own width and the coverage the assembly drawer clears
-        // would disagree, and the two panels would sit on top of each other.
-        if (willOpen) setNotesPanelOpenByPanel((prev) => (prev[panelKey] ? { ...prev, [panelKey]: false } : prev))
-        if (willOpen === wasOpen) return
-
-        const wrapper = screenshotOverlayRootRef.current?.querySelector(
-            `[data-focus-panel-wrapper="${CSS.escape(panelKey)}"]`
-        )
-        const drawer = wrapper?.querySelector('[data-focus-drawer="true"]')
-        const scroller = drawer ? findPanelScroller(drawer) : null
-        if (!drawer || !scroller) return
-        const scrollTo = (value) => {
-            scroller.scrollTop = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, value))
-        }
-
-        if (willOpen) {
-            detailScrollMemoryRef.current[panelKey] = scroller.scrollTop
-            const above = drawer.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-            // Only when its top has gone past — no need to move a detail that is
-            // already showing from the beginning.
-            if (above < 0) scrollTo(scroller.scrollTop + above)
-
-            // Bring the transcript the detail is about to the top of the list, so
-            // it is obvious which of twenty identifiers the panel is describing.
-            // Deferred a frame: the drawer widens and the list offset drops as the
-            // detail opens, and the row's position is only settled after that.
-            requestAnimationFrame(() => {
-                const row = wrapper.querySelector(
-                    `[data-drawer-transcript-row="${CSS.escape(transcriptId)}"]`
-                )
-                const list = wrapper.querySelector('[data-focus-drawer-list="true"]')
-                if (!row || !list) return
-                const shift = Math.round(row.getBoundingClientRect().top - list.getBoundingClientRect().top)
-                setDetailListShiftByPanel((prev) => ({ ...prev, [panelKey]: Math.max(0, shift) }))
-            })
-            return
-        }
-
-        setDetailListShiftByPanel((prev) => (prev[panelKey] ? { ...prev, [panelKey]: 0 } : prev))
-        const remembered = detailScrollMemoryRef.current[panelKey]
-        delete detailScrollMemoryRef.current[panelKey]
-        if (Number.isFinite(remembered)) scrollTo(remembered)
-    }, [findPanelScroller])
+    const handleDetailTranscriptChange = useCallback((...args) => changeDetailTranscript({
+        detailScrollMemoryRef,
+        detailTranscriptRef,
+        findPanelScroller,
+        screenshotOverlayRootRef,
+        setDetailListShiftByPanel,
+        setDetailTranscriptByPanel,
+        setNotesPanelOpenByPanel,
+    }, ...args), [findPanelScroller])
 
     const handleClearPanelFocus = useCallback((panelKey) => {
         setPanelClearEpochs((prev) => ({ ...prev, [panelKey]: (prev[panelKey] || 0) + 1 }))
@@ -1599,54 +1303,7 @@ export default function GenomeBrowserView({
     // the page scrolls decides where the aligned pair ends up on screen. Matching
     // them keeps the drawer looking still; scrolling less slides the pair down,
     // which is how a row hiding under the sticky band is brought out from it.
-    const movePinAlignment = useCallback((panel, from, to, scrollDistance = null) => {
-        stopPinAnimation()
-        const distance = to - from
-        const travel = scrollDistance === null ? distance : scrollDistance
-        if (!distance && !travel) return
-
-        const scroller = findPanelScroller(panel)
-        const drawer = panel.closest('[data-focus-panel-wrapper]')
-            ?.querySelector('[data-focus-drawer-body="true"]')
-        const scrollTo = (value) => {
-            if (!scroller) return
-            scroller.scrollTop = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, value))
-        }
-        if (!scroller || !drawer) {
-            setFocusDrawerPinOffset(to)
-            if (scroller) scrollTo(scroller.scrollTop + travel)
-            else window.scrollBy(0, travel)
-            return
-        }
-
-        // Flushed, so the settled offset and the transform that walks back to the
-        // starting position land in the same paint. Left to batch, React commits
-        // the offset a frame early and the list jumps the whole distance before
-        // sliding back.
-        //
-        // The offset itself is a margin now, so the transform is free to carry
-        // the animation as a correction that decays to nothing.
-        const settled = ''
-        flushSync(() => setFocusDrawerPinOffset(to))
-        drawer.style.transform = `translateY(${-distance}px)`
-
-        const scrollFrom = scroller.scrollTop
-        const duration = Math.min(520, Math.max(220, Math.max(Math.abs(distance), Math.abs(travel)) * 1.5))
-        const started = performance.now()
-        const step = (now) => {
-            const t = Math.min(1, (now - started) / duration)
-            const eased = 1 - ((1 - t) ** 3)
-            scrollTo(scrollFrom + (travel * eased))
-            if (t < 1) {
-                drawer.style.transform = `translateY(${-distance * (1 - eased)}px)`
-                pinAnimationRef.current = { frame: requestAnimationFrame(step), drawer, settled }
-                return
-            }
-            drawer.style.transform = settled
-            pinAnimationRef.current = null
-        }
-        pinAnimationRef.current = { frame: requestAnimationFrame(step), drawer, settled }
-    }, [findPanelScroller, stopPinAnimation])
+    const movePinAlignment = useCallback((...args) => movePinnedAlignment({ findPanelScroller, pinAnimationRef, setFocusDrawerPinOffset, stopPinAnimation }, ...args), [findPanelScroller, stopPinAnimation])
 
     // Letting the pin go — or switching panel, or collapsing the drawer — undoes
     // both halves together, so the drawer again looks still while the browser
@@ -2086,80 +1743,7 @@ export default function GenomeBrowserView({
     const readyCheckInFlightRef = useRef(new Map())
     const readyCheckAttemptsRef = useRef(new Map())
 
-    const checkGenomeReady = useCallback((panel) => {
-        const panelKey = panel.key
-        const inFlight = readyCheckInFlightRef.current.get(panelKey)
-        if (inFlight) return inFlight
-
-        const updateState = (state, detail = '') => {
-            setBrowserReadyState((prev) => {
-                const current = prev?.[panelKey]
-                if (current?.state === 'ready' && (state === 'checking' || state === 'pending')) {
-                    return prev
-                }
-                if (current?.state === state && (current?.detail || '') === (detail || '')) {
-                    // Nothing moved. Returning prev keeps a poll that is waiting
-                    // out a long build from re-rendering every panel each time.
-                    return prev
-                }
-                return {
-                    ...prev,
-                    [panelKey]: { state, detail },
-                }
-            })
-        }
-
-        // Counts consecutive "no such genome" answers only, not polls in
-        // general: a genome that has just been added answers 404 until its files
-        // land in the configuration, and that is the wait this budget is for.
-        // Counting every poll would spend the budget waiting out a long index
-        // build and then call the next blip fatal.
-        const attemptKey = `${panelKey}|${panel.genomeParam}`
-        const attempt = readyCheckAttemptsRef.current.get(attemptKey) || 0
-
-        const run = (async () => {
-            updateState('checking')
-            let status = 0
-            let ok = false
-            let regionCount = 0
-            let detail = ''
-            try {
-                const res = await fetch(`${API_BASE}/api/browse/regions?genome=${encodeURIComponent(panel.genomeParam)}`)
-                status = res.status
-                ok = res.ok
-                if (ok) {
-                    const data = await res.json()
-                    regionCount = Array.isArray(data) ? data.length : 0
-                } else {
-                    try {
-                        detail = (await res.json())?.detail || ''
-                    } catch {
-                        detail = ''
-                    }
-                }
-            } catch {
-                status = 0  // No response at all; treated as "try again".
-            }
-
-            if (status === 404) {
-                readyCheckAttemptsRef.current.set(attemptKey, attempt + 1)
-            } else {
-                readyCheckAttemptsRef.current.delete(attemptKey)
-            }
-
-            const outcome = classifyReadiness({ ok, status, regionCount, attempt })
-            updateState(outcome, outcome === 'ready' ? '' : detail)
-            return outcome
-        })()
-
-        readyCheckInFlightRef.current.set(panelKey, run)
-        run.finally(() => {
-            if (readyCheckInFlightRef.current.get(panelKey) === run) {
-                readyCheckInFlightRef.current.delete(panelKey)
-            }
-        })
-        return run
-    }, [])
+    const checkGenomeReady = useCallback((...args) => checkGenomeReadiness({ readyCheckAttemptsRef, readyCheckInFlightRef, setBrowserReadyState }, ...args), [])
 
     // Discard a failed index build and start another. Without this a build that
     // failed once holds the genome until the backend is restarted.
@@ -2327,80 +1911,19 @@ export default function GenomeBrowserView({
         setNavigateGenes((prev) => ({ ...prev, ...nextNavigate }))
     }, [isActive, panels, externalFocusMap, selectedGenes])
 
-    const applyLinkedGeneView = useCallback((genesByPanelKey, options = {}) => {
-        const validPanels = panels.filter((panel) => hasFiniteGeneCoords(genesByPanelKey?.[panel.key]))
-        if (validPanels.length < 2) return false
-
-        const validKeys = validPanels.map((panel) => panel.key)
-        const requestedAnchorKey = String(options.anchorKey || '').trim()
-        const anchorKey = validKeys.includes(requestedAnchorKey) ? requestedAnchorKey : validKeys[0]
-        const anchorGene = genesByPanelKey[anchorKey]
-
-        const anchorFivePrime = geneFivePrime(anchorGene)
-        if (!Number.isFinite(anchorFivePrime)) return false
-        const { ratio: fivePrimeRatio, span } = linkedGeneFraming(validPanels.map((panel) => ({
-            gene: genesByPanelKey[panel.key],
-            bounds: describeBrowserViewport(panel.key)?.bounds,
-            frameRange: browserViewportControls(panel.key)?.frameFocusedRange,
-        })), anchorGene?.strand)
-
-        const deltas = {}
-        const nextNavigate = {}
-        const nextPositions = {}
-        for (const panel of validPanels) {
-            const gene = genesByPanelKey[panel.key]
-            const fivePrime = geneFivePrime(gene)
-            if (!Number.isFinite(fivePrime)) continue
-            const windowStart = fivePrime - (fivePrimeRatio * span)
-            const windowEnd = windowStart + span
-            deltas[panel.key] = {
-                delta: fivePrime - anchorFivePrime,
-                chrom: gene.chrom,
-            }
-            nextNavigate[panel.key] = {
-                ...gene,
-                windowStart,
-                windowEnd,
-                centerVertically: true,
-            }
-            nextPositions[panel.key] = {
-                chrom: gene.chrom,
-                // Navigation already accounts for the drawer. The linked position
-                // must use the same framing or enabling Pan/Zoom undoes that work.
-                ...(browserViewportControls(panel.key)?.frameFocusedRange?.(windowStart, windowEnd)
-                    || { start: windowStart, end: windowEnd }),
-            }
-        }
-
-        if (Object.keys(deltas).length < 2) return false
-
-        if (lockPanRef.current) setLockPan(false)
-        if (lockZoomRef.current) setLockZoom(false)
-        clearPendingLinkApply()
-
-        setPanelPositions((prev) => {
-            const next = { ...prev }
-            for (const key of validKeys) {
-                delete next[key]
-            }
-            return next
-        })
-        setNavigateGenes((prev) => ({ ...prev, ...nextNavigate }))
-        setLinkedPanelKeys(validKeys)
-        linkModelRef.current = {
-            type: 'gene',
-            anchorKey,
-            deltas,
-        }
-
-        linkApplyTimerRef.current = window.setTimeout(() => {
-            linkApplyTimerRef.current = null
-            setPanelPositions((prev) => ({ ...prev, ...nextPositions }))
-            setLockPan(true)
-            setLockZoom(true)
-        }, 260)
-        return true
-    }, [panels, clearPendingLinkApply])
+    const applyLinkedGeneView = useCallback((...args) => applyLinkedGeneViewToPanels({
+        clearPendingLinkApply,
+        linkApplyTimerRef,
+        linkModelRef,
+        lockPanRef,
+        lockZoomRef,
+        panels,
+        setLinkedPanelKeys,
+        setLockPan,
+        setLockZoom,
+        setNavigateGenes,
+        setPanelPositions,
+    }, ...args), [panels, clearPendingLinkApply])
 
     useEffect(() => {
         const becameActive = isActive && !wasActiveRef.current
@@ -2438,124 +1961,19 @@ export default function GenomeBrowserView({
         clearPendingLinkApply(false)
     }, [clearPendingLinkApply])
 
-    const flushPanelPositionChange = useCallback((panelKey, chrom, start, end, targetTrack, anchorRatio = null) => {
-        if (firstPanel && panelKey === firstPanel.key && onRefViewportChange) {
-            onRefViewportChange({ chrom, start, end, targetTrack: targetTrack || null })
-        }
-        // Keep the ref up-to-date with the source panel's actual position.
-        panelActualPositionsRef.current[panelKey] = { chrom, start, end }
-        syncSourcePanelKeyRef.current = panelKey
-        if (!(lockPanRef.current || lockZoomRef.current || isOverlayActive)) return
-
-        let recipients = []
-        if (linkedSet.size >= 2) {
-            recipients = panels
-                .map((panel) => panel.key)
-                .filter((key) => key !== panelKey && linkedSet.has(key))
-        } else if (panels.length >= 2) {
-            recipients = panels
-                .map((panel) => panel.key)
-                .filter((key) => key !== panelKey)
-        }
-        if (recipients.length === 0) return
-
-        const model = linkModelRef.current
-        const sourceDelta = model?.deltas?.[panelKey]?.delta
-        const canApplyOffsets = Number.isFinite(sourceDelta) && recipients.every((key) => Number.isFinite(model?.deltas?.[key]?.delta))
-        const canApplyRegionChroms = model?.type === 'region' && recipients.every((key) => String(model?.chroms?.[key] || '').trim())
-        const isZoom = Number.isFinite(anchorRatio)
-        const newSpan = Number(end) - Number(start)
-
-        setPanelPositions((prev) => {
-            const next = { ...prev }
-            let changed = false
-            const getRecipientChrom = (key) => (
-                panelActualPositionsRef.current[key]?.chrom
-                || prev[key]?.chrom
-                || chrom
-            )
-            if (canApplyOffsets) {
-                // Gene-link delta model: offset each recipient by its genomic delta.
-                // Include anchorRatio so lockZoom applies the position directly instead
-                // of falling back to the keep-own-center logic.
-                const anchorStart = Number(start) - Number(sourceDelta)
-                const anchorEnd = Number(end) - Number(sourceDelta)
-                for (const key of recipients) {
-                    const info = model.deltas[key]
-                    const delta = Number(info.delta)
-                    const nextPosition = {
-                        chrom: info.chrom || chrom,
-                        start: anchorStart + delta,
-                        end: anchorEnd + delta,
-                        targetTrack,
-                        anchorRatio: isZoom ? anchorRatio : undefined,
-                    }
-                    if (!samePanelPosition(prev[key], nextPosition)) {
-                        next[key] = nextPosition
-                        changed = true
-                    }
-                }
-            } else if (canApplyRegionChroms) {
-                for (const key of recipients) {
-                    const nextPosition = {
-                        chrom: model.chroms[key] || chrom,
-                        start,
-                        end,
-                        targetTrack,
-                        anchorRatio: isZoom ? anchorRatio : undefined,
-                    }
-                    if (!samePanelPosition(prev[key], nextPosition)) {
-                        next[key] = nextPosition
-                        changed = true
-                    }
-                }
-            } else if (isZoom && lockZoomRef.current && !lockPanRef.current) {
-                // lockZoom zoom event without a delta model: apply the same screen-ratio
-                // anchor to each recipient so they zoom in place at the same visual column.
-                // Use panelActualPositionsRef so we always have the real current position,
-                // not the stale panelPositions state value (which gets overwritten by pan
-                // broadcasts and would otherwise cause a jump on the next zoom event).
-                for (const key of recipients) {
-                    const actualPos = panelActualPositionsRef.current[key]
-                    const prevPos = actualPos || prev[key]
-                    if (prevPos && Number.isFinite(prevPos.start) && Number.isFinite(prevPos.end)) {
-                        const prevSpan = Number(prevPos.end) - Number(prevPos.start)
-                        const anchor = Number(prevPos.start) + anchorRatio * prevSpan
-                        const nextStart = anchor - anchorRatio * newSpan
-                        const nextEnd = anchor + (1 - anchorRatio) * newSpan
-                        // Update the ref so subsequent events also use the right position.
-                        panelActualPositionsRef.current[key] = { chrom: prevPos.chrom || getRecipientChrom(key), start: nextStart, end: nextEnd }
-                        const nextPosition = {
-                            chrom: prevPos.chrom || getRecipientChrom(key),
-                            start: nextStart,
-                            end: nextEnd,
-                            targetTrack,
-                            anchorRatio,
-                        }
-                        if (!samePanelPosition(prev[key], nextPosition)) {
-                            next[key] = nextPosition
-                            changed = true
-                        }
-                    } else {
-                        const nextPosition = { chrom: getRecipientChrom(key), start, end, targetTrack, anchorRatio }
-                        if (!samePanelPosition(prev[key], nextPosition)) {
-                            next[key] = nextPosition
-                            changed = true
-                        }
-                    }
-                }
-            } else {
-                for (const key of recipients) {
-                    const nextPosition = { chrom: getRecipientChrom(key), start, end, targetTrack }
-                    if (!samePanelPosition(prev[key], nextPosition)) {
-                        next[key] = nextPosition
-                        changed = true
-                    }
-                }
-            }
-            return changed ? next : prev
-        })
-    }, [firstPanel, onRefViewportChange, isOverlayActive, linkedSet, panels])
+    const flushPanelPositionChange = useCallback((...args) => flushLinkedPanelPositions({
+        firstPanel,
+        isOverlayActive,
+        linkModelRef,
+        linkedSet,
+        lockPanRef,
+        lockZoomRef,
+        onRefViewportChange,
+        panelActualPositionsRef,
+        panels,
+        setPanelPositions,
+        syncSourcePanelKeyRef,
+    }, ...args), [firstPanel, onRefViewportChange, isOverlayActive, linkedSet, panels])
 
     // Broadcast to the linked panels synchronously. The source panel already
     // coalesces its own pan/zoom to one update per animation frame, so deferring
@@ -2567,134 +1985,38 @@ export default function GenomeBrowserView({
         flushPanelPositionChange(panelKey, chrom, start, end, targetTrack, anchorRatio)
     }, [flushPanelPositionChange])
 
-    const handleLinkRegion = useCallback(async () => {
-        if (panelCount < 2 || !firstPanel || linkingRegion) return
-        const primaryPosition = panelActualPositionsRef.current[firstPanel.key]
-        if (
-            !primaryPosition?.chrom ||
-            !Number.isFinite(Number(primaryPosition.start)) ||
-            !Number.isFinite(Number(primaryPosition.end)) ||
-            Number(primaryPosition.end) <= Number(primaryPosition.start)
-        ) {
-            return
-        }
+    const handleLinkRegion = useCallback((...args) => linkPanelsByRegion({
+        clearPendingLinkApply,
+        fetchRegionsForPanel,
+        firstPanel,
+        linkModelRef,
+        linkingRegion,
+        lockPanRef,
+        lockZoomRef,
+        panelActualPositionsRef,
+        panelCount,
+        panels,
+        setLinkedPanelKeys,
+        setLinkingRegion,
+        setLockPan,
+        setLockZoom,
+        setPanelPositions,
+        syncSourcePanelKeyRef,
+        tutorialEpochRef,
+    }, ...args), [clearPendingLinkApply, fetchRegionsForPanel, firstPanel, linkingRegion, panelCount, panels])
 
-        const requestEpoch = tutorialEpochRef.current
-        setLinkingRegion(true)
-        try {
-            const primaryRegions = await fetchRegionsForPanel(firstPanel)
-            const primaryRegion = resolveRegionByChromTokens(primaryRegions, primaryPosition.chrom)
-            const sourceTokens = chromosomeTokensForRegion(primaryRegion, primaryPosition.chrom)
-            if (!sourceTokens.size) return
-
-            const linkedKeys = [firstPanel.key]
-            const chroms = { [firstPanel.key]: String(primaryPosition.chrom) }
-            const nextPositions = {}
-
-            for (const panel of panels) {
-                if (panel.key === firstPanel.key) continue
-                const regions = await fetchRegionsForPanel(panel)
-                const region = resolveRegionByChromTokens(regions, sourceTokens)
-                if (!region?.chrom) continue
-                const window = clampWindowToRegion(
-                    String(region.chrom),
-                    Number(primaryPosition.start),
-                    Number(primaryPosition.end),
-                    region,
-                )
-                if (!window) continue
-                linkedKeys.push(panel.key)
-                chroms[panel.key] = window.chrom
-                nextPositions[panel.key] = window
-                panelActualPositionsRef.current[panel.key] = window
-            }
-
-            if (requestEpoch !== tutorialEpochRef.current || linkedKeys.length < 2) return
-
-            if (lockPanRef.current) setLockPan(false)
-            if (lockZoomRef.current) setLockZoom(false)
-            clearPendingLinkApply()
-            linkModelRef.current = {
-                type: 'region',
-                anchorKey: firstPanel.key,
-                chroms,
-            }
-            syncSourcePanelKeyRef.current = firstPanel.key
-            setLinkedPanelKeys(linkedKeys)
-            setPanelPositions((prev) => ({ ...prev, ...nextPositions }))
-            setLockPan(true)
-            setLockZoom(true)
-        } catch (error) {
-            console.error('Failed to link region:', error)
-        } finally {
-            setLinkingRegion(false)
-        }
-    }, [clearPendingLinkApply, fetchRegionsForPanel, firstPanel, linkingRegion, panelCount, panels])
-
-    const handleLinkGene = useCallback(async () => {
-        if (!hasPanels) return
-        const selectedByPanel = {}
-        for (const panel of panels) {
-            const gene = hasFiniteGeneCoords(selectedGenes[panel.key])
-                ? selectedGenes[panel.key]
-                : externalFocusMap?.[panel.key]
-            if (hasFiniteGeneCoords(gene)) {
-                selectedByPanel[panel.key] = gene
-            }
-        }
-        const selectedKeys = Object.keys(selectedByPanel)
-        if (selectedKeys.length === 0) return
-
-        const anchorKey = selectedKeys[0]
-        const anchorGene = selectedByPanel[anchorKey]
-        const queryToken = String(anchorGene?.name || anchorGene?.id || '').trim()
-        const hasUnmatchedPanels = panels.some((panel) => !selectedByPanel[panel.key])
-        if (!hasUnmatchedPanels || !queryToken) {
-            if (selectedKeys.length >= 2) {
-                setSelectedGenes((prev) => ({ ...prev, ...selectedByPanel }))
-                applyLinkedGeneView(selectedByPanel, { anchorKey })
-            }
-            return
-        }
-
-        const requestEpoch = tutorialEpochRef.current
-        setLinkingGene(true)
-        try {
-            const matched = { ...selectedByPanel }
-            await Promise.all(panels.map(async (panel) => {
-                if (matched[panel.key]) return
-                try {
-                    const res = await fetch(`${API_BASE}/api/browse/search_gene?genome=${encodeURIComponent(panel.genomeParam)}&query=${encodeURIComponent(queryToken)}`)
-                    if (!res.ok) return
-                    const gene = await res.json()
-                    if (hasFiniteGeneCoords(gene)) {
-                        matched[panel.key] = gene
-                    }
-                } catch {
-                    // keep unmatched panels independent
-                }
-            }))
-
-            if (requestEpoch !== tutorialEpochRef.current) return
-            const matchedKeys = panels
-                .map((panel) => panel.key)
-                .filter((key) => hasFiniteGeneCoords(matched[key]))
-            if (matchedKeys.length < 2) {
-                setLinkedPanelKeys([])
-                linkModelRef.current = null
-                alert(`Gene "${queryToken}" was not found in at least two visible genomes.`)
-                return
-            }
-
-            const effectiveAnchor = matched[anchorKey] ? anchorKey : matchedKeys[0]
-            setSelectedGenes((prev) => ({ ...prev, ...matched }))
-            applyLinkedGeneView(matched, { anchorKey: effectiveAnchor })
-        } catch (e) {
-            console.error('Failed to link gene:', e)
-        } finally {
-            setLinkingGene(false)
-        }
-    }, [hasPanels, panels, selectedGenes, externalFocusMap, applyLinkedGeneView])
+    const handleLinkGene = useCallback((...args) => linkPanelsByGene({
+        applyLinkedGeneView,
+        externalFocusMap,
+        hasPanels,
+        linkModelRef,
+        panels,
+        selectedGenes,
+        setLinkedPanelKeys,
+        setLinkingGene,
+        setSelectedGenes,
+        tutorialEpochRef,
+    }, ...args), [hasPanels, panels, selectedGenes, externalFocusMap, applyLinkedGeneView])
 
     const handleClearFocusedGenes = useCallback(() => {
         clearPendingLinkApply()
@@ -3233,701 +2555,164 @@ export default function GenomeBrowserView({
     ])
 
     return (
-        <div
-            ref={screenshotOverlayRootRef}
-            className="relative w-full flex flex-col"
-            style={fillSinglePanelHeight ? { minHeight: '100%' } : undefined}
-        >
-            {isOverlayActive && (
-                <div className={`flex-none w-full px-4 py-2 flex items-center justify-between shadow-sm border-b z-10 ${isLight ? 'bg-indigo-50 border-indigo-200 text-indigo-900' : 'bg-indigo-900/40 border-indigo-800/50 text-indigo-100'}`}>
-                    <div className="flex items-center gap-2">
-                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
-                        <span className="text-sm font-medium">Linked alignment active</span>
-                        <span className="text-xs ml-2 opacity-80">Regions are synchronised based on the pairwise alignment. Gaps are shown in sequence and features.</span>
-                    </div>
-                    <button
-                        onClick={onClearAlignmentOverlay}
-                        className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${isLight ? 'bg-indigo-200 hover:bg-indigo-300 text-indigo-900' : 'bg-indigo-800 hover:bg-indigo-700 text-indigo-100'}`}
-                    >
-                        Exit linked alignment
-                    </button>
-                </div>
-            )}
-
-            {/* `data-tutorial-occluder` while it follows the scroll: the bar then floats
-                over the panels instead of scrolling with them, and a tutorial spotlight on
-                whatever slides underneath has to stop at its edge rather than paint over
-                the buttons the step is not talking about. */}
-            <div
-                data-browser-controls="true"
-                data-browser-global-controls="true"
-                data-tour-id="browser-global-controls"
-                // Control freak: which controls have ever been used. One listener for the
-                // whole bar rather than one per button; see achievements/browserControls.js.
-                onClickCapture={(event) => {
-                    const key = browserControlKey(event.target)
-                    if (key) trackAchievement('browser.control', key)
-                }}
-                data-tutorial-occluder={controlsFollowScroll ? 'true' : undefined}
-                className="flex items-center justify-between px-4 py-2 border-b flex-none"
-                style={{
-                    backgroundColor: isLight ? '#f1f3f5' : '#1E2938',
-                    borderColor: isLight ? '#dee2e6' : '#373a40',
-                    // Pulled up by the scroller's own padding, so the row comes to
-                    // rest against the app's top bar rather than a padding below it.
-                    ...(controlsFollowScroll
-                        ? { position: 'sticky', top: -Math.max(0, focusDrawerStickyInset), zIndex: 30 }
-                        : null),
-                }}
-            >
-                <div className="flex items-center gap-2">
-                    {hasPanels && (
-                        <>
-                            <button
-                                data-tour-id="browser-tracks-toggle"
-                                onClick={() => {
-                                    if (globalTracksState !== 'off') trackAchievement('browser.tracksAway')
-                                    handleGlobalTracksToggle()
-                                }}
-                                className="flex-shrink-0 flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors hover:bg-gray-100 dark:hover:bg-[#373a40]"
-                                style={{
-                                    backgroundColor: isLight ? '#ffffff' : '#1E2938',
-                                    color: isLight ? '#4b5563' : '#9ca3af',
-                                    border: `1px solid ${isLight ? '#d1d5db' : '#4b5563'}`,
-                                }}
-                                title={globalTracksState === 'off' ? 'Show all tracks' : 'Hide all tracks'}
-                            >
-                                <svg width="14" height="26" viewBox="0 0 14 26" fill="none">
-                                    <rect
-                                        x="0" y="0" width="14" height="26" rx="7"
-                                        fill={globalTracksState === 'off' ? (isLight ? '#ced4da' : '#373a40') : (globalTracksState === 'mixed' ? (isLight ? '#adb5bd' : '#5c5f66') : '#3366cc')}
-                                        className="transition-colors duration-200"
-                                    />
-                                    <circle
-                                        cx="7"
-                                        cy={globalTracksState === 'off' ? '19' : (globalTracksState === 'mixed' ? '13' : '7')}
-                                        r="5"
-                                        fill="#ffffff"
-                                        className="transition-all duration-200"
-                                    />
-                                </svg>
-                                Tracks
-                            </button>
-
-                            <button
-                                type="button"
-                                data-browser-control="browser-adaptive"
-                                onClick={() => setAdaptivePanelHeightOverride(!adaptivePanelHeight)}
-                                className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
-                                style={browserActionButtonStyle(true, useAdaptivePanelHeight)}
-                                title="Let each browser shrink to exactly its track content instead of keeping a uniform band height"
-                            >
-                                Adaptive
-                            </button>
-
-                            <button
-                                onClick={() => {
-                                    if (!hideInactiveMode) trackAchievement('browser.tracksAway')
-                                    setHideInactiveMode((prev) => !prev)
-                                }}
-                                data-tour-id="browser-hide-inactive"
-                                data-tutorial-engaged={hideInactiveMode ? 'true' : 'false'}
-                                className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
-                                style={browserActionButtonStyle(true, hideInactiveMode)}
-                                title={hideInactiveMode
-                                    ? 'Show inactive tracks in browser'
-                                    : 'Hide inactive tracks from view as they are turned off'}
-                            >
-                                Hide
-                            </button>
-
-                            <button
-                                data-tour-id="browser-detail"
-                                data-tutorial-engaged={compressMode ? 'true' : 'false'}
-                                onClick={() => setCompressMode((prev) => !prev)}
-                                className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
-                                style={browserActionButtonStyle(true, compressMode, { emphasizeWhenEnabled: true })}
-                                title={compressMode
-                                    ? 'Return to normal transcript spacing'
-                                    : 'Compact transcript rows at transcript-detail zoom'}
-                            >
-                                Detail
-                            </button>
-
-                            <button
-                                data-tour-id="browser-flatten"
-                                data-tutorial-engaged={flattenMode ? 'true' : 'false'}
-                                onClick={() => {
-                                    if (!flattenMode) trackAchievement('browser.flatten')
-                                    setFlattenMode((prev) => !prev)
-                                }}
-                                className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-colors"
-                                style={browserActionButtonStyle(true, flattenMode, { emphasizeWhenEnabled: true })}
-                                title={flattenMode
-                                    ? 'Return to normal track spacing'
-                                    : 'Minimise empty vertical space in visible tracks'}
-                            >
-                                Flatten
-                            </button>
-
-                            {!isOverlayActive && (
-                                <>
-                                    <button
-                                        data-tour-id="browser-unfocus"
-                                        onClick={handleClearFocusedGenes}
-                                        disabled={!anyFocusedGene}
-                                        className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
-                                        style={browserActionButtonStyle(anyFocusedGene, anyFocusedGene, { emphasizeWhenEnabled: true })}
-                                        title="Clear all focused genes and locations across genomes"
-                                    >
-                                        Unfocus
-                                    </button>
-
-                                    <button
-                                        data-tour-id="browser-pan"
-                                        data-tutorial-engaged={lockPan ? 'true' : 'false'}
-                                        onClick={() => {
-                                            if (panelCount < 2) return
-                                            const newPan = !lockPan
-                                            if (!newPan && !lockZoom) {
-                                                clearPendingLinkApply()
-                                                linkModelRef.current = null
-                                                setLinkedPanelKeys([])
-                                            }
-                                            setPanelPositions({})
-                                            setLockPan(newPan)
-                                            if (newPan && lockZoom) trackAchievement('browser.tandem')
-                                        }}
-                                        disabled={panelCount < 2}
-                                        className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
-                                        style={browserActionButtonStyle(panelCount >= 2, lockPan)}
-                                        title={panelCount >= 2 ? 'Lock panning across linked genome panels' : 'Requires at least two visible genome panels'}
-                                    >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                                        </svg>
-                                        Pan
-                                    </button>
-
-                                    <button
-                                        data-tour-id="browser-zoom"
-                                        data-tutorial-engaged={lockZoom ? 'true' : 'false'}
-                                        onClick={() => {
-                                            if (panelCount < 2) return
-                                            const newZoom = !lockZoom
-                                            if (!newZoom && !lockPan) {
-                                                clearPendingLinkApply()
-                                                linkModelRef.current = null
-                                                setLinkedPanelKeys([])
-                                            }
-                                            setPanelPositions({})
-                                            setLockZoom(newZoom)
-                                            if (newZoom && lockPan) trackAchievement('browser.tandem')
-                                        }}
-                                        disabled={panelCount < 2}
-                                        className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
-                                        style={browserActionButtonStyle(panelCount >= 2, lockZoom)}
-                                        title={panelCount >= 2 ? 'Lock zoom across linked genome panels' : 'Requires at least two visible genome panels'}
-                                    >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                                        </svg>
-                                        Zoom
-                                    </button>
-
-                                    <button
-                                        data-tour-id="browser-linkRegion"
-                                        data-tutorial-engaged={linkModelRef.current?.type === 'region' ? 'true' : 'false'}
-                                        onClick={handleLinkRegion}
-                                        disabled={panelCount < 2 || linkingRegion}
-                                        className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
-                                        style={browserActionButtonStyle(panelCount >= 2, linkedPanelKeys.length >= 2 && linkModelRef.current?.type === 'region', { working: linkingRegion, emphasizeWhenEnabled: true })}
-                                        title={panelCount >= 2 ? 'Link visible genome panels to the primary region and coordinates' : 'Requires at least two visible genome panels'}
-                                    >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                                        </svg>
-                                        {linkingRegion ? 'Linking...' : 'Region'}
-                                    </button>
-
-                                    <button
-                                        data-tour-id="browser-linkGene"
-                                        data-tutorial-engaged={linkModelRef.current?.type === 'gene' ? 'true' : 'false'}
-                                        onClick={handleLinkGene}
-                                        disabled={panelCount < 2 || !anyFocusedGene || linkingGene}
-                                        className="flex-shrink-0 self-stretch flex items-center gap-1.5 text-xs px-2.5 py-1 rounded transition-all duration-200"
-                                        style={browserActionButtonStyle(panelCount >= 2 && anyFocusedGene, linkedPanelKeys.length >= 2, { working: linkingGene, emphasizeWhenEnabled: true })}
-                                        title={
-                                            panelCount < 2
-                                                ? 'Requires at least two visible genome panels'
-                                                : (anyFocusedGene ? 'Link focused genes across visible genomes' : 'Select a gene first')
-                                        }
-                                    >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                                        </svg>
-                                        {linkingGene ? 'Linking...' : 'Gene'}
-                                    </button>
-                                </>
-                            )}
-
-                            {(() => {
-                                const chkStyle = {
-                                    accentColor: isLight ? '#0099ff' : '#0077cc',
-                                    cursor: 'pointer',
-                                    width: '11px',
-                                    height: '11px',
-                                    flexShrink: 0,
-                                }
-                                const labelStyle = {
-                                    color: isLight ? '#4b5563' : '#9ca3af',
-                                    userSelect: 'none',
-                                    cursor: 'pointer',
-                                    whiteSpace: 'nowrap',
-                                }
-                                const toggle = (key) => {
-                                    const next = { ...biotypeFilter, [key]: !biotypeFilter[key] }
-                                    if (!Object.values(next).some(Boolean)) trackAchievement('browser.allClassesOff')
-                                    setBiotypeFilter((prev) => ({ ...prev, [key]: !prev[key] }))
-                                }
-                                return (
-                                    <>
-                                        <div className="h-4 w-px flex-shrink-0 mx-1" style={{ backgroundColor: isLight ? '#dee2e6' : '#495057' }} />
-                                        <div data-tour-id="browser-biotype-filter" className="grid gap-x-4 gap-y-0.5" style={{ gridTemplateColumns: 'auto auto', fontSize: '10px', lineHeight: '1.35' }}>
-                                            <label className="flex items-center gap-1" style={labelStyle}>
-                                                <input data-tour-id="browser-biotype-proteinCoding" type="checkbox" checked={biotypeFilter.proteinCoding} onChange={() => toggle('proteinCoding')} style={chkStyle} />
-                                                Protein-coding
-                                            </label>
-                                            <label className="flex items-center gap-1" style={labelStyle}>
-                                                <input data-tour-id="browser-biotype-lncRNA" type="checkbox" checked={biotypeFilter.lncRNA} onChange={() => toggle('lncRNA')} style={chkStyle} />
-                                                Long non-coding
-                                            </label>
-                                            <label className="flex items-center gap-1" style={labelStyle}>
-                                                <input data-tour-id="browser-biotype-pseudogene" type="checkbox" checked={biotypeFilter.pseudogene} onChange={() => toggle('pseudogene')} style={chkStyle} />
-                                                Pseudogene
-                                            </label>
-                                            <label className="flex items-center gap-1" style={labelStyle}>
-                                                <input data-tour-id="browser-biotype-smallNonCoding" type="checkbox" checked={biotypeFilter.smallNonCoding} onChange={() => toggle('smallNonCoding')} style={chkStyle} />
-                                                Small non-coding
-                                            </label>
-                                        </div>
-                                    </>
-                                )
-                            })()}
-                        </>
-                    )}
-                </div>
-                <div className="flex items-stretch flex-shrink-0 gap-2 ml-4" style={{ marginRight: '34px' }}>
-                    <button
-                        type="button"
-                        data-tour-id="browser-controls-lock"
-                        onClick={() => setControlsFollowScroll((prev) => !prev)}
-                        aria-pressed={controlsFollowScroll}
-                        // Square, and exactly as tall as the Cycle button beside it:
-                        // both are an 18px line boxed in the same 7px padding and
-                        // 1px border, so the two stay matched without a fixed size.
-                        className="flex-shrink-0 flex items-center justify-center transition-colors"
-                        style={{ ...browserActionButtonStyle(true, controlsFollowScroll), padding: '7px', borderRadius: '6px', lineHeight: 0 }}
-                        aria-label={controlsFollowScroll
-                            ? 'Controls unlocked and following the page: lock them back into place'
-                            : 'Controls locked in place: unlock them to follow the page down'}
-                        title={controlsFollowScroll
-                            ? 'Unlocked: these controls follow the page down. Click to lock them back into place.'
-                            : 'Locked: these controls stay put and scroll away with the page. Click to unlock them so they follow you down.'}
-                    >
-                        {/* The padlock the Feature Explorer locks splice paths with. */}
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                            <path d={controlsFollowScroll ? UNLOCKED_ICON_PATH : LOCKED_ICON_PATH} />
-                        </svg>
-                    </button>
-                    {onPromoteGenome && <GenomeWheel
-                        species={listedGenomes}
-                        activeSpecies={panelSpecies}
-                        config={config}
-                        panelRootRef={screenshotPanelsRef}
-                        onPromote={handleCyclePromote}
-                        onPreview={setCyclePreview}
-                        isActive={isActive && !screenshotMode}
-                        isLight={isLight}
-                        held={tutorialRunning}
-                    />}
-                </div>
-            </div>
-
-            {/* Portalled to the page, so it floats in the app's left-hand padding
-                rather than scrolling away with the panels it is steering. */}
-            <BrowserScrollRail
-                panels={scrollRailStops}
-                hostRef={screenshotPanelsRef}
-                overlayRef={screenshotOverlayRootRef}
-                onJump={alignPanelToTop}
-                cyclePreview={cyclePreview}
-                isActive={isActive && !screenshotMode && hasPanels}
-                isLight={isLight}
-                balanced
-            />
-
-            <div
-                ref={screenshotPanelsRef}
-                className={`relative w-full flex flex-col ${fillSinglePanelHeight ? '' : 'min-h-[220px]'} ${!hasPanels ? (isLight ? 'bg-white opacity-95' : 'bg-[#1E2938]') : ''}`}
-                style={fillSinglePanelHeight ? growingPanelStyle : undefined}
-            >
-                {!hasPanels ? (
-                    <div className="flex-1 min-h-[320px] w-full flex flex-col items-center justify-center p-6 bg-transparent">
-                        <img
-                            src="ensembl-e-blue.svg"
-                            alt="Ensembl"
-                            className={`mb-4 ${isLight ? 'opacity-80' : 'opacity-60 grayscale-[10%]'}`}
-                            style={{ width: '130px', height: '130px' }}
-                        />
-                        <h2 className={`text-xl font-semibold mb-2 ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>No genomes selected</h2>
-                        <p className={`text-sm text-center max-w-xl ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                            Select active genomes from the bar above or add/remove via the Genome Selector
-                        </p>
-                    </div>
-                ) : (
-                    panels.map((panel, idx) => {
-                        const panelKey = panel.key
-                        const trackBrowsePath = panel.customTrackBrowsePath || fallbackBrowseRoot
-                        const useSecondaryPreset = panel.useSecondaryPreset
-                        const panelReady = browserReadyState?.[panelKey]?.state || 'idle'
-                        const panelDetail = browserReadyState?.[panelKey]?.detail || ''
-                        // Only once the check has actually said so. Treating the
-                        // initial 'idle' as ready mounted the browser before
-                        // anything had been asked, so it fired a regions request
-                        // of its own, took whatever error was going, and then
-                        // unmounted when the first real check flipped to
-                        // 'checking' — a wasted request and a visible flash.
-                        const isReady = panelReady === 'ready'
-                        const panelReloadKey = panel.alignmentRole === 'reference'
-                            ? refReloadKey
-                            : (panel.alignmentRole === 'target' ? tgtReloadKey : 0)
-
-                        const drawerEntry = focusDrawerEntries.find((entry) => entry.panelKey === panelKey) || null
-                        const panelLocation = selectedLocations[panelKey] || null
-                        const drawerAlign = focusDrawerAlignByPanel[panelKey] || { top: 0, height: 0 }
-                        const drawerPinOffset = activePinPanelKey === panelKey ? focusDrawerPinOffset : 0
-                        // With a gene of focus the assembly drawer drops down onto
-                        // the focus drawer's band line and takes its height, so the
-                        // two headers read as one row across the panel. With no
-                        // gene it goes back to the toolbar its pill sits in.
-                        const assemblyAlign = ((drawerEntry || panelLocation) && drawerAlign.height)
-                            ? drawerAlign
-                            : (assemblyDrawerAlignByPanel[panelKey] || { top: 0, height: 0 })
-                        const assemblyState = assemblyInfoByPanel[panelKey] || null
-                        // Cleared past whatever drawer is currently out, so the
-                        // two never sit on top of each other. Only one of them
-                        // can be — a panel focuses a gene or a location, never both.
-                        const focusDrawerCoverage = panelLocation
-                            ? (!isLocationDrawerOpen(panelKey)
-                                ? FOCUS_DRAWER_RAIL_WIDTH
-                                : ((locationDetailByPanel[panelKey] || locationNotesPanelOpenByPanel[panelKey])
-                                    ? LOCATION_DRAWER_DETAIL_WIDTH
-                                    : FOCUS_DRAWER_WIDTH))
-                            : !drawerEntry
-                                ? 0
-                                : !isFocusDrawerOpen(panelKey)
-                                    ? FOCUS_DRAWER_RAIL_WIDTH
-                                    : ((detailTranscriptByPanel[panelKey] || notesPanelOpenByPanel[panelKey])
-                                        ? FOCUS_DRAWER_DETAIL_WIDTH
-                                        : FOCUS_DRAWER_WIDTH)
-
-                        return (
-                            <div
-                                key={panelKey}
-                                // The drawer for this genome is positioned against
-                                // this box, so it can never reach over the panel
-                                // above or below however tall its list grows.
-                                data-focus-panel-wrapper={panelKey}
-                                data-tutorial-genome={panel.species.tutorial_dataset_id || undefined}
-                                className="relative w-full flex flex-col"
-                                style={fillSinglePanelHeight ? growingPanelStyle : undefined}
-                            >
-                                {incomingGene?.genomeKey === panelKey && (
-                                    <div role="status" className={`absolute top-12 left-14 z-30 rounded px-3 py-2 text-sm ${isLight ? 'bg-white text-gray-700' : 'bg-gray-800 text-gray-200'}`}>
-                                        Opening {incomingGene.gene.id}…
-                                    </div>
-                                )}
-                                {incomingGeneError?.genomeKey === panelKey && (
-                                    <div role="alert" className={`absolute top-12 left-14 right-4 z-30 rounded border p-3 text-sm flex items-center justify-between gap-3 ${isLight ? 'bg-red-50 border-red-200 text-red-800' : 'bg-red-950 border-red-800 text-red-200'}`}>
-                                        <span>{incomingGeneError.message}</span>
-                                        <button type="button" className="underline shrink-0" onClick={() => setIncomingGeneError(null)}>Dismiss</button>
-                                    </div>
-                                )}
-                                {idx > 0 && (
-                                    <div className="w-full flex-none" style={{ height: '2px', backgroundColor: isLight ? '#adb5bd' : '#373a40' }} />
-                                )}
-                                <div
-                                    className="w-full flex flex-col overflow-visible"
-                                    style={{
-                                        ...growingPanelStyle,
-                                        // A floor only. The browser inside lays its tracks out at
-                                        // full height and overflows onto the page rather than into
-                                        // a nested scroll area.
-                                        minHeight: useAdaptivePanelHeight ? 0 : (panelMinHeight || 0),
-                                        height: 'auto',
-                                    }}
-                                >
-                                    {isReady ? (
-                                        <GenomeBrowser
-                                            key={panelKey}
-                                            isActive={isActive}
-                                            genome={panel.genomeParam}
-                                            tutorialRecipeId={panel.species.tutorial_dataset_id || ''}
-                                            tutorialActive={tutorialRunning}
-                                            geneNoteCounts={noteCountsByPanel[panelKey] || EMPTY_NOTE_COUNTS}
-                                            onOpenGeneNotes={panelCallbacks[panelKey].onOpenGeneNotes}
-                                            alignmentRole={panel.alignmentRole}
-                                            reloadEpoch={panelReloadKey}
-                                            theme={theme}
-                                            label={panel.label}
-                                            genomePillLabel={panel.genomePillLabel}
-                                            genomeColor={resolveGenomeColor(panel.species)}
-                                            onGenomePillClick={panelCallbacks[panelKey].onGenomePillClick}
-                                            genomePillExpanded={Boolean(assemblyDrawerOpenByPanel[panelKey])}
-                                            toolbarPosition="top"
-                                            rulerPosition="top"
-                                            focusBarPosition="top"
-                                            trackAlign="top"
-                                            showSequenceTrack={true}
-                                            sequenceTrackPosition="bottom"
-                                            sequenceTrackLabel="SL"
-                                            sequenceTrackTooltip={useSecondaryPreset
-                                                ? 'Base level view of the secondary genome'
-                                                : 'Base level view of the primary genome'}
-                                            customTrackBrowsePath={trackBrowsePath}
-                                            availableTracks={availableTracksByPanel[panelKey] || EMPTY_TRACK_LIST}
-                                            availableGroups={availableGroupsByPanel[panelKey] || EMPTY_TRACK_LIST}
-                                            sessionTracks={sessionTracksByGenome?.[trackAssemblyKey(getGenomeKey(panel.species))]?.entries || null}
-                                            sessionReady={sessionReady}
-                                            onSessionTracksChange={sessionActive ? sessionHandlerFor(trackAssemblyKey(getGenomeKey(panel.species))) : null}
-                                            refreshAvailableTracks={refreshRegisteredTracks}
-                                            tutorialTracksRequest={browserTracksRequest}
-                                            onTutorialHideInactive={setHideInactiveMode}
-                                            onTrackVisibilityChange={panelCallbacks[panelKey].onTrackVisibilityChange}
-                                            forceTracksVisibility={forceTracksVisibility}
-                                            hideInactiveTracks={hideInactiveMode}
-                                            compressTranscripts={compressMode}
-                                            flattenTracks={flattenMode}
-                                            adaptiveHeight={useAdaptivePanelHeight}
-                                            hiddenBiotypeClasses={hiddenBiotypeClasses}
-                                            dimNonSelectedGenes={config?.dim_non_selected_genes !== false}
-                                            alignmentOverlay={panel.alignmentRole ? alignmentOverlay : null}
-                                            onPositionChange={panelCallbacks[panelKey].onPositionChange}
-                                            onViewSync={panelCallbacks[panelKey].onViewSync}
-                                            onNearViewportChange={panelCallbacks[panelKey].onNearViewportChange}
-                                            minCanvasHeight={Math.max(
-                                                sharedCanvasHeight,
-                                                locationDrawerFitByPanel[panelKey]
-                                                    ? (panelContentHeights[panelKey] || 0) + locationDrawerFitByPanel[panelKey]
-                                                    : 0
-                                            )}
-                                            onContentHeightChange={panelCallbacks[panelKey].onContentHeightChange}
-                                            browsingControls={browsingControls}
-                                            onBrowsingTargetChange={panelCallbacks[panelKey].onBrowsingTargetChange}
-                                            externalPosition={
-                                                (effectiveLockPan || effectiveLockZoom) && syncSourcePanelKeyRef.current !== panelKey
-                                                    ? (holdFarPanels && farPanelKeys.has(panelKey) && heldPanelPositions && panelKey in heldPanelPositions
-                                                        ? heldPanelPositions[panelKey]
-                                                        : (panelPositions[panelKey] || null))
-                                                    : null
-                                            }
-                                            lockPan={effectiveLockPan}
-                                            lockZoom={effectiveLockZoom}
-                                            onGeneSelect={panelCallbacks[panelKey].onGeneSelect}
-                                            onLocationSelect={panelCallbacks[panelKey].onLocationSelect}
-                                            hiddenGeneIds={locationHiddenGenesByPanel[panelKey] || null}
-                                            focusTranscriptView={focusTranscriptViews[panelKey] || null}
-                                            geneTranscriptViews={geneTranscriptViews[panelKey] || null}
-                                            focusDrawerInset={focusDrawerInsetFor(panelKey)}
-                                            focusDrawerInsetOnFocus={FOCUS_DRAWER_WIDTH}
-                                            onFocusTranscriptsChange={panelCallbacks[panelKey].onFocusTranscriptsChange}
-                                            onFocusTranscriptViewChange={panelCallbacks[panelKey].onFocusTranscriptViewChange}
-                                            onFocusRowGeometryChange={panelCallbacks[panelKey].onFocusRowGeometryChange}
-                                            onGeneTranscriptViewChange={panelCallbacks[panelKey].onGeneTranscriptViewChange}
-                                            navigateToGene={navigateGenes[panelKey] || null}
-                                            navigateToLocation={externalFocusLocationsByGenome?.[panelKey] || null}
-                                            onManualNavigate={handleManualBrowserNavigate}
-                                            clearFocusEpoch={clearFocusEpoch + (panelClearEpochs[panelKey] || 0)}
-                                            screenshotTargetId={panelKey}
-                                            onScreenshotTargetChange={panelCallbacks[panelKey].onScreenshotTargetChange}
-                                        />
-                                    ) : (
-                                        <IndexPreparingNotice
-                                            isLight={isLight}
-                                            state={panelReady}
-                                            detail={panelDetail}
-                                            onRetry={() => retryGenomeIndex(panel)}
-                                        />
-                                    )}
-                                </div>
-
-                                {drawerEntry && (
-                                    <FocusGeneDrawer
-                                        theme={theme}
-                                        open={isFocusDrawerOpen(panelKey)}
-                                        onToggle={() => setFocusDrawerOpenByPanel((prev) => {
-                                            const wasOpen = prev[panelKey] !== false
-                                            // Collapsing hides the list the pin belongs to, so the
-                                            // highlight it holds in the browser has nothing left to
-                                            // point at. Let it go rather than stranding it.
-                                            if (wasOpen) {
-                                                setDetailTranscriptByPanel((all) => ({ ...all, [panelKey]: '' }))
-                                                setNotesPanelOpenByPanel((all) => ({ ...all, [panelKey]: false }))
-                                                handleFocusTranscriptViewChange(panelKey, {
-                                                    pinnedId: null, hoverId: null, ghostId: null,
-                                                })
-                                            }
-                                            return { ...prev, [panelKey]: !wasOpen }
-                                        })}
-                                        onDismiss={() => handleClearPanelFocus(panelKey)}
-                                        entries={[drawerEntry]}
-                                        activePanelKey={panelKey}
-                                        view={focusTranscriptViews[panelKey] || null}
-                                        onViewChange={(patch) => handleFocusTranscriptViewChange(panelKey, patch)}
-                                        showPanelSwitcher={false}
-                                        alignTop={drawerAlign.top}
-                                        alignHeight={drawerAlign.height}
-                                        pinOffset={drawerPinOffset}
-                                        stickyTopInset={focusDrawerStickyInset}
-                                        listShift={detailListShiftByPanel[panelKey] || 0}
-                                        genome={panel.genomeParam}
-                                            tutorialRecipeId={panel.species.tutorial_dataset_id || ''}
-                                            tutorialActive={tutorialRunning}
-                                        detailTranscriptId={detailTranscriptByPanel[panelKey] || ''}
-                                        onDetailTranscriptChange={(id) => handleDetailTranscriptChange(panelKey, id)}
-                                        notesEnabled={Boolean(notesGenomeKeyFor(panel))}
-                                        // Selected out of the loaded store, so this
-                                        // is always exactly this gene's notes — there
-                                        // is no per-gene fetch left to lag behind.
-                                        notes={notesByPanel[panelKey] || EMPTY_NOTE_LIST}
-                                        notesStatus={noteStore.status}
-                                        notesError={noteStore.error}
-                                        notesPanelOpen={Boolean(notesPanelOpenByPanel[panelKey])}
-                                        onNotesPanelToggle={() => handleNotesPanelToggle(panelKey)}
-                                        openNoteId={openNoteIdByPanel[panelKey] || ''}
-                                        onOpenNoteChange={(id) => handleOpenNoteChange(panelKey, id)}
-                                        noteSortMode={noteSortByPanel[panelKey] || DEFAULT_NOTE_SORT_MODE}
-                                        onNoteSortChange={(mode) => setNoteSortByPanel((prev) => ({ ...prev, [panelKey]: mode }))}
-                                        noteSaveState={noteStore.saveStateFor(openNoteIdByPanel[panelKey] || '')}
-                                        onNoteCreate={() => handleNoteCreate(panelKey)}
-                                        onNoteFieldChange={(id, patch) => noteStore.updateNoteFields(id, patch)}
-                                        onNoteSave={(id, options) => noteStore.saveNote(id, options)}
-                                        onNoteDelete={(id) => handleNoteDelete(panelKey, id)}
-                                        onNotesReload={(noteId) => noteStore.reload({ noteId })}
-                                    />
-                                )}
-
-                                {panelLocation && (
-                                    <FocusLocationDrawer
-                                        theme={theme}
-                                        open={isLocationDrawerOpen(panelKey)}
-                                        onToggle={() => setLocationDrawerOpenByPanel((prev) => {
-                                            const wasOpen = prev[panelKey] !== false
-                                            // Collapsing puts away what was open beside the
-                                            // list: the wide slot has nothing to hang off.
-                                            if (wasOpen) {
-                                                setLocationDetailByPanel((all) => ({ ...all, [panelKey]: null }))
-                                                setLocationNotesPanelOpenByPanel((all) => ({ ...all, [panelKey]: false }))
-                                            }
-                                            return { ...prev, [panelKey]: !wasOpen }
-                                        })}
-                                        onDismiss={() => handleClearPanelFocus(panelKey)}
-                                        location={panelLocation}
-                                        genome={panel.genomeParam}
-                                        genomeLabel={panel.genomePillLabel || panel.label}
-                                        accent={resolveGenomeColor(panel.species)}
-                                        alignTop={drawerAlign.top}
-                                        alignHeight={drawerAlign.height}
-                                        stickyTopInset={focusDrawerStickyInset}
-                                        features={locationFeaturesByPanel[panelKey] || null}
-                                        onFeaturesReload={() => setLocationFeaturesEpoch((prev) => prev + 1)}
-                                        isFeatureHiddenByClass={isFeatureHiddenByClass}
-                                        hiddenGeneIds={locationHiddenGenesByPanel[panelKey] || null}
-                                        onToggleGeneHidden={(geneId) => handleLocationGeneHiddenToggle(panelKey, geneId)}
-                                        onFocusGene={(gene) => handleLocationFocusGene(panelKey, gene)}
-                                        detail={locationDetailByPanel[panelKey] || null}
-                                        onDetailChange={(detail) => handleLocationDetailChange(panelKey, detail)}
-                                        onHeightFitChange={(delta) => handleLocationDrawerFit(panelKey, delta)}
-                                        notesEnabled={Boolean(notesGenomeKeyFor(panel))}
-                                        notes={locationNotesByPanel[panelKey] || EMPTY_NOTE_LIST}
-                                        notesStatus={noteStore.status}
-                                        notesError={noteStore.error}
-                                        notesPanelOpen={Boolean(locationNotesPanelOpenByPanel[panelKey])}
-                                        onNotesPanelToggle={() => handleLocationNotesPanelToggle(panelKey)}
-                                        openNoteId={locationOpenNoteIdByPanel[panelKey] || ''}
-                                        onOpenNoteChange={(id) => setLocationOpenNoteIdByPanel((prev) => ({ ...prev, [panelKey]: id }))}
-                                        noteSortMode={locationNoteSortByPanel[panelKey] || DEFAULT_NOTE_SORT_MODE}
-                                        onNoteSortChange={(mode) => setLocationNoteSortByPanel((prev) => ({ ...prev, [panelKey]: mode }))}
-                                        noteSaveState={noteStore.saveStateFor(locationOpenNoteIdByPanel[panelKey] || '')}
-                                        onNoteCreate={() => handleLocationNoteCreate(panelKey)}
-                                        onNoteFieldChange={(id, patch) => noteStore.updateNoteFields(id, patch)}
-                                        onNoteSave={(id, options) => noteStore.saveNote(id, options)}
-                                        onNoteDelete={(id) => handleLocationNoteDelete(panelKey, id)}
-                                        onNotesReload={(noteId) => noteStore.reload({ noteId })}
-                                    />
-                                )}
-
-                                {assemblyDrawerOpenByPanel[panelKey] && (
-                                    <AssemblyInfoDrawer
-                                        theme={theme}
-                                        open
-                                        onClose={() => closeAssemblyDrawer(panelKey)}
-                                        genome={panel.species}
-                                        assemblyInfo={assemblyState?.info || null}
-                                        loading={assemblyState?.loading !== false}
-                                        accentColor={resolveGenomeColor(panel.species)}
-                                        label={panel.genomePillLabel || panel.label}
-                                        alignTop={assemblyAlign.top}
-                                        alignHeight={assemblyAlign.height}
-                                        stickyTopInset={focusDrawerStickyInset}
-                                        rightInset={focusDrawerCoverage}
-                                    />
-                                )}
-                            </div>
-                        )
-                    })
-                )}
-
-                {panelsBottomSpacer > 0 && (
-                    // Empty page under the last genome, so it can be scrolled up
-                    // to the top bar like any other. Not a gap between panels:
-                    // it only exists past the end of the final one.
-                    <div className="w-full flex-none" style={{ height: panelsBottomSpacer }} aria-hidden="true" />
-                )}
-
-            </div>
-
-            <ScreenshotSelectionOverlay
-                active={screenshotMode && hasPanels}
-                theme={theme}
-                containerRef={screenshotOverlayRootRef}
-                scrollContainerRef={screenshotPanelsRef}
-                exemptRefs={[screenshotToggleButtonRef]}
-                useViewport={true}
-                targets={screenshotTargets}
-                onSelect={(target) => {
-                    setSelectedScreenshotTarget(target)
-                    onScreenshotModeChange?.(false)
-                }}
-                onCancel={() => {
-                    onScreenshotModeChange?.(false)
-                }}
-            />
-
-            <ScreenshotExportModal
-                open={Boolean(selectedScreenshotTarget)}
-                theme={theme}
-                target={selectedScreenshotTarget}
-                outputDir={defaultScreenshotDir}
-                onSave={handleScreenshotSave}
-                onClose={handleScreenshotModalClose}
-            />
-
-        </div>
+        renderBrowserView({
+            activePinPanelKey,
+            adaptivePanelHeight,
+            alignPanelToTop,
+            alignmentOverlay,
+            anyFocusedGene,
+            assemblyDrawerAlignByPanel,
+            assemblyDrawerOpenByPanel,
+            assemblyInfoByPanel,
+            availableGroupsByPanel,
+            availableTracksByPanel,
+            biotypeFilter,
+            browserActionButtonStyle,
+            browserReadyState,
+            browserTracksRequest,
+            browsingControls,
+            clearFocusEpoch,
+            clearPendingLinkApply,
+            closeAssemblyDrawer,
+            compressMode,
+            config,
+            controlsFollowScroll,
+            cyclePreview,
+            defaultScreenshotDir,
+            detailListShiftByPanel,
+            detailTranscriptByPanel,
+            effectiveLockPan,
+            effectiveLockZoom,
+            externalFocusLocationsByGenome,
+            fallbackBrowseRoot,
+            farPanelKeys,
+            fillSinglePanelHeight,
+            flattenMode,
+            focusDrawerAlignByPanel,
+            focusDrawerEntries,
+            focusDrawerInsetFor,
+            focusDrawerPinOffset,
+            focusDrawerStickyInset,
+            focusTranscriptViews,
+            forceTracksVisibility,
+            geneTranscriptViews,
+            globalTracksState,
+            growingPanelStyle,
+            handleClearFocusedGenes,
+            handleClearPanelFocus,
+            handleCyclePromote,
+            handleDetailTranscriptChange,
+            handleFocusTranscriptViewChange,
+            handleGlobalTracksToggle,
+            handleLinkGene,
+            handleLinkRegion,
+            handleLocationDetailChange,
+            handleLocationDrawerFit,
+            handleLocationFocusGene,
+            handleLocationGeneHiddenToggle,
+            handleLocationNoteCreate,
+            handleLocationNoteDelete,
+            handleLocationNotesPanelToggle,
+            handleManualBrowserNavigate,
+            handleNoteCreate,
+            handleNoteDelete,
+            handleNotesPanelToggle,
+            handleOpenNoteChange,
+            handleScreenshotModalClose,
+            handleScreenshotSave,
+            hasPanels,
+            heldPanelPositions,
+            hiddenBiotypeClasses,
+            hideInactiveMode,
+            holdFarPanels,
+            incomingGene,
+            incomingGeneError,
+            isActive,
+            isFeatureHiddenByClass,
+            isFocusDrawerOpen,
+            isLight,
+            isLocationDrawerOpen,
+            isOverlayActive,
+            linkModelRef,
+            linkedPanelKeys,
+            linkingGene,
+            linkingRegion,
+            listedGenomes,
+            locationDetailByPanel,
+            locationDrawerFitByPanel,
+            locationFeaturesByPanel,
+            locationHiddenGenesByPanel,
+            locationNoteSortByPanel,
+            locationNotesByPanel,
+            locationNotesPanelOpenByPanel,
+            locationOpenNoteIdByPanel,
+            lockPan,
+            lockZoom,
+            navigateGenes,
+            noteCountsByPanel,
+            noteSortByPanel,
+            noteStore,
+            notesByPanel,
+            notesGenomeKeyFor,
+            notesPanelOpenByPanel,
+            onClearAlignmentOverlay,
+            onPromoteGenome,
+            onScreenshotModeChange,
+            openNoteIdByPanel,
+            panelCallbacks,
+            panelClearEpochs,
+            panelContentHeights,
+            panelCount,
+            panelMinHeight,
+            panelPositions,
+            panelSpecies,
+            panels,
+            panelsBottomSpacer,
+            refReloadKey,
+            refreshRegisteredTracks,
+            resolveGenomeColor,
+            retryGenomeIndex,
+            screenshotMode,
+            screenshotOverlayRootRef,
+            screenshotPanelsRef,
+            screenshotTargets,
+            screenshotToggleButtonRef,
+            scrollRailStops,
+            selectedLocations,
+            selectedScreenshotTarget,
+            sessionActive,
+            sessionHandlerFor,
+            sessionReady,
+            sessionTracksByGenome,
+            setAdaptivePanelHeightOverride,
+            setBiotypeFilter,
+            setCompressMode,
+            setControlsFollowScroll,
+            setCyclePreview,
+            setDetailTranscriptByPanel,
+            setFlattenMode,
+            setFocusDrawerOpenByPanel,
+            setHideInactiveMode,
+            setIncomingGeneError,
+            setLinkedPanelKeys,
+            setLocationDetailByPanel,
+            setLocationDrawerOpenByPanel,
+            setLocationFeaturesEpoch,
+            setLocationNoteSortByPanel,
+            setLocationNotesPanelOpenByPanel,
+            setLocationOpenNoteIdByPanel,
+            setLockPan,
+            setLockZoom,
+            setNoteSortByPanel,
+            setNotesPanelOpenByPanel,
+            setPanelPositions,
+            setSelectedScreenshotTarget,
+            sharedCanvasHeight,
+            syncSourcePanelKeyRef,
+            tgtReloadKey,
+            theme,
+            tutorialRunning,
+            useAdaptivePanelHeight,
+        })
     )
 }

@@ -19,7 +19,7 @@ import { readBackendSources, readSources } from './helpers/readSource.js'
 
 const overlay = readFileSync(new URL('../src/components/TutorialOverlay.jsx', import.meta.url), 'utf8')
 const provider = readFileSync(new URL('../src/hooks/useTutorial.jsx', import.meta.url), 'utf8')
-const browserView = readFileSync(new URL('../src/components/genome-browser/GenomeBrowserView.jsx', import.meta.url), 'utf8')
+const browserView = readSources('src/components/genome-browser/GenomeBrowserView.jsx', 'src/components/genome-browser/view')
 const screenshot = readFileSync(new URL('../src/components/ScreenshotSelectionOverlay.jsx', import.meta.url), 'utf8')
 const main = readFileSync(new URL('../src/main.jsx', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')
@@ -766,7 +766,7 @@ test("a locus a tutorial asks for lands where the reader can see it", () => {
   assert.doesNotMatch(body, /animateToView\(start, end/)
 
   // The two halves of this that were already right, kept honest.
-  const view = readFileSync(new URL('../src/components/genome-browser/GenomeBrowserView.jsx', import.meta.url), 'utf8')
+  const view = readSources('src/components/genome-browser/GenomeBrowserView.jsx', 'src/components/genome-browser/view')
   // Blind to the transcript detail: re-framing every time that panel opens would shuffle
   // the browser under someone who is reading metadata rather than the track.
   assert.match(view, /return isFocusDrawerOpen\(panelKey\) \? FOCUS_DRAWER_WIDTH : FOCUS_DRAWER_RAIL_WIDTH/)

@@ -4,6 +4,7 @@
 // checked by reading the source, in the style of crossViewIsolation.test.js.
 
 import assert from 'node:assert/strict'
+import { readSources } from './helpers/readSource.js'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -252,7 +253,7 @@ test('deleting a note while its create is pending removes the eventual server co
 
 test('the genome drawer leaves note editing cleanly and clears transcript pins', () => {
     const drawer = read('components/FocusNotesPanel.jsx')
-    const browser = read('components/genome-browser/GenomeBrowserView.jsx')
+    const browser = readSources('src/components/genome-browser/GenomeBrowserView.jsx', 'src/components/genome-browser/view')
     assert.ok(drawer.includes('if (noteIsBlank(note))'),
         'blank notes still pass through confirmation')
     assert.ok(browser.includes('const handleNoteDelete'),
