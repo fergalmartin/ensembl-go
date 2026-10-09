@@ -71,17 +71,16 @@ test('SV auxiliary tracks render a two-window halo at the original pixel density
   )
 })
 
-test('regular pair and trio views project auxiliary data from committed windows', async () => {
+test('the trio view projects auxiliary data from committed windows', async () => {
   const source = await readFile(
     new URL('../src/components/StructuralVariationView.jsx', import.meta.url),
     'utf8',
   )
 
-  assert.match(source, /window=\{baseTgtWindow\}\s+displayWindow=\{displayTgtWindow\}/)
   assert.match(source, /window=\{baseTopWindow\}\s+displayWindow=\{displayTopWindow\}/)
   assert.match(source, /window=\{baseBottomWindow\}\s+displayWindow=\{displayBottomWindow\}/)
-  assert.equal([...source.matchAll(/window=\{viewRefWindow\}\s+displayWindow=\{displayRefWindow\}/g)].length, 2)
-  assert.equal([...source.matchAll(/displayReferenceWindow=\{displayRefWindow\}/g)].length, 3)
+  assert.equal([...source.matchAll(/window=\{viewRefWindow\}\s+displayWindow=\{displayRefWindow\}/g)].length, 1)
+  assert.equal([...source.matchAll(/displayReferenceWindow=\{displayRefWindow\}/g)].length, 2)
   assert.match(source, /const signalPaths = useMemo/)
   assert.match(source, /const referenceIntervalRects = useMemo/)
   assert.match(source, /const targetIntervalRects = useMemo/)
