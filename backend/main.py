@@ -1,26 +1,25 @@
 """
-Ensembl Go Backend - FastAPI server for local genome and alignment views.
-Uses lightweight targeted GFF3 lookup instead of full parsing.
+Ensembl Go Backend - the FastAPI application.
+
+This module only assembles the app: logging, the origin/token middleware, and the
+routers. The endpoints live in routes/ (one router per domain, see
+routes/__init__.py for the conventions they follow), the shared core in the
+modules beside this one (app_paths, app_state, config_store, genome_context,
+gff_index, ...), and the self-contained alignment_explorer, gene_trees and
+sequence_view packages are handed what they need from package_providers.
+
+Electron and the packaged app run this file as __main__, so no other module may
+import it: that would load a second copy of the app and of all shared state.
 """
 
 import hmac
 import logging
 from contextlib import asynccontextmanager
-from urllib.parse import urlparse
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
-# A note on ``def`` versus ``async def`` for route handlers, because it is load-bearing
-# here. This process serves everything from a single event loop, so an ``async def``
-# handler that does blocking work — reading the configuration, walking the output
-# directory, waiting on a remote registry — stops the process answering *any* request
-# for as long as it runs. The symptom is never local to the slow endpoint: the whole UI
-# goes dead, and the user sees whichever button they happened to press do nothing.
-# So a handler that only does blocking work is declared ``def``, which FastAPI runs on
-# its worker threadpool; a handler that genuinely needs the loop (to spawn a background
-# task, say) stays ``async def`` and hands its blocking part to ``run_in_threadpool``.
 from fastapi.responses import JSONResponse
 
 
@@ -34,38 +33,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from security_utils import require_loopback_client, validate_backend_bind_host
-import routes.structure
-import transcript_translation
-import routes.splice
-import sequence_windows
-import routes.long_reads
-import routes.bed
-import routes.bigwig
-import routes.vcf
-import routes.sv
-import routes.alignment
-import routes.stats
-import routes.genome_removal
-import routes.downloads
-import routes.remote_catalog
-import routes.custom_genomes
-import routes.config
-import routes.neighbourhood
-import routes.homology
-import routes.tutorial
-import routes.tracks
-import routes.notes
-import routes.achievements
-import genome_context
-import local_inventory
+import app_paths
 import app_state
 import file_io
-import app_paths
-import routes.sequence_export
-import routes.feature_explorer
-import routes.browse
+import genome_context
+import local_inventory
 import package_providers
+import sequence_windows
+import transcript_translation
+import routes.achievements
+import routes.alignment
+import routes.bed
+import routes.bigwig
+import routes.browse
+import routes.config
+import routes.custom_genomes
+import routes.downloads
+import routes.feature_explorer
+import routes.genome_removal
+import routes.homology
+import routes.long_reads
+import routes.neighbourhood
+import routes.notes
+import routes.remote_catalog
+import routes.sequence_export
+import routes.splice
+import routes.stats
+import routes.structure
+import routes.sv
+import routes.tracks
+import routes.tutorial
+import routes.vcf
+from alignment_explorer import create_router as create_alignment_explorer_router
+from gene_trees import create_router as create_gene_trees_router
+from security_utils import require_loopback_client, validate_backend_bind_host
+from sequence_view import create_router as create_sequence_view_router
 
 
 @asynccontextmanager
@@ -82,7 +84,10 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Ensembl Go API", lifespan=_lifespan)
 
-from alignment_explorer import create_router as create_alignment_explorer_router
+# The self-contained packages never import the app; each is handed the functions
+# it needs. They are passed as lambdas that look the function up on every call, so
+# a test that patches the defining module (package_providers, genome_context, ...)
+# is seen here too.
 app.include_router(create_alignment_explorer_router(
     annotation_provider=lambda *args, **kwargs: package_providers.alignment_explorer_annotation_features(*args, **kwargs),
     gene_provider=lambda *args, **kwargs: package_providers.alignment_explorer_block_genes(*args, **kwargs),
@@ -90,7 +95,6 @@ app.include_router(create_alignment_explorer_router(
 
 # Gene trees: the library lives beside the user's genomes, the protein maps it
 # builds from their GFFs are derived data and live in the cache.
-from gene_trees import create_router as create_gene_trees_router
 app.include_router(create_gene_trees_router(
     library_path_provider=lambda: package_providers.gene_trees_library_path(),
     genomes_provider=lambda: package_providers.gene_trees_local_genomes(),
@@ -103,11 +107,7 @@ app.include_router(create_gene_trees_router(
         "align_fn": lambda *args: package_providers.gene_trees_align(*args),
     }))
 
-# The sequence view, wired the same way: a package that never imports this module
-# and is handed the functions it needs. Every provider is defined further down
-# this file, so each is passed as a lambda that looks it up when called rather
-# than as the name, which does not exist yet at this line.
-from sequence_view import create_router as create_sequence_view_router
+# The sequence view, wired the same way.
 app.include_router(create_sequence_view_router(
     db_provider=lambda *args, **kwargs: genome_context._get_browse_db(*args, **kwargs),
     db_optional_provider=lambda *args, **kwargs: genome_context._get_browse_db_optional(*args, **kwargs),
@@ -217,23 +217,14 @@ async def enforce_local_origin(request: Request, call_next):
     return await call_next(request)
 
 
-# ============ API Endpoints ============
-
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
 
 
+# The local genome inventory is a function the whole backend calls; it is also
+# served as an endpoint.
 app.get("/api/remote/local-assemblies")(local_inventory.list_local_assemblies)
-
-
-# ============ Genome Browser API ============
-
-
-routes.vcf._VCF_TILE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-routes.vcf._VCF_BLOCK_TILE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 if __name__ == "__main__":

@@ -82,6 +82,7 @@ _VCF_HANDLE_LOCKS_GUARD = threading.Lock()
 
 
 _VCF_TILE_DISK_CACHE_DIR = app_paths.CACHE_DIR / "vcf_tiles"
+_VCF_TILE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 _VCF_TILE_CACHE_SCHEMA = "v6"
@@ -124,6 +125,7 @@ _VCF_BLOCK_TILE_CACHE_SCHEMA = "v5"
 
 
 _VCF_BLOCK_TILE_DISK_CACHE_DIR = app_paths.CACHE_DIR / "vcf_block_tiles"
+_VCF_BLOCK_TILE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class VcfBlockTileRequest(BaseModel):
