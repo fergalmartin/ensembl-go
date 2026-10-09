@@ -171,8 +171,11 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
         self.assertEqual(Path(resolved).name, "selector.index.db")
 
     def test_queueing_the_same_annotation_under_another_name_reuses_the_build(self):
-        first, _ = gff_index.queue_index_build(str(self.gff), str(self.release_dir / "a.index.db"))
-        second, _ = gff_index.queue_index_build(str(self.gff), str(self.release_dir / "b.index.db"))
+        # Keep the background worker out of it: if it finished the first build of this
+        # tiny annotation before the second call, there would be no queued task to reuse.
+        with patch.object(gff_index, "_ensure_index_worker_started"):
+            first, _ = gff_index.queue_index_build(str(self.gff), str(self.release_dir / "a.index.db"))
+            second, _ = gff_index.queue_index_build(str(self.gff), str(self.release_dir / "b.index.db"))
         self.assertEqual(first, second)
 
     # ── a build that cannot succeed must not be retried on every poll ────────
