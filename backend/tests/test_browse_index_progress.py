@@ -29,6 +29,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.browse  # noqa: E402
 import stats_utils  # noqa: E402
 import genome_context  # noqa: E402
 import gff_index  # noqa: E402
@@ -92,7 +93,7 @@ class IndexProgressTests(unittest.TestCase):
         # The assembly is in the FASTA and is ready at once. Holding the whole
         # panel back for a build that takes minutes was the entire complaint.
         with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
-            db_path, pending = main._get_browse_db_for_regions("reference")
+            db_path, pending = routes.browse._get_browse_db_for_regions("reference")
         self.assertEqual(db_path, "")
         self.assertTrue(pending, "the caller was not told genes are still coming")
 
@@ -104,12 +105,12 @@ class IndexProgressTests(unittest.TestCase):
             "_resolve_browse_genome_context",
             return_value={"db_path": "", "gff_path": ""},
         ):
-            self.assertEqual(main._get_browse_db_for_regions("reference"), ("", False))
+            self.assertEqual(routes.browse._get_browse_db_for_regions("reference"), ("", False))
 
     def test_a_built_index_is_handed_over_with_nothing_outstanding(self):
         gff_index.ensure_gff_index(str(self.gff), str(self.db))
         with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
-            db_path, pending = main._get_browse_db_for_regions("reference")
+            db_path, pending = routes.browse._get_browse_db_for_regions("reference")
         self.assertEqual(db_path, gff_index._normalize_fs_path(str(self.db)))
         self.assertFalse(pending)
 
@@ -132,9 +133,9 @@ class IndexProgressTests(unittest.TestCase):
             "transcripts": 30,
         })
         with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
-            status = main._index_status_for_genome("reference")
+            status = routes.browse._index_status_for_genome("reference")
 
-        self.assertEqual(status["state"], main.INDEX_STATE_BUILDING)
+        self.assertEqual(status["state"], routes.browse.INDEX_STATE_BUILDING)
         self.assertEqual(status["percent"], 48.0)
         self.assertEqual(status["genes"], 12)
         self.assertEqual(status["queue_position"], 1)
@@ -150,7 +151,7 @@ class IndexProgressTests(unittest.TestCase):
             "transcripts": 2000,
         })
         with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
-            status = main._index_status_for_genome("reference")
+            status = routes.browse._index_status_for_genome("reference")
         self.assertEqual(status["percent"], 96.0)
         self.assertLess(status["percent"], 100.0)
 
@@ -166,17 +167,17 @@ class IndexProgressTests(unittest.TestCase):
         self._record_task("waiting", status="queued")
 
         with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
-            status = main._index_status_for_genome("reference")
+            status = routes.browse._index_status_for_genome("reference")
 
-        self.assertEqual(status["state"], main.INDEX_STATE_QUEUED)
+        self.assertEqual(status["state"], routes.browse.INDEX_STATE_QUEUED)
         self.assertEqual(status["queue_position"], 2)
         self.assertEqual(status["queue_length"], 2)
 
     def test_status_reports_a_built_index_as_ready(self):
         gff_index.ensure_gff_index(str(self.gff), str(self.db))
         with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
-            status = main._index_status_for_genome("reference")
-        self.assertEqual(status["state"], main.INDEX_STATE_READY)
+            status = routes.browse._index_status_for_genome("reference")
+        self.assertEqual(status["state"], routes.browse.INDEX_STATE_READY)
         self.assertEqual(status["percent"], 100.0)
 
     def test_a_genome_without_an_annotation_reports_no_gene_track(self):
@@ -185,15 +186,15 @@ class IndexProgressTests(unittest.TestCase):
             "_resolve_browse_genome_context",
             return_value={"db_path": "", "gff_path": ""},
         ):
-            status = main._index_status_for_genome("reference")
-        self.assertEqual(status["state"], main.INDEX_STATE_NONE)
+            status = routes.browse._index_status_for_genome("reference")
+        self.assertEqual(status["state"], routes.browse.INDEX_STATE_NONE)
 
     def test_asking_for_status_never_starts_a_build(self):
         # Views that only watch progress must not be the thing that begins work.
         with patch.object(genome_context, "_resolve_browse_genome_context", return_value=self.context):
             with patch.object(gff_index, "queue_index_build", side_effect=AssertionError("queued")):
-                status = main._index_status_for_genome("reference")
-        self.assertEqual(status["state"], main.INDEX_STATE_ABSENT)
+                status = routes.browse._index_status_for_genome("reference")
+        self.assertEqual(status["state"], routes.browse.INDEX_STATE_ABSENT)
 
     # -- getting out of a failed build -------------------------------------
 

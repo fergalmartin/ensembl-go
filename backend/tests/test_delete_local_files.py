@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import fastapi  # noqa: E402
 import routes.genome_removal  # noqa: E402
 import local_inventory  # noqa: E402
 
@@ -166,7 +167,7 @@ class ManagedLayoutDeleteTests(unittest.TestCase):
             root = Path(tmpdir)
             self._managed_genome(root)
 
-            with self.assertRaises(main.HTTPException) as ctx:
+            with self.assertRaises(fastapi.HTTPException) as ctx:
                 _delete(root, dataset_release_key="ensembl/1999_01")
             self.assertEqual(ctx.exception.status_code, 404)
 
@@ -199,7 +200,7 @@ class UserSuppliedFileTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaises(main.HTTPException) as ctx:
+            with self.assertRaises(fastapi.HTTPException) as ctx:
                 _delete(root)
 
             self.assertEqual(ctx.exception.status_code, 400)
@@ -241,7 +242,7 @@ class UserSuppliedFileTests(unittest.TestCase):
 class EmptyAssemblyTests(unittest.TestCase):
     def test_missing_directory_is_a_404(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(main.HTTPException) as ctx:
+            with self.assertRaises(fastapi.HTTPException) as ctx:
                 _delete(Path(tmpdir))
             self.assertEqual(ctx.exception.status_code, 404)
 
@@ -251,7 +252,7 @@ class EmptyAssemblyTests(unittest.TestCase):
             asm_dir = root / "local_data" / SPECIES / ASSEMBLY
             _write(asm_dir / "notes.txt", b"hello")
 
-            with self.assertRaises(main.HTTPException) as ctx:
+            with self.assertRaises(fastapi.HTTPException) as ctx:
                 _delete(root)
             self.assertEqual(ctx.exception.status_code, 404)
             self.assertTrue((asm_dir / "notes.txt").exists())

@@ -20,6 +20,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import fastapi  # noqa: E402
 import routes.genome_removal  # noqa: E402
 import local_inventory  # noqa: E402
 import config_store  # noqa: E402
@@ -406,7 +407,7 @@ class EndpointTests(unittest.TestCase):
             root = Path(tmpdir).resolve()
             home, entry, descriptor = self._manual_fixture(root)
 
-            with self.assertRaises(main.HTTPException) as ctx:
+            with self.assertRaises(fastapi.HTTPException) as ctx:
                 self._remove(root, [descriptor], [entry], plan_token="not-the-current-plan")
 
             self.assertEqual(ctx.exception.status_code, 409)
@@ -537,14 +538,14 @@ class EndpointTests(unittest.TestCase):
             descriptor = routes.genome_removal.GenomeRemovalDescriptor(
                 species_key="../../etc", assembly="passwd", provider="ensembl"
             )
-            with self.assertRaises(main.HTTPException) as ctx:
+            with self.assertRaises(fastapi.HTTPException) as ctx:
                 self._preview(root, [descriptor], [])
             self.assertEqual(ctx.exception.status_code, 400)
 
     def test_empty_request_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             request = routes.genome_removal.GenomeRemovalRequest(output_dir=str(Path(tmpdir).resolve()), genomes=[])
-            with self.assertRaises(main.HTTPException) as ctx:
+            with self.assertRaises(fastapi.HTTPException) as ctx:
                 asyncio.run(routes.genome_removal.preview_genome_removal(request))
             self.assertEqual(ctx.exception.status_code, 400)
 

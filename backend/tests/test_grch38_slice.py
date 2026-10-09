@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import routes.browse  # noqa: E402
 import routes.tutorial  # noqa: E402
 import routes.notes  # noqa: E402
 import config_store  # noqa: E402
@@ -231,7 +232,7 @@ class SliceIndexTests(unittest.TestCase):
         original = config_store.load_config
         config_store.load_config = lambda: {"output_dir": self.workspace, "active_species": []}
         try:
-            regions = loop.run_until_complete(main.browse_regions(genome=genome))
+            regions = loop.run_until_complete(routes.browse.browse_regions(genome=genome))
             region = regions[0].model_dump() if hasattr(regions[0], "model_dump") else dict(regions[0])
             self.assertEqual(region["chrom"], CHROM)
             self.assertEqual(region["end"], REGION_END)
@@ -241,7 +242,7 @@ class SliceIndexTests(unittest.TestCase):
             self.assertEqual(region["gene_count"], 58)
 
             genes = loop.run_until_complete(
-                main.browse_genes(genome=genome, chrom=CHROM, start=REG4_START, end=REG4_END)
+                routes.browse.browse_genes(genome=genome, chrom=CHROM, start=REG4_START, end=REG4_END)
             )
             names = [(g.model_dump() if hasattr(g, "model_dump") else dict(g))["name"] for g in genes]
             self.assertIn("REG4", names)

@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi import HTTPException  # noqa: E402
 
 import main  # noqa: E402
+import routes.browse  # noqa: E402
 import genome_context  # noqa: E402
 import local_inventory  # noqa: E402
 
@@ -94,12 +95,12 @@ class OptionalIndexResolutionTests(unittest.TestCase):
 class GenomeOnlyBrowsingTests(unittest.TestCase):
     def test_genes_endpoint_returns_empty_without_an_annotation(self):
         with patch.object(genome_context, "_get_browse_db_optional", lambda _g: ""):
-            result = asyncio.run(main.browse_genes(genome="reference", chrom="chr1"))
+            result = asyncio.run(routes.browse.browse_genes(genome="reference", chrom="chr1"))
         self.assertEqual(result, [])
 
     def test_genes_endpoint_still_requires_a_chrom(self):
         with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(main.browse_genes(genome="reference", chrom=""))
+            asyncio.run(routes.browse.browse_genes(genome="reference", chrom=""))
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_regions_come_from_the_fasta_alone(self):
@@ -109,11 +110,11 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
             def get_reference_length(self, name):
                 return {"chr1": 244, "chr2": 120}[name]
 
-        with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", False)), \
+        with patch.object(routes.browse, "_get_browse_db_for_regions", lambda _g: ("", False)), \
                 patch.object(genome_context, "_get_browse_fasta", lambda _g: _FakeFasta()), \
                 patch.object(genome_context, "_build_genome_synonym_index", lambda _g, _r: {}), \
                 patch.object(genome_context, "_get_genome_metadata_path", lambda _g: ""):
-            regions = asyncio.run(main.browse_regions(genome="reference"))
+            regions = asyncio.run(routes.browse.browse_regions(genome="reference"))
 
         by_name = {r.chrom: r for r in regions}
         self.assertEqual(set(by_name), {"chr1", "chr2"})
@@ -125,10 +126,10 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
         def _no_fasta(_genome):
             raise HTTPException(status_code=404, detail="FASTA not configured")
 
-        with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", False)), \
+        with patch.object(routes.browse, "_get_browse_db_for_regions", lambda _g: ("", False)), \
                 patch.object(genome_context, "_get_browse_fasta", _no_fasta):
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.run(main.browse_regions(genome="reference"))
+                asyncio.run(routes.browse.browse_regions(genome="reference"))
         self.assertEqual(ctx.exception.status_code, 404)
 
     def test_regions_keep_the_caller_polling_when_an_index_is_the_only_hope(self):
@@ -138,10 +139,10 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
         def _no_fasta(_genome):
             raise HTTPException(status_code=404, detail="FASTA not configured")
 
-        with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", True)), \
+        with patch.object(routes.browse, "_get_browse_db_for_regions", lambda _g: ("", True)), \
                 patch.object(genome_context, "_get_browse_fasta", _no_fasta):
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.run(main.browse_regions(genome="reference"))
+                asyncio.run(routes.browse.browse_regions(genome="reference"))
         self.assertEqual(ctx.exception.status_code, genome_context.INDEX_BUILDING_STATUS)
 
     def test_an_assembly_is_browsable_while_its_genes_are_still_indexing(self):
@@ -154,11 +155,11 @@ class GenomeOnlyBrowsingTests(unittest.TestCase):
             def get_reference_length(self, name):
                 return 1000
 
-        with patch.object(main, "_get_browse_db_for_regions", lambda _g: ("", True)), \
+        with patch.object(routes.browse, "_get_browse_db_for_regions", lambda _g: ("", True)), \
                 patch.object(genome_context, "_get_browse_fasta", lambda _g: _FakeFasta()), \
                 patch.object(genome_context, "_build_genome_synonym_index", lambda _g, _r: {}), \
                 patch.object(genome_context, "_get_genome_metadata_path", lambda _g: ""):
-            regions = asyncio.run(main.browse_regions(genome="reference"))
+            regions = asyncio.run(routes.browse.browse_regions(genome="reference"))
 
         self.assertEqual([r.chrom for r in regions], ["chr1"])
         self.assertEqual(regions[0].end, 1000)

@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import fastapi  # noqa: E402
 import routes.config  # noqa: E402
 import routes.tutorial  # noqa: E402
 import genome_context  # noqa: E402
@@ -186,7 +187,7 @@ class DemoGenomeEndpointTests(unittest.TestCase):
                 self.assertIn(expected, names)
 
     def test_install_without_an_output_dir_is_a_bad_request(self):
-        with self.assertRaises(main.HTTPException) as caught:
+        with self.assertRaises(fastapi.HTTPException) as caught:
             asyncio.run(routes.tutorial.post_demo_genome_install(
                 routes.tutorial.DemoGenomeInstallRequest(output_dir="  ")
             ))

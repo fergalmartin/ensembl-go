@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+import fastapi
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from homology_search import HomologySearchStore, row_rank
 
@@ -211,20 +213,20 @@ class HomologyApiTests(unittest.TestCase):
                                                                        focus_query_gene_id='M2', focus_target_key=target['target_key']))
         self.assertEqual(focused['focus_row_id'], target['row_id'])
         self.assertEqual(focused['filtered_rows'], result['filtered_rows'])
-        with self.assertRaises(main.HTTPException) as error:
+        with self.assertRaises(fastapi.HTTPException) as error:
             self.homology.search_homology_table(self.homology.HomologySearchRequest(genome_key=self.genome_key.replace('2025_12', '2024_10'), gene_query='H1'))
         self.assertEqual(error.exception.status_code, 404)
-        with self.assertRaises(main.HTTPException):
+        with self.assertRaises(fastapi.HTTPException):
             self.homology.search_homology_table(self.homology.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1', min_identity=float('nan')))
 
     def test_no_file_and_unconfigured_path(self):
         main = self.main
         self.genome['files']['homology'] = ''
-        with self.assertRaises(main.HTTPException) as error:
+        with self.assertRaises(fastapi.HTTPException) as error:
             self.homology.search_homology_table(self.homology.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1'))
         self.assertEqual(error.exception.status_code, 404)
         self.assertEqual(self.homology.homology_search_sources()['sources'][self.genome_key]['status'], 'missing')
-        with self.assertRaises(main.HTTPException):
+        with self.assertRaises(fastapi.HTTPException):
             self.homology._resolve_allowed_homology_path(str(self.path))
 
     def test_legacy_endpoint_contract_remains_unchanged(self):
