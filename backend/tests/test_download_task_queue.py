@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import download_manager as dm  # noqa: E402
 import main  # noqa: E402
+import app_state  # noqa: E402
 from download_manager import DownloadTask  # noqa: E402
 
 
@@ -36,7 +37,7 @@ class CancelByIdTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.tasks = {}
-        patcher = patch.object(main.download_manager, "tasks", self.tasks)
+        patcher = patch.object(app_state.download_manager, "tasks", self.tasks)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(self.tmp.cleanup)

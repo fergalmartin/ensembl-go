@@ -205,13 +205,11 @@ from security_utils import (
     validate_remote_download_url,
     validate_trackhub_data_url,
 )
+import app_state
 import file_io
 import data_paths
 import app_paths
 
-
-# Initialize Download Manager
-download_manager = DownloadManager(app_paths.SPECIES_JSON_PATH, cache_dir=app_paths.CACHE_DIR)
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
@@ -219,7 +217,7 @@ async def _lifespan(_app: FastAPI):
     # way — usually finished — before the user opens the download view. Non-blocking:
     # the fetch runs on a background thread and startup continues immediately.
     try:
-        download_manager.ensure_catalog_available()
+        app_state.download_manager.ensure_catalog_available()
     except Exception:
         logger.exception("Failed to start the initial species catalogue fetch")
     yield
@@ -5811,7 +5809,7 @@ def _find_catalog_species_key(species_key: Any) -> str:
     key = str(species_key or "").strip()
     if not key:
         return ""
-    species_data = getattr(download_manager, "species_data", {}) or {}
+    species_data = getattr(app_state.download_manager, "species_data", {}) or {}
     if key in species_data:
         return key
     lowered = key.lower()
@@ -5828,7 +5826,7 @@ def _catalog_genome_metadata(species_key: Any, assembly: Any, provider: Any = DE
     assembly_token = str(assembly or "").strip()
     if not key or not assembly_token:
         return {}
-    info = (getattr(download_manager, "species_data", {}) or {}).get(key) or {}
+    info = (getattr(app_state.download_manager, "species_data", {}) or {}).get(key) or {}
     if not isinstance(info, dict):
         return {}
     assemblies = info.get("assemblies") or {}
@@ -5837,10 +5835,10 @@ def _catalog_genome_metadata(species_key: Any, assembly: Any, provider: Any = DE
         assembly_info = {}
     display = {}
     try:
-        summary = next((item for item in (download_manager._species_cache or []) if item.key == key), None)
+        summary = next((item for item in (app_state.download_manager._species_cache or []) if item.key == key), None)
         # Configuration needs labels for its saved genomes, not summaries and
         # taxonomy diagnostics for every species in the download catalogue.
-        display = download_manager.species_display_name(key) if summary is None else {
+        display = app_state.download_manager.species_display_name(key) if summary is None else {
             "display_name": summary.display_name,
             "display_name_reason": summary.display_name_reason,
         }
@@ -7043,8 +7041,8 @@ async def create_directory(request: MkdirRequest):
 async def list_remote_groups(provider: str = DEFAULT_PROVIDER):
     """Return taxonomic groups with species counts."""
     if normalize_provider(provider) == DEFAULT_PROVIDER:
-        download_manager.schedule_catalog_refresh_if_stale()
-    return download_manager.list_groups(provider=provider)
+        app_state.download_manager.schedule_catalog_refresh_if_stale()
+    return app_state.download_manager.list_groups(provider=provider)
 
 @app.get("/api/remote/species", response_model=List[SpeciesSummary])
 async def list_remote_species(
@@ -7054,15 +7052,15 @@ async def list_remote_species(
 ):
     """List species, optionally filtered by group/sub_group."""
     if normalize_provider(provider) == DEFAULT_PROVIDER:
-        download_manager.schedule_catalog_refresh_if_stale()
-    return download_manager.list_species(provider=provider, group=group, sub_group=sub_group)
+        app_state.download_manager.schedule_catalog_refresh_if_stale()
+    return app_state.download_manager.list_species(provider=provider, group=group, sub_group=sub_group)
 
 @app.get("/api/remote/species/{key}")
 async def get_remote_species_details(key: str, provider: str = DEFAULT_PROVIDER):
     """Get full details for a specific species."""
     if normalize_provider(provider) == DEFAULT_PROVIDER:
-        download_manager.schedule_catalog_refresh_if_stale()
-    return download_manager.get_species_details(key, provider=provider)
+        app_state.download_manager.schedule_catalog_refresh_if_stale()
+    return app_state.download_manager.get_species_details(key, provider=provider)
 
 
 @app.get("/api/remote/files/{key}/{assembly}/availability")
@@ -7074,9 +7072,9 @@ async def get_remote_file_availability(
 ):
     """Return assembly files plus dated dataset release file groups."""
     if normalize_provider(provider) == DEFAULT_PROVIDER:
-        download_manager.schedule_catalog_refresh_if_stale()
+        app_state.download_manager.schedule_catalog_refresh_if_stale()
     return await asyncio.to_thread(
-        download_manager.get_file_availability,
+        app_state.download_manager.get_file_availability,
         key,
         assembly,
         provider,
@@ -7093,9 +7091,9 @@ async def get_remote_files(
 ):
     """Get download URLs for a specific species assembly."""
     if normalize_provider(provider) == DEFAULT_PROVIDER:
-        download_manager.schedule_catalog_refresh_if_stale()
+        app_state.download_manager.schedule_catalog_refresh_if_stale()
     requested_types = [part.strip() for part in str(file_types or "").split(",") if part.strip()]
-    return await asyncio.to_thread(download_manager.get_download_urls,
+    return await asyncio.to_thread(app_state.download_manager.get_download_urls,
         key,
         assembly,
         file_types=requested_types or None,
@@ -7112,7 +7110,7 @@ async def search_remote_ncbi_species(
     """Search NCBI genome assemblies via the Datasets API."""
     try:
         result = await asyncio.to_thread(
-            download_manager.search_ncbi_species,
+            app_state.download_manager.search_ncbi_species,
             query,
             assembly_source,
             page_size,
@@ -7133,7 +7131,7 @@ async def list_featured_remote_ncbi_species(assembly_source: str = "all"):
     """Return a curated set of NCBI genomes, preferring paired RefSeq accessions where possible."""
     try:
         result = await asyncio.to_thread(
-            download_manager.list_featured_ncbi_species,
+            app_state.download_manager.list_featured_ncbi_species,
             assembly_source,
         )
         return {
@@ -7151,7 +7149,7 @@ async def list_featured_remote_ncbi_species(assembly_source: str = "all"):
 async def refresh_remote_ncbi_cache():
     """Clear cached RefSeq browse metadata so the next requests fetch fresh NCBI results."""
     try:
-        return await asyncio.to_thread(download_manager.refresh_ncbi_cache)
+        return await asyncio.to_thread(app_state.download_manager.refresh_ncbi_cache)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to refresh RefSeq browse cache: {exc}")
 
@@ -7161,7 +7159,7 @@ async def browse_remote_ncbi_group(group: str = "Featured", page_token: Optional
     """Return a paginated list of RefSeq species for the given taxonomic group."""
     try:
         result = await asyncio.to_thread(
-            download_manager.browse_ncbi_group,
+            app_state.download_manager.browse_ncbi_group,
             group,
             page_token,
             page_size,
@@ -7184,15 +7182,15 @@ class CatalogAcknowledgeRequest(BaseModel):
 @app.get("/api/remote/catalog/status")
 async def get_remote_catalog_status():
     """Return the current remote catalogue refresh status and latest change summary."""
-    download_manager.schedule_catalog_refresh_if_stale()
-    return download_manager.get_catalog_status()
+    app_state.download_manager.schedule_catalog_refresh_if_stale()
+    return app_state.download_manager.get_catalog_status()
 
 
 @app.post("/api/remote/catalog/refresh")
 async def refresh_remote_catalog():
     """Force a remote catalogue refresh now."""
     try:
-        return await asyncio.to_thread(download_manager.refresh_catalog, True)
+        return await asyncio.to_thread(app_state.download_manager.refresh_catalog, True)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to refresh remote catalogue: {exc}")
 
@@ -7200,7 +7198,7 @@ async def refresh_remote_catalog():
 @app.post("/api/remote/catalog/acknowledge")
 async def acknowledge_remote_catalog_change(request: CatalogAcknowledgeRequest):
     """Mark the latest catalogue change notification as seen."""
-    return download_manager.acknowledge_catalog_change(request.token)
+    return app_state.download_manager.acknowledge_catalog_change(request.token)
 
 class DownloadRequest(BaseModel):
     url: str
@@ -7759,8 +7757,8 @@ async def _download_then_warm_assembly_metadata(
     user opens a genome's overview, rather than being the one thing they wait on.
     Entirely best-effort: nothing here can fail a download.
     """
-    await download_manager.download_file(url, dest, task_id)
-    task = download_manager.tasks.get(task_id)
+    await app_state.download_manager.download_file(url, dest, task_id)
+    task = app_state.download_manager.tasks.get(task_id)
     if not task or str(getattr(task, "status", "")) != "completed":
         return
     if request is not None:
@@ -7875,7 +7873,7 @@ def _prepare_download(
         except Exception:
             pass
 
-    for existing in download_manager.tasks.values():
+    for existing in app_state.download_manager.tasks.values():
         if request.force:
             continue
         if existing.destination == str(dest) and existing.status in {"pending", "downloading", "completed"}:
@@ -7897,7 +7895,7 @@ def _prepare_download(
         status="pending",
         destination=str(dest),
     )
-    download_manager.tasks[task_id] = task
+    app_state.download_manager.tasks[task_id] = task
     warm_accessions = [request.assembly] + [
         str(v).strip() for v in (request.equivalent_accessions or []) if str(v).strip()
     ]
@@ -7906,7 +7904,7 @@ def _prepare_download(
     # Auto-fetch metadata when core genome files are requested.
     if request.file_type in {"fasta", "gff3"}:
         try:
-            metadata_files = download_manager.get_download_urls(
+            metadata_files = app_state.download_manager.get_download_urls(
                 request.species_key,
                 request.assembly,
                 file_types=["metadata"],
@@ -7927,7 +7925,7 @@ def _prepare_download(
                         and t.file_type == "metadata"
                         and t.status in {"pending", "downloading", "completed"}
                     )
-                    for t in download_manager.tasks.values()
+                    for t in app_state.download_manager.tasks.values()
                 )
 
                 if not metadata_dest.exists() and not already_tracked:
@@ -7962,7 +7960,7 @@ def _prepare_download(
                         status="pending",
                         destination=str(metadata_dest),
                     )
-                    download_manager.tasks[metadata_task_id] = metadata_task
+                    app_state.download_manager.tasks[metadata_task_id] = metadata_task
                     spawns.append(
                         (metadata_file.url, metadata_dest, metadata_task_id, warm_accessions)
                     )
@@ -8239,7 +8237,7 @@ async def cancel_downloads(request: CancelDownloadRequest):
         if str(value or "").strip()
     }
     canceled_task_ids: List[str] = []
-    for task_id, task in list(download_manager.tasks.items()):
+    for task_id, task in list(app_state.download_manager.tasks.items()):
         if str(task.species_key or "") != str(request.species_key or ""):
             continue
         if str(task.assembly or "") != str(request.assembly or ""):
@@ -8299,7 +8297,7 @@ def _cancel_download_tasks_by_id(task_ids: List[str], cancel_all: bool = False) 
     active_statuses = {"pending", "downloading"}
     wanted = {str(value or "").strip() for value in (task_ids or []) if str(value or "").strip()}
     targets: Dict[str, DownloadTask] = {}
-    for task_id, task in list(download_manager.tasks.items()):
+    for task_id, task in list(app_state.download_manager.tasks.items()):
         if str(task.status or "") not in active_statuses:
             continue
         if cancel_all or task_id in wanted:
@@ -8311,7 +8309,7 @@ def _cancel_download_tasks_by_id(task_ids: List[str], cancel_all: bool = False) 
         if str(task.file_type or "") in {"fasta", "gff3"}
     }
     if core_genomes:
-        for task_id, task in list(download_manager.tasks.items()):
+        for task_id, task in list(app_state.download_manager.tasks.items()):
             if task_id in targets or str(task.file_type or "") != "metadata":
                 continue
             if str(task.status or "") not in active_statuses:
@@ -9098,15 +9096,15 @@ def list_local_assemblies(output_dir: str):
     # Build a lookup from species_key -> display info
     # Ensure cache is populated — it may be empty if /api/remote/species hasn't been called yet
     species_lookup = {}
-    if not download_manager._species_cache and download_manager.species_data:
-        download_manager._build_cache()
+    if not app_state.download_manager._species_cache and app_state.download_manager.species_data:
+        app_state.download_manager._build_cache()
 
-    if download_manager._species_cache:
-        for s in download_manager._species_cache:
+    if app_state.download_manager._species_cache:
+        for s in app_state.download_manager._species_cache:
             species_lookup[s.key] = s
     else:
         # Fallback: build from raw data dict directly
-        for key, info in download_manager.species_data.items():
+        for key, info in app_state.download_manager.species_data.items():
             species_lookup[key] = {
                 "scientific_name": info.get("scientific_name", key),
                 "common_name": info.get("common_name", ""),
@@ -9407,13 +9405,13 @@ def delete_local_files(request: DeleteLocalFilesRequest):
     # continue showing old completed/failed badges after files were deleted.
     remove_task_ids = [
         task_id
-        for task_id, task in list(download_manager.tasks.items())
+        for task_id, task in list(app_state.download_manager.tasks.items())
         if str(task.species_key or "") == str(request.species_key or "")
         and str(task.assembly or "") == str(request.assembly or "")
         and normalize_provider(task.provider) == provider
     ]
     for task_id in remove_task_ids:
-        download_manager.tasks.pop(task_id, None)
+        app_state.download_manager.tasks.pop(task_id, None)
     _record_deletion_achievement(
         build_provider_aware_genome_key(request.species_key, request.assembly, provider),
         request.output_dir,
@@ -9781,10 +9779,10 @@ async def remove_genome_data(request: GenomeRemovalRequest):
             (str(descriptor.species_key or ""), str(descriptor.assembly or ""), normalize_provider(descriptor.provider))
             for descriptor in request.genomes
         }
-        for task_id, task in list(download_manager.tasks.items()):
+        for task_id, task in list(app_state.download_manager.tasks.items()):
             key = (str(task.species_key or ""), str(task.assembly or ""), normalize_provider(task.provider))
             if key in removed_pairs:
-                download_manager.tasks.pop(task_id, None)
+                app_state.download_manager.tasks.pop(task_id, None)
 
         return {
             "results": results,
@@ -9802,7 +9800,7 @@ async def remove_genome_data(request: GenomeRemovalRequest):
 @app.get("/api/remote/tasks")
 async def list_download_tasks():
     """List all download tasks."""
-    return list(download_manager.tasks.values())
+    return list(app_state.download_manager.tasks.values())
 
 
 # ============ Stats API ============
@@ -14841,7 +14839,7 @@ def _genome_taxid(genome: str, species: Dict[str, Any]) -> int:
             return value
 
     catalog_key = _find_catalog_species_key(species.get("species_key"))
-    info = (getattr(download_manager, "species_data", {}) or {}).get(catalog_key) or {}
+    info = (getattr(app_state.download_manager, "species_data", {}) or {}).get(catalog_key) or {}
     if isinstance(info, dict):
         for key in ("taxid", "species_taxonomy_id"):
             try:
@@ -14865,7 +14863,7 @@ def _genome_lineage(genome: str, species: Dict[str, Any]) -> Tuple[int, ...]:
     taxid = _genome_taxid(genome, species)
     if not taxid:
         return ()
-    classifier = getattr(download_manager, "taxonomy_classifier", None)
+    classifier = getattr(app_state.download_manager, "taxonomy_classifier", None)
     if classifier is None:
         return ()
     try:
@@ -18600,13 +18598,13 @@ def _sv_local_species_match(genome: Dict[str, Any], local_assemblies: List[Dict[
 
 def _sv_downloadable_match(genome: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     try:
-        if not download_manager._species_cache and download_manager.species_data:
-            download_manager._build_cache()
+        if not app_state.download_manager._species_cache and app_state.download_manager.species_data:
+            app_state.download_manager._build_cache()
     except Exception:
         pass
 
-    if download_manager._species_cache:
-        for species in download_manager._species_cache:
+    if app_state.download_manager._species_cache:
+        for species in app_state.download_manager._species_cache:
             species_key = getattr(species, "key", "") or ""
             for assembly in getattr(species, "assemblies", []) or []:
                 candidate = {
@@ -18623,7 +18621,7 @@ def _sv_downloadable_match(genome: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 if _sv_records_match(genome, candidate):
                     return candidate
 
-    for species_key, species_info in (download_manager.species_data or {}).items():
+    for species_key, species_info in (app_state.download_manager.species_data or {}).items():
         if not isinstance(species_info, dict):
             continue
         for accession, assembly_info in (species_info.get("assemblies") or {}).items():
@@ -22037,7 +22035,7 @@ def _achievement_name_taxid_index() -> Dict[str, int]:
             return _achievement_name_taxids
         index: Dict[str, int] = {}
         genera: Dict[str, int] = {}
-        classifier = getattr(download_manager, "taxonomy_classifier", None)
+        classifier = getattr(app_state.download_manager, "taxonomy_classifier", None)
         records = ((classifier.artifact or {}).get("taxids") or {}) if classifier else {}
         for taxid_text, record in records.items():
             if not isinstance(record, dict):
@@ -22062,7 +22060,7 @@ def _achievement_name_taxid_index() -> Dict[str, int]:
 
 
 def _achievement_lineage_known(taxid: int) -> bool:
-    classifier = getattr(download_manager, "taxonomy_classifier", None)
+    classifier = getattr(app_state.download_manager, "taxonomy_classifier", None)
     if not classifier or not taxid:
         return False
     try:
@@ -22087,7 +22085,7 @@ def _achievement_genome_taxid(
                 candidates.append(int(value))
         except (TypeError, ValueError):
             pass
-    info = (getattr(download_manager, "species_data", {}) or {}).get(_find_catalog_species_key(species_key)) or {}
+    info = (getattr(app_state.download_manager, "species_data", {}) or {}).get(_find_catalog_species_key(species_key)) or {}
     if isinstance(info, dict):
         for field in ("taxid", "species_taxonomy_id"):
             try:
@@ -22121,7 +22119,7 @@ def _achievement_genome_taxid(
 
 def _achievement_lineage_taxa(doc: Dict[str, Any]) -> List[int]:
     """Every clade any downloaded genome belongs to — what the taxon achievements test."""
-    classifier = getattr(download_manager, "taxonomy_classifier", None)
+    classifier = getattr(app_state.download_manager, "taxonomy_classifier", None)
     union: Set[int] = set()
     for taxid in set((doc.get("taxa") or {}).values()):
         union.add(int(taxid))

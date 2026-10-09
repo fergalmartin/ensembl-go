@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import app_state  # noqa: E402
 from download_manager import AssemblySummary  # noqa: E402
 
 
@@ -38,7 +39,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
             }
         }
 
-        with patch.object(main.download_manager, "species_data", species_data):
+        with patch.object(app_state.download_manager, "species_data", species_data):
             enriched = main._enrich_config_genome_labels(config)
 
         self.assertEqual(enriched["active_species"][0]["scientific_name"], "Homo sapiens")
@@ -62,7 +63,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
             "genome_key": "Vulpes_vulpes::GCA_964106925.2",
         }
 
-        with patch.object(main.download_manager, "species_data", species_data):
+        with patch.object(app_state.download_manager, "species_data", species_data):
             hydrated = main._hydrate_track_genome_label(track, main.DEFAULT_CONFIG)
 
         self.assertEqual(hydrated["genome_species_label"], "Red fox")
@@ -121,8 +122,8 @@ class GenomeDisplayLabelTests(unittest.TestCase):
                     "assemblies": {accession: {"name": "ilAclSpar1.1_alternate_haplotype"}},
                 }
             }
-            with patch.object(main.download_manager, "_species_cache", [summary]), \
-                    patch.object(main.download_manager, "species_data", catalog):
+            with patch.object(app_state.download_manager, "_species_cache", [summary]), \
+                    patch.object(app_state.download_manager, "species_data", catalog):
                 results = main.list_local_assemblies(str(root))
 
         self.assertEqual(len(results), 1)
@@ -181,8 +182,8 @@ class GenomeDisplayLabelTests(unittest.TestCase):
             )
 
             with (
-                patch.object(main.download_manager, "_species_cache", [summary]),
-                patch.object(main.download_manager, "species_data", species_data),
+                patch.object(app_state.download_manager, "_species_cache", [summary]),
+                patch.object(app_state.download_manager, "species_data", species_data),
             ):
                 results = main.list_local_assemblies(str(root))
 

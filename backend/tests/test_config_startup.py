@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main
+import app_state  # noqa: E402
 from download_manager import DownloadManager
 from species_name_policy import build_species_name_policy
 
@@ -53,7 +54,7 @@ class ConfigStartupTests(unittest.TestCase):
             "active_species": [genome],
             "genome_playlists": [{"id": "saved", "name": "Saved", "genomes": [genome]}],
         }
-        with patch.object(main, "download_manager", self.manager), \
+        with patch.object(app_state, "download_manager", self.manager), \
                 patch.object(main, "CONFIG_FILE", self.root / "config.json"), \
                 patch.object(self.manager, "_build_cache", wraps=self.manager._build_cache) as build:
             main.save_config(config)

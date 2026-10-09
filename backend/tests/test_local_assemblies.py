@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import app_state  # noqa: E402
 
 
 async def _noop_download(url, destination, task_id):
@@ -344,7 +345,7 @@ class LocalAssembliesTests(unittest.TestCase):
     def test_start_download_places_dataset_files_under_release_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            main.download_manager.tasks = {}
+            app_state.download_manager.tasks = {}
             request = main.DownloadRequest(
                 url="https://ftp.ebi.ac.uk/pub/ensemblorganisms/GCA/000/005/845/2/ensembl/2025_12/geneset/genes.gff3.gz",
                 filename="genes.gff3.gz",
@@ -360,12 +361,12 @@ class LocalAssembliesTests(unittest.TestCase):
                 dataset_release_date="2025_12",
                 dataset_release_label="ensembl 2025_12",
             )
-            with patch.object(main.download_manager, "download_file", side_effect=_noop_download), \
-                    patch.object(main.download_manager, "get_download_urls", return_value=[]):
+            with patch.object(app_state.download_manager, "download_file", side_effect=_noop_download), \
+                    patch.object(app_state.download_manager, "get_download_urls", return_value=[]):
                 result = asyncio.run(main.start_download(request))
 
             self.assertEqual(result["status"], "started")
-            task = next(iter(main.download_manager.tasks.values()))
+            task = next(iter(app_state.download_manager.tasks.values()))
             expected = (root / "local_data" / "Test_species" / "GCA_000005845.2" / "datasets" / "ensembl" / "2025_12" / "GCA_000005845.2.gff3.gz").resolve()
             self.assertEqual(Path(task.destination), expected)
             manifest = json.loads((root / "local_data" / "Test_species" / "GCA_000005845.2" / "GCA_000005845.2.genome_manifest.json").read_text(encoding="utf-8"))
@@ -375,7 +376,7 @@ class LocalAssembliesTests(unittest.TestCase):
     def test_start_download_infers_release_from_ensembl_url_when_client_omits_it(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            main.download_manager.tasks = {}
+            app_state.download_manager.tasks = {}
             request = main.DownloadRequest(
                 url="https://ftp.ebi.ac.uk/pub/ensemblorganisms/GCA/018/472/595/2/ensembl/2024_10/geneset/genes.gff3.gz",
                 filename="genes.gff3.gz",
@@ -387,12 +388,12 @@ class LocalAssembliesTests(unittest.TestCase):
                 scientific_name="Homo sapiens",
                 assembly_name="HG00438_pat_hprc_f2",
             )
-            with patch.object(main.download_manager, "download_file", side_effect=_noop_download), \
-                    patch.object(main.download_manager, "get_download_urls", return_value=[]):
+            with patch.object(app_state.download_manager, "download_file", side_effect=_noop_download), \
+                    patch.object(app_state.download_manager, "get_download_urls", return_value=[]):
                 result = asyncio.run(main.start_download(request))
 
             self.assertEqual(result["status"], "started")
-            task = next(iter(main.download_manager.tasks.values()))
+            task = next(iter(app_state.download_manager.tasks.values()))
             self.assertEqual(task.dataset_release_key, "ensembl/2024_10")
             self.assertIn("datasets/ensembl/2024_10", task.destination)
             manifest_path = root / "local_data" / "Homo_sapiens" / "GCA_018472595.2" / "GCA_018472595.2.genome_manifest.json"
