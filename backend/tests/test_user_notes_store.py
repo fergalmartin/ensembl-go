@@ -16,6 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import config_store  # noqa: E402
 import app_paths  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
@@ -74,13 +75,13 @@ def _store(output_dir=None):
         root = Path(tmpdir)
         cache_file = root / "config.json"
         cache_notes = root / "user_notes.json"
-        with patch.object(main, "CONFIG_FILE", cache_file), \
+        with patch.object(config_store, "CONFIG_FILE", cache_file), \
                 patch.object(main, "DEFAULT_USER_NOTES_FILE", cache_notes), \
                 patch.object(main, "USER_NOTES_FILE", cache_notes):
-            config = {**main.DEFAULT_CONFIG}
+            config = {**config_store.DEFAULT_CONFIG}
             if output_dir is not None:
                 config["output_dir"] = str(root / output_dir)
-            main.save_config(config)
+            config_store.save_config(config)
             yield root, cache_notes
 
 

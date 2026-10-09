@@ -22,6 +22,7 @@ import pytest
 
 import demo_genome
 import main
+import config_store  # noqa: E402
 from demo_genome import (
     DEMO_TRACK_BUNDLE,
     DEMO_TRACK_SUBDIR,
@@ -135,7 +136,7 @@ def test_a_tutorials_tracks_do_not_reach_the_users_registry(monkeypatch):
         user_registry.write_text(json.dumps({"tracks": [{"id": "users-own", "label": "My own track"}]}))
         before = user_registry.read_bytes()
 
-        monkeypatch.setattr(main, "load_config", lambda: {"output_dir": out})
+        monkeypatch.setattr(config_store, "load_config", lambda: {"output_dir": out})
 
         # Outside a tutorial the user's own track is what the app sees.
         assert [t["label"] for t in main._load_track_registry()["tracks"]] == ["My own track"]
@@ -177,7 +178,7 @@ def test_a_tutorials_track_cannot_be_registered_into_the_users_registry(monkeypa
 
     output_dir = tmp_path / "out"
     (output_dir / "local_data").mkdir(parents=True)
-    monkeypatch.setattr(main, "load_config", lambda: {"output_dir": str(output_dir)})
+    monkeypatch.setattr(config_store, "load_config", lambda: {"output_dir": str(output_dir)})
 
     workspace = tutorial_workspace(str(output_dir))
     (workspace / "demo_tracks").mkdir(parents=True)

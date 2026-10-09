@@ -26,6 +26,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import config_store  # noqa: E402
 
 
 TOY_GFF = (
@@ -98,7 +99,7 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
         }
         cfg = dict(self.cfg, active_species=[species], ref_gff="", target_gff="")
 
-        with patch.object(main, "load_config", return_value=cfg):
+        with patch.object(config_store, "load_config", return_value=cfg):
             with patch.object(main, "_dedupe_active_species", return_value=[species]):
                 with patch.object(main, "_active_species_item_key", return_value="genome-key"):
                     self.assertEqual(
@@ -136,7 +137,7 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
         species = {"assembly": "GCF_000001405.40", "files": {"gff3": str(self.gff)}}
         cfg = dict(self.cfg, active_species=[species], ref_gff="", target_gff="")
 
-        with patch.object(main, "load_config", return_value=cfg):
+        with patch.object(config_store, "load_config", return_value=cfg):
             with patch.object(main, "_dedupe_active_species", return_value=[species]):
                 with patch.object(main, "_active_species_item_key", return_value="genome-key"):
                     with self.assertRaises(HTTPException) as caught:

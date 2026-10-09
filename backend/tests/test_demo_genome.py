@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import config_store  # noqa: E402
 from genome_identity import iter_local_assembly_dirs  # noqa: E402
 
 
@@ -247,7 +248,7 @@ class TutorialWorkspaceTests(unittest.TestCase):
             real_output_dir = str(Path(tmpdir) / "genomes")
             config_file.write_text(json.dumps({"output_dir": real_output_dir}), encoding="utf-8")
 
-            with patch.object(main, "CONFIG_FILE", config_file):
+            with patch.object(config_store, "CONFIG_FILE", config_file):
                 tutorial_dir = str(Path(real_output_dir) / demo_genome.TUTORIAL_WORKSPACE_DIR)
                 main.update_config(
                     main.ConfigUpdate(output_dir=tutorial_dir, active_species=[])
@@ -262,7 +263,7 @@ class TutorialWorkspaceTests(unittest.TestCase):
             config_file.write_text(json.dumps({"output_dir": str(Path(tmpdir) / "old")}), encoding="utf-8")
             wanted = str(Path(tmpdir) / "new_genomes")
 
-            with patch.object(main, "CONFIG_FILE", config_file):
+            with patch.object(config_store, "CONFIG_FILE", config_file):
                 main.update_config(main.ConfigUpdate(output_dir=wanted))
                 saved = json.loads(config_file.read_text(encoding="utf-8"))
                 self.assertEqual(saved.get("output_dir"), wanted)

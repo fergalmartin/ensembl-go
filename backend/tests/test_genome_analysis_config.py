@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import config_store  # noqa: E402
 
 
 class GenomeAnalysisConfigTests(unittest.TestCase):
@@ -27,7 +28,7 @@ class GenomeAnalysisConfigTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = Path(tmpdir) / "config.json"
-            with patch.object(main, "CONFIG_FILE", config_file):
+            with patch.object(config_store, "CONFIG_FILE", config_file):
                 response = main.update_config(main.ConfigUpdate(
                     genome_analysis_reports=reports,
                 ))

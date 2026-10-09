@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import config_store  # noqa: E402
 import app_paths  # noqa: E402
 
 
@@ -45,11 +46,11 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             track_file = root / "signal.bw"
             track_file.write_bytes(b"bw")
 
-            with patch.object(main, "CONFIG_FILE", cache_file), \
+            with patch.object(config_store, "CONFIG_FILE", cache_file), \
                     patch.object(main, "DEFAULT_TRACK_REGISTRY_FILE", cache_registry), \
                     patch.object(main, "TRACK_REGISTRY_FILE", cache_registry):
-                main.save_config({
-                    **main.DEFAULT_CONFIG,
+                config_store.save_config({
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                 })
 
@@ -81,11 +82,11 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }
             cache_registry.write_text(json.dumps({"tracks": [legacy]}), encoding="utf-8")
 
-            with patch.object(main, "CONFIG_FILE", cache_file), \
+            with patch.object(config_store, "CONFIG_FILE", cache_file), \
                     patch.object(main, "DEFAULT_TRACK_REGISTRY_FILE", cache_registry), \
                     patch.object(main, "TRACK_REGISTRY_FILE", cache_registry):
-                main.save_config({
-                    **main.DEFAULT_CONFIG,
+                config_store.save_config({
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                 })
 
@@ -103,9 +104,9 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             cache_file = root / "cache.json"
             output_dir = root / "output"
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
-                main.save_config({
-                    **main.DEFAULT_CONFIG,
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
+                config_store.save_config({
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                 })
 
@@ -130,27 +131,27 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             output_dir = root / "output"
             playlist = _playlist()
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
-                main.save_config({
-                    **main.DEFAULT_CONFIG,
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
+                config_store.save_config({
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                     "genome_playlists": [playlist],
                     "selected_genome_playlist_id": playlist["id"],
                 })
 
-                sidecar = output_dir / "local_data" / main.OUTPUT_DIR_PLAYLISTS_FILENAME
+                sidecar = output_dir / "local_data" / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME
                 self.assertTrue(sidecar.exists())
                 saved_sidecar = json.loads(sidecar.read_text(encoding="utf-8"))
                 self.assertEqual(saved_sidecar["genome_playlists"][0]["id"], playlist["id"])
 
                 cache_file.write_text(json.dumps({
-                    **main.DEFAULT_CONFIG,
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                     "genome_playlists": [],
                     "selected_genome_playlist_id": "__all__",
                 }), encoding="utf-8")
 
-                loaded = main.load_config()
+                loaded = config_store.load_config()
             self.assertEqual(loaded["genome_playlists"][0]["id"], playlist["id"])
             self.assertEqual(loaded["selected_genome_playlist_id"], playlist["id"])
 
@@ -161,16 +162,16 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             output_dir = root / "output"
             colors = ["#111111", "#222222", "#333333", "#444444", "#555555"]
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
-                main.save_config({
-                    **main.DEFAULT_CONFIG,
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
+                config_store.save_config({
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                     "genome_browser_colors": colors,
                     "show_fps_counter": True,
                     "sv_hide_inactive_tracks": True,
                 })
 
-                sidecar = output_dir / "local_data" / main.OUTPUT_DIR_CONFIG_FILENAME
+                sidecar = output_dir / "local_data" / config_store.OUTPUT_DIR_CONFIG_FILENAME
                 self.assertTrue(sidecar.exists())
                 saved_sidecar = json.loads(sidecar.read_text(encoding="utf-8"))
                 self.assertEqual(saved_sidecar["config"]["genome_browser_colors"], colors)
@@ -178,14 +179,14 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                 self.assertTrue(saved_sidecar["config"]["sv_hide_inactive_tracks"])
 
                 cache_file.write_text(json.dumps({
-                    **main.DEFAULT_CONFIG,
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
-                    "genome_browser_colors": main.DEFAULT_CONFIG["genome_browser_colors"],
+                    "genome_browser_colors": config_store.DEFAULT_CONFIG["genome_browser_colors"],
                     "show_fps_counter": False,
                     "sv_hide_inactive_tracks": False,
                 }), encoding="utf-8")
 
-                loaded = main.load_config()
+                loaded = config_store.load_config()
                 self.assertEqual(loaded["genome_browser_colors"], colors)
                 self.assertTrue(loaded["show_fps_counter"])
                 self.assertTrue(loaded["sv_hide_inactive_tracks"])
@@ -198,10 +199,10 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
 
             sidecar_dir = output_dir / "local_data"
             sidecar_dir.mkdir(parents=True)
-            (sidecar_dir / main.OUTPUT_DIR_CONFIG_FILENAME).write_text(json.dumps({
+            (sidecar_dir / config_store.OUTPUT_DIR_CONFIG_FILENAME).write_text(json.dumps({
                 "version": 1,
                 "config": {
-                    **main.DEFAULT_CONFIG,
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                     "genome_browser_colors": colors,
                     "default_light_mode": True,
@@ -223,13 +224,13 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             config_path.write_text(json.dumps({
                 "version": 1,
                 "config": {
-                    **main.DEFAULT_CONFIG,
+                    **config_store.DEFAULT_CONFIG,
                     "genome_browser_colors": colors,
                     "sv_hide_inactive_tracks": True,
                 },
             }), encoding="utf-8")
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
                 loaded = main.load_custom_config(main.LoadConfigRequest(path=str(config_path)))
 
             self.assertEqual(loaded["genome_browser_colors"], colors)
@@ -245,24 +246,24 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
 
             sidecar_dir = new_output / "local_data"
             sidecar_dir.mkdir(parents=True)
-            (sidecar_dir / main.OUTPUT_DIR_CONFIG_FILENAME).write_text(json.dumps({
+            (sidecar_dir / config_store.OUTPUT_DIR_CONFIG_FILENAME).write_text(json.dumps({
                 "version": 1,
                 "config": {
-                    **main.DEFAULT_CONFIG,
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(new_output),
                     "genome_browser_colors": colors,
                     "show_fps_counter": True,
                 },
             }), encoding="utf-8")
             cache_file.write_text(json.dumps({
-                **main.DEFAULT_CONFIG,
+                **config_store.DEFAULT_CONFIG,
                 "output_dir": str(old_output),
             }), encoding="utf-8")
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
                 response = main.update_config(main.ConfigUpdate(
                     output_dir=str(new_output),
-                    genome_browser_colors=main.DEFAULT_CONFIG["genome_browser_colors"],
+                    genome_browser_colors=config_store.DEFAULT_CONFIG["genome_browser_colors"],
                     show_fps_counter=False,
                 ))
 
@@ -280,19 +281,19 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
 
             sidecar_dir = new_output / "local_data"
             sidecar_dir.mkdir(parents=True)
-            (sidecar_dir / main.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
+            (sidecar_dir / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
                 "version": 1,
                 "genome_playlists": [playlist],
                 "selected_genome_playlist_id": playlist["id"],
             }), encoding="utf-8")
             cache_file.write_text(json.dumps({
-                **main.DEFAULT_CONFIG,
+                **config_store.DEFAULT_CONFIG,
                 "output_dir": str(old_output),
                 "genome_playlists": [],
                 "selected_genome_playlist_id": "__all__",
             }), encoding="utf-8")
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
                 response = main.update_config(main.ConfigUpdate(
                     output_dir=str(new_output),
                     genome_playlists=[],
@@ -309,9 +310,9 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             output_dir = root / "output"
             playlist = _playlist()
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
-                main.save_config({
-                    **main.DEFAULT_CONFIG,
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
+                config_store.save_config({
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                     "genome_playlists": [playlist],
                     "selected_genome_playlist_id": playlist["id"],
@@ -323,7 +324,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                 ))
 
             self.assertEqual(response["config"]["genome_playlists"][0]["id"], playlist["id"])
-            sidecar = output_dir / "local_data" / main.OUTPUT_DIR_PLAYLISTS_FILENAME
+            sidecar = output_dir / "local_data" / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME
             saved_sidecar = json.loads(sidecar.read_text(encoding="utf-8"))
             self.assertEqual(saved_sidecar["genome_playlists"][0]["id"], playlist["id"])
 
@@ -334,9 +335,9 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             output_dir = root / "output"
             playlist = _playlist()
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
-                main.save_config({
-                    **main.DEFAULT_CONFIG,
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
+                config_store.save_config({
+                    **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                     "genome_playlists": [playlist],
                     "selected_genome_playlist_id": playlist["id"],
@@ -349,7 +350,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                 ))
 
             self.assertEqual(response["config"]["genome_playlists"], [])
-            sidecar = output_dir / "local_data" / main.OUTPUT_DIR_PLAYLISTS_FILENAME
+            sidecar = output_dir / "local_data" / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME
             saved_sidecar = json.loads(sidecar.read_text(encoding="utf-8"))
             self.assertEqual(saved_sidecar["genome_playlists"], [])
 
@@ -360,16 +361,16 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             output_dir = root / "output"
             playlist = _playlist()
             cache_file.write_text(json.dumps({
-                **main.DEFAULT_CONFIG,
+                **config_store.DEFAULT_CONFIG,
                 "output_dir": str(output_dir),
                 "genome_playlists": [playlist],
                 "selected_genome_playlist_id": playlist["id"],
             }), encoding="utf-8")
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
-                loaded = main.load_config()
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
+                loaded = config_store.load_config()
 
-            sidecar = output_dir / "local_data" / main.OUTPUT_DIR_PLAYLISTS_FILENAME
+            sidecar = output_dir / "local_data" / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME
             self.assertTrue(sidecar.exists())
             self.assertEqual(loaded["genome_playlists"][0]["id"], playlist["id"])
 
@@ -380,25 +381,25 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             working_dir = root / "working"
             playlist = _playlist()
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
-                main.save_config({
-                    **main.DEFAULT_CONFIG,
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
+                config_store.save_config({
+                    **config_store.DEFAULT_CONFIG,
                     "working_dir": str(working_dir),
                     "genome_playlists": [playlist],
                     "selected_genome_playlist_id": playlist["id"],
                 })
 
-                sidecar = working_dir / "local_data" / main.OUTPUT_DIR_PLAYLISTS_FILENAME
+                sidecar = working_dir / "local_data" / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME
                 self.assertTrue(sidecar.exists())
 
                 cache_file.write_text(json.dumps({
-                    **main.DEFAULT_CONFIG,
+                    **config_store.DEFAULT_CONFIG,
                     "working_dir": str(working_dir),
                     "genome_playlists": [],
                     "selected_genome_playlist_id": "__all__",
                 }), encoding="utf-8")
 
-                loaded = main.load_config()
+                loaded = config_store.load_config()
                 self.assertEqual(loaded["genome_playlists"][0]["id"], playlist["id"])
                 self.assertEqual(loaded["selected_genome_playlist_id"], playlist["id"])
 
@@ -412,19 +413,19 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
 
             sidecar_dir = new_working / "local_data"
             sidecar_dir.mkdir(parents=True)
-            (sidecar_dir / main.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
+            (sidecar_dir / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
                 "version": 1,
                 "genome_playlists": [playlist],
                 "selected_genome_playlist_id": playlist["id"],
             }), encoding="utf-8")
             cache_file.write_text(json.dumps({
-                **main.DEFAULT_CONFIG,
+                **config_store.DEFAULT_CONFIG,
                 "working_dir": str(old_working),
                 "genome_playlists": [],
                 "selected_genome_playlist_id": "__all__",
             }), encoding="utf-8")
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
                 response = main.update_config(main.ConfigUpdate(
                     working_dir=str(new_working),
                     genome_playlists=[],
@@ -443,20 +444,20 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
 
             output_sidecar_dir = output_dir / "local_data"
             output_sidecar_dir.mkdir(parents=True)
-            (output_sidecar_dir / main.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
+            (output_sidecar_dir / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
                 "version": 1,
                 "genome_playlists": [],
                 "selected_genome_playlist_id": "__all__",
             }), encoding="utf-8")
             working_sidecar_dir = working_dir / "local_data"
             working_sidecar_dir.mkdir(parents=True)
-            (working_sidecar_dir / main.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
+            (working_sidecar_dir / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
                 "version": 1,
                 "genome_playlists": [playlist],
                 "selected_genome_playlist_id": playlist["id"],
             }), encoding="utf-8")
 
-            state = main._load_playlist_state_for_config({
+            state = config_store._load_playlist_state_for_config({
                 "output_dir": str(output_dir),
                 "working_dir": str(working_dir),
             })
@@ -471,7 +472,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
 
             sidecar_dir = output_dir / "local_data"
             sidecar_dir.mkdir(parents=True)
-            (sidecar_dir / main.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
+            (sidecar_dir / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME).write_text(json.dumps({
                 "version": 1,
                 "genome_playlists": [playlist],
                 "selected_genome_playlist_id": playlist["id"],
@@ -497,25 +498,25 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }
             palette = ["#123456", "#abcdef"]
 
-            with patch.object(main, "CONFIG_FILE", cache_file):
+            with patch.object(config_store, "CONFIG_FILE", cache_file):
                 main.update_config(main.ConfigUpdate(
                     genome_default_color="#00b692",
                     genome_colors=assignments,
                     genome_color_palette=palette,
                 ))
 
-                loaded = main.load_config()
+                loaded = config_store.load_config()
                 self.assertEqual(loaded["genome_default_color"], "#00b692")
                 self.assertEqual(loaded["genome_colors"], assignments)
                 self.assertEqual(loaded["genome_color_palette"], palette)
 
     def test_colour_keys_are_recognised_configuration(self):
         for key in ("genome_default_color", "genome_colors", "genome_color_palette"):
-            self.assertIn(key, main.RECOGNIZED_CONFIG_KEYS)
+            self.assertIn(key, config_store.RECOGNIZED_CONFIG_KEYS)
         # The positional list it replaced is kept only so a configuration written
         # before the change can still be read and migrated.
-        self.assertEqual(main.DEFAULT_CONFIG["genome_browser_colors"], [])
-        self.assertEqual(main.DEFAULT_CONFIG["genome_default_color"], "#3366cc")
+        self.assertEqual(config_store.DEFAULT_CONFIG["genome_browser_colors"], [])
+        self.assertEqual(config_store.DEFAULT_CONFIG["genome_default_color"], "#3366cc")
 
 
 if __name__ == "__main__":

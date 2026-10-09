@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import achievements_store as store  # noqa: E402
 import main  # noqa: E402
+import config_store  # noqa: E402
 
 
 class StoreModelTests(unittest.TestCase):
@@ -156,13 +157,13 @@ def _app(output_dir="out"):
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
         cache_file = root / "cache_achievements.json"
-        with patch.object(main, "CONFIG_FILE", root / "config.json"), \
+        with patch.object(config_store, "CONFIG_FILE", root / "config.json"), \
                 patch.object(main, "ACHIEVEMENTS_FILE", cache_file):
-            config = {**main.DEFAULT_CONFIG}
+            config = {**config_store.DEFAULT_CONFIG}
             if output_dir is not None:
                 config["output_dir"] = str(root / output_dir)
                 (root / output_dir).mkdir(parents=True, exist_ok=True)
-            main.save_config(config)
+            config_store.save_config(config)
             yield root, cache_file
 
 
@@ -206,10 +207,10 @@ class AchievementEndpointTests(unittest.TestCase):
             _sync({"unlocked": {"scribe": "2026-01-01T00:00:00Z"}})
             self.assertTrue(cache_file.exists())
 
-            config = main.load_config()
+            config = config_store.load_config()
             config["output_dir"] = str(root / "later")
             (root / "later").mkdir()
-            main.save_config(config)
+            config_store.save_config(config)
 
             response = _get()
             self.assertIn("scribe", response["store"]["unlocked"])
@@ -239,7 +240,7 @@ class AchievementEndpointTests(unittest.TestCase):
 
             self.assertTrue(response["readonly"])
             self.assertEqual(json.loads(sidecar.read_text()), original)
-            messages = [w["message"] for w in main.get_config_warnings()]
+            messages = [w["message"] for w in config_store.get_config_warnings()]
             self.assertTrue(any("newer version" in m for m in messages))
 
     def test_reset_clears_every_copy_so_nothing_comes_back(self):

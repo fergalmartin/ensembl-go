@@ -29,6 +29,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import config_store  # noqa: E402
 
 
 TOY_GFF = (
@@ -261,27 +262,27 @@ class ConfigCacheTests(unittest.TestCase):
     """Loading the configuration is on every request path, including the polls."""
 
     def tearDown(self):
-        main.invalidate_config_cache()
+        config_store.invalidate_config_cache()
 
     def test_repeated_loads_do_not_re_read_the_file(self):
-        main.invalidate_config_cache()
-        with patch.object(main, "_load_config_uncached", wraps=main._load_config_uncached) as loader:
+        config_store.invalidate_config_cache()
+        with patch.object(config_store, "_load_config_uncached", wraps=config_store._load_config_uncached) as loader:
             for _ in range(20):
-                main.load_config()
+                config_store.load_config()
         self.assertEqual(loader.call_count, 1)
 
     def test_each_caller_gets_its_own_copy_to_mutate(self):
-        main.invalidate_config_cache()
-        first = main.load_config()
+        config_store.invalidate_config_cache()
+        first = config_store.load_config()
         first["output_dir"] = "/somewhere/a-caller-scribbled-here"
-        second = main.load_config()
+        second = config_store.load_config()
         self.assertNotEqual(second.get("output_dir"), "/somewhere/a-caller-scribbled-here")
 
     def test_invalidating_forces_the_next_load_to_go_to_disk(self):
-        main.load_config()
-        main.invalidate_config_cache()
-        with patch.object(main, "_load_config_uncached", wraps=main._load_config_uncached) as loader:
-            main.load_config()
+        config_store.load_config()
+        config_store.invalidate_config_cache()
+        with patch.object(config_store, "_load_config_uncached", wraps=config_store._load_config_uncached) as loader:
+            config_store.load_config()
         self.assertEqual(loader.call_count, 1)
 
 

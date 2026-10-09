@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main
+import config_store  # noqa: E402
 import app_state  # noqa: E402
 from download_manager import DownloadManager
 from species_name_policy import build_species_name_policy
@@ -49,16 +50,16 @@ class ConfigStartupTests(unittest.TestCase):
             "assembly": "GCA_123456789.1",
         }
         config = {
-            **main.DEFAULT_CONFIG,
+            **config_store.DEFAULT_CONFIG,
             "output_dir": str(self.root / "output"),
             "active_species": [genome],
             "genome_playlists": [{"id": "saved", "name": "Saved", "genomes": [genome]}],
         }
         with patch.object(app_state, "download_manager", self.manager), \
-                patch.object(main, "CONFIG_FILE", self.root / "config.json"), \
+                patch.object(config_store, "CONFIG_FILE", self.root / "config.json"), \
                 patch.object(self.manager, "_build_cache", wraps=self.manager._build_cache) as build:
-            main.save_config(config)
-            self.addCleanup(main.invalidate_config_cache)
+            config_store.save_config(config)
+            self.addCleanup(config_store.invalidate_config_cache)
             loaded = main.get_config()
             sidecar = main.get_output_dir_config(config["output_dir"])
             playlists = main.get_config_playlists(config["output_dir"])

@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import config_store  # noqa: E402
 
 SLICE = demo_genome.SLICE_GENOME
 CHROM = "1"
@@ -225,8 +226,8 @@ class SliceIndexTests(unittest.TestCase):
         loop = asyncio.new_event_loop()
         genome = f"{SLICE.provider}::{SLICE.species_key}::{SLICE.assembly}"
 
-        original = main.load_config
-        main.load_config = lambda: {"output_dir": self.workspace, "active_species": []}
+        original = config_store.load_config
+        config_store.load_config = lambda: {"output_dir": self.workspace, "active_species": []}
         try:
             regions = loop.run_until_complete(main.browse_regions(genome=genome))
             region = regions[0].model_dump() if hasattr(regions[0], "model_dump") else dict(regions[0])
@@ -243,7 +244,7 @@ class SliceIndexTests(unittest.TestCase):
             names = [(g.model_dump() if hasattr(g, "model_dump") else dict(g))["name"] for g in genes]
             self.assertIn("REG4", names)
         finally:
-            main.load_config = original
+            config_store.load_config = original
 
 
 class BundledGenomeRegistryTests(unittest.TestCase):
@@ -307,12 +308,12 @@ class TutorialNotesStayInTheSandboxTests(unittest.TestCase):
         (self.output_dir / "local_data").mkdir(parents=True)
         self.workspace = demo_genome.tutorial_workspace(str(self.output_dir))
         (self.workspace / "local_data").mkdir(parents=True)
-        self._original_load_config = main.load_config
-        main.load_config = lambda: {"output_dir": str(self.output_dir)}
+        self._original_load_config = config_store.load_config
+        config_store.load_config = lambda: {"output_dir": str(self.output_dir)}
         self.loop = asyncio.new_event_loop()
 
     def tearDown(self):
-        main.load_config = self._original_load_config
+        config_store.load_config = self._original_load_config
         demo_genome.clear_tutorial_session_genome()
         self._tmp.cleanup()
 

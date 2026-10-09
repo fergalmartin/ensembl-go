@@ -183,12 +183,13 @@ class HomologyApiTests(unittest.TestCase):
     def setUp(self):
         HomologyStoreTests.setUp(self)
         import main
+        import config_store  # noqa: E402
         self.main = main
         self.genome_key = 'ensembl::Mus_musculus::GCA_1::dataset::ensembl/2025_12'
         self.genome = {'provider': 'ensembl', 'species_key': 'Mus_musculus', 'assembly': 'GCA_1',
                        'dataset_release_key': 'ensembl/2025_12', 'files': {'homology': str(self.path)}}
         self.config = {'active_species': [self.genome]}
-        self.config_patch = patch.object(main, 'load_config', return_value=self.config)
+        self.config_patch = patch.object(config_store, 'load_config', return_value=self.config)
         self.store_patch = patch.object(main, 'homology_search_store', self.store)
         self.config_patch.start()
         self.store_patch.start()

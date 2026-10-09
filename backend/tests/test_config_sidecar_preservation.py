@@ -22,6 +22,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import config_store  # noqa: E402
 
 
 COLOURS = {"ensembl:Bos_taurus:ARS-UCD2.0": "#ff0000", "ensembl:Mus_musculus:GRCm39": "#00ff00"}
@@ -39,11 +40,11 @@ class SidecarBase(unittest.TestCase):
 
     @property
     def sidecar(self):
-        return self.output_dir / "local_data" / main.OUTPUT_DIR_CONFIG_FILENAME
+        return self.output_dir / "local_data" / config_store.OUTPUT_DIR_CONFIG_FILENAME
 
     @property
     def playlist_file(self):
-        return self.output_dir / "local_data" / main.OUTPUT_DIR_PLAYLISTS_FILENAME
+        return self.output_dir / "local_data" / config_store.OUTPUT_DIR_PLAYLISTS_FILENAME
 
     def stored(self):
         return json.loads(self.sidecar.read_text(encoding="utf-8"))["config"]
@@ -53,19 +54,19 @@ class SidecarBase(unittest.TestCase):
 
     def unadopted(self, **overrides):
         """What a fresh installation holds: defaults, having read nothing."""
-        return {**main.DEFAULT_CONFIG, "output_dir": str(self.output_dir), **overrides}
+        return {**config_store.DEFAULT_CONFIG, "output_dir": str(self.output_dir), **overrides}
 
     def adopted(self, **overrides):
         """A configuration that has read the directory, as the running app has."""
         config = self.unadopted()
-        config = main._merge_output_dir_config_state(config)
-        config = main._merge_output_dir_playlist_state(config)
-        config = main._record_sidecar_revisions(config)
+        config = config_store._merge_output_dir_config_state(config)
+        config = config_store._merge_output_dir_playlist_state(config)
+        config = config_store._record_sidecar_revisions(config)
         return {**config, **overrides}
 
     def save(self, config, **kwargs):
-        with patch.object(main, "CONFIG_FILE", self.config_file):
-            main.save_config(config, **kwargs)
+        with patch.object(config_store, "CONFIG_FILE", self.config_file):
+            config_store.save_config(config, **kwargs)
 
 
 class UnadoptedWritesAreRefused(SidecarBase):
@@ -156,7 +157,7 @@ class DamagedAndForcedWrites(SidecarBase):
     def test_previous_sidecar_is_backed_up(self):
         self.save(self.unadopted(genome_colors=COLOURS))
         self.save(self.adopted(genome_colors={"x": "#0000ff"}))
-        backup = self.sidecar.parent / f"{main.OUTPUT_DIR_CONFIG_FILENAME}.bak"
+        backup = self.sidecar.parent / f"{config_store.OUTPUT_DIR_CONFIG_FILENAME}.bak"
         self.assertTrue(backup.exists())
         self.assertEqual(json.loads(backup.read_text(encoding="utf-8"))["config"]["genome_colors"], COLOURS)
 
@@ -176,8 +177,8 @@ class AdoptionRecoversState(SidecarBase):
             active_species=SPECIES,
             dim_non_selected_genes=False,
         ))
-        recovered = main._merge_output_dir_playlist_state(
-            main._merge_output_dir_config_state(self.unadopted())
+        recovered = config_store._merge_output_dir_playlist_state(
+            config_store._merge_output_dir_config_state(self.unadopted())
         )
         self.assertEqual(recovered["genome_colors"], COLOURS)
         self.assertEqual(recovered["active_species"], SPECIES)

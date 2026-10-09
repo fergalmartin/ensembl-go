@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi import HTTPException  # noqa: E402
 
 import main  # noqa: E402
+import config_store  # noqa: E402
 from main import (  # noqa: E402
     SvAlignmentDeleteRequest,
     SvAlignmentRegisterRequest,
@@ -54,8 +55,8 @@ class SvConfigEndpointTestCase(unittest.TestCase):
         # config, so each test needs its own rather than the developer's real one.
         self.app_config = {"output_dir": str(self.root), "sv_config_paths": []}
 
-        patch.object(main, "load_config", lambda: dict(self.app_config)).start()
-        patch.object(main, "save_config", self._save_config).start()
+        patch.object(config_store, "load_config", lambda: dict(self.app_config)).start()
+        patch.object(config_store, "save_config", self._save_config).start()
         self.addCleanup(patch.stopall)
 
         _sv_registry_cache["signature"] = None

@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main
+import config_store  # noqa: E402
 
 
 class CyclePreviewTests(unittest.TestCase):
@@ -12,7 +13,7 @@ class CyclePreviewTests(unittest.TestCase):
         genome = {"species_key": "human", "assembly": "GCA_000001405.29", "files": {"gff3": "/test/human.gff3", "index": "/test/human.db"}}
         config = {"active_species": [], "next_previous_session_genomes": [genome]}
         key = main._active_species_item_key(genome)
-        with patch.object(main, "load_config", return_value=config), patch.object(main, "tutorial_session_species", return_value=[]), patch.object(main, "_browse_index_for", return_value="/test/human.db"):
+        with patch.object(config_store, "load_config", return_value=config), patch.object(main, "tutorial_session_species", return_value=[]), patch.object(main, "_browse_index_for", return_value="/test/human.db"):
             context = main._resolve_browse_genome_context(key)
         self.assertEqual(context["gff_path"], "/test/human.gff3")
         self.assertEqual(config["active_species"], [])
@@ -27,6 +28,6 @@ class CyclePreviewTests(unittest.TestCase):
     def test_alignment_link_can_resolve_by_bare_assembly_accession(self):
         genome = {"species_key": "human", "assembly": "GCA_000001405.29", "files": {"gff3": "/test/human.gff3", "index": "/test/human.db"}}
         config = {"active_species": [genome], "next_previous_session_genomes": []}
-        with patch.object(main, "load_config", return_value=config), patch.object(main, "tutorial_session_species", return_value=[]), patch.object(main, "_browse_index_for", return_value="/test/human.db"):
+        with patch.object(config_store, "load_config", return_value=config), patch.object(main, "tutorial_session_species", return_value=[]), patch.object(main, "_browse_index_for", return_value="/test/human.db"):
             context = main._resolve_browse_genome_context("gca_000001405.29")
         self.assertIs(context["species"], genome)

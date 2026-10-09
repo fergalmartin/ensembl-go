@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import config_store  # noqa: E402
 import app_state  # noqa: E402
 from download_manager import AssemblySummary  # noqa: E402
 
@@ -16,7 +17,7 @@ from download_manager import AssemblySummary  # noqa: E402
 class GenomeDisplayLabelTests(unittest.TestCase):
     def test_enrich_config_prefers_catalog_assembly_name_over_accession(self):
         config = {
-            **main.DEFAULT_CONFIG,
+            **config_store.DEFAULT_CONFIG,
             "active_species": [
                 {
                     "provider": "ensembl",
@@ -40,7 +41,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
         }
 
         with patch.object(app_state.download_manager, "species_data", species_data):
-            enriched = main._enrich_config_genome_labels(config)
+            enriched = config_store._enrich_config_genome_labels(config)
 
         self.assertEqual(enriched["active_species"][0]["scientific_name"], "Homo sapiens")
         self.assertEqual(enriched["active_species"][0]["assembly_name"], "GRCh38.p14")
@@ -64,7 +65,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
         }
 
         with patch.object(app_state.download_manager, "species_data", species_data):
-            hydrated = main._hydrate_track_genome_label(track, main.DEFAULT_CONFIG)
+            hydrated = main._hydrate_track_genome_label(track, config_store.DEFAULT_CONFIG)
 
         self.assertEqual(hydrated["genome_species_label"], "Red fox")
         self.assertEqual(hydrated["display_name"], "Red fox")

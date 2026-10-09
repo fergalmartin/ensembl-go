@@ -20,6 +20,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import config_store  # noqa: E402
 import removal_rules  # noqa: E402
 
 CONVERTED_HEADER = (
@@ -323,14 +324,14 @@ class EndpointTests(unittest.TestCase):
 
     def _preview(self, root: Path, descriptors, entries):
         request = main.GenomeRemovalRequest(output_dir=str(root), genomes=descriptors)
-        with patch.object(main, "load_config", return_value=self._config(root, entries)):
+        with patch.object(config_store, "load_config", return_value=self._config(root, entries)):
             return asyncio.run(main.preview_genome_removal(request))
 
     def _remove(self, root: Path, descriptors, entries, plan_token=""):
         request = main.GenomeRemovalRequest(
             output_dir=str(root), genomes=descriptors, plan_token=plan_token
         )
-        with patch.object(main, "load_config", return_value=self._config(root, entries)):
+        with patch.object(config_store, "load_config", return_value=self._config(root, entries)):
             return asyncio.run(main.remove_genome_data(request))
 
     def _manual_fixture(self, root: Path):
@@ -391,7 +392,7 @@ class EndpointTests(unittest.TestCase):
             config["active_species"] = [entry]
 
             request = main.GenomeRemovalRequest(output_dir=str(root), genomes=[descriptor])
-            with patch.object(main, "load_config", return_value=config):
+            with patch.object(config_store, "load_config", return_value=config):
                 result = asyncio.run(main.remove_genome_data(request))
 
             self.assertEqual(result["results"][0]["status"], "deleted")
