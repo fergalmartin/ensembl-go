@@ -1,4 +1,4 @@
-import { NUCLEOTIDE_COLORS, getBaseColor } from '../utils/nucleotideStyle'
+import { getBaseColor } from '../utils/nucleotideStyle'
 import { browserControlKey } from '../achievements/browserControls.js'
 import { trackAchievement } from '../achievements/tracker.js'
 import { Fragment, memo, useRef, useEffect, useId, useLayoutEffect, useState, useCallback, useMemo } from 'react'
@@ -39,17 +39,13 @@ import {
     buildSvgDocument,
     escapeXml,
 } from '../utils/screenshotExport'
-import {
-    buildGeneIntervalIndex,
-    queryGeneIntervalIndex,
-    sameGeneRange,
-} from '../utils/geneIntervalIndex'
+import { buildGeneIntervalIndex, sameGeneRange } from '../utils/geneIntervalIndex'
 import InfoGlyph from './InfoGlyph'
 import { registerBrowserViewport } from '../utils/browserTutorialControls'
 import useTutorial from '../hooks/useTutorial'
 import useNearViewport from '../hooks/useNearViewport'
 import { getTranscriptExonSegments } from './genomeBrowserExonSegments'
-import { orderTranscripts, resolveGeneTranscriptView } from './genomeBrowserTranscriptView'
+import { resolveGeneTranscriptView } from './genomeBrowserTranscriptView'
 import { shouldResetStickyGeneRows } from './genomeBrowserTranscriptLayout'
 import {
     DEFAULT_BROWSING_CONTROLS,
@@ -65,7 +61,7 @@ import {
     isWheelGestureFromChrome,
     isWheelInsideIsolatedOverlay,
 } from '../utils/browsingControls'
-import { bedThickPieces, bedThickRegion } from '../utils/bedThickRegion'
+import { bedThickPieces } from '../utils/bedThickRegion'
 import { checkRangeAgainstBounds, parseLocationQuery } from '../utils/locationQuery'
 import { formatZoneLabel, zonedSegments, zonedValueFraction, zoneThresholdsFor } from '../utils/zonedScale'
 import { effectiveMemberTrack, gatherRows, groupRowIdFor, isGroupRowId } from '../utils/trackGroups'
@@ -99,7 +95,6 @@ import NoteGlyph from './NoteGlyph'
 
 // ============ Constants ============
 import { API_BASE } from '../backendRuntime'
-import { overlayOccluders } from '../utils/overlayGeometry'
 import GeneIndexProgressOverlay from './GeneIndexProgressOverlay'
 import {
     GENE_INDEX_TRACK_HEIGHT,
@@ -108,63 +103,153 @@ import {
 } from '../utils/geneIndexOverlay'
 import { INDEX_BUILDING_STATUS } from '../utils/browserReadiness'
 import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../sessionResume.js'
-const EMPTY_LIST = Object.freeze([])
-const TRACK_HEIGHT = 40
-// How often the panel asks how the gene index behind it is getting on.
-// Fast enough that the meter reads as live, slow enough that a build
-// running for minutes is not polled thousands of times.
-const GENE_INDEX_POLL_INTERVAL_MS = 1200
-const TRACK_GAP = 8
-const EXON_HEIGHT = 12
-const INTRON_HEIGHT = 2
-const LABEL_FONT = sansFont(11)
-const COORD_FONT = monoFont(RULER_FONT_SIZE)
-const PILL_FONT = sansFont(10)
-const LHS_WIDTH = 48
-// How long a move the tutorial makes takes. Long enough to read as travelling rather
-// than jumping, and in the same range as the browser's own Home/End (400ms) and
-// whole-chromosome reset (500ms). The tutorial scales it by the chosen autoplay speed.
-const TUTORIAL_MOVE_MS = 700
+import {
+  BED_DENSITY_LEVELS,
+  BIGBED_BLOCK_LEVELS,
+  BIGBED_BLOCK_MERGE_GAP_PX,
+  BIGBED_DETAIL_DENSE_FEATURE_THRESHOLD,
+  BIGBED_DETAIL_EXON_HEIGHT,
+  BIGBED_DETAIL_LABEL_FONT_PX,
+  BIGBED_DETAIL_LANE_TOP_PAD,
+  BIGBED_DETAIL_MAX_FEATURES_PER_TILE,
+  BIGBED_FEATURE_TILE_SPAN,
+  BIGWIG_DATA_TYPE_DEFAULTS,
+  COLORS,
+  COORD_FONT,
+  CUSTOM_TRACK_HEIGHT_ADAPTIVE_VCF,
+  CUSTOM_TRACK_HEIGHT_ADAPTIVE_VCF_COMPACT,
+  CUSTOM_TRACK_HEIGHT_STANDARD,
+  CUSTOM_TRACK_HEIGHT_ZONED,
+  CUSTOM_TRACK_TOOLTIP_DWELL_MS,
+  CUSTOM_TRACK_TOOLTIP_MOVE_TOL_PX,
+  DEFAULT_CUSTOM_TRACK_RENDER_MODE,
+  EMPTY_LIST,
+  EXON_HEIGHT,
+  EXPANDED_FOOTER_INLINE_GAP,
+  EXPANDED_FOOTER_LABEL_TOP_OFFSET,
+  GENE_CHROM_CACHE_ENTER_SPAN,
+  GENE_INDEX_POLL_INTERVAL_MS,
+  GENE_LAYOUT_BUCKET_MIN_STEP,
+  GENE_LAYOUT_BUFFER_MAX,
+  GENE_LAYOUT_BUFFER_MIN,
+  GENE_LAYOUT_COVERAGE_SHRINK_THRESHOLD,
+  GENE_SUBTRACK_DISABLE_BP,
+  GENE_SUBTRACK_ENABLE_BP,
+  INTRON_HEIGHT,
+  JOINED_GROUP_HEADER_HEIGHT,
+  LABEL_FONT,
+  LHS_WIDTH,
+  MAX_BOTTOM_ALIGN_EXTRA_TOP_GAP,
+  MAX_GENE_TILE_CACHE_TILES,
+  MAX_TRANSCRIPT_CACHE_GENES,
+  MAX_TRANSCRIPT_PREFETCH_GENES,
+  NOTE_BUBBLE_GAP,
+  NOTE_BUBBLE_MIN_GENE_WIDTH,
+  NOTE_BUBBLE_SIZE,
+  REVERSE_COMPLEMENTED_TRACK_IDS,
+  SIDEBAR_RC_HALF_GAP,
+  SIDEBAR_RC_LINE_GAP,
+  SIDEBAR_TOGGLE_HIT_RADIUS,
+  SIDEBAR_TOGGLE_ICON_SIZE,
+  SIDEBAR_TOGGLE_LABEL_GAP,
+  SPLICE_BLOCK_LEVELS,
+  SPLICE_BLOCK_MERGE_GAP_PX,
+  SPLICE_BLOCK_TRACK_HEIGHT,
+  SPLICE_FINE_BP_PER_PX,
+  SPLICE_HEIGHT_BASE,
+  SPLICE_HEIGHT_MAX,
+  SPLICE_HEIGHT_MIN,
+  SPLICE_HEIGHT_STEP,
+  SPLICE_TILE_SPAN_COARSE,
+  SPLICE_TILE_SPAN_FINE,
+  SPLICE_TRANSCRIPT_BP_PER_PX,
+  TRACK_LOD_LEVELS,
+  TRACK_PICKER_GROUP_PREFIX,
+  TRANSCRIPT_DETAIL_VIEWSPAN_BP,
+  TUTORIAL_MOVE_MS,
+  VCF_LOD_LEVELS,
+  VCF_SETTINGS_DEFAULTS,
+  ZONED_ZONE_SOLID_COLORS,
+  bigBedLanePitch,
+  gutterMarkerStyle,
+  isGeneModelTrack,
+  isIntervalTrackType,
+  joinedGroupHeaderText,
+  pickerRowClass,
+} from './genome-browser/browserConstants.js'
+import {
+  BED_TO_BROWSER_OFFSET,
+  REV_COMP,
+  TILE_SIZE,
+  bigBedFeatureKey,
+  clamp,
+  collectGenesFromList,
+  getChromGeneCacheKey,
+  getFetchErrorMessage,
+  getTileKey,
+  isTransientFetchError,
+  isTransientFetchErrorMessage,
+  normalizeBigBedFeatureForRender,
+  normalizeVcfDensityForHotspots,
+  shiftBedFeatureToBrowserFrame,
+  shiftBedInterval,
+  smoothVcfDensityBins,
+  smoothVcfDensityClasses,
+  snapToTile,
+} from './genome-browser/trackData.js'
+import {
+  bedTrackColors,
+  bigBedBlockColor,
+  bigBedBlockStroke,
+  bigBedFeatureColor,
+  getBigBedLaneCapacity,
+  getBigBedTrackHeightForLanes,
+  hexToRgba,
+  isVcfAdaptiveLikeMode,
+  normalizeBedSettings,
+  normalizeBigWigDisplayMode,
+  normalizeBigWigHexColor,
+  normalizeBigWigSettings,
+  normalizeSpliceTrackSettings,
+  normalizeVcfDisplayMode,
+  normalizeVcfSettings,
+} from './genome-browser/trackSettings.js'
+import {
+  annotateSpliceSimilarityLift,
+  computeSplicePeakY,
+  cubicDerivativeAt,
+  cubicPointAt,
+  formatSpliceMotifForDisplay,
+  getSpliceBezierControls,
+  spliceJunctionKey,
+  spliceSupportBandWeight,
+  spliceSupportColor,
+} from './genome-browser/spliceGeometry.js'
+import {
+  buildAlignedIntronChevronLayout,
+  formatBp,
+  formatCoord,
+  formatGeneStrand,
+  formatRegionCoord,
+  formatSignalValueForTooltip,
+  formatSignalValueForTrack,
+  getFeatureCoordsForView,
+  getGeneCoordRange,
+  getSelectedGeneCoordsForView,
+  getTranscriptLayoutMetrics,
+  getTranscriptPopupMetadata,
+  hasGeneCoords,
+} from './genome-browser/browserFormat.js'
+import {
+  beginCanvasMirror,
+  endCanvasMirror,
+  fillScreenText,
+  getScrollerMetrics,
+  getScrollerVisibleTop,
+  measureExpandedFooterLabelWidth,
+  scrollScrollerTo,
+} from './genome-browser/canvasText.js'
 
-/** A box over one track's switch in the gutter, for a tutorial to spotlight.
- *
- *  The gutter is painted on the canvas and hit-tested by geometry, so there is no element
- *  to anchor on; these markers are `pointer-events-none` and exist only to be measured. */
-function gutterMarkerStyle(trackY, trackHeight) {
-    return {
-        left: 0,
-        top: Math.max(0, trackY + (trackHeight / 2) - SIDEBAR_TOGGLE_HIT_RADIUS - 2),
-        width: LHS_WIDTH,
-        height: (SIDEBAR_TOGGLE_HIT_RADIUS + 2) * 2,
-    }
-}
-// Measured up from the label's baseline to the top of the expanded footer row, so the
-// label and the control beside it share one top edge. Six rather than ten: ten put that
-// edge at the mid-line plus six, which is exactly the bottom of the last exon block, and
-// the row sat flush against the transcript it belongs to.
-const EXPANDED_FOOTER_LABEL_TOP_OFFSET = 6
-const EXPANDED_FOOTER_INLINE_GAP = 6
-
-let expandedFooterTextMeasureContext = null
-function measureExpandedFooterLabelWidth(text) {
-    const fallbackWidth = String(text || '').length * 6
-    if (typeof document === 'undefined') return fallbackWidth + 4
-    if (!expandedFooterTextMeasureContext) {
-        expandedFooterTextMeasureContext = document.createElement('canvas').getContext('2d')
-    }
-    if (!expandedFooterTextMeasureContext) return fallbackWidth + 4
-    expandedFooterTextMeasureContext.font = LABEL_FONT
-    return Math.ceil(expandedFooterTextMeasureContext.measureText(String(text || '')).width) + 4
-}
-// Sidebar power toggles are drawn as a bare glyph, like the chevron and close
-// controls on the focus drawer: the genome's own colour when the track is on,
-// muted grey when it is off. A filled disc read as far louder than the thing it
-// was toggling. The hit radius stays generous so the smaller glyph is no harder
-// to click than the disc was.
-const SIDEBAR_TOGGLE_ICON_SIZE = 16
-const SIDEBAR_TOGGLE_HIT_RADIUS = 12
-const SIDEBAR_TOGGLE_LABEL_GAP = 6
-const CUSTOM_TRACK_HEIGHT_STANDARD = 54
 /* The track picker adds and removes; switching a track on and off is the gutter's job.
  * Each row has one button, Add or Remove, for what it will be once applied, and rows that
  * are (or will be) on the panel are highlighted. Nothing changes until Apply. */
@@ -184,36 +269,6 @@ function PickerRowButton({ willShow, onClick, isLight, disabled = false, tourId 
     )
 }
 
-const pickerRowClass = (willShow, isLight) => `w-full text-left px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${willShow
-    ? isLight ? 'border-blue-300 bg-blue-50' : 'border-blue-600/80 bg-blue-900/25'
-    : isLight ? 'border-gray-200 hover:border-blue-200 hover:bg-gray-50' : 'border-gray-700 hover:border-gray-600 hover:bg-gray-800/40'}`
-
-// The track picker's selection holds registry track ids and, for groups, 'group:<id>'.
-const TRACK_PICKER_GROUP_PREFIX = 'group:'
-// A joined track group's row opens with a band naming the group.
-const JOINED_GROUP_HEADER_HEIGHT = 16
-const joinedGroupHeaderText = (rowLayout) => {
-    const count = rowLayout?.memberIds?.length || 0
-    return `${rowLayout?.label || 'Track group'} · ${count} track${count === 1 ? '' : 's'}`
-}
-const CUSTOM_TRACK_HEIGHT_ZONED = 81
-const CUSTOM_TRACK_HEIGHT_ENSEMBL_VCF = 100
-const CUSTOM_TRACK_HEIGHT_ADAPTIVE_VCF = 108
-const CUSTOM_TRACK_HEIGHT_ADAPTIVE_VCF_COMPACT = 64
-const COMPRESSED_TRANSCRIPT_ROW_PITCH = 8
-const COMPRESSED_TRANSCRIPT_ROW_GAP = 1
-const COMPRESSED_TRANSCRIPT_EXON_HEIGHT = 6
-const COMPRESSED_TRANSCRIPT_TRACK_PADDING = 12
-const COMPRESSED_TRANSCRIPT_MID_OFFSET = 4
-const COMPRESSED_TRANSCRIPT_MIN_TRACK_HEIGHT = 24
-const FLATTENED_TRANSCRIPT_ROW_PITCH = 18
-const FLATTENED_TRANSCRIPT_ROW_GAP = 2
-const FLATTENED_TRANSCRIPT_TRACK_PADDING = 2
-const FLATTENED_TRANSCRIPT_MID_OFFSET = 8
-const FLATTENED_TRANSCRIPT_MIN_TRACK_HEIGHT = 36
-const FLATTENED_COMPRESSED_TRANSCRIPT_TRACK_PADDING = 1
-const FLATTENED_COMPRESSED_TRANSCRIPT_MIN_TRACK_HEIGHT = 36
-
 const extractPathData = (svgRaw) => {
     if (typeof svgRaw !== 'string') return ''
     const m = svgRaw.match(/<path[^>]*\sd=(['"])(.*?)\1/i)
@@ -229,574 +284,7 @@ const extractSvgBody = (svgRaw) => {
 const RESET_ICON_PATH_D = extractPathData(iconResetRaw)
 const ANCHOR_ICON_BODY = extractSvgBody(iconAnchorRaw)
 
-// 5-level LOD pyramid for custom tracks
-// binsPerTile × bpPerBin = tile size in bp
-// Buffer = 2× viewport each side = 5× viewport total covered
-const TRACK_LOD_LEVELS = [
-    { id: 'L0', minBpPerPx: 1000, bpPerBin: 10000, binsPerTile: 500 }, // 5Mb tiles — whole-chrom overview
-    { id: 'L1', minBpPerPx: 100, bpPerBin: 1000, binsPerTile: 512 }, // 512kb tiles — regional
-    { id: 'L2', minBpPerPx: 10, bpPerBin: 100, binsPerTile: 512 }, // 51.2kb tiles — gene level
-    { id: 'L3', minBpPerPx: 2, bpPerBin: 10, binsPerTile: 512 }, // 5.12kb tiles — exon level
-    { id: 'L4', minBpPerPx: 0, bpPerBin: 1, binsPerTile: 1024 }, // 1kb tiles — base level
-]
-// Keep backward-compat alias for any legacy path still referencing BIGWIG_LOD_LEVELS
-const BIGWIG_LOD_LEVELS = TRACK_LOD_LEVELS
-
-const VCF_LOD_LEVELS = [
-    { id: 'L0', minBpPerPx: 1200, bpPerBin: 25000, binsPerTile: 400, mode: 'summary' },
-    { id: 'L1', minBpPerPx: 240, bpPerBin: 2500, binsPerTile: 512, mode: 'summary' },
-    { id: 'L2', minBpPerPx: 48, bpPerBin: 500, binsPerTile: 512, mode: 'summary' },
-    { id: 'L3', minBpPerPx: 8, bpPerBin: 60, binsPerTile: 512, mode: 'summary' },
-    { id: 'L4', minBpPerPx: 0, bpPerBin: 3, binsPerTile: 1024, mode: 'detail' },
-]
-
-const VCF_SETTINGS_DEFAULTS = {
-    genic_color: '#00b692',
-    intergenic_color: '#96d0c9',
-}
-
-const SPLICE_FINE_BP_PER_PX = 140
-const SPLICE_TILE_SPAN_FINE = 120_000
-const SPLICE_TILE_SPAN_COARSE = 500_000
-const SPLICE_TRANSCRIPT_BP_PER_PX = 40
-const TRANSCRIPT_DETAIL_VIEWSPAN_BP = 500_000
-
-// A gene carrying notes gets a speech bubble at its head. Smaller than the
-// transcript-count pill because it says one thing rather than reading as a
-// control, and it has to sit in the 16px of track padding above row zero.
-const NOTE_BUBBLE_SIZE = 14
-// Much looser than the footer pill's 60px: a bubble is a fixed mark, not a
-// label that has to fit inside the gene. Below this the gene is a tick and the
-// bubble would be describing something the reader cannot see.
-const NOTE_BUBBLE_MIN_GENE_WIDTH = 24
-const NOTE_BUBBLE_GAP = 2
-const SPLICE_BLOCK_TRACK_HEIGHT = 56
-const SPLICE_BLOCK_MERGE_GAP_PX = 2
-const SPLICE_BLOCK_LEVELS = [
-    { id: 'L0', minBpPerPx: 1600, tileSpanBp: 2_000_000, blockBp: 40_000 },
-    { id: 'L1', minBpPerPx: 800, tileSpanBp: 1_000_000, blockBp: 20_000 },
-    { id: 'L2', minBpPerPx: 320, tileSpanBp: 500_000, blockBp: 10_000 },
-    { id: 'L3', minBpPerPx: SPLICE_FINE_BP_PER_PX, tileSpanBp: 250_000, blockBp: 5_000 },
-]
-const BIGBED_DETAIL_ENTER_BP_PER_PX = 18
-const BIGBED_DETAIL_EXIT_BP_PER_PX = 26
-const BIGBED_FEATURE_TILE_SPAN = 120_000
-const BIGBED_BLOCK_MERGE_GAP_PX = 2
-const BIGBED_DETAIL_EXON_HEIGHT = EXON_HEIGHT
-const BIGBED_DETAIL_LANE_PITCH = EXON_HEIGHT + 4
-// Gene models name each transcript under it, as the gene track does.
-const BIGBED_DETAIL_LABEL_ROW = 11
-const BIGBED_DETAIL_LABEL_FONT_PX = 9
-const bigBedLanePitch = (labelled) => BIGBED_DETAIL_LANE_PITCH + (labelled ? BIGBED_DETAIL_LABEL_ROW : 0)
-// A GFF/GTF read as gene models rather than one interval per line.
-const isGeneModelTrack = (track) => track?.type === 'gff' && track?.renderMode === 'transcripts'
-const BIGBED_DETAIL_LANE_TOP_PAD = 4
-const BIGBED_DETAIL_LANE_BOTTOM_PAD = 4
-const BIGBED_DETAIL_TRACK_BASE_HEIGHT = 34
-const BIGBED_DETAIL_TRACK_MAX_HEIGHT = 240
-const BIGBED_DETAIL_MAX_FEATURES_PER_TILE = 3000
-const BIGBED_DETAIL_DENSE_FEATURE_THRESHOLD = 2500
-// Blocks are ~2px at each level's finest zoom, so separate features stay separate on
-// screen; at 25-130px they used to merge a run of peaks into one slab. The ids changed
-// with the sizes so tiles cached at the old sizes are not reused.
-const BIGBED_BLOCK_LEVELS = [
-    // A whole chromosome at B0 alone is ~70 tiles; this keeps it to a handful.
-    { id: 'B00', minBpPerPx: 12_000, tileSpanBp: 32_000_000, blockBp: 24_000 },
-    { id: 'B0', minBpPerPx: 1500, tileSpanBp: 4_000_000, blockBp: 3_000 },
-    { id: 'B1', minBpPerPx: 320, tileSpanBp: 800_000, blockBp: 640 },
-    { id: 'B2', minBpPerPx: 60, tileSpanBp: 200_000, blockBp: 120 },
-    // The backend's smallest block is 50bp.
-    { id: 'B3', minBpPerPx: BIGBED_DETAIL_ENTER_BP_PER_PX, tileSpanBp: 80_000, blockBp: 50 },
-]
-// Density view for BED/BigBed: feature counts per bin, drawn as a histogram at every
-// zoom. Each level's bins are ~3px at its finest zoom and a tile holds ~320 of them, so
-// a screenful is one to five tiles whatever the zoom.
-const BED_DENSITY_LEVELS = [
-    { id: 'D0', minBpPerPx: 60_000, tileSpanBp: 64_000_000, blockBp: 200_000 },
-    { id: 'D1', minBpPerPx: 12_000, tileSpanBp: 16_000_000, blockBp: 40_000 },
-    { id: 'D2', minBpPerPx: 2_500, tileSpanBp: 3_200_000, blockBp: 8_000 },
-    { id: 'D3', minBpPerPx: 500, tileSpanBp: 640_000, blockBp: 1_600 },
-    { id: 'D4', minBpPerPx: 100, tileSpanBp: 128_000, blockBp: 320 },
-    { id: 'D5', minBpPerPx: 0, tileSpanBp: 32_000, blockBp: 64 },
-]
-const BED_DEFAULT_COLOR = '#10b981'
-const GFF_DEFAULT_COLOR = '#0891b2'
-// Interval tracks share one pipeline: BigBed through pyBigWig, plain BED and GFF/GTF
-// through the backend's in-memory index, all served as BigBed-shaped tiles.
-const INTERVAL_TRACK_TYPES = new Set(['bigbed', 'bed', 'gff'])
-const isIntervalTrackType = (type) => INTERVAL_TRACK_TYPES.has(type)
-const SPLICE_HEIGHT_BASE = 52
-const SPLICE_HEIGHT_STEP = 12
-const SPLICE_HEIGHT_MIN = 56
-const SPLICE_HEIGHT_MAX = 180
-const GENE_LAYOUT_BUFFER_MIN = 100_000
-const GENE_LAYOUT_BUFFER_MAX = 500_000
-const GENE_LAYOUT_BUCKET_MIN_STEP = 50_000
-const GENE_SUBTRACK_ENABLE_BP = 1_450_000
-const GENE_SUBTRACK_DISABLE_BP = 1_650_000
-const GENE_CHROM_CACHE_ENTER_SPAN = 2_000_000
-const GENE_LAYOUT_COVERAGE_SHRINK_THRESHOLD = 0.85
-const MAX_GENE_TILE_CACHE_TILES = 640
-const MAX_TRANSCRIPT_CACHE_GENES = 180
-const MAX_TRANSCRIPT_PREFETCH_GENES = 96
-const MAX_BOTTOM_ALIGN_EXTRA_TOP_GAP = 12
-const SPLICE_HEAT_STOPS_LIGHT = [
-    [51, 102, 204],   // transcript blue (cold)
-    [139, 92, 246],   // purple (mid)
-    [239, 68, 68],    // red (hot)
-]
-const SPLICE_HEAT_STOPS_DARK = [
-    [91, 141, 239],   // transcript blue (cold)
-    [167, 139, 250],  // purple (mid)
-    [248, 113, 113],  // red (hot)
-]
-const DEFAULT_SPLICE_TRACK_SETTINGS = {
-    min_support: 1,
-    canonical_mode: 'all',
-    annotated_mode: 'all',
-    show_arrows: true,
-    max_junctions: 5000,
-    weak_max_support: 2,
-    low_max_support: 4,
-    medium_max_support: 9,
-}
-const BIGWIG_DATA_TYPE_DEFAULTS = {
-    rna_seq: {
-        display_mode: 'zoned_heatmap',
-        plot_color: '#3b82f6',
-        zoned_colors: ['#f7cd61', '#f4a940', '#ea7a2d', '#cc2f1f'],
-        zone_scale: 'fixed',
-    },
-    atac_seq: {
-        display_mode: 'signal_plot',
-        plot_color: '#b52aa1',
-        zoned_colors: ['#86efac', '#4ade80', '#22c55e', '#15803d'],
-        zone_scale: 'file',
-    },
-    chip_seq: {
-        display_mode: 'signal_plot',
-        plot_color: '#8b5cf6',
-        zoned_colors: ['#c4b5fd', '#a78bfa', '#8b5cf6', '#6d28d9'],
-        zone_scale: 'file',
-    },
-    custom: {
-        display_mode: 'signal_plot',
-        plot_color: '#14b8a6',
-        zoned_colors: ['#93c5fd', '#60a5fa', '#3b82f6', '#1d4ed8'],
-        zone_scale: 'file',
-    },
-}
-
-
-const VCF_EFFECT_COLORS = {
-    light: {
-        protein_altering: '#d946ef', // magenta/rose
-        splicing: '#f59e0b',         // amber
-        transcript: '#2563eb',       // blue
-        regulatory: '#0f766e',       // teal-cyan
-        intergenic: '#7dd3fc',       // pale cyan
-        other: '#64748b',            // slate
-        occupancy: '#69b8b0',
-    },
-    dark: {
-        protein_altering: '#e879f9',
-        splicing: '#fbbf24',
-        transcript: '#60a5fa',
-        regulatory: '#2dd4bf',
-        intergenic: '#a5f3fc',
-        other: '#94a3b8',
-        occupancy: '#7ecbc3',
-    },
-}
-const DEFAULT_CUSTOM_TRACK_RENDER_MODE = 'zoned_heatmap'
-const CUSTOM_TRACK_TOOLTIP_DWELL_MS = 1000
-const CUSTOM_TRACK_TOOLTIP_MOVE_TOL_PX = 4
-const ZONED_ZONE_SOLID_COLORS = {
-    light: ['#f7cd61', '#f4a940', '#ea7a2d', '#cc2f1f'],
-    dark: ['#f5c04c', '#ef9a30', '#e36823', '#d03a2a'],
-}
-
-// Ensembl-inspired color palette
-const COLORS = {
-    light: {
-        bg: '#ffffff',
-        // The ruler is unfilled on www.ensembl.org, and its rule, ticks and
-        // labels are all the same mid grey — sampled from the live site at 1x.
-        rulerBg: '#ffffff',
-        rulerLine: '#787878',
-        rulerText: '#787878',
-        tickMajor: '#787878',
-        tickMinor: '#787878',
-        gutterLine: '#dee2e6',
-        exonProteinCoding: '#3366cc',     // Ensembl blue
-        exonNonCoding: '#33a02c',
-        utr: '#a6cee3',
-        intronLine: '#868e96',
-        focusLine: '#e53e3e',
-        geneLabelText: '#212529',
-        strandChevron: '#868e96',
-        selectedGene: '#dbe4ff', // pleasant soft indigo highlight
-        pillBg: '#3366cc',
-        pillText: '#ffffff',
-        forwardStrandBg: '#ffffff',
-        reverseStrandBg: '#f8f9fa',
-        trackLabel: '#868e96',
-        infoBg: '#f1f3f5',
-        infoText: '#343a40',
-        sequenceBg: '#f8f9fa',
-        ...NUCLEOTIDE_COLORS.light,
-    },
-    dark: {
-        bg: '#1a1b1e',
-        // Ensembl has no dark theme to copy; these are the light greys inverted
-        // to keep the same weight against the dark canvas.
-        rulerBg: '#1a1b1e',
-        rulerLine: '#8b8b8b',
-        rulerText: '#8b8b8b',
-        tickMajor: '#8b8b8b',
-        tickMinor: '#8b8b8b',
-        gutterLine: '#373a40',
-        exonProteinCoding: '#5b8def',
-        exonNonCoding: '#51cf66',
-        utr: '#74c0fc',
-        intronLine: '#5c5f66',
-        focusLine: '#fc8181',
-        geneLabelText: '#c1c2c5',
-        strandChevron: '#5c5f66',
-        selectedGene: '#2b3a55', // soft deep indigo
-        pillBg: '#5b8def',
-        pillText: '#ffffff',
-        forwardStrandBg: '#1a1b1e',
-        reverseStrandBg: '#212226',
-        trackLabel: '#5c5f66',
-        infoBg: '#1E2938',
-        infoText: '#c1c2c5',
-        sequenceBg: '#212226',
-        ...NUCLEOTIDE_COLORS.dark,
-    }
-}
-
 // ============ Helper Functions ============
-
-// Shared for the same reason as the ruler's: this runs per label, per frame.
-const COORD_FORMAT = new Intl.NumberFormat()
-
-function formatCoord(n) {
-    const value = Number(n)
-    if (!Number.isFinite(value)) return '—'
-    return COORD_FORMAT.format(Math.round(value))
-}
-
-function formatBp(n) {
-    const value = Number(n)
-    if (!Number.isFinite(value)) return '—'
-    const abs = Math.abs(value)
-    const sign = value < 0 ? '-' : ''
-    if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(1)}Mb`
-    if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(1)}kb`
-    return `${sign}${abs}bp`
-}
-
-function hasGeneCoords(gene) {
-    return Boolean(gene) && Number.isFinite(Number(gene.start)) && Number.isFinite(Number(gene.end))
-}
-
-function normalizeGeneCoord(value) {
-    const n = Number(value)
-    return Number.isFinite(n) ? n : null
-}
-
-function getGeneCoordRange(gene) {
-    if (!hasGeneCoords(gene)) return null
-    return {
-        start: normalizeGeneCoord(gene.start),
-        end: normalizeGeneCoord(gene.end),
-    }
-}
-
-function formatGeneStrand(strand) {
-    if (strand === '+') return 'Forward strand'
-    if (strand === '-') return 'Reverse strand'
-    return 'Unknown strand'
-}
-
-function versionedStableId(id, version) {
-    const stableId = String(id || '').trim()
-    const stableVersion = String(version || '').trim()
-    if (!stableId) return '—'
-    if (!stableVersion || /\.\d+$/.test(stableId)) return stableId
-    return `${stableId}.${stableVersion}`
-}
-
-function intervalListLength(intervals) {
-    return (Array.isArray(intervals) ? intervals : []).reduce((sum, interval) => {
-        const start = Number(interval?.start)
-        const end = Number(interval?.end)
-        if (!Number.isFinite(start) || !Number.isFinite(end)) return sum
-        return sum + Math.max(0, Math.abs(Math.round(end) - Math.round(start)) + 1)
-    }, 0)
-}
-
-function genomicSpanLength(start, end) {
-    const s = Number(start)
-    const e = Number(end)
-    if (!Number.isFinite(s) || !Number.isFinite(e)) return 0
-    return Math.max(0, Math.abs(Math.round(e) - Math.round(s)) + 1)
-}
-
-function countCdsExons(exons, cdsList) {
-    const safeExons = Array.isArray(exons) ? exons : []
-    const safeCdsList = Array.isArray(cdsList) ? cdsList : []
-    return safeExons.filter((exon) => {
-        const exonStart = Number(exon?.start)
-        const exonEnd = Number(exon?.end)
-        if (!Number.isFinite(exonStart) || !Number.isFinite(exonEnd)) return false
-        return safeCdsList.some((cds) => {
-            const cdsStart = Number(cds?.start)
-            const cdsEnd = Number(cds?.end)
-            if (!Number.isFinite(cdsStart) || !Number.isFinite(cdsEnd)) return false
-            return Math.max(exonStart, cdsStart) <= Math.min(exonEnd, cdsEnd)
-        })
-    }).length
-}
-
-function getTranscriptPopupMetadata(transcript) {
-    const tx = transcript || {}
-    const exons = Array.isArray(tx?.exons) ? tx.exons : []
-    const cdsList = Array.isArray(tx?.cds_list) ? tx.cds_list : []
-    return {
-        stableId: versionedStableId(tx?.id, tx?.version),
-        biotype: String(tx?.biotype || '').trim() || '—',
-        genomicSpanBp: genomicSpanLength(tx?.start, tx?.end),
-        transcriptLength: exons.length > 0 ? intervalListLength(exons) : genomicSpanLength(tx?.start, tx?.end),
-        exonCount: exons.length,
-        hasCds: cdsList.length > 0,
-        cdsExonCount: countCdsExons(exons, cdsList),
-        cdsLength: intervalListLength(cdsList),
-    }
-}
-
-function formatSignalDisplayValue(value) {
-    if (value === null || value === undefined || Number.isNaN(value)) return null
-    const numeric = Number(value)
-    if (!Number.isFinite(numeric)) return null
-    return numeric
-}
-
-function formatSignalValueForTooltip(value) {
-    const numeric = formatSignalDisplayValue(value)
-    if (numeric === null) return 'NA'
-    if (Number.isInteger(numeric)) return numeric.toLocaleString()
-    return numeric.toLocaleString(undefined, { maximumFractionDigits: 6 })
-}
-
-function formatSignalValueForTrack(value) {
-    const numeric = formatSignalDisplayValue(value)
-    if (numeric === null) return 'NA'
-    const abs = Math.abs(numeric)
-    if (abs >= 1000) return numeric.toFixed(0)
-    if (abs >= 10) return numeric.toFixed(1)
-    return numeric.toFixed(2)
-}
-
-function getSelectedGeneCoordsForView(gene, isAligned, alignData, genomicToOverlay, options = {}) {
-    const range = getGeneCoordRange(gene)
-    if (!range) return null
-
-    let start = range.start
-    let end = range.end
-
-    if (isAligned && alignData) {
-        const o1 = genomicToOverlay(start)
-        const o2 = genomicToOverlay(end)
-        start = Math.min(o1, o2)
-        end = Math.max(o1, o2)
-    }
-
-    if (!Number.isFinite(start) || !Number.isFinite(end)) return null
-    if (end <= start) end = start + 1
-
-    const targetFillFractionRaw = Number(options?.targetFillFraction)
-    const targetFillFraction = Number.isFinite(targetFillFractionRaw) && targetFillFractionRaw > 0 && targetFillFractionRaw < 1
-        ? targetFillFractionRaw
-        : 0.8
-    const span = Math.max(1, end - start)
-    const paddedSpan = span / targetFillFraction
-    const flank = Math.max(0, (paddedSpan - span) / 2)
-
-    start -= flank
-    end += flank
-    return { start, end }
-}
-
-function getTranscriptDisplayList(transcripts, limit) {
-    return resolveGeneTranscriptView({
-        transcripts,
-        limit: Math.max(1, Math.floor(Number(limit) || 1)),
-    }).transcripts
-}
-
-function getTranscriptIntrons(transcript) {
-    const exons = (Array.isArray(transcript?.exons) ? transcript.exons : [])
-        .map((exon) => ({
-            start: Number(exon?.start),
-            end: Number(exon?.end),
-        }))
-        .filter((exon) => Number.isFinite(exon.start) && Number.isFinite(exon.end) && exon.end > exon.start)
-        .sort((a, b) => a.start - b.start)
-
-    if (exons.length < 2) return []
-
-    const introns = []
-    for (let i = 0; i < exons.length - 1; i += 1) {
-        const start = exons[i].end
-        const end = exons[i + 1].start
-        if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
-            introns.push({ start, end })
-        }
-    }
-    return introns
-}
-
-function getDefaultChevronPositions(start, end, spacing) {
-    const usableStart = Number(start)
-    const usableEnd = Number(end)
-    const safeSpacing = Math.max(1, Number(spacing) || 1)
-    if (!Number.isFinite(usableStart) || !Number.isFinite(usableEnd) || usableEnd <= usableStart) {
-        return []
-    }
-
-    const usableLength = usableEnd - usableStart
-    if (usableLength <= safeSpacing * 0.7) {
-        return [(usableStart + usableEnd) / 2]
-    }
-
-    const count = Math.max(1, Math.floor(usableLength / safeSpacing))
-    const step = usableLength / (count + 1)
-    return Array.from({ length: count }, (_, idx) => usableStart + ((idx + 1) * step))
-}
-
-function mergeChevronPositions(alignedPositions, defaultPositions, spacing) {
-    const minGap = Math.max(4, (Number(spacing) || 1) * 0.55)
-    const merged = []
-
-    const addPosition = (position) => {
-        if (!Number.isFinite(position)) return
-        const alreadyPresent = merged.some((existing) => Math.abs(existing - position) < 0.5)
-        if (alreadyPresent) return
-        const tooClose = merged.some((existing) => Math.abs(existing - position) < minGap)
-        if (tooClose) return
-        merged.push(position)
-    }
-
-    ;[...(alignedPositions || []), ...(defaultPositions || [])]
-        .sort((a, b) => a - b)
-        .forEach(addPosition)
-
-    return merged.sort((a, b) => a - b)
-}
-
-function buildAlignedIntronChevronLayout(displayTxs, spacingPx, edgePaddingPx, genomicToScreen) {
-    const safeSpacing = Math.max(1, Number(spacingPx) || 1)
-    const safeEdgePadding = Math.max(0, Number(edgePaddingPx) || 0)
-    const projectToScreen = typeof genomicToScreen === 'function' ? genomicToScreen : null
-    if (!projectToScreen) return []
-    const priorIntrons = []
-
-    return (Array.isArray(displayTxs) ? displayTxs : []).map((tx) => {
-        const txPositions = []
-        const introns = getTranscriptIntrons(tx)
-
-        for (const intron of introns) {
-            const rawStart = projectToScreen(intron.start)
-            const rawEnd = projectToScreen(intron.end)
-            const usableStart = Math.min(rawStart, rawEnd) + safeEdgePadding
-            const usableEnd = Math.max(rawStart, rawEnd) - safeEdgePadding
-            if (!(usableEnd > usableStart)) continue
-
-            const overlappingPriorIntrons = priorIntrons.filter((prior) => prior.end > usableStart && prior.start < usableEnd)
-            const alignedPositions = overlappingPriorIntrons.flatMap((prior) =>
-                prior.positions.filter((position) => position >= usableStart && position <= usableEnd)
-            )
-            if (alignedPositions.length === 0) {
-                for (const prior of overlappingPriorIntrons) {
-                    const overlapStart = Math.max(prior.start, usableStart)
-                    const overlapEnd = Math.min(prior.end, usableEnd)
-                    if (overlapEnd <= overlapStart) continue
-                    alignedPositions.push((overlapStart + overlapEnd) / 2)
-                }
-            }
-            const defaultPositions = getDefaultChevronPositions(usableStart, usableEnd, safeSpacing)
-            const mergedPositions = mergeChevronPositions(alignedPositions, defaultPositions, safeSpacing)
-
-            txPositions.push(...mergedPositions)
-            priorIntrons.push({
-                start: usableStart,
-                end: usableEnd,
-                positions: mergedPositions,
-            })
-        }
-
-        return txPositions.sort((a, b) => a - b)
-    })
-}
-
-function getFeatureCoordsForView(start, end, isAligned, alignData, genomicToOverlay) {
-    let normalizedStart = Number(start)
-    let normalizedEnd = Number(end)
-    if (!Number.isFinite(normalizedStart) || !Number.isFinite(normalizedEnd)) return null
-
-    if (isAligned && alignData) {
-        const o1 = genomicToOverlay(normalizedStart)
-        const o2 = genomicToOverlay(normalizedEnd)
-        normalizedStart = Math.min(o1, o2)
-        normalizedEnd = Math.max(o1, o2)
-    } else if (normalizedEnd < normalizedStart) {
-        const swap = normalizedStart
-        normalizedStart = normalizedEnd
-        normalizedEnd = swap
-    }
-
-    if (!Number.isFinite(normalizedStart) || !Number.isFinite(normalizedEnd)) return null
-    if (normalizedEnd <= normalizedStart) normalizedEnd = normalizedStart + 1
-    return { start: normalizedStart, end: normalizedEnd }
-}
-
-function getTranscriptLayoutMetrics(isCompressed, isFlattened = false) {
-    if (isCompressed) {
-        return {
-            rowPitch: COMPRESSED_TRANSCRIPT_ROW_PITCH,
-            rowGap: COMPRESSED_TRANSCRIPT_ROW_GAP,
-            exonHeight: COMPRESSED_TRANSCRIPT_EXON_HEIGHT,
-            trackPadding: isFlattened ? FLATTENED_COMPRESSED_TRANSCRIPT_TRACK_PADDING : COMPRESSED_TRANSCRIPT_TRACK_PADDING,
-            midOffset: COMPRESSED_TRANSCRIPT_MID_OFFSET,
-            minTrackHeight: isFlattened ? FLATTENED_COMPRESSED_TRANSCRIPT_MIN_TRACK_HEIGHT : COMPRESSED_TRANSCRIPT_MIN_TRACK_HEIGHT,
-            flattened: isFlattened,
-        }
-    }
-
-    if (isFlattened) {
-        return {
-            rowPitch: FLATTENED_TRANSCRIPT_ROW_PITCH,
-            rowGap: FLATTENED_TRANSCRIPT_ROW_GAP,
-            exonHeight: EXON_HEIGHT,
-            trackPadding: FLATTENED_TRANSCRIPT_TRACK_PADDING,
-            midOffset: FLATTENED_TRANSCRIPT_MID_OFFSET,
-            minTrackHeight: FLATTENED_TRANSCRIPT_MIN_TRACK_HEIGHT,
-            flattened: true,
-        }
-    }
-
-    return {
-        rowPitch: TRACK_HEIGHT + 2,
-        rowGap: 2,
-        exonHeight: EXON_HEIGHT,
-        trackPadding: 16,
-        midOffset: (TRACK_HEIGHT - 14) / 2,
-        minTrackHeight: 36,
-        flattened: false,
-    }
-}
 
 function TranscriptInfoPopup({
     popup,
@@ -920,759 +408,10 @@ function TranscriptInfoPopup({
     )
 }
 
-function formatRegionCoord(chrom, start, end) {
-    if (!chrom) return '—'
-    const formattedStart = formatCoord(start)
-    const formattedEnd = formatCoord(end)
-    if (formattedStart === '—' || formattedEnd === '—') return chrom
-    return `${chrom}:${formattedStart}-${formattedEnd}`
-}
-
-
-function clamp(value, min, max) {
-    return Math.min(max, Math.max(min, value))
-}
-
-function quantileFromSorted(sortedValues, q) {
-    const arr = Array.isArray(sortedValues) ? sortedValues : []
-    if (arr.length === 0) return 0
-    const qNorm = clamp(Number(q), 0, 1)
-    const idx = (arr.length - 1) * qNorm
-    const lo = Math.floor(idx)
-    const hi = Math.ceil(idx)
-    if (lo === hi) return Number(arr[lo]) || 0
-    const loVal = Number(arr[lo]) || 0
-    const hiVal = Number(arr[hi]) || 0
-    const t = idx - lo
-    return loVal + (hiVal - loVal) * t
-}
-
-function normalizeVcfDensityForHotspots(densityBins) {
-    const values = Array.isArray(densityBins) ? densityBins : []
-    if (values.length === 0) return []
-    const finite = values
-        .map((v) => Number(v))
-        .filter((v) => Number.isFinite(v) && v > 0)
-    if (finite.length === 0) {
-        return values.map(() => 0)
-    }
-    const sorted = [...finite].sort((a, b) => a - b)
-    const median = Math.max(1e-6, quantileFromSorted(sorted, 0.5))
-    const p95 = quantileFromSorted(sorted, 0.95)
-    // Legacy occupancy payloads are typically in [0,1]; newer payloads are
-    // enrichment-like where baseline is around 1 and hotspots are >1.
-    const isLegacyOccupancy = p95 <= 1.05
-
-    return values.map((v) => {
-        const raw = Number(v)
-        if (!Number.isFinite(raw) || raw <= 0) return 0
-        const ratio = isLegacyOccupancy
-            ? (raw / median)
-            : raw
-        const positive = Math.max(0, Math.log2(Math.max(1e-6, ratio)))
-        const hotspot = Math.pow(clamp(positive / 3.0, 0, 1), 0.72)
-        const baseline = ratio < 1
-            ? (clamp(ratio, 0, 1) * 0.06)
-            : 0.06
-        return baseline + ((1 - baseline) * hotspot)
-    })
-}
-
-function smoothVcfDensityBins(values, populated, radius = 1) {
-    const src = Array.isArray(values) ? values : []
-    const n = src.length
-    if (n === 0 || radius <= 0) return src.slice()
-    const pop = populated instanceof Uint8Array ? populated : null
-    const out = src.slice()
-    for (let i = 0; i < n; i++) {
-        if (pop && !pop[i]) continue
-        let sum = 0
-        let wsum = 0
-        const lo = Math.max(0, i - radius)
-        const hi = Math.min(n - 1, i + radius)
-        for (let j = lo; j <= hi; j++) {
-            if (pop && !pop[j]) continue
-            const v = Number(src[j])
-            if (!Number.isFinite(v)) continue
-            const w = radius + 1 - Math.abs(j - i)
-            sum += v * w
-            wsum += w
-        }
-        if (wsum > 0) out[i] = sum / wsum
-    }
-    return out
-}
-
-function smoothVcfDensityClasses(classes, populated, radius = 1) {
-    const src = Array.isArray(classes) ? classes : []
-    const n = src.length
-    if (n === 0 || radius <= 0) return src.slice()
-    const pop = populated instanceof Uint8Array ? populated : null
-    const out = src.slice()
-    for (let i = 0; i < n; i++) {
-        if (pop && !pop[i]) continue
-        let g = 0
-        let inter = 0
-        const lo = Math.max(0, i - radius)
-        const hi = Math.min(n - 1, i + radius)
-        for (let j = lo; j <= hi; j++) {
-            if (pop && !pop[j]) continue
-            const w = radius + 1 - Math.abs(j - i)
-            if (src[j] === 'genic') g += w
-            else inter += w
-        }
-        out[i] = g >= inter ? 'genic' : 'intergenic'
-    }
-    return out
-}
-
-function getFetchErrorMessage(error) {
-    if (!error) return 'Request failed'
-    if (typeof error === 'string') return error
-    const message = String(error?.message || error?.detail || error)
-    return message || 'Request failed'
-}
-
-function isTransientFetchErrorMessage(message) {
-    const token = String(message || '').trim().toLowerCase()
-    if (!token) return false
-    return (
-        token.includes('failed to fetch')
-        || token.includes('fetch failed')
-        || token.includes('networkerror')
-        || token.includes('network error')
-        || token.includes('load failed')
-        || token.includes('connection was lost')
-        || token.includes('aborterror')
-        || token.includes('aborted')
-        || token.includes('signal is aborted')
-    )
-}
-
-function isTransientFetchError(error) {
-    return isTransientFetchErrorMessage(getFetchErrorMessage(error))
-}
-
-function parseItemRgb(value) {
-    const token = String(value || '').trim()
-    if (!token) return null
-    const parts = token.split(',')
-    if (parts.length !== 3) return null
-    const rgb = parts.map((part) => Number.parseInt(part.trim(), 10))
-    if (rgb.some((v) => !Number.isFinite(v))) return null
-    return [
-        clamp(rgb[0], 0, 255),
-        clamp(rgb[1], 0, 255),
-        clamp(rgb[2], 0, 255),
-    ]
-}
-
-function bigBedFeatureKey(feature) {
-    const start = Number(feature?.start) || 0
-    const end = Number(feature?.end) || 0
-    const name = String(feature?.name || '')
-    const strand = String(feature?.strand || '.')
-    const score = String(feature?.score ?? '')
-    const color = String(feature?.itemRgb || feature?.color || '')
-    const blockCount = String(feature?.block_count ?? '')
-    const blockSizes = String(feature?.block_sizes || '')
-    const blockStarts = String(feature?.block_starts || '')
-    const renderKind = String(feature?.render_kind || feature?._render_kind || '')
-    return `${start}|${end}|${name}|${strand}|${score}|${color}|${blockCount}|${blockSizes}|${blockStarts}|${renderKind}`
-}
-
-// A BED/BigBed track's chosen colour, or '' for automatic.
-function normalizeBedSettings(raw) {
-    const color = String(raw?.color || '').trim().toLowerCase()
-    return { color: /^#[0-9a-f]{6}$/.test(color) ? color : '' }
-}
-
-// Automatic colouring: the file's own itemRgb where it has one, then the type's default.
-// A colour chosen for the track overrides both.
-function bedTrackColors(track) {
-    const chosen = normalizeBedSettings(track?.bedSettings || track?.bed_settings).color
-    return {
-        chosen,
-        fallback: track?.type === 'bed' ? BED_DEFAULT_COLOR : track?.type === 'gff' ? GFF_DEFAULT_COLOR : '',
-    }
-}
-
-function bigBedFeatureColor(feature, isLight, colors = null) {
-    const chosen = colors?.chosen || ''
-    if (chosen) {
-        return {
-            fill: hexToRgba(chosen, isLight ? 0.58 : 0.72),
-            stroke: hexToRgba(chosen, isLight ? 0.92 : 0.98),
-        }
-    }
-    const rgb = parseItemRgb(feature?.itemRgb || feature?.color)
-    if (rgb) {
-        const [r, g, b] = rgb
-        return {
-            fill: `rgba(${r},${g},${b},${isLight ? 0.58 : 0.72})`,
-            stroke: `rgba(${r},${g},${b},${isLight ? 0.92 : 0.98})`,
-        }
-    }
-    const fallbackColor = colors?.fallback || VCF_SETTINGS_DEFAULTS.genic_color
-    const fallback = {
-        fill: hexToRgba(fallbackColor, isLight ? 0.34 : 0.46),
-        stroke: hexToRgba(fallbackColor, isLight ? 0.94 : 0.98),
-    }
-    return fallback
-}
-
-function bigBedBlockColor(span, isLight, colors = null) {
-    // Summary blocks intentionally use a stable generic color so large low-LOD spans
-    // do not flicker as different underlying features stream in/out during pan/zoom.
-    const base = colors?.chosen || colors?.fallback || ''
-    if (base) return hexToRgba(base, isLight ? 0.5 : 0.58)
-    return isLight ? 'rgba(5,150,105,0.44)' : 'rgba(52,211,153,0.50)'
-}
-
-function bigBedBlockStroke(isLight, colors = null) {
-    const base = colors?.chosen || colors?.fallback || ''
-    if (base) return hexToRgba(base, isLight ? 0.6 : 0.72)
-    return isLight ? 'rgba(5,150,105,0.5)' : 'rgba(110,231,183,0.62)'
-}
-
-function getBigBedLaneCapacity(plotHeight, lanePitch = BIGBED_DETAIL_LANE_PITCH) {
-    const available = Math.max(
-        BIGBED_DETAIL_EXON_HEIGHT,
-        Number(plotHeight || 0) - BIGBED_DETAIL_LANE_TOP_PAD - BIGBED_DETAIL_LANE_BOTTOM_PAD,
-    )
-    return Math.max(1, Math.floor((available - BIGBED_DETAIL_EXON_HEIGHT) / lanePitch) + 1)
-}
-
-function getBigBedTrackHeightForLanes(laneCount, lanePitch = BIGBED_DETAIL_LANE_PITCH) {
-    const lanes = Math.max(1, Number.isFinite(Number(laneCount)) ? Math.round(Number(laneCount)) : 1)
-    return clamp(
-        Math.max(
-            CUSTOM_TRACK_HEIGHT_STANDARD,
-            Math.round(BIGBED_DETAIL_TRACK_BASE_HEIGHT + lanes * lanePitch),
-        ),
-        CUSTOM_TRACK_HEIGHT_STANDARD,
-        BIGBED_DETAIL_TRACK_MAX_HEIGHT,
-    )
-}
-
-function normalizeBigBedBlockSegments(rawBlocks, fallbackStart, fallbackEnd) {
-    if (!Array.isArray(rawBlocks)) return []
-    const out = []
-    for (const block of rawBlocks) {
-        const s = Number(block?.start)
-        const e = Number(block?.end)
-        if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
-        const start = Math.max(Number(fallbackStart) || 0, s)
-        const end = Math.min(Number(fallbackEnd) || Number.MAX_SAFE_INTEGER, e)
-        if (end <= start) continue
-        out.push({ start, end })
-    }
-    out.sort((a, b) => (a.start - b.start) || (a.end - b.end))
-    return out
-}
-
-function parseBigBedBlockCsvInts(value) {
-    const token = String(value || '').trim().replace(/,+$/, '')
-    if (!token) return []
-    const out = []
-    for (const part of token.split(',')) {
-        const v = Number.parseInt(String(part).trim(), 10)
-        if (!Number.isFinite(v)) return []
-        out.push(v)
-    }
-    return out
-}
-
-function deriveBigBedExonBlocksFromBedColumns(rowStart, rowEnd, blockCountRaw, blockSizesRaw, blockStartsRaw) {
-    const start = Number(rowStart)
-    const end = Number(rowEnd)
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return []
-    const blockCount = Number.parseInt(String(blockCountRaw ?? ''), 10)
-    const blockSizes = parseBigBedBlockCsvInts(blockSizesRaw)
-    const blockStarts = parseBigBedBlockCsvInts(blockStartsRaw)
-    const expected = Number.isFinite(blockCount) && blockCount > 0 ? blockCount : blockSizes.length
-    if (expected <= 0 || blockSizes.length !== expected || blockStarts.length !== expected) return []
-    const out = []
-    for (let i = 0; i < expected; i += 1) {
-        const size = Number(blockSizes[i])
-        const relStart = Number(blockStarts[i])
-        if (!Number.isFinite(size) || !Number.isFinite(relStart) || size <= 0) return []
-        const exonStart = start + relStart
-        const exonEnd = exonStart + size
-        const clippedStart = Math.max(start, exonStart)
-        const clippedEnd = Math.min(end, exonEnd)
-        if (clippedEnd > clippedStart) out.push({ start: clippedStart, end: clippedEnd })
-    }
-    out.sort((a, b) => (a.start - b.start) || (a.end - b.end))
-    return out
-}
-
-// BED and BigBed positions are 0-based and half-open: [start, end) is bases start+1..end.
-// This browser numbers bases from 1 and draws base N over [N, N+1) — genes and the
-// sequence track both do — so those bases belong at [start+1, end+1). Drawing the raw
-// numbers put every BED feature one base to the left: its first base under the label
-// of the base before, its last base one short. Tiles are moved into the browser's frame
-// once, as they are cached; anything showing a position as a number shows start..end-1.
-const BED_TO_BROWSER_OFFSET = 1
-
-function shiftBedInterval(interval) {
-    if (!interval || typeof interval !== 'object') return interval
-    const s = Number(interval.start)
-    const e = Number(interval.end)
-    return {
-        ...interval,
-        start: Number.isFinite(s) ? s + BED_TO_BROWSER_OFFSET : interval.start,
-        end: Number.isFinite(e) ? e + BED_TO_BROWSER_OFFSET : interval.end,
-    }
-}
-
-function shiftBedFeatureToBrowserFrame(feature) {
-    if (!feature || typeof feature !== 'object') return feature
-    const shifted = shiftBedInterval(feature)
-    for (const key of ['thick_start', 'thick_end']) {
-        const v = feature[key]
-        if (v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v))) {
-            shifted[key] = Number(v) + BED_TO_BROWSER_OFFSET
-        }
-    }
-    // Block starts are relative to the feature start, so they move with it; the
-    // absolute blocks the backend derived do not, and are shifted here.
-    if (Array.isArray(feature.exon_blocks)) shifted.exon_blocks = feature.exon_blocks.map(shiftBedInterval)
-    if (Array.isArray(feature.cds_blocks)) shifted.cds_blocks = feature.cds_blocks.map(shiftBedInterval)
-    return shifted
-}
-
-function normalizeBigBedFeatureForRender(feature) {
-    if (!feature || typeof feature !== 'object') return null
-    const start = Number(feature?.start)
-    const end = Number(feature?.end)
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
-
-    const explicitExons = normalizeBigBedBlockSegments(feature?.exon_blocks, start, end)
-    const fallbackExons = explicitExons.length > 0
-        ? explicitExons
-        : deriveBigBedExonBlocksFromBedColumns(start, end, feature?.block_count, feature?.block_sizes, feature?.block_starts)
-    const structureValidRaw = feature?.structure_valid === true
-    const structureValid = (structureValidRaw && explicitExons.length > 0) || fallbackExons.length > 0
-    const requestedRenderKind = String(feature?.render_kind || '').trim().toLowerCase()
-    const renderKind = (structureValid && requestedRenderKind === 'transcript') || (structureValid && !requestedRenderKind)
-        ? 'transcript'
-        : 'interval'
-
-    let cdsBlocks = normalizeBigBedBlockSegments(feature?.cds_blocks, start, end)
-    if (cdsBlocks.length === 0 && structureValid) {
-        const thickStart = Number(feature?.thick_start)
-        const thickEnd = Number(feature?.thick_end)
-        if (Number.isFinite(thickStart) && Number.isFinite(thickEnd) && thickEnd > thickStart) {
-            cdsBlocks = fallbackExons
-                .map((exon) => ({
-                    start: Math.max(exon.start, thickStart),
-                    end: Math.min(exon.end, thickEnd),
-                }))
-                .filter((block) => block.end > block.start)
-        }
-    }
-
-    // BED9 without blocks: a thick core drawn full height and the rest thin, as UCSC
-    // and IGV do (see utils/bedThickRegion). A single box hid the difference.
-    const thick = structureValid ? null : bedThickRegion(feature, start, end)
-
-    return {
-        ...feature,
-        start,
-        end,
-        _structure_valid: structureValid,
-        _render_kind: renderKind,
-        _exon_blocks: structureValid ? fallbackExons : [],
-        _cds_blocks: structureValid ? cdsBlocks : [],
-        _thick: thick,
-    }
-}
-
-
-function normalizeBigWigDataType(value, fallback = 'rna_seq') {
-    const token = String(value || '').trim().toLowerCase()
-    return Object.prototype.hasOwnProperty.call(BIGWIG_DATA_TYPE_DEFAULTS, token) ? token : fallback
-}
-
-function normalizeBigWigDisplayMode(mode, dataType = 'rna_seq') {
-    const token = String(mode || '').trim().toLowerCase()
-    if (token === 'line_plot' || token === 'bar_chart') return 'signal_plot'
-    if (token === 'signal_plot' || token === 'zoned_heatmap') return token
-    const normalizedType = normalizeBigWigDataType(dataType)
-    return BIGWIG_DATA_TYPE_DEFAULTS[normalizedType].display_mode
-}
-
-function normalizeVcfDisplayMode(mode) {
-    let token = String(mode || '').trim().toLowerCase()
-    if (token === 'block_lollipop' || token === 'block-lollipop') token = 'adaptive'
-    if (token === 'ensembl' || token === 'lollipop' || token === 'density') token = 'density_lollipop'
-    return token === 'adaptive' || token === 'density_lollipop' ? token : 'density_lollipop'
-}
-
-function isVcfAdaptiveLikeMode(mode) {
-    const normalized = normalizeVcfDisplayMode(mode)
-    return normalized === 'adaptive' || normalized === 'density_lollipop'
-}
-
-function normalizeVcfHexColor(value, fallback) {
-    const token = String(value || '').trim()
-    return /^#[0-9a-fA-F]{6}$/.test(token) ? token.toLowerCase() : String(fallback || '').toLowerCase()
-}
-
-function normalizeVcfSettings(raw = null, previous = null) {
-    const prev = previous && typeof previous === 'object' ? previous : {}
-    const base = {
-        genic_color: normalizeVcfHexColor(prev.genic_color, VCF_SETTINGS_DEFAULTS.genic_color),
-        intergenic_color: normalizeVcfHexColor(prev.intergenic_color, VCF_SETTINGS_DEFAULTS.intergenic_color),
-    }
-    const source = raw && typeof raw === 'object' ? raw : {}
-    return {
-        genic_color: normalizeVcfHexColor(source.genic_color, base.genic_color),
-        intergenic_color: normalizeVcfHexColor(source.intergenic_color, base.intergenic_color),
-    }
-}
-
-function normalizeBigWigHexColor(value, fallback) {
-    const token = String(value || '').trim()
-    return /^#[0-9a-fA-F]{6}$/.test(token) ? token.toLowerCase() : String(fallback || '').toLowerCase()
-}
-
-function normalizeBigWigZonedColors(rawColors, fallbackColors) {
-    const fallback = Array.isArray(fallbackColors) && fallbackColors.length >= 4
-        ? fallbackColors.slice(0, 4)
-        : BIGWIG_DATA_TYPE_DEFAULTS.rna_seq.zoned_colors.slice(0, 4)
-    const source = Array.isArray(rawColors) ? rawColors : []
-    return [0, 1, 2, 3].map((idx) => normalizeBigWigHexColor(source[idx], fallback[idx]))
-}
-
-function normalizeBigWigSettings(raw = null, previous = null) {
-    const prevType = normalizeBigWigDataType(previous?.data_type, 'rna_seq')
-    const prevDefaults = BIGWIG_DATA_TYPE_DEFAULTS[prevType]
-    const prev = {
-        data_type: prevType,
-        plot_color: normalizeBigWigHexColor(previous?.plot_color, prevDefaults.plot_color),
-        zoned_colors: normalizeBigWigZonedColors(previous?.zoned_colors, prevDefaults.zoned_colors),
-        use_default_plot_color: previous?.use_default_plot_color !== false,
-        use_default_zoned_colors: previous?.use_default_zoned_colors !== false,
-    }
-
-    const source = raw && typeof raw === 'object' ? raw : {}
-    const data_type = normalizeBigWigDataType(source.data_type, prev.data_type)
-    const defaults = BIGWIG_DATA_TYPE_DEFAULTS[data_type]
-    const use_default_plot_color = source.use_default_plot_color !== undefined
-        ? source.use_default_plot_color !== false
-        : prev.use_default_plot_color
-    const use_default_zoned_colors = source.use_default_zoned_colors !== undefined
-        ? source.use_default_zoned_colors !== false
-        : prev.use_default_zoned_colors
-
-    return {
-        data_type,
-        plot_color: use_default_plot_color
-            ? defaults.plot_color
-            : normalizeBigWigHexColor(source.plot_color, prev.plot_color),
-        zoned_colors: use_default_zoned_colors
-            ? defaults.zoned_colors.slice(0, 4)
-            : normalizeBigWigZonedColors(source.zoned_colors, prev.zoned_colors),
-        use_default_plot_color,
-        use_default_zoned_colors,
-        // 'fixed' zones for read coverage, 'file': edges from the file's own peaks, or
-        // 'custom': the four edges in custom_zones.
-        zone_scale: ['fixed', 'file', 'files', 'custom'].includes(source.zone_scale)
-            ? source.zone_scale
-            : (['fixed', 'file', 'files', 'custom'].includes(previous?.zone_scale) ? previous.zone_scale : defaults.zone_scale),
-        custom_zones: Array.isArray(source.custom_zones)
-            ? source.custom_zones.map(Number)
-            : (Array.isArray(previous?.custom_zones) ? previous.custom_zones.map(Number) : null),
-        // 'files': edges from the peaks of every file registered together, so they compare.
-        shared_zones: Array.isArray(source.shared_zones)
-            ? source.shared_zones.map(Number)
-            : (Array.isArray(previous?.shared_zones) ? previous.shared_zones.map(Number) : null),
-    }
-}
-
-function hexToRgba(hex, alpha = 1) {
-    const token = String(hex || '').trim()
-    const match = token.match(/^#([0-9a-fA-F]{6})$/)
-    if (!match) {
-        return `rgba(59,130,246,${clamp(alpha, 0, 1)})`
-    }
-    const value = match[1]
-    const r = Number.parseInt(value.slice(0, 2), 16)
-    const g = Number.parseInt(value.slice(2, 4), 16)
-    const b = Number.parseInt(value.slice(4, 6), 16)
-    return `rgba(${r},${g},${b},${clamp(alpha, 0, 1)})`
-}
-
-function normalizeSpliceTrackSettings(raw = null) {
-    const merged = { ...DEFAULT_SPLICE_TRACK_SETTINGS, ...(raw || {}) }
-    const minSupport = Number.parseInt(merged.min_support, 10)
-    const maxJunctions = Number.parseInt(merged.max_junctions, 10)
-    const weakMax = Number.parseInt(merged.weak_max_support, 10)
-    const lowMax = Number.parseInt(merged.low_max_support, 10)
-    const mediumMax = Number.parseInt(merged.medium_max_support, 10)
-    const canonicalMode = ['all', 'canonical', 'non_canonical'].includes(String(merged.canonical_mode))
-        ? String(merged.canonical_mode)
-        : 'all'
-    const annotatedMode = ['all', 'annotated', 'novel'].includes(String(merged.annotated_mode))
-        ? String(merged.annotated_mode)
-        : 'all'
-    const min_support = Number.isFinite(minSupport) ? Math.max(1, minSupport) : 1
-    const weak_max_support = Number.isFinite(weakMax) ? Math.max(min_support, weakMax) : Math.max(min_support, DEFAULT_SPLICE_TRACK_SETTINGS.weak_max_support)
-    const low_max_support = Number.isFinite(lowMax) ? Math.max(weak_max_support + 1, lowMax) : Math.max(weak_max_support + 1, DEFAULT_SPLICE_TRACK_SETTINGS.low_max_support)
-    const medium_max_support = Number.isFinite(mediumMax) ? Math.max(low_max_support + 1, mediumMax) : Math.max(low_max_support + 1, DEFAULT_SPLICE_TRACK_SETTINGS.medium_max_support)
-    return {
-        min_support,
-        canonical_mode: canonicalMode,
-        annotated_mode: annotatedMode,
-        show_arrows: merged.show_arrows !== false,
-        max_junctions: Number.isFinite(maxJunctions) ? Math.max(100, maxJunctions) : 5000,
-        weak_max_support,
-        low_max_support,
-        medium_max_support,
-    }
-}
-
-function spliceJunctionKey(junction) {
-    const s = Number(junction?.start)
-    const e = Number(junction?.end)
-    const strand = String(junction?.strand || '.')
-    return `${s}|${e}|${strand}`
-}
-
-function mixRgb(a, b, t) {
-    return [
-        Math.round(a[0] + (b[0] - a[0]) * t),
-        Math.round(a[1] + (b[1] - a[1]) * t),
-        Math.round(a[2] + (b[2] - a[2]) * t),
-    ]
-}
-
-function spliceSupportColor(weight, isLight) {
-    const stops = isLight ? SPLICE_HEAT_STOPS_LIGHT : SPLICE_HEAT_STOPS_DARK
-    const w = clamp(Number.isFinite(weight) ? weight : 0, 0, 1)
-    if (w <= 0) return stops[0]
-    if (w >= 1) return stops[stops.length - 1]
-    const scaled = w * (stops.length - 1)
-    const idx = Math.floor(scaled)
-    const frac = scaled - idx
-    return mixRgb(stops[idx], stops[Math.min(stops.length - 1, idx + 1)], frac)
-}
-
-function spliceSupportBandForValue(support, spliceSettings) {
-    const count = Math.max(0, Number(support) || 0)
-    const settings = spliceSettings || DEFAULT_SPLICE_TRACK_SETTINGS
-    if (count <= settings.weak_max_support) return 'weak'
-    if (count <= settings.low_max_support) return 'low'
-    if (count <= settings.medium_max_support) return 'medium'
-    return 'high'
-}
-
-function spliceSupportBandWeight(support, spliceSettings) {
-    const band = spliceSupportBandForValue(support, spliceSettings)
-    if (band === 'weak') return 0.14
-    if (band === 'low') return 0.4
-    if (band === 'medium') return 0.68
-    return 0.94
-}
-
-function reverseComplementDinucleotide(token) {
-    const seq = String(token || '').toUpperCase()
-    const map = { A: 'T', C: 'G', G: 'C', T: 'A' }
-    return seq
-        .split('')
-        .reverse()
-        .map((base) => map[base] || 'N')
-        .join('')
-}
-
-function formatSpliceMotifForDisplay(motif, strand) {
-    const text = String(motif || '').trim()
-    const m = text.match(/^([ACGT]{2})\s*(?:\/|-)\s*([ACGT]{2})$/i)
-    if (!m) return text || 'unknown'
-    const donor = m[1].toUpperCase()
-    const acceptor = m[2].toUpperCase()
-    if (String(strand || '.').trim() === '-') {
-        // Reverse strand: present motif in transcript-forward orientation.
-        return `${reverseComplementDinucleotide(acceptor)}/${reverseComplementDinucleotide(donor)}`
-    }
-    return `${donor}/${acceptor}`
-}
-
-function getSpliceArcLift(widthPx, lodMode) {
-    const w = Math.max(1, Number(widthPx) || 1)
-    const maxLift = lodMode === 'detail' ? 84 : 63
-    const sqrtTerm = Math.sqrt(w) * (lodMode === 'detail' ? 1.55 : 1.25)
-    const longIntronBoost = Math.log2(1 + w) * (lodMode === 'detail' ? 1.35 : 1.05)
-    return Math.min(maxLift, 5 + sqrtTerm + longIntronBoost)
-}
-
-function getSpliceBezierControls(x1, x2, peakY) {
-    const dx = x2 - x1
-    const dir = dx >= 0 ? 1 : -1
-    const span = Math.abs(dx)
-    const shoulder = Math.max(6, Math.min(44, span * 0.22))
-    return {
-        c1x: x1 + dir * shoulder,
-        c1y: peakY,
-        c2x: x2 - dir * shoulder,
-        c2y: peakY,
-    }
-}
-
-function annotateSpliceSimilarityLift(arcs, lodMode) {
-    const list = Array.isArray(arcs) ? arcs : []
-    if (list.length <= 1) return list
-    const bucketPx = lodMode === 'detail' ? 2 : 3
-    const liftStep = lodMode === 'detail' ? 3 : 2
-    const groups = new Map()
-    for (const arc of list) {
-        const minX = Math.min(Number(arc?.x1) || 0, Number(arc?.x2) || 0)
-        const maxX = Math.max(Number(arc?.x1) || 0, Number(arc?.x2) || 0)
-        const b1 = Math.round(minX / bucketPx)
-        const b2 = Math.round(maxX / bucketPx)
-        const key = `${b1}|${b2}`
-        if (!groups.has(key)) groups.set(key, [])
-        groups.get(key).push(arc)
-    }
-    const out = []
-    for (const group of groups.values()) {
-        group.sort((a, b) =>
-            (Number(a?.lane || 0) - Number(b?.lane || 0))
-            || ((Number(b?.n_total || 0)) - (Number(a?.n_total || 0)))
-            || ((Number(a?.end || 0) - Number(a?.start || 0)) - (Number(b?.end || 0) - Number(b?.start || 0)))
-            || ((Number(a?.start || 0)) - (Number(b?.start || 0)))
-            || ((Number(a?.end || 0)) - (Number(b?.end || 0)))
-        )
-        group.forEach((arc, idx) => {
-            out.push({ ...arc, similarity_lift: idx * liftStep })
-        })
-    }
-    return out
-}
-
-function computeSplicePeakY({
-    baselineY,
-    minTopY,
-    lane,
-    lanePitch,
-    widthPx,
-    lodMode,
-    extraLift = 0,
-}) {
-    const laneN = Math.max(0, Number(lane || 0))
-    const laneLift = (laneN + 1) * lanePitch
-    const laneTopSeparation = Math.min(14, laneN * (lodMode === 'detail' ? 1.8 : 1.4))
-    const topLimit = minTopY + laneTopSeparation
-    const maxTotalLift = Math.max(2, baselineY - topLimit)
-
-    const baseSpanLift = getSpliceArcLift(widthPx, lodMode)
-    // Use most available arc headroom while keeping a small top margin.
-    const boostedSpanLift = Math.min(maxTotalLift * 0.96, baseSpanLift * 1.3)
-
-    const w = Math.max(1, Number(widthPx) || 1)
-    const dragScale = 1 + Math.min(0.65, Math.log2(1 + w) / 14)
-    const dragInput = clamp(Number(extraLift) || 0, -120, 240)
-    const effectiveDragLift = dragInput * dragScale
-
-    const desiredLift = laneLift + boostedSpanLift + effectiveDragLift
-    const totalLift = clamp(desiredLift, 2, maxTotalLift)
-    return baselineY - totalLift
-}
-
-function cubicPointAt(p0, p1, p2, p3, t) {
-    const omt = 1 - t
-    return (omt * omt * omt * p0)
-        + (3 * omt * omt * t * p1)
-        + (3 * omt * t * t * p2)
-        + (t * t * t * p3)
-}
-
-function cubicDerivativeAt(p0, p1, p2, p3, t) {
-    const omt = 1 - t
-    return 3 * (
-        (p1 - p0) * omt * omt
-        + 2 * (p2 - p1) * omt * t
-        + (p3 - p2) * t * t
-    )
-}
-
-
-const REV_COMP = {
-    'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N',
-    'a': 't', 't': 'a', 'c': 'g', 'g': 'c', 'n': 'n',
-    '-': '-'
-}
-
-// ============ Tile Cache Constants (module-level to avoid stale closures) ============
-const TILE_SIZE = 1_000_000
-const getTileKey = (chrom, tileStart) => `${chrom}:${tileStart}`
-const getChromGeneCacheKey = (genome, chrom) => `${genome || ''}:${String(chrom || '').trim().toLowerCase()}`
-const snapToTile = (pos) => Math.floor(pos / TILE_SIZE) * TILE_SIZE
-
-function collectGenesFromList(genes, start, end) {
-    return queryGeneIntervalIndex(genes, start, end)
-}
-
 // ============ Page-level vertical scrolling ============
 // Browser panels never scroll internally, so bringing a track feature into view
 // means moving whichever ancestor owns the page scroll (falling back to the
 // window when the app is not inside its own scroll container).
-
-function getScrollerMetrics(scroller) {
-    const isWindowScroller = !scroller
-        || scroller === document.documentElement
-        || scroller === document.body
-    if (isWindowScroller) {
-        const doc = document.documentElement
-        const viewportHeight = window.innerHeight || doc?.clientHeight || 0
-        return {
-            isWindowScroller: true,
-            top: 0,
-            bottom: viewportHeight,
-            scrollTop: window.scrollY || doc?.scrollTop || 0,
-            maxScrollTop: Math.max(0, (doc?.scrollHeight || 0) - viewportHeight),
-        }
-    }
-    const rect = scroller.getBoundingClientRect()
-    return {
-        isWindowScroller: false,
-        top: rect.top,
-        bottom: rect.bottom,
-        scrollTop: scroller.scrollTop,
-        maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight),
-    }
-}
-
-// Where the scroller's content can actually be seen from, in client space: its top
-// edge, pushed down by chrome floating over it — the browser's control bar when it
-// is set to follow the scroll. A sticky bar is taken at the place it comes to rest,
-// not where it is now: one still in the flow above the panels sticks as soon as the
-// scroll carries it to the edge, and then covers whatever was parked there.
-function getScrollerVisibleTop(scroller, metrics) {
-    let visibleTop = metrics.top
-    const scope = metrics.isWindowScroller ? document : scroller
-    for (const node of overlayOccluders(scope)) {
-        const rect = node.getBoundingClientRect()
-        if (!(rect.height > 0)) continue
-        const style = window.getComputedStyle(node)
-        let bottom = rect.bottom
-        if (style.position === 'sticky') {
-            const padTop = metrics.isWindowScroller
-                ? 0
-                : (parseFloat(window.getComputedStyle(scroller).paddingTop) || 0)
-            bottom = metrics.top + padTop + (parseFloat(style.top) || 0) + rect.height
-        }
-        visibleTop = Math.max(visibleTop, bottom)
-    }
-    return visibleTop
-}
-
-function scrollScrollerTo(scroller, metrics, top, behavior = 'smooth') {
-    if (metrics.isWindowScroller) window.scrollTo({ top, behavior })
-    else scroller.scrollTo({ top, behavior })
-}
 
 // ============ Mirrored drawing for a flipped (3'→5') panel ============
 // Custom tracks are laid out left to right in genomic order by a dozen renderers.
@@ -1681,64 +420,6 @@ function scrollScrollerTo(scroller, metrics, top, behavior = 'smooth') {
 // genomicToScreen is the unflipped one reflected about that same axis
 // (LHS_WIDTH + viewWidth). Text is un-mirrored where it is drawn, keeping its
 // anchor, so a label beside a feature stays beside it and still reads.
-
-const MIRRORED_TEXT_ALIGN = { left: 'right', right: 'left', start: 'end', end: 'start' }
-// The built-in tracks a flipped panel shows reverse complemented, and so marks "RC"
-// on the line under their label, in the label's own size. Custom tracks are marked
-// too: their values are unchanged, but they are drawn mirrored like everything else,
-// and an unmarked track in a flipped panel reads as though it were the right way round.
-const REVERSE_COMPLEMENTED_TRACK_IDS = new Set(['forward', 'reverse', 'sequence'])
-const SIDEBAR_RC_LINE_GAP = 13
-// The label moves up by this, and RC sits the rest of the gap below the centre, so
-// the pair is centred on the toggle — a short track (SL) then has room above and below.
-// Rounded down: the labels' ink sits half a pixel above their centre line already.
-const SIDEBAR_RC_HALF_GAP = Math.floor(SIDEBAR_RC_LINE_GAP / 2)
-const nativeFillText = typeof CanvasRenderingContext2D === 'undefined'
-    ? null
-    : CanvasRenderingContext2D.prototype.fillText
-
-function callNativeFillText(ctx, text, x, y, maxWidth) {
-    // An explicit undefined maxWidth reads as NaN, which draws nothing.
-    if (maxWidth === undefined) nativeFillText.call(ctx, text, x, y)
-    else nativeFillText.call(ctx, text, x, y, maxWidth)
-}
-
-function beginCanvasMirror(ctx, axis) {
-    ctx.save()
-    ctx.translate(axis, 0)
-    ctx.scale(-1, 1)
-    ctx.fillText = function mirroredFillText(text, x, y, maxWidth) {
-        this.save()
-        this.textAlign = MIRRORED_TEXT_ALIGN[this.textAlign] || this.textAlign
-        this.translate(x, 0)
-        this.scale(-1, 1)
-        this.translate(-x, 0)
-        callNativeFillText(this, text, x, y, maxWidth)
-        this.restore()
-    }
-}
-
-// Safe to call when no mirror is open, so a draw can clear one left behind by a
-// frame that threw part way through.
-function endCanvasMirror(ctx) {
-    if (!Object.prototype.hasOwnProperty.call(ctx, 'fillText')) return
-    delete ctx.fillText
-    ctx.restore()
-}
-
-// Text that belongs to the panel rather than the data — a track's name, its value
-// axis — drawn where it is given on screen whether or not a mirror is open.
-function fillScreenText(ctx, mirrorAxis, text, x, y) {
-    if (!Object.prototype.hasOwnProperty.call(ctx, 'fillText')) {
-        ctx.fillText(text, x, y)
-        return
-    }
-    ctx.save()
-    ctx.translate(mirrorAxis, 0)
-    ctx.scale(-1, 1)
-    callNativeFillText(ctx, text, x, y)
-    ctx.restore()
-}
 
 // ============ GenomeBrowser Component ============
 
@@ -4317,7 +2998,6 @@ function GenomeBrowser({
         bigBedLayoutStateRef.current = {}
     }, [selectedChrom])
 
-
     const formatSignalValue = useCallback((value) => {
         return formatSignalValueForTrack(value)
     }, [])
@@ -6330,7 +5010,6 @@ function GenomeBrowser({
         evictOldTilesIfNeeded,
     ])
 
-
     const handleCustomTrackFilePicked = useCallback((path) => {
         setPendingCustomTrackPath(path)
         setCustomTrackLabelInput('Custom track')
@@ -6410,8 +5089,6 @@ function GenomeBrowser({
             animated: false,
         }
     }, [])
-
-
 
     // Notify parent when the location of focus changes
     const onLocationSelectRef = useRef(onLocationSelect)
@@ -9863,7 +8540,6 @@ function GenomeBrowser({
         }
     }, [isFlipped, viewWidth, getCustomTrackHoverInTrackFrame])
 
-
     // Notify parent of our actual current view position so it can use the real
     // value for ratio-anchored zoom (avoids stale panelPositions state jumps).
     useEffect(() => {
@@ -11042,7 +9718,6 @@ function GenomeBrowser({
     useEffect(() => {
         onContentHeightChangeRef.current?.(naturalCanvasHeight)
     }, [naturalCanvasHeight])
-
 
     // Preserve page geometry even when the bitmap is not being repainted.
     // Scroll/cycle targets and shared panel heights still follow current data.
@@ -14399,7 +13074,6 @@ function GenomeBrowser({
         onFocusRowGeometryChangeRef.current?.(focusRowGeometry)
     }, [focusRowGeometry])
 
-
     // Restore the focus framing on pin, but only when the view has actually
     // drifted from it. Re-framing unconditionally would re-run the whole focus
     // animation on every click, including the ones that change nothing.
@@ -15211,7 +13885,6 @@ function GenomeBrowser({
                 </button>
             </div>
 
-
             {/* Coordinates display */}
             <button
                 data-tour-id="browser-coordinates"
@@ -15920,7 +14593,6 @@ function GenomeBrowser({
                     </div>
                 </div>
             )}
-
 
             {effectiveToolbarPosition === 'top' && toolbar}
 

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { EXPANDED_FOOTER_LABEL_TOP_OFFSET } from '../src/components/genome-browser/browserConstants.js'
+
 import {
   GENE_FOOTER_CONTROL_TOP_OFFSET,
   GENE_FOOTER_LABEL_BASELINE_OFFSET,
@@ -295,7 +297,7 @@ test('an expanded gene\'s label and X clear the transcript they sit under', () =
   // its top exactly on the bottom of the last exon block, so the row sat flush against the
   // transcript it belongs to; six leaves a visible gap without moving it off the gene.
   const EXON_HALF_HEIGHT = 6
-  const EXPANDED_FOOTER_LABEL_TOP_OFFSET = 6 // GenomeBrowser.jsx
+  assert.equal(EXPANDED_FOOTER_LABEL_TOP_OFFSET, 6)
   const metrics = { rowPitch: 32, rowGap: 2, midOffset: 8, exonHeight: 12 }
 
   const footer = getGeneFooterGeometry({
