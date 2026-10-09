@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import achievements_store as store  # noqa: E402
 import main  # noqa: E402
+import demo_genome  # noqa: E402
+import routes.achievements  # noqa: E402
 import config_store  # noqa: E402
 
 
@@ -158,7 +160,7 @@ def _app(output_dir="out"):
         root = Path(tmpdir)
         cache_file = root / "cache_achievements.json"
         with patch.object(config_store, "CONFIG_FILE", root / "config.json"), \
-                patch.object(main, "ACHIEVEMENTS_FILE", cache_file):
+                patch.object(routes.achievements, "ACHIEVEMENTS_FILE", cache_file):
             config = {**config_store.DEFAULT_CONFIG}
             if output_dir is not None:
                 config["output_dir"] = str(root / output_dir)
@@ -168,15 +170,15 @@ def _app(output_dir="out"):
 
 
 def _get():
-    return asyncio.run(main.get_achievements())
+    return asyncio.run(routes.achievements.get_achievements())
 
 
 def _sync(delta):
-    return asyncio.run(main.sync_achievements(main.AchievementsSyncRequest(delta=delta)))
+    return asyncio.run(routes.achievements.sync_achievements(routes.achievements.AchievementsSyncRequest(delta=delta)))
 
 
 def _reset():
-    return asyncio.run(main.reset_achievements())
+    return asyncio.run(routes.achievements.reset_achievements())
 
 
 def _legacy_genome(root: Path, species="Felis_catus", assembly="GCA_000181335.5", taxid=9685):
@@ -263,11 +265,11 @@ class AchievementEndpointTests(unittest.TestCase):
                 url="https://example.org/x.fa.gz", filename="x.fa.gz", species_key="Felis_catus",
                 assembly="GCA_000181335.5", file_type="fasta", output_dir=str(root / "out"), taxid=9685,
             )
-            with patch.object(main, "tutorial_session_workspace", return_value=str(root / "tut")):
-                main._record_download_achievement(request)
+            with patch.object(demo_genome, "tutorial_session_workspace", return_value=str(root / "tut")):
+                routes.achievements._record_download_achievement(request)
             self.assertNotIn("genome.downloaded", _get()["store"]["distinct"])
 
-            main._record_download_achievement(request)
+            routes.achievements._record_download_achievement(request)
             self.assertEqual(
                 _get()["store"]["distinct"]["genome.downloaded"],
                 ["ensembl::Felis_catus::GCA_000181335.5"],
@@ -292,7 +294,7 @@ class AchievementEndpointTests(unittest.TestCase):
                 url="https://example.org/x.tsv.gz", filename="x.tsv.gz", species_key="Felis_catus",
                 assembly="GCA_000181335.5", file_type="homology", output_dir=str(root / "out"),
             )
-            main._record_download_achievement(request)
+            routes.achievements._record_download_achievement(request)
             self.assertNotIn("genome.downloaded", _get()["store"]["distinct"])
 
     def test_deleting_a_genome_is_counted(self):

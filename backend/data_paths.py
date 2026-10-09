@@ -81,3 +81,18 @@ def _find_assembly_report_file(assembly_dir: Path) -> Optional[Path]:
 
 def _sanitize_filename(filename: str) -> str:
     return sanitize_leaf_filename(filename)
+
+
+def _assembly_report_taxid(path: str) -> int:
+    """Taxid from an NCBI-style assembly report header ('# Taxid: 9606')."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if not line.startswith("#"):
+                    break
+                match = re.match(r"#\s*Taxid:\s*(\d+)", line)
+                if match:
+                    return int(match.group(1))
+    except Exception:
+        return 0
+    return 0
