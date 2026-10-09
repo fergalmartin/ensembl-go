@@ -16,6 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.notes  # noqa: E402
 import config_store  # noqa: E402
 import app_paths  # noqa: E402
 
@@ -26,7 +27,7 @@ GENOME_KEY = "ensembl::homo_sapiens::GRCh38"
 
 
 def _target(gene_id="ENSG00000141510", label="TP53", genome_key=GENOME_KEY, kind="gene", selection_key=""):
-    return main.NoteTargetModel(
+    return routes.notes.NoteTargetModel(
         kind=kind,
         genome_key=genome_key,
         id=gene_id,
@@ -36,35 +37,35 @@ def _target(gene_id="ENSG00000141510", label="TP53", genome_key=GENOME_KEY, kind
 
 
 def _create(**kwargs):
-    return asyncio.run(main.create_user_note(main.UserNoteCreateRequest(**kwargs)))
+    return asyncio.run(routes.notes.create_user_note(routes.notes.UserNoteCreateRequest(**kwargs)))
 
 
 def _list(**kwargs):
-    return asyncio.run(main.list_user_notes(**kwargs))
+    return asyncio.run(routes.notes.list_user_notes(**kwargs))
 
 
 def _index(**kwargs):
-    return asyncio.run(main.user_notes_index(**kwargs))
+    return asyncio.run(routes.notes.user_notes_index(**kwargs))
 
 
 def _update(note_id, **kwargs):
-    return asyncio.run(main.update_user_note(note_id, main.UserNoteUpdateRequest(**kwargs)))
+    return asyncio.run(routes.notes.update_user_note(note_id, routes.notes.UserNoteUpdateRequest(**kwargs)))
 
 
 def _delete(note_id):
-    return asyncio.run(main.delete_user_note(note_id))
+    return asyncio.run(routes.notes.delete_user_note(note_id))
 
 
 def _archive(note_id, archived=True):
-    return asyncio.run(main.set_user_note_archived(
+    return asyncio.run(routes.notes.set_user_note_archived(
         note_id,
-        main.UserNoteArchiveRequest(archived=archived),
+        routes.notes.UserNoteArchiveRequest(archived=archived),
     ))
 
 
 def _bulk_delete(*note_ids):
-    return asyncio.run(main.bulk_delete_user_notes(
-        main.UserNoteBulkDeleteRequest(note_ids=list(note_ids)),
+    return asyncio.run(routes.notes.bulk_delete_user_notes(
+        routes.notes.UserNoteBulkDeleteRequest(note_ids=list(note_ids)),
     ))
 
 
@@ -76,8 +77,8 @@ def _store(output_dir=None):
         cache_file = root / "config.json"
         cache_notes = root / "user_notes.json"
         with patch.object(config_store, "CONFIG_FILE", cache_file), \
-                patch.object(main, "DEFAULT_USER_NOTES_FILE", cache_notes), \
-                patch.object(main, "USER_NOTES_FILE", cache_notes):
+                patch.object(routes.notes, "DEFAULT_USER_NOTES_FILE", cache_notes), \
+                patch.object(routes.notes, "USER_NOTES_FILE", cache_notes):
             config = {**config_store.DEFAULT_CONFIG}
             if output_dir is not None:
                 config["output_dir"] = str(root / output_dir)
@@ -90,10 +91,10 @@ class UserNotesStorageTests(unittest.TestCase):
         with _store(output_dir="output") as (root, cache_notes):
             created = _create(target=_target(), body="Exon 4 differs.")
 
-            sidecar = root / "output" / "local_data" / main.OUTPUT_DIR_USER_NOTES_FILENAME
+            sidecar = root / "output" / "local_data" / routes.notes.OUTPUT_DIR_USER_NOTES_FILENAME
             self.assertTrue(sidecar.exists())
             saved = json.loads(sidecar.read_text(encoding="utf-8"))
-            self.assertEqual(saved["version"], main.USER_NOTES_STORE_VERSION)
+            self.assertEqual(saved["version"], routes.notes.USER_NOTES_STORE_VERSION)
             self.assertEqual(saved["notes"][0]["id"], created["id"])
             self.assertEqual(saved["notes"][0]["body"], "Exon 4 differs.")
             self.assertFalse(cache_notes.exists())
@@ -133,7 +134,7 @@ class UserNotesStorageTests(unittest.TestCase):
     def test_later_updated_at_wins_when_both_stores_hold_the_same_note(self):
         with _store(output_dir="output") as (root, cache_notes):
             _create(target=_target(), body="new")
-            sidecar = root / "output" / "local_data" / main.OUTPUT_DIR_USER_NOTES_FILENAME
+            sidecar = root / "output" / "local_data" / routes.notes.OUTPUT_DIR_USER_NOTES_FILENAME
             store = json.loads(sidecar.read_text(encoding="utf-8"))
             note_id = store["notes"][0]["id"]
 
@@ -245,11 +246,11 @@ class UserNotesApiTests(unittest.TestCase):
             self.assertEqual(ctx.exception.status_code, 400)
 
             with self.assertRaises(HTTPException) as ctx:
-                _create(target=_target(), body="x", tags=[f"tag {index}" for index in range(main.MAX_NOTE_TAGS + 1)])
+                _create(target=_target(), body="x", tags=[f"tag {index}" for index in range(routes.notes.MAX_NOTE_TAGS + 1)])
             self.assertEqual(ctx.exception.status_code, 400)
 
             with self.assertRaises(HTTPException) as ctx:
-                _create(target=_target(), body="x", tags=["x" * (main.MAX_NOTE_TAG_CHARS + 1)])
+                _create(target=_target(), body="x", tags=["x" * (routes.notes.MAX_NOTE_TAG_CHARS + 1)])
             self.assertEqual(ctx.exception.status_code, 400)
 
     def test_update_with_stale_updated_at_returns_409_and_the_current_note(self):
@@ -401,11 +402,11 @@ class UserNotesApiTests(unittest.TestCase):
         with _store():
             created = _create(
                 target=_target(),
-                title="t" * (main.MAX_NOTE_TITLE_CHARS + 50),
-                body="b" * (main.MAX_NOTE_BODY_CHARS + 50),
+                title="t" * (routes.notes.MAX_NOTE_TITLE_CHARS + 50),
+                body="b" * (routes.notes.MAX_NOTE_BODY_CHARS + 50),
             )
-            self.assertEqual(len(created["title"]), main.MAX_NOTE_TITLE_CHARS)
-            self.assertEqual(len(created["body"]), main.MAX_NOTE_BODY_CHARS)
+            self.assertEqual(len(created["title"]), routes.notes.MAX_NOTE_TITLE_CHARS)
+            self.assertEqual(len(created["body"]), routes.notes.MAX_NOTE_BODY_CHARS)
 
 
 class UserNotesEnvironmentTests(unittest.TestCase):

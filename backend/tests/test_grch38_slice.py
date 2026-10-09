@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import routes.notes  # noqa: E402
 import config_store  # noqa: E402
 
 SLICE = demo_genome.SLICE_GENOME
@@ -319,8 +320,8 @@ class TutorialNotesStayInTheSandboxTests(unittest.TestCase):
 
     def _create(self, title):
         return self.loop.run_until_complete(
-            main.create_user_note(
-                main.UserNoteCreateRequest(
+            routes.notes.create_user_note(
+                routes.notes.UserNoteCreateRequest(
                     target={"kind": "gene", "genome_key": "g", "id": REG4_GENE_ID},
                     title=title,
                     body="…",
@@ -329,7 +330,7 @@ class TutorialNotesStayInTheSandboxTests(unittest.TestCase):
         )
 
     def _titles(self):
-        listed = self.loop.run_until_complete(main.list_user_notes())
+        listed = self.loop.run_until_complete(routes.notes.list_user_notes())
         notes = listed["notes"] if isinstance(listed, dict) else listed.notes
         return [n["title"] if isinstance(n, dict) else n.title for n in notes]
 

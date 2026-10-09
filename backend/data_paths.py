@@ -1,6 +1,7 @@
 """Where a genome's files live under the output directory, and the checks that
 keep user-supplied path segments, file names and download URLs inside it."""
 
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -96,3 +97,20 @@ def _assembly_report_taxid(path: str) -> int:
     except Exception:
         return 0
     return 0
+
+
+def _resolve_user_file(path_value: str, label: str) -> Path:
+    """Resolve a user-supplied path and confirm it is a readable file."""
+    token = str(path_value or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="{0} path is required".format(label))
+    resolved = Path(token).expanduser()
+    try:
+        resolved = resolved.resolve()
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail="Invalid {0} path: {1}".format(label, exc))
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="{0} file not found: {1}".format(label, resolved))
+    if not os.access(str(resolved), os.R_OK):
+        raise HTTPException(status_code=403, detail="{0} file is not readable".format(label))
+    return resolved

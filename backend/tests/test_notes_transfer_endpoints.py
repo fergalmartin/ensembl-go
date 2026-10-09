@@ -18,6 +18,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.notes  # noqa: E402
 import config_store  # noqa: E402
 import notes_transfer as nt  # noqa: E402
 
@@ -28,29 +29,29 @@ GENOME_KEY = "ensembl::homo_sapiens::GRCh38"
 
 
 def _target(gene_id="ENSG00000141510", label="TP53", genome_key=GENOME_KEY, kind="gene"):
-    return main.NoteTargetModel(kind=kind, genome_key=genome_key, id=gene_id, label=label)
+    return routes.notes.NoteTargetModel(kind=kind, genome_key=genome_key, id=gene_id, label=label)
 
 
 def _create(**kwargs):
-    return asyncio.run(main.create_user_note(main.UserNoteCreateRequest(**kwargs)))
+    return asyncio.run(routes.notes.create_user_note(routes.notes.UserNoteCreateRequest(**kwargs)))
 
 
 def _export(**kwargs):
-    return asyncio.run(main.export_user_notes(main.NotesExportRequest(**kwargs)))
+    return asyncio.run(routes.notes.export_user_notes(routes.notes.NotesExportRequest(**kwargs)))
 
 
 def _scan(path):
-    return asyncio.run(main.scan_user_notes_import(main.NotesImportScanRequest(path=str(path))))
+    return asyncio.run(routes.notes.scan_user_notes_import(routes.notes.NotesImportScanRequest(path=str(path))))
 
 
 def _apply(path, **kwargs):
     return asyncio.run(
-        main.apply_user_notes_import(main.NotesImportApplyRequest(path=str(path), **kwargs))
+        routes.notes.apply_user_notes_import(routes.notes.NotesImportApplyRequest(path=str(path), **kwargs))
     )
 
 
 def _stored():
-    return main._load_user_notes(config_store.load_config())["notes"]
+    return routes.notes._load_user_notes(config_store.load_config())["notes"]
 
 
 @contextmanager
@@ -59,8 +60,8 @@ def _store(output_dir=None):
         root = Path(tmpdir)
         cache_notes = root / "user_notes.json"
         with patch.object(config_store, "CONFIG_FILE", root / "config.json"), \
-                patch.object(main, "DEFAULT_USER_NOTES_FILE", cache_notes), \
-                patch.object(main, "USER_NOTES_FILE", cache_notes):
+                patch.object(routes.notes, "DEFAULT_USER_NOTES_FILE", cache_notes), \
+                patch.object(routes.notes, "USER_NOTES_FILE", cache_notes):
             config = {**config_store.DEFAULT_CONFIG}
             if output_dir is not None:
                 config["output_dir"] = str(root / output_dir)
@@ -71,7 +72,7 @@ def _store(output_dir=None):
 def _write_store(path, notes):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps({"version": main.USER_NOTES_STORE_VERSION, "notes": notes}, indent=2),
+        json.dumps({"version": routes.notes.USER_NOTES_STORE_VERSION, "notes": notes}, indent=2),
         encoding="utf-8",
     )
 
@@ -219,7 +220,7 @@ class ScanTests(unittest.TestCase):
         with _store() as (root, _cache):
             path, notes = self._exported(root)
             for note in notes:
-                asyncio.run(main.delete_user_note(note["id"]))
+                asyncio.run(routes.notes.delete_user_note(note["id"]))
             scan = _scan(path)
             self.assertEqual(scan["summary"]["new"], 2)
 
@@ -297,7 +298,7 @@ class ApplyTests(unittest.TestCase):
         with _store() as (root, _cache):
             note = _create(target=_target(), body="Worth keeping.")
             path = self._export_all(root)
-            asyncio.run(main.delete_user_note(note["id"]))
+            asyncio.run(routes.notes.delete_user_note(note["id"]))
             self.assertEqual(_stored(), [])
 
             result = _apply(path, strategy="newer_wins")
@@ -379,7 +380,7 @@ class DestructiveImportTests(unittest.TestCase):
 
     def test_replace_all_does_not_let_notes_resurrect_from_a_second_store(self):
         with _store(output_dir="output") as (root, cache_notes):
-            sidecar = root / "output" / "local_data" / main.OUTPUT_DIR_USER_NOTES_FILENAME
+            sidecar = root / "output" / "local_data" / routes.notes.OUTPUT_DIR_USER_NOTES_FILENAME
             _write_store(sidecar, [_raw_note("note_sidecar0001", "In the sidecar.", "2026-01-01T00:00:00Z")])
             _write_store(cache_notes, [_raw_note("note_cachedir001", "In the cache dir.", "2026-01-01T00:00:00Z")])
             self.assertEqual(len(_stored()), 2)
@@ -397,7 +398,7 @@ class DestructiveImportTests(unittest.TestCase):
 
     def test_replace_matching_survives_an_older_copy_in_a_second_store(self):
         with _store(output_dir="output") as (root, cache_notes):
-            sidecar = root / "output" / "local_data" / main.OUTPUT_DIR_USER_NOTES_FILENAME
+            sidecar = root / "output" / "local_data" / routes.notes.OUTPUT_DIR_USER_NOTES_FILENAME
             _write_store(sidecar, [_raw_note("note_shared00001", "Sidecar copy.", "2026-01-01T00:00:00Z")])
             _write_store(cache_notes, [_raw_note("note_shared00001", "Cache copy, newer.", "2026-04-01T00:00:00Z")])
 
@@ -415,7 +416,7 @@ class DestructiveImportTests(unittest.TestCase):
 
     def test_replace_all_backs_up_every_store_first(self):
         with _store(output_dir="output") as (root, cache_notes):
-            sidecar = root / "output" / "local_data" / main.OUTPUT_DIR_USER_NOTES_FILENAME
+            sidecar = root / "output" / "local_data" / routes.notes.OUTPUT_DIR_USER_NOTES_FILENAME
             _write_store(sidecar, [_raw_note("note_sidecar0001", "Irreplaceable prose.", "2026-01-01T00:00:00Z")])
             _write_store(cache_notes, [_raw_note("note_cachedir001", "Also irreplaceable.", "2026-01-01T00:00:00Z")])
 
