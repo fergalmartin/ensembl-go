@@ -22,7 +22,7 @@ const provider = readFileSync(new URL('../src/hooks/useTutorial.jsx', import.met
 const browserView = readSources('src/components/genome-browser/GenomeBrowserView.jsx', 'src/components/genome-browser/view')
 const screenshot = readFileSync(new URL('../src/components/ScreenshotSelectionOverlay.jsx', import.meta.url), 'utf8')
 const main = readFileSync(new URL('../src/main.jsx', import.meta.url), 'utf8')
-const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')
+const app = readSources('src/App.jsx', 'src/app', 'src/components/app-shell')
 const backendDemo = readFileSync(new URL('../../backend/demo_genome.py', import.meta.url), 'utf8')
 // The whole backend app, so the assertion survives code moving out of main.py.
 const backendMain = readBackendSources()

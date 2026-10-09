@@ -36,57 +36,24 @@ class ErrorBoundary extends React.Component {
 }
 
 import './App.css'
-import { datasetReleaseDownloadMetadata } from './utils/downloadMetadata'
-import FeatureLegend from './components/FeatureLegend'
-import ConfigurationView from './components/ConfigurationView'
-import NeighbourhoodView from './components/NeighbourhoodView'
-import StructuralVariationView from './components/StructuralVariationView'
-import HomologyView from './components/HomologyView'
 import useHomologyWorkspace from './components/homology/useHomologyWorkspace'
-import StatsView from './components/StatsView'
-import FeatureExplorerView from './components/FeatureExplorerView'
-import DownloadView from './components/DownloadView'
-import GenomeSelectorView from './components/GenomeSelectorView'
-import GenomeBrowserView from './components/genome-browser/GenomeBrowserView'
-import HomeView from './components/HomeView'
-import GettingStartedOutputDirPrompt from './components/GettingStartedOutputDirPrompt'
-import HelpView from './components/HelpView'
-import TutorialsView from './components/TutorialsView'
-import TrackManagerView from './components/TrackManagerView'
-import NotesView from './components/NotesView'
-import MultiAlignmentSidebar from './components/MultiAlignmentSidebar'
-import MultiAlignmentPanel from './components/MultiAlignmentPanel'
 const AlignmentExplorerView = React.lazy(() => import('./components/alignment-explorer/AlignmentExplorerView'))
 const SequenceView = React.lazy(() => import('./components/sequence-view/SequenceView'))
 const GeneTreesView = React.lazy(() => import('./components/gene-trees/GeneTreesView'))
-import SaveAlignmentModal from './components/SaveAlignmentModal'
-import LoadAlignmentModal from './components/LoadAlignmentModal'
-import AppButtonIcon from './components/AppButtonIcon'
-import AppOrganiserPanel from './components/AppOrganiserPanel.jsx'
-import NoGenomesPillsMessage from './components/NoGenomesPillsMessage'
 import { useTutorialHost } from './hooks/useTutorial'
 import { resetTutorialWorkspace } from './tutorials/demoGenomeApi'
 import { isTutorialSandboxActive, withoutTutorialSandboxFields } from './tutorials/sandbox'
-import SelectedSpeciesPillsBar, { PILLS_ROW_HEIGHT } from './components/SelectedSpeciesPillsBar'
-import ActiveTasksButton from './components/ActiveTasksButton'
+import { PILLS_ROW_HEIGHT } from './components/SelectedSpeciesPillsBar'
 import { getDownloadTasksSnapshot, subscribeDownloadTasks } from './utils/downloadTasksStore'
 import { cycleSelection } from './utils/genomeWheel'
-import WindowsBackendSetupView from './components/WindowsBackendSetupView'
-import ScreenshotSelectionOverlay from './components/ScreenshotSelectionOverlay'
-import ScreenshotExportModal from './components/ScreenshotExportModal'
 import {
   APP_BUTTON_META,
   DEFAULT_ACTIVE_APP_BUTTONS,
-  TOP_BAR_BUTTON_PX,
   TOP_BAR_COLUMN_STRIDE_PX,
-  TOP_BAR_GAP_PX,
-  TOP_BAR_VIEWPORT_PX,
   buildAppButtonLayout,
   isRearrangedFromDefault,
   normalizeActiveAppButtons,
 } from './appButtonConfig'
-import AchievementsView from './components/achievements/AchievementsView'
-import AchievementToastHost from './components/achievements/AchievementToast'
 import {
   loadAchievements,
   refreshAchievements,
@@ -106,20 +73,15 @@ import {
 import {
   DEFAULT_GENOME_COLOR,
   genomeColorResolver,
-  migrateLegacyGenomeColors,
   normalizeCustomGenomeColors,
   normalizeGenomeColorAssignments,
   normalizeGenomeDefaultColor,
 } from './genomeColorSchemes'
-import {
-  DEFAULT_BROWSING_CONTROL_SCHEME_ID,
-  normalizeBrowsingControlSchemeId,
-} from './utils/browsingControls'
+import { DEFAULT_BROWSING_CONTROL_SCHEME_ID } from './utils/browsingControls'
 import {
   buildDefaultScreenshotName,
   buildDomNodeScreenshotSnapshot,
   measureScreenshotNode,
-  rasterizeSvgMarkup,
   subtreeContainsCanvas,
 } from './utils/screenshotExport'
 import {
@@ -130,39 +92,23 @@ import {
   normalizeGenomeProvider,
   MANUAL_PROVIDER,
 } from './utils/genomeIdentity'
-import { playlistTourSlug } from './utils/playlistGenomes'
 import {
   primaryGenomeForIndex,
   shouldAutoEnsurePrimaryIndex,
 } from './utils/genomeIndexingPolicy'
 import {
-  appendUniqueSpecies,
   basenameFromPath,
   buildGenomeLabel,
   buildGenomePillLabel,
   dedupeSpeciesList,
   dirnameFromPath,
   getViewActiveCapacity,
-  prependUniqueSpecies,
   reorderWithInsertPosition,
   sameStringArrayItems,
   speciesItemKey,
   speciesListsEqualByKey,
 } from './app/genomeLists.js'
-import {
-  geneFocusSignature,
-  hasFiniteGeneCoords,
-  mergeGeneFocus,
-  normalizeGeneToken,
-  updateGeneFocusMapEntry,
-} from './app/geneFocus.js'
-import {
-  buildAlignmentGenomicToColumnMap,
-  buildProjectedTranscriptFeatures,
-  getCoveredAlignmentColumnRange,
-  getTranscriptBoundaryStatus,
-  getTranscriptSpan,
-} from './app/alignmentProjection.js'
+import { geneFocusSignature, mergeGeneFocus, updateGeneFocusMapEntry } from './app/geneFocus.js'
 import {
   NEIGHBOURHOOD_FLANK_WINDOW_SIZE,
   SV_NO_ANCHOR_KEY,
@@ -171,25 +117,41 @@ import {
 } from './app/viewSpecies.js'
 import {
   CONFIG_SAVE_NAV_WAIT_MS,
-  DRAWER_BORDER_PX,
-  DRAWER_PADDING_X,
   PREVIOUS_SESSION_PLAYLIST_ID,
   SELECTOR_REFRESH_EVENT,
-  TOP_BAR_SCROLL_ARROW_PX,
   holdScrollTop,
   readPendingSelectorGenomeIds,
   writePendingSelectorGenomeIds,
 } from './app/appLayout.js'
 import {
   buildPreviousSessionGenomes,
-  findNextPreviousSessionPlaylist,
-  findPreviousSessionPlaylist,
   isNextPreviousSessionPlaylist,
   isPreviousSessionPlaylist,
-  removeEmptyPreviousSessionPlaylist,
-  upsertPreviousSessionPlaylist,
   withNextPreviousSessionGenomes,
 } from './app/previousSessionPlaylist.js'
+import { renderAppLayout } from './components/app-shell/AppLayout.jsx'
+import { loadAppConfig } from './app/configLoading.js'
+import { applyAppConfigCascade } from './app/configLoading.js'
+import { runMultipleAlignment } from './app/featureAlignment.js'
+import { resolveAlignmentInputs } from './app/featureAlignment.js'
+import { changeAlignmentRowSetting } from './app/featureAlignment.js'
+import { buildPairwiseOverlay } from './app/featureAlignment.js'
+import { computeAlignmentDisplayRows } from './app/featureAlignment.js'
+import { toggleSpeciesPill } from './app/genomeSelection.js'
+import { changeStructuralVariationGenomeOrder } from './app/genomeSelection.js'
+import { toggleStructuralVariationPill } from './app/genomeSelection.js'
+import { applySelectorConfigChange } from './app/genomeSelection.js'
+import { selectNeighbourhoodLink } from './app/neighbourhoodActions.js'
+import { seedNeighbourhoodFromHomologyHit } from './app/neighbourhoodActions.js'
+import { watchDownloadTasks } from './app/appEffects.js'
+import { syncReferenceGeneFocus } from './app/appEffects.js'
+import { restoreFocusFromSession } from './app/appEffects.js'
+import { saveFallbackScreenshot } from './app/screenshots.js'
+import { loadAlignmentWorkspace } from './app/featureAlignment.js'
+import { saveAlignmentWorkspace } from './app/featureAlignment.js'
+import { reorderSpeciesPills } from './app/genomeSelection.js'
+import { loadPairLinks } from './app/neighbourhoodActions.js'
+import { syncTargetGeneFocus } from './app/appEffects.js'
 
 // The genome pills strip's padding, and the height that falls out of it. Kept in one
 // place because two things depend on it: the strip's own style below, and the app
@@ -761,12 +723,25 @@ function App() {
   // when a snapshot is taken — the page hiding, unloading or the machine sleeping — so
   // keeping it current is one assignment per render.
   const sessionStateRef = useRef(null)
-  sessionStateRef.current = {
-    currentView, config, configLoaded, inactiveSelectedSpecies, dualViewFocus, mainContentNode,
-    browserRefGene, browserTgtGene, browserFocusByGenome,
-    alignmentInputs, alignmentGlobalFlanks, alignmentGlobalFlanksLocked, alignmentGlobalFlankMax,
-    alignmentSidebarCollapsed, multiAlignmentResult, loadedAlignmentBaselineByGenome,
-  }
+  restoreFocusFromSession({
+      alignmentGlobalFlankMax,
+      alignmentGlobalFlanks,
+      alignmentGlobalFlanksLocked,
+      alignmentInputs,
+      alignmentSidebarCollapsed,
+      browserFocusByGenome,
+      browserRefGene,
+      browserTgtGene,
+      config,
+      configLoaded,
+      currentView,
+      dualViewFocus,
+      inactiveSelectedSpecies,
+      loadedAlignmentBaselineByGenome,
+      mainContentNode,
+      multiAlignmentResult,
+      sessionStateRef,
+  })
   useEffect(() => {
     consumeRestoredSessionState('app.focus')
     const unregisterView = registerSessionState('app.view', () => sessionStateRef.current.currentView)
@@ -900,9 +875,7 @@ function App() {
   // that async resolve completions cannot overwrite one another. Keep that ref in
   // sync before the browser paints: a passive effect leaves a short window where
   // a transcript is visibly selected but a Run/Go click still sees the old row.
-  useLayoutEffect(() => {
-    alignmentInputsRef.current = alignmentInputs
-  }, [alignmentInputs])
+  useLayoutEffect((...args) => watchDownloadTasks({ alignmentInputs, alignmentInputsRef }, ...args), [alignmentInputs])
 
   useEffect(() => {
     const inProgressStatuses = new Set(['pending', 'downloading'])
@@ -1175,199 +1148,16 @@ function App() {
     return () => clearTimeout(timer)
   }, [currentView, refResolved?.selectedTranscriptId, tgtResolved?.selectedTranscriptId, refFlankBp, tgtFlankBp])
 
-  const fetchConfig = async () => {
-    // While a tutorial runs, `config` is the sandbox overlay — so re-reading here would
-    // look up the sidecar for the tutorial's scratch directory and write its empty genome
-    // list over the user's real one in state. The user's configuration cannot have changed
-    // underneath us anyway, since the tutorial is forbidden from writing it.
-    if (isTutorialSandboxActive()) return null
-    try {
-      const res = await fetch(`${API_BASE}/api/config`)
-      if (res.ok) {
-        // Both stores are swept of any tutorial scratch configuration before they are
-        // read. Writing it is shut off at source, but a configuration saved before that
-        // was true still carries the tutorial's own genomes and its scratch output
-        // directory, and nothing else would ever take them out again.
-        const data = withoutTutorialSandboxFields(await res.json())
-        // Recover any fields the backend may have lost (e.g. output_dir wiped by a crashed write)
-        // by merging in values from the Electron-side durable config store.
-        const electronConfig = withoutTutorialSandboxFields(window.electronAPI?.getElectronConfig?.() || {})
-        let recovered = {
-          ...electronConfig,
-          ...data,
-          output_dir: data.output_dir || electronConfig.output_dir || '',
-          working_dir: data.working_dir || electronConfig.working_dir || '',
-        }
-        if (recovered.output_dir || recovered.working_dir) {
-          try {
-            const configParams = new URLSearchParams()
-            if (recovered.output_dir) configParams.set('output_dir', recovered.output_dir)
-            if (recovered.working_dir) configParams.set('working_dir', recovered.working_dir)
-            const outputConfigRes = await fetch(`${API_BASE}/api/config/output-dir?${configParams.toString()}`)
-            if (outputConfigRes.ok) {
-              const outputPayload = await outputConfigRes.json()
-              const outputConfig = withoutTutorialSandboxFields(outputPayload?.config)
-              if (outputPayload?.found && outputConfig) {
-                recovered = {
-                  ...recovered,
-                  ...outputConfig,
-                  output_dir: recovered.output_dir || outputConfig.output_dir || '',
-                  working_dir: recovered.working_dir || outputConfig.working_dir || '',
-                }
-              }
-            }
-          } catch (error) {
-            console.error('Failed to load configuration from output directory:', error)
-          }
-          try {
-            const playlistParams = new URLSearchParams()
-            if (recovered.output_dir) playlistParams.set('output_dir', recovered.output_dir)
-            if (recovered.working_dir) playlistParams.set('working_dir', recovered.working_dir)
-            const playlistRes = await fetch(`${API_BASE}/api/config/playlists?${playlistParams.toString()}`)
-            if (playlistRes.ok) {
-              const playlistState = await playlistRes.json()
-              if ((playlistState.genome_playlists || []).length > 0) {
-                recovered = {
-                  ...recovered,
-                  genome_playlists: playlistState.genome_playlists,
-                  selected_genome_playlist_id: playlistState.selected_genome_playlist_id || recovered.selected_genome_playlist_id || '__all__',
-                }
-              }
-            }
-          } catch (error) {
-            console.error('Failed to load genome playlists from output directory:', error)
-          }
-        }
-        // If the backend was missing output_dir, resync it now so the backend is up to date.
-        if (!data.output_dir && recovered.output_dir) {
-          fetch(`${API_BASE}/api/config`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(recovered),
-          }).catch(() => {})
-        }
-        const previousPlaylist = findPreviousSessionPlaylist(recovered.genome_playlists)
-        const nextPreviousPlaylist = findNextPreviousSessionPlaylist(recovered.genome_playlists)
-        const nextPreviousPlaylistGenomes = buildPreviousSessionGenomes(nextPreviousPlaylist?.genomes || [])
-        const fieldNextPreviousSessionGenomes = buildPreviousSessionGenomes(recovered.next_previous_session_genomes || [])
-        const hasNextPreviousSessionSnapshot = Boolean(nextPreviousPlaylist) || fieldNextPreviousSessionGenomes.length > 0
-        const promotedPreviousSessionGenomes = buildPreviousSessionGenomes(
-          nextPreviousPlaylist
-            ? nextPreviousPlaylistGenomes
-            : (hasNextPreviousSessionSnapshot ? fieldNextPreviousSessionGenomes : (previousPlaylist?.genomes || []))
-        )
-        const hasPreviousPlaylist = promotedPreviousSessionGenomes.length > 0
-        const shouldPromotePreviousSessionPlaylist = hasNextPreviousSessionSnapshot || Boolean(previousPlaylist)
-        const recoveredWithPreviousPlaylist = shouldPromotePreviousSessionPlaylist
-          ? (
-              hasPreviousPlaylist
-                ? upsertPreviousSessionPlaylist(recovered, promotedPreviousSessionGenomes)
-                : removeEmptyPreviousSessionPlaylist(recovered)
-            )
-          : recovered
-        const startupActiveSpecies = hasPreviousPlaylist
-          ? promotedPreviousSessionGenomes
-          : dedupeSpeciesList(recovered.active_species || [])
-        const hasActiveSpecies = startupActiveSpecies.length > 0
-        const startupSelectedPlaylistId = hasPreviousPlaylist
-          ? PREVIOUS_SESSION_PLAYLIST_ID
-          : (recovered.selected_genome_playlist_id === PREVIOUS_SESSION_PLAYLIST_ID ? '__all__' : (recovered.selected_genome_playlist_id || '__all__'))
-        const startupConfig = {
-          ...recoveredWithPreviousPlaylist,
-          selected_genome_playlist_id: startupSelectedPlaylistId,
-          active_species: startupActiveSpecies,
-          next_previous_session_genomes: buildPreviousSessionGenomes(startupActiveSpecies),
-          active_app_buttons: normalizeActiveAppButtons(recovered.active_app_buttons),
-          // First launch under per-genome colours carries the old positional list
-          // over: its first entry was the primary genome's colour, which is what
-          // the default now is, and the rest join the palette.
-          ...migrateLegacyGenomeColors(recovered),
-          // `recovered` includes the hand-editable Electron store, so a stale or
-          // invalid scheme id has to be coerced before it reaches the browser.
-          browsing_control_scheme: normalizeBrowsingControlSchemeId(recovered.browsing_control_scheme),
-          target_fasta: '',
-          target_gff: '',
-          target_index: '',
-          ...(hasActiveSpecies ? {} : { ref_fasta: '', ref_gff: '', ref_index: '', homologies_file: '' })
-        }
-        // Resuming after a reload rather than launching: the saved configuration already
-        // has the right genomes, but not the order the reader had them in, the playlist
-        // they had open, the genomes they had selected without activating, or which of
-        // the active ones each view was showing. Those come from the session snapshot.
-        // Peeked, not taken: StrictMode runs this load twice in development, and both
-        // runs must resume the same way. It stops applying once the restore window
-        // closes, or an explicit save below asks for the configuration as saved.
-        const resumedGenomes = peekRestoredSessionState('app.genomes')
-        let resumedInactive = []
-        let resumedFocus = null
-        if (resumedGenomes && typeof resumedGenomes === 'object') {
-          const activeByKey = new Map(dedupeSpeciesList(startupConfig.active_species).map((species) => [speciesItemKey(species), species]))
-          const orderedKeys = Array.isArray(resumedGenomes.activeKeys) ? resumedGenomes.activeKeys.filter((key) => activeByKey.has(key)) : []
-          if (orderedKeys.length) {
-            const ordered = orderedKeys.map((key) => activeByKey.get(key))
-            for (const [key, species] of activeByKey) {
-              if (!orderedKeys.includes(key)) ordered.push(species)
-            }
-            startupConfig.active_species = ordered
-            startupConfig.next_previous_session_genomes = buildPreviousSessionGenomes(ordered)
-          }
-          const playlistId = String(resumedGenomes.selectedPlaylistId || '')
-          if (playlistId && (playlistId === '__all__' || (startupConfig.genome_playlists || []).some((playlist) => playlist?.id === playlistId))) {
-            startupConfig.selected_genome_playlist_id = playlistId
-          }
-          if (Array.isArray(resumedGenomes.inactiveSelected)) {
-            resumedInactive = dedupeSpeciesList(resumedGenomes.inactiveSelected.filter((species) => (
-              species && typeof species === 'object' && !activeByKey.has(speciesItemKey(species))
-            )))
-          }
-          const focus = resumedGenomes.viewFocus
-          if (focus && activeByKey.has(focus.primaryKey)) {
-            resumedFocus = {
-              primaryKey: focus.primaryKey,
-              secondaryKey: activeByKey.has(focus.secondaryKey) ? focus.secondaryKey : '',
-            }
-          }
-        }
-        const startupActive = dedupeSpeciesList(startupConfig.active_species)
-        const startupPrimary = startupActive[0] || null
-        const startupSecondary = startupActive[1] || null
-        setConfig(startupConfig)
-        setInactiveSelectedSpecies(resumedInactive)
-        setDualViewFocus(resumedFocus || {
-          primaryKey: startupPrimary ? speciesItemKey(startupPrimary) : '',
-          secondaryKey: startupSecondary ? speciesItemKey(startupSecondary) : '',
-        })
-        savedConfigRef.current = { ...startupConfig }
-        nextPreviousSessionSignatureRef.current = JSON.stringify(startupConfig.next_previous_session_genomes || [])
-        persistedActiveButtonsRef.current = JSON.stringify(normalizeActiveAppButtons(startupConfig.active_app_buttons))
-        // A configuration that already knows its colours is in sync with the
-        // disk and needs no write. One that has just been migrated off the old
-        // positional list is not: leaving the marker empty makes the persist
-        // effect save the migration, so it happens once rather than being
-        // recomputed — and undone — on every launch.
-        persistedGenomeColorsRef.current = recovered.genome_default_color
-          ? JSON.stringify({
-            genome_default_color: normalizeGenomeDefaultColor(startupConfig.genome_default_color),
-            genome_colors: normalizeGenomeColorAssignments(startupConfig.genome_colors),
-            genome_color_palette: normalizeCustomGenomeColors(startupConfig.genome_color_palette),
-          })
-          : ''
-        setConfigLoaded(true)
-        if (shouldPromotePreviousSessionPlaylist) {
-          window.electronAPI?.saveElectronConfig?.(startupConfig)
-          fetch(`${API_BASE}/api/config`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(startupConfig),
-          }).catch(() => {})
-        }
-        return startupConfig
-      }
-    } catch (e) {
-      console.error('Failed to fetch config:', e)
-    }
-    return null
-  }
+  const fetchConfig = (...args) => loadAppConfig({
+      nextPreviousSessionSignatureRef,
+      persistedActiveButtonsRef,
+      persistedGenomeColorsRef,
+      savedConfigRef,
+      setConfig,
+      setConfigLoaded,
+      setDualViewFocus,
+      setInactiveSelectedSpecies,
+  }, ...args)
 
   const fetchRecent = async () => {
     try {
@@ -1431,166 +1221,26 @@ function App() {
     }
   }, [])
 
-  const loadNeighbourhoodPairLinks = useCallback(async ({
-    refGenomeKey: pairRefGenomeKey,
-    targetGenomeKey: pairTargetGenomeKey,
-    refGeneId,
-    targetGeneId,
-    useHomology = false,
-  }) => {
-    const refKey = String(pairRefGenomeKey || '').trim()
-    const tgtKey = String(pairTargetGenomeKey || '').trim()
-    const srcGeneId = String(refGeneId || '').trim()
-    const dstGeneId = String(targetGeneId || '').trim()
-    const pairKey = buildNeighbourhoodPairKey(refKey, tgtKey)
-    if (!pairKey || !srcGeneId || !dstGeneId) return null
-
-    const prevController = neighbourhoodPairAbortRef.current[pairKey]
-    if (prevController) {
-      try { prevController.abort() } catch { }
-    }
-    const controller = new AbortController()
-    neighbourhoodPairAbortRef.current[pairKey] = controller
-    const reqSeq = (Number(neighbourhoodPairRequestSeqRef.current[pairKey]) || 0) + 1
-    neighbourhoodPairRequestSeqRef.current[pairKey] = reqSeq
-
-    if (useHomology) {
-      setNeighbourhoodHomologyPairLoading((prev) => (prev?.[pairKey] ? prev : { ...prev, [pairKey]: true }))
-    }
-
-    try {
-      const url = `${API_BASE}/api/neighbourhood?ref_genome=${encodeURIComponent(refKey)}&target_genome=${encodeURIComponent(tgtKey)}&ref_gene_id=${encodeURIComponent(srcGeneId)}&target_gene_id=${encodeURIComponent(dstGeneId)}&window_size=${NEIGHBOURHOOD_FLANK_WINDOW_SIZE}${useHomology ? '&use_homology=true' : ''}`
-      const res = await fetch(url, { signal: controller.signal })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err?.detail || 'Failed to load neighbourhood links')
-      }
-      const json = await res.json()
-      if ((Number(neighbourhoodPairRequestSeqRef.current[pairKey]) || 0) !== reqSeq) return null
-      const homologies = Array.isArray(json?.homologies)
-        ? json.homologies.filter((pair) => Array.isArray(pair) && pair.length >= 2)
-        : []
-      const homologyLinks = Array.isArray(json?.homology_links) ? json.homology_links : []
-      const refGenes = Array.isArray(json?.reference_genes) ? json.reference_genes : []
-      const targetGenes = Array.isArray(json?.target_genes) ? json.target_genes : []
-      const resolvedRefGeneId = String(json?.request_ref_gene_id || srcGeneId).trim()
-      const resolvedTargetGeneId = String(json?.request_target_gene_id || dstGeneId).trim()
-      setNeighbourhoodLinksByPair((prev) => ({ ...prev, [pairKey]: homologies }))
-      setNeighbourhoodHomologyLinksByPair((prev) => ({ ...prev, [pairKey]: homologyLinks }))
-      if (refGenes.length || targetGenes.length) trackAchievement('neighbourhood.loaded')
-      if (refGenes.length || targetGenes.length) {
-        setNeighbourhoodTracksByGenome((prev) => {
-          const next = { ...(prev || {}) }
-          if (refGenes.length) {
-            next[refKey] = mergeNeighbourhoodTrack(
-              prev?.[refKey],
-              refGenes,
-              String(json?.center_ref_id || resolvedRefGeneId).trim(),
-              resolvedRefGeneId,
-              NEIGHBOURHOOD_FLANK_WINDOW_SIZE,
-            )
-          }
-          if (targetGenes.length) {
-            next[tgtKey] = mergeNeighbourhoodTrack(
-              prev?.[tgtKey],
-              targetGenes,
-              String(json?.center_target_id || resolvedTargetGeneId).trim(),
-              resolvedTargetGeneId,
-              NEIGHBOURHOOD_FLANK_WINDOW_SIZE,
-            )
-          }
-          return next
-        })
-      }
-      setNeighbourhoodPairRequestByKey((prev) => ({
-        ...prev,
-        [pairKey]: {
-          refGeneId: resolvedRefGeneId,
-          targetGeneId: resolvedTargetGeneId,
-          windowSize: NEIGHBOURHOOD_FLANK_WINDOW_SIZE,
-          useHomology,
-        },
-      }))
-      return json
-    } catch (e) {
-      if (e?.name === 'AbortError') return null
-      if ((Number(neighbourhoodPairRequestSeqRef.current[pairKey]) || 0) !== reqSeq) return null
-      console.error(`Neighbourhood pair fetch error (${pairKey}):`, e)
-      return null
-    } finally {
-      if ((Number(neighbourhoodPairRequestSeqRef.current[pairKey]) || 0) !== reqSeq) return
-      if (neighbourhoodPairAbortRef.current[pairKey] === controller) {
-        delete neighbourhoodPairAbortRef.current[pairKey]
-      }
-      if (useHomology) {
-        setNeighbourhoodHomologyPairLoading((prev) => {
-          if (!prev?.[pairKey]) return prev
-          const next = { ...prev }
-          delete next[pairKey]
-          return next
-        })
-      }
-    }
-  }, [])
+  const loadNeighbourhoodPairLinks = useCallback((...args) => loadPairLinks({
+      neighbourhoodPairAbortRef,
+      neighbourhoodPairRequestSeqRef,
+      setNeighbourhoodHomologyLinksByPair,
+      setNeighbourhoodHomologyPairLoading,
+      setNeighbourhoodLinksByPair,
+      setNeighbourhoodPairRequestByKey,
+      setNeighbourhoodTracksByGenome,
+  }, ...args), [])
 
   // Resolve a gene/transcript ID for either side
-  const resolveInput = useCallback(async (side, query) => {
-    const setSideLoading = side === 'ref' ? setRefLoading : setTgtLoading
-    const setSideError = side === 'ref' ? setRefError : setTgtError
-    const setSideResolved = side === 'ref' ? setRefResolved : setTgtResolved
-    const genome = side === 'ref' ? 'reference' : 'target'
-
-    // Focusing a gene pushes its name into this input, which then looks for the same gene
-    // on the comparison side. During a tutorial that side is still the user's own
-    // reference genome, and the gene is one of the demo genome's invented ones — so the
-    // lookup can only fail, noisily, for something nobody asked for.
-    if (isTutorialSandboxActive()) {
-      setSideResolved(null)
-      setSideError(null)
-      return null
-    }
-
-    // With no annotation configured for this side there is nothing to resolve against,
-    // so the request can only come back 404 — and the "Not found" it produces says the
-    // gene is missing when really the side is simply unset.
-    const configured = side === 'ref'
-      ? configRef.current?.ref_gff
-      : configRef.current?.target_gff
-    if (!String(configured || '').trim()) {
-      setSideResolved(null)
-      setSideError(null)
-      return null
-    }
-
-    setSideLoading(true)
-    setSideError(null)
-
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/resolve_id?genome=${genome}&query=${encodeURIComponent(query.trim())}`
-      )
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.detail || 'Not found')
-      }
-      const data = await res.json()
-      const resolved = {
-        query: data.query,
-        resolvedType: data.resolved_type,
-        gene: data.gene,
-        transcripts: data.transcripts,
-        selectedTranscriptId: data.selected_transcript_id,
-      }
-      setSideResolved(resolved)
-      return resolved
-    } catch (e) {
-      setSideError(e.message)
-      setSideResolved(null)
-      return null
-    } finally {
-      setSideLoading(false)
-    }
-  }, [])
+  const resolveInput = useCallback((...args) => resolveAlignmentInput({
+      configRef,
+      setRefError,
+      setRefLoading,
+      setRefResolved,
+      setTgtError,
+      setTgtLoading,
+      setTgtResolved,
+  }, ...args), [])
 
   const handleRefGeneSelect = useCallback((gene) => {
     if (gene?.name || gene?.id) {
@@ -1652,82 +1302,19 @@ function App() {
     setBrowserFocusByGenome({})
   }, [])
 
-  const handleNeighbourhoodLinkSelect = useCallback((payload = {}) => {
-    const payloadGenesByGenome = payload?.genesByGenome && typeof payload.genesByGenome === 'object'
-      ? payload.genesByGenome
-      : null
-    if (payloadGenesByGenome && Object.keys(payloadGenesByGenome).length > 0) {
-      const focusUpdatesByGenome = {}
-      const queryLabelByGenome = {}
-      for (const [genomeKeyRaw, geneRaw] of Object.entries(payloadGenesByGenome)) {
-        const genomeKey = String(genomeKeyRaw || '').trim()
-        const gene = geneRaw || null
-        const geneId = String(gene?.id || '').trim()
-        if (!genomeKey || !geneId) continue
-        focusUpdatesByGenome[genomeKey] = gene
-        const label = String(gene?.name || gene?.id || '').trim()
-        if (label) queryLabelByGenome[genomeKey] = label
-      }
-
-      const refGeneUpdate = refGenomeKey ? focusUpdatesByGenome[refGenomeKey] : null
-      const tgtGeneUpdate = tgtGenomeKey ? focusUpdatesByGenome[tgtGenomeKey] : null
-      if (refGeneUpdate) {
-        setBrowserRefGene((prev) => {
-          const next = mergeGeneFocus(prev, refGeneUpdate)
-          return geneFocusSignature(prev) === geneFocusSignature(next) ? prev : next
-        })
-        if (refGeneUpdate?.name || refGeneUpdate?.id) {
-          setRefInput(refGeneUpdate.name || refGeneUpdate.id)
-        }
-      }
-      if (tgtGeneUpdate) {
-        setBrowserTgtGene((prev) => {
-          const next = mergeGeneFocus(prev, tgtGeneUpdate)
-          return geneFocusSignature(prev) === geneFocusSignature(next) ? prev : next
-        })
-        if (tgtGeneUpdate?.name || tgtGeneUpdate?.id) {
-          setTgtInput(tgtGeneUpdate.name || tgtGeneUpdate.id)
-        }
-      }
-
-      setBrowserFocusByGenome((prev) => {
-        let next = prev
-        for (const [genomeKey, gene] of Object.entries(focusUpdatesByGenome)) {
-          const fallbackGene = genomeKey === refGenomeKey
-            ? browserRefGene
-            : (genomeKey === tgtGenomeKey ? browserTgtGene : null)
-          next = updateGeneFocusMapEntry(next, genomeKey, gene, fallbackGene)
-        }
-        return next
-      })
-
-      setNeighbourhoodQueryByGenome((prev) => {
-        const next = { ...(prev || {}) }
-        let changed = false
-        for (const [genomeKey, label] of Object.entries(queryLabelByGenome)) {
-          if (next[genomeKey] !== label) {
-            next[genomeKey] = label
-            changed = true
-          }
-        }
-        return changed ? next : prev
-      })
-      return
-    }
-
-    const refGenome = String(payload?.refGenomeKey || '').trim()
-    const tgtGenome = String(payload?.targetGenomeKey || '').trim()
-    const referenceGene = payload?.referenceGene || null
-    const targetGene = payload?.targetGene || null
-    if (!refGenome || !tgtGenome || !referenceGene?.id || !targetGene?.id) return
-    setNeighbourhoodQueryByGenome((prev) => ({
-      ...prev,
-      [refGenome]: referenceGene?.name || referenceGene?.id || prev?.[refGenome] || '',
-      [tgtGenome]: targetGene?.name || targetGene?.id || prev?.[tgtGenome] || '',
-    }))
-    handleGenomeFocusGeneSelect(refGenome, referenceGene)
-    handleGenomeFocusGeneSelect(tgtGenome, targetGene)
-  }, [handleGenomeFocusGeneSelect, refGenomeKey, tgtGenomeKey, browserRefGene, browserTgtGene])
+  const handleNeighbourhoodLinkSelect = useCallback((...args) => selectNeighbourhoodLink({
+      browserRefGene,
+      browserTgtGene,
+      handleGenomeFocusGeneSelect,
+      refGenomeKey,
+      setBrowserFocusByGenome,
+      setBrowserRefGene,
+      setBrowserTgtGene,
+      setNeighbourhoodQueryByGenome,
+      setRefInput,
+      setTgtInput,
+      tgtGenomeKey,
+  }, ...args), [handleGenomeFocusGeneSelect, refGenomeKey, tgtGenomeKey, browserRefGene, browserTgtGene])
 
   const handleNeighbourhoodResolveGenome = useCallback(async (genomeKey, queryOverride = null) => {
     const key = String(genomeKey || '').trim()
@@ -1906,129 +1493,33 @@ function App() {
   }
 
   // Auto-populate alignment inputs when browser genes change
-  useEffect(() => {
-    const focusKey = `${normalizeGeneToken(browserRefGene?.id)}|${normalizeGeneToken(browserRefGene?.name)}`
-    const focusChanged = lastRefFocusKeyRef.current !== focusKey
-    if (lastRefFocusKeyRef.current !== focusKey) {
-      lastRefFocusKeyRef.current = focusKey
-    }
-    if (!browserRefGene) {
-      refResolveInFlightQueryRef.current = ''
-      refLastResolvedQueryRef.current = ''
-      return
-    }
-    if (focusChanged) {
-      const display = browserRefGene.name || browserRefGene.id
-      setRefInput(display)
-    }
+  useEffect((...args) => syncReferenceGeneFocus({
+      browserRefGene,
+      currentView,
+      lastRefFocusKeyRef,
+      refLastResolvedQueryRef,
+      refResolveInFlightQueryRef,
+      resolveInput,
+      setAlignment,
+      setBrowserRefGene,
+      setError,
+      setLoadedParams,
+      setRefInput,
+  }, ...args), [browserRefGene, currentView, resolveInput])
 
-    // In multi-alignment and neighbourhood views, browser focus is already the source
-    // of truth, so avoid re-resolving IDs and stomping manual text edits.
-    if (currentView === 'alignment' || currentView === 'neighbourhood') {
-      return
-    }
-
-    // Legacy pairwise flow: new gene selection invalidates displayed alignment.
-    setAlignment(null)
-    setLoadedParams(null)
-    setError(null)
-    const query = browserRefGene.id || browserRefGene.name
-    const queryNorm = String(query || '').trim().toLowerCase()
-    if (!queryNorm) return
-
-    if (
-      refResolveInFlightQueryRef.current === queryNorm ||
-      refLastResolvedQueryRef.current === queryNorm
-    ) {
-      return
-    }
-
-    refResolveInFlightQueryRef.current = queryNorm
-    let cancelled = false
-    resolveInput('ref', query).then((resolved) => {
-      if (cancelled || !resolved?.gene || !queryNorm) return
-      refLastResolvedQueryRef.current = queryNorm
-      setBrowserRefGene((prev) => {
-        if (!prev || hasFiniteGeneCoords(prev)) return prev
-        const prevId = String(prev.id || '').trim().toLowerCase()
-        const prevName = String(prev.name || '').trim().toLowerCase()
-        const resolvedId = String(resolved.gene.id || '').trim().toLowerCase()
-        const resolvedName = String(resolved.gene.name || '').trim().toLowerCase()
-        const matches = prevId === queryNorm || prevName === queryNorm || resolvedId === queryNorm || resolvedName === queryNorm
-        if (!matches || !hasFiniteGeneCoords(resolved.gene)) return prev
-        return mergeGeneFocus(prev, resolved.gene)
-      })
-    }).finally(() => {
-      if (refResolveInFlightQueryRef.current === queryNorm) {
-        refResolveInFlightQueryRef.current = ''
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [browserRefGene, currentView, resolveInput])
-
-  useEffect(() => {
-    const focusKey = `${normalizeGeneToken(browserTgtGene?.id)}|${normalizeGeneToken(browserTgtGene?.name)}`
-    const focusChanged = lastTgtFocusKeyRef.current !== focusKey
-    if (lastTgtFocusKeyRef.current !== focusKey) {
-      lastTgtFocusKeyRef.current = focusKey
-    }
-    if (!browserTgtGene) {
-      tgtResolveInFlightQueryRef.current = ''
-      tgtLastResolvedQueryRef.current = ''
-      return
-    }
-    if (focusChanged) {
-      const display = browserTgtGene.name || browserTgtGene.id
-      setTgtInput(display)
-    }
-
-    // In multi-alignment and neighbourhood views, browser focus is already the source
-    // of truth, so avoid re-resolving IDs and stomping manual text edits.
-    if (currentView === 'alignment' || currentView === 'neighbourhood') {
-      return
-    }
-
-    // Legacy pairwise flow: new gene selection invalidates displayed alignment.
-    setAlignment(null)
-    setLoadedParams(null)
-    setError(null)
-    const query = browserTgtGene.id || browserTgtGene.name
-    const queryNorm = String(query || '').trim().toLowerCase()
-    if (!queryNorm) return
-
-    if (
-      tgtResolveInFlightQueryRef.current === queryNorm ||
-      tgtLastResolvedQueryRef.current === queryNorm
-    ) {
-      return
-    }
-
-    tgtResolveInFlightQueryRef.current = queryNorm
-    let cancelled = false
-    resolveInput('tgt', query).then((resolved) => {
-      if (cancelled || !resolved?.gene || !queryNorm) return
-      tgtLastResolvedQueryRef.current = queryNorm
-      setBrowserTgtGene((prev) => {
-        if (!prev || hasFiniteGeneCoords(prev)) return prev
-        const prevId = String(prev.id || '').trim().toLowerCase()
-        const prevName = String(prev.name || '').trim().toLowerCase()
-        const resolvedId = String(resolved.gene.id || '').trim().toLowerCase()
-        const resolvedName = String(resolved.gene.name || '').trim().toLowerCase()
-        const matches = prevId === queryNorm || prevName === queryNorm || resolvedId === queryNorm || resolvedName === queryNorm
-        if (!matches || !hasFiniteGeneCoords(resolved.gene)) return prev
-        return mergeGeneFocus(prev, resolved.gene)
-      })
-    }).finally(() => {
-      if (tgtResolveInFlightQueryRef.current === queryNorm) {
-        tgtResolveInFlightQueryRef.current = ''
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [browserTgtGene, currentView, resolveInput])
+  useEffect((...args) => syncTargetGeneFocus({
+      browserTgtGene,
+      currentView,
+      lastTgtFocusKeyRef,
+      resolveInput,
+      setAlignment,
+      setBrowserTgtGene,
+      setError,
+      setLoadedParams,
+      setTgtInput,
+      tgtLastResolvedQueryRef,
+      tgtResolveInFlightQueryRef,
+  }, ...args), [browserTgtGene, currentView, resolveInput])
 
   // Auto-load neighbourhood rows from shared focus state for all active genomes.
   useEffect(() => {
@@ -2288,99 +1779,7 @@ function App() {
     }
   }, [alignmentInputs, collapseSource])
 
-  const resolveAlignmentInput = useCallback(async (genomeKey, queryOverride = null, options = {}) => {
-    const row = (alignmentInputsRef.current || []).find((item) => item.genome_key === genomeKey)
-    if (!row) return null
-    const query = String(queryOverride != null ? queryOverride : row.query || '').trim()
-    if (!query) return null
-
-    const requestToken = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-    alignmentResolveRequestTokenRef.current[genomeKey] = requestToken
-    try {
-      alignmentResolveControllersRef.current[genomeKey]?.abort()
-    } catch { }
-    const controller = new AbortController()
-    alignmentResolveControllersRef.current[genomeKey] = controller
-    setAlignmentInputs((prev) => prev.map((item) => (
-      item.genome_key === genomeKey
-        ? { ...item, status: 'resolving', error: '' }
-        : item
-    )))
-
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/resolve_id?genome=${encodeURIComponent(genomeKey)}&query=${encodeURIComponent(query)}`,
-        { signal: controller.signal }
-      )
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err?.detail || 'Not found')
-      }
-      const data = await res.json()
-      const resolvedTranscripts = Array.isArray(data.transcripts) ? data.transcripts : []
-      const fallbackSelectedTranscriptId = String(
-        data.selected_transcript_id
-        || resolvedTranscripts.find((tx) => tx?.is_canonical)?.id
-        || resolvedTranscripts[0]?.id
-        || ''
-      ).trim()
-      const resolved = {
-        query: data.query,
-        resolvedType: data.resolved_type,
-        gene: data.gene,
-        transcripts: resolvedTranscripts,
-        selectedTranscriptId: fallbackSelectedTranscriptId,
-      }
-      if (alignmentResolveRequestTokenRef.current[genomeKey] !== requestToken) return null
-      const preferredSelectedTranscriptId = String(options?.selectedTranscriptId || '').trim()
-      setAlignmentInputs((prev) => prev.map((item) => {
-        if (item.genome_key !== genomeKey) return item
-        const currentSelectedTranscriptId = String(item.settings?.selectedTranscriptId || '').trim()
-        const hasCurrentSelectedTranscript = currentSelectedTranscriptId
-          ? resolved.transcripts?.some((tx) => String(tx?.id || '').trim() === currentSelectedTranscriptId)
-          : false
-        const hasPreferredSelectedTranscript = preferredSelectedTranscriptId
-          ? resolved.transcripts?.some((tx) => String(tx?.id || '').trim() === preferredSelectedTranscriptId)
-          : false
-        const nextSelected = String(
-          (options?.preferSelectedTranscriptId && hasPreferredSelectedTranscript ? preferredSelectedTranscriptId : '')
-          || (hasCurrentSelectedTranscript ? currentSelectedTranscriptId : '')
-          || (hasPreferredSelectedTranscript ? preferredSelectedTranscriptId : '')
-          || resolved.selectedTranscriptId
-          || resolved.transcripts?.find((tx) => tx?.is_canonical)?.id
-          || resolved.transcripts?.[0]?.id
-          || ''
-        ).trim()
-        return {
-          ...item,
-          query,
-          status: 'resolved',
-          error: '',
-          include: true,
-          resolved,
-          settings: {
-            ...(item.settings || {}),
-            selectedTranscriptId: nextSelected,
-          },
-          lastAutoQuery: options?.auto ? String(query).toLowerCase() : item.lastAutoQuery,
-        }
-      }))
-      return resolved
-    } catch (e) {
-      if (alignmentResolveRequestTokenRef.current[genomeKey] !== requestToken) return null
-      const message = e?.message || 'Resolve failed'
-      setAlignmentInputs((prev) => prev.map((item) => (
-        item.genome_key === genomeKey
-          ? { ...item, status: 'error', error: message, include: true, resolved: null }
-          : item
-      )))
-      return null
-    } finally {
-      if (alignmentResolveControllersRef.current[genomeKey] === controller) {
-        delete alignmentResolveControllersRef.current[genomeKey]
-      }
-    }
-  }, [])
+  const resolveAlignmentInput = useCallback((...args) => resolveAlignmentInputs({ alignmentInputsRef, alignmentResolveControllersRef, alignmentResolveRequestTokenRef, setAlignmentInputs }, ...args), [])
 
   const cancelAlignmentInputResolve = useCallback((genomeKey) => {
     const controller = alignmentResolveControllersRef.current[genomeKey]
@@ -2526,116 +1925,13 @@ function App() {
     })
   }, [])
 
-  const handleAlignmentRowSettingChange = useCallback((genomeKey, patch) => {
-    setAlignmentInputs((prev) => prev.map((row) => {
-      if (row.genome_key !== genomeKey) return row
-      const current = { ...(row.settings || {}) }
-      const incoming = { ...(patch || {}) }
-      const resolvedMax = Number.isFinite(Number(incoming.flankMax))
-        ? Math.max(100, Number(incoming.flankMax))
-        : (Number.isFinite(Number(current.flankMax)) ? Math.max(100, Number(current.flankMax)) : 1000)
-
-      let flank5 = Number.isFinite(Number(incoming.flank5))
-        ? Math.max(0, Number(incoming.flank5))
-        : (Number.isFinite(Number(current.flank5)) ? Math.max(0, Number(current.flank5)) : 100)
-      let flank3 = Number.isFinite(Number(incoming.flank3))
-        ? Math.max(0, Number(incoming.flank3))
-        : (Number.isFinite(Number(current.flank3)) ? Math.max(0, Number(current.flank3)) : 100)
-
-      const lockFromPatch = Object.prototype.hasOwnProperty.call(incoming, 'flanksLocked')
-        ? Boolean(incoming.flanksLocked)
-        : Boolean(current.flanksLocked ?? true)
-
-      if (lockFromPatch) {
-        const hasF5 = Object.prototype.hasOwnProperty.call(incoming, 'flank5')
-        const hasF3 = Object.prototype.hasOwnProperty.call(incoming, 'flank3')
-        if (hasF5 && !hasF3) {
-          flank3 = flank5
-        } else if (hasF3 && !hasF5) {
-          flank5 = flank3
-        } else if (!hasF5 && !hasF3 && Object.prototype.hasOwnProperty.call(incoming, 'flanksLocked')) {
-          flank3 = flank5
-        } else if (hasF5 && hasF3) {
-          flank3 = flank5
-        }
-      }
-
-      flank5 = Math.min(resolvedMax, flank5)
-      flank3 = Math.min(resolvedMax, flank3)
-
-      const nextSettings = {
-        ...current,
-        ...incoming,
-        flankMax: resolvedMax,
-        flanksLocked: lockFromPatch,
-        flank5,
-        flank3,
-      }
-      const nextSelectedTranscriptId = String(nextSettings.selectedTranscriptId || '').trim()
-      const nextResolved = row.resolved
-        ? {
-          ...row.resolved,
-          selectedTranscriptId: nextSelectedTranscriptId || row.resolved.selectedTranscriptId || '',
-        }
-        : row.resolved
-      return { ...row, settings: nextSettings, resolved: nextResolved }
-    }))
-  }, [])
+  const handleAlignmentRowSettingChange = useCallback((...args) => changeAlignmentRowSetting({ setAlignmentInputs }, ...args), [])
 
   const handleAlignmentRunSettingsChange = useCallback((patch) => {
     setAlignmentRunSettings((prev) => ({ ...prev, ...(patch || {}), profile: 'balanced' }))
   }, [])
 
-  const buildPairwiseOverlayFromMulti = useCallback((multiResult) => {
-    const rows = multiResult?.rows || []
-    if (rows.length < 2) return null
-    const first = rows[0]
-    const second = rows[1]
-    const seq1 = String(first.aligned_sequence || '')
-    const seq2 = String(second.aligned_sequence || '')
-    if (!seq1 || !seq2 || seq1.length !== seq2.length) return null
-
-    let matches = 0
-    let denom = 0
-    let gaps = 0
-    for (let i = 0; i < seq1.length; i += 1) {
-      const a = seq1[i]
-      const b = seq2[i]
-      if (a === '-' || b === '-') {
-        gaps += 1
-      } else {
-        denom += 1
-        if (a === b) matches += 1
-      }
-    }
-    const identity = denom > 0 ? (matches / denom) * 100 : 0
-    return {
-      transcript_id: first.transcript_id || '',
-      target_transcript_id: second.transcript_id || '',
-      reference: {
-        name: first.tag || 'reference',
-        sequence: seq1,
-        features: first.features || [],
-        chrom: first.chrom || '',
-        genomic_start: Number(first.genomic_start || 0),
-        genomic_end: Number(first.genomic_end || 0),
-        strand: first.strand || '+',
-      },
-      target: {
-        name: second.tag || 'target',
-        sequence: seq2,
-        features: second.features || [],
-        chrom: second.chrom || '',
-        genomic_start: Number(second.genomic_start || 0),
-        genomic_end: Number(second.genomic_end || 0),
-        strand: second.strand || '+',
-      },
-      alignment_length: seq1.length,
-      identity,
-      gaps,
-      timestamp: multiResult?.timestamp || new Date().toISOString(),
-    }
-  }, [])
+  const buildPairwiseOverlayFromMulti = useCallback((...args) => buildPairwiseOverlay({}, ...args), [])
 
   const buildResolvedAlignmentSignature = useCallback((rows, globalFlanksSource) => {
     const flankSource = globalFlanksSource || { flank5: 100, flank3: 100 }
@@ -2673,104 +1969,19 @@ function App() {
     return JSON.stringify(normalized)
   }, [])
 
-  const runMultiAlignment = useCallback(async () => {
-    // Use the rows from the render that supplied this click handler. In
-    // particular, this guarantees that the transcript shown in the controlled
-    // select is the transcript sent to the backend.
-    const rows = alignmentInputs || []
-    if (!rows.length) return
-    const runSignature = buildResolvedAlignmentSignature(rows, alignmentGlobalFlanks)
-    const nextLoadedBaseline = {}
-
-    const payloadRows = rows.map((row) => {
-      const useGlobal = row.settings?.useGlobalFlanks !== false
-      const flank5 = useGlobal ? alignmentGlobalFlanks.flank5 : row.settings?.flank5
-      const flank3 = useGlobal ? alignmentGlobalFlanks.flank3 : row.settings?.flank3
-      const bestQuery = String(
-        row.query
-        || row.resolved?.query
-        || row.resolved?.gene?.id
-        || row.resolved?.gene?.name
-        || ''
-      ).trim()
-      const transcriptQueryFallback = String(
-        row.resolved?.resolvedType === 'transcript'
-          ? (bestQuery || row.resolved?.query || '')
-          : ''
-      ).trim()
-      const chosenTranscriptId = String(
-        row.settings?.selectedTranscriptId
-        || row.resolved?.selectedTranscriptId
-        || row.resolved?.transcripts?.find((tx) => tx?.is_canonical)?.id
-        || row.resolved?.transcripts?.[0]?.id
-        || transcriptQueryFallback
-        || ''
-      ).trim()
-      if (String(row.genome_key || '').trim()) {
-        nextLoadedBaseline[String(row.genome_key || '').trim()] = {
-          genomeKey: String(row.genome_key || '').trim(),
-          query: bestQuery,
-          geneId: String(row.resolved?.gene?.id || '').trim(),
-          geneName: String(row.resolved?.gene?.name || '').trim(),
-          selectedTranscriptId: chosenTranscriptId,
-        }
-      }
-      return {
-        genome: row.genome_param || row.genome_key,
-        genome_key: row.genome_key,
-        tag: row.tag,
-        query: bestQuery,
-        include: Boolean(chosenTranscriptId || bestQuery),
-        transcript_id: chosenTranscriptId,
-        selected_transcript_id: chosenTranscriptId,
-        use_gene_boundaries: row.settings?.useGeneBoundaries !== false,
-        flank_5_bp: Math.max(0, parseInt(flank5 || 0, 10) || 0),
-        flank_3_bp: Math.max(0, parseInt(flank3 || 0, 10) || 0),
-        overlay_annotation: Boolean(row.settings?.overlayAnnotation),
-      }
-    })
-
-    setAlignmentViewLoading(true)
-    setAlignmentViewError(null)
-    try {
-      const res = await fetch(`${API_BASE}/api/align/multi`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rows: payloadRows,
-          run_scope: 'resolved_subset',
-          run_settings: {
-            ...alignmentRunSettings,
-            profile: 'balanced',
-          },
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        throw new Error(data?.detail || 'Failed to run feature alignment')
-      }
-      const alignedRows = Array.isArray(data?.rows) ? data.rows : []
-      const includedCount = Number.isFinite(Number(data?.included_count))
-        ? Number(data.included_count)
-        : alignedRows.length
-      if (includedCount < 2 || alignedRows.length < 2) {
-        const warningMessage = Array.isArray(data?.warnings) && data.warnings.length > 0
-          ? String(data.warnings[0] || '').trim()
-          : ''
-        throw new Error(warningMessage || 'Need at least two resolved genomes with selected transcripts to run alignment.')
-      }
-      setLoadedAlignmentBaselineByGenome(nextLoadedBaseline)
-      setMultiAlignmentResult(data)
-      setLastSuccessfulMultiAlignmentSignature(runSignature)
-      alignmentResultSourceRef.current = { kind: 'run', signature: runSignature }
-      // Bridge from Feature Alignment to the browser alignment overlay is disabled for now.
-      setAlignmentOverlay(null)
-    } catch (e) {
-      setAlignmentViewError(e?.message || 'Failed to run feature alignment')
-    } finally {
-      setAlignmentViewLoading(false)
-    }
-  }, [alignmentInputs, alignmentRunSettings, alignmentGlobalFlanks, buildResolvedAlignmentSignature])
+  const runMultiAlignment = useCallback((...args) => runMultipleAlignment({
+      alignmentGlobalFlanks,
+      alignmentInputs,
+      alignmentResultSourceRef,
+      alignmentRunSettings,
+      buildResolvedAlignmentSignature,
+      setAlignmentOverlay,
+      setAlignmentViewError,
+      setAlignmentViewLoading,
+      setLastSuccessfulMultiAlignmentSignature,
+      setLoadedAlignmentBaselineByGenome,
+      setMultiAlignmentResult,
+  }, ...args), [alignmentInputs, alignmentRunSettings, alignmentGlobalFlanks, buildResolvedAlignmentSignature])
 
   // Putting the Feature Alignment back after a reload. Each restored row is resolved
   // again, keeping the transcript the reader had chosen; once they all have, the result
@@ -2829,257 +2040,32 @@ function App() {
     setSaveAlignmentModalOpen(true)
   }, [multiAlignmentResult])
 
-  const handleDoSaveAlignment = useCallback(async ({ name }) => {
-    if (!multiAlignmentResult) return { ok: false, error: 'No alignment result' }
-    const outputDir = config?.output_dir || ''
-    if (!outputDir) return { ok: false, error: 'Output directory not configured' }
+  const handleDoSaveAlignment = useCallback((...args) => saveAlignmentWorkspace({ activeSpeciesByKey, config, loadedAlignmentBaselineByGenome, multiAlignmentResult }, ...args), [multiAlignmentResult, config?.output_dir, activeSpeciesByKey, loadedAlignmentBaselineByGenome])
 
-    // Build aligned_sequences map and genomes list from the result rows
-    const alignedSequences = {}
-    const genomes = []
-    for (const row of (multiAlignmentResult.rows || [])) {
-      const key = row.genome_key || row.genome || ''
-      if (!key) continue
-      alignedSequences[key] = row.aligned_sequence || ''
-      const species = activeSpeciesByKey.get(key) || {}
-      const loadedBaseline = loadedAlignmentBaselineByGenome?.[key] || null
-        genomes.push({
-          genome_key: key,
-          species_key: species.species_key || '',
-          assembly: species.assembly || '',
-        assembly_name: species.assembly_name || '',
-        scientific_name: species.scientific_name || '',
-        common_name: species.common_name || '',
-        gene_symbol: loadedBaseline?.geneName || row.query || '',
-        gene_id: loadedBaseline?.geneId || row.query || '',
-        transcript_id: row.transcript_id || '',
-        tag: row.tag || '',
-        chrom: row.chrom || '',
-        genomic_start: row.genomic_start || 0,
-        genomic_end: row.genomic_end || 0,
-        strand: row.strand || '+',
-          raw_length: row.raw_length || 0,
-          flank_5_bp: row.flank_5_bp || 0,
-          flank_3_bp: row.flank_3_bp || 0,
-          use_gene_boundaries: row.use_gene_boundaries !== false,
-          identity_to_consensus: row.identity_to_consensus || 0,
-          gap_fraction: row.gap_fraction || 0,
-          features: row.features || [],
-        })
-    }
-    const stats = {
-      alignment_length: multiAlignmentResult.alignment_length || 0,
-      average_identity: multiAlignmentResult.average_identity || 0,
-      requested_count: multiAlignmentResult.requested_count || 0,
-      included_count: multiAlignmentResult.included_count || 0,
-      profile: multiAlignmentResult.profile || 'balanced',
-      strategy: multiAlignmentResult.strategy || '',
-    }
-    try {
-      const res = await fetch(`${API_BASE}/api/alignments/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          output_dir: outputDir,
-          genomes,
-          aligned_sequences: alignedSequences,
-          stats,
-          consensus: multiAlignmentResult.consensus || '',
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) return { ok: false, error: data?.detail || 'Save failed' }
-      return { ok: true, name: data.name }
-    } catch (e) {
-      return { ok: false, error: e?.message || 'Save failed' }
-    }
-  }, [multiAlignmentResult, config?.output_dir, activeSpeciesByKey, loadedAlignmentBaselineByGenome])
-
-  const handleLoadAlignment = useCallback(async ({ name, loadMode, alignmentGenomes, localAssemblies }) => {
-    const outputDir = config?.output_dir || ''
-    if (!outputDir) return { ok: false, error: 'Output directory not configured' }
-
-    const currentConfig = configRef.current || config
-    const currentActive = dedupeSpeciesList(currentConfig?.active_species || [])
-    const currentActiveKeys = new Set(currentActive.map((s) => speciesItemKey(s)))
-    const currentInactive = dedupeSpeciesList(inactiveSelectedSpeciesRef.current)
-    const currentInactiveKeys = new Set(currentInactive.map((s) => speciesItemKey(s)))
-
-    // Determine which genome_keys to include and which species to activate
-    const fileKeys = (alignmentGenomes || []).map((g) => g.genome_key).filter(Boolean)
-    let includeKeys = []
-    let newActive = [...currentActive]
-    let newInactive = [...currentInactive]
-
-    for (const gKey of fileKeys) {
-      if (currentActiveKeys.has(gKey)) {
-        includeKeys.push(gKey)
-      } else if (currentInactiveKeys.has(gKey)) {
-        if (loadMode === 'active_inactive' || loadMode === 'all') {
-          // Move from inactive → active
-          const species = currentInactive.find((s) => speciesItemKey(s) === gKey)
-          if (species) {
-            newActive = [...newActive, species]
-            newInactive = newInactive.filter((s) => speciesItemKey(s) !== gKey)
-            includeKeys.push(gKey)
-          }
-        }
-      } else {
-        // Check local assemblies (available but not selected)
-        const localMatch = (localAssemblies || []).find((a) => speciesItemKey(a) === gKey)
-        if (localMatch && loadMode === 'all') {
-          newActive = [...newActive, localMatch]
-          includeKeys.push(gKey)
-        }
-      }
-    }
-
-    if (includeKeys.length === 0) {
-      return { ok: false, error: 'No matching genomes found for current selection' }
-    }
-
-    // Apply genome activation if needed
-    const activationChanged = newActive.length !== currentActive.length
-    if (activationChanged) {
-      const updatedConfig = { ...currentConfig, active_species: dedupeSpeciesList(newActive) }
-      setConfig(updatedConfig)
-      configRef.current = updatedConfig
-      setInactiveSelectedSpecies(dedupeSpeciesList(newInactive))
-      try {
-        await fetch(`${API_BASE}/api/config`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updatedConfig),
-        })
-      } catch (e) {
-        console.error('Failed to save config after genome activation:', e)
-      }
-    }
-
-    // Load alignment data from backend
-    try {
-      const res = await fetch(`${API_BASE}/api/alignments/load`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, output_dir: outputDir, genome_keys: includeKeys }),
-      })
-      const data = await res.json()
-      if (!res.ok) return { ok: false, error: data?.detail || 'Load failed' }
-      const loadedRows = Array.isArray(data?.rows) ? data.rows : []
-      const loadedRowByGenomeKey = new Map(
-        loadedRows
-          .map((row) => [String(row?.genome_key || row?.genome || '').trim(), row])
-          .filter(([key]) => key)
-      )
-      const nextAlignmentSpecies = dedupeSpeciesList(newActive).filter((species) => Boolean(species?.files?.gff3))
-      const previousRowsByGenomeKey = new Map((alignmentInputsRef.current || []).map((row) => [row.genome_key, row]))
-      const nextAlignmentRows = nextAlignmentSpecies.map((species, idx) => {
-        const row = buildAlignmentInputRow(species, idx, previousRowsByGenomeKey.get(speciesItemKey(species)) || null)
-        const loadedRow = loadedRowByGenomeKey.get(String(row.genome_key || '').trim())
-        if (!loadedRow) {
-          return {
-            ...row,
-            query: '',
-            status: 'idle',
-            error: '',
-            resolved: null,
-            lastAutoQuery: '',
-            settings: {
-              ...(row.settings || {}),
-              selectedTranscriptId: '',
-            },
-          }
-        }
-        return {
-          ...row,
-          query: String(loadedRow?.query || '').trim(),
-          status: 'idle',
-          error: '',
-          resolved: null,
-          lastAutoQuery: '',
-          settings: {
-            ...(row.settings || {}),
-            overlayAnnotation: loadedRow?.overlay_annotation !== false,
-            useGeneBoundaries: loadedRow?.use_gene_boundaries !== false,
-            selectedTranscriptId: String(loadedRow?.transcript_id || '').trim(),
-          },
-        }
-      })
-      const immediateLoadedBaseline = {}
-      for (const genome of alignmentGenomes || []) {
-        const genomeKey = String(genome?.genome_key || '').trim()
-        if (!genomeKey) continue
-        immediateLoadedBaseline[genomeKey] = {
-          genomeKey,
-          query: String(genome?.gene_symbol || genome?.gene_id || genome?.transcript_id || '').trim(),
-          geneId: String(genome?.gene_id || '').trim(),
-          geneName: String(genome?.gene_symbol || '').trim(),
-          selectedTranscriptId: String(genome?.transcript_id || '').trim(),
-        }
-      }
-      alignmentInputsRef.current = nextAlignmentRows
-      setAlignmentInputs(nextAlignmentRows)
-      setLoadedAlignmentBaselineByGenome(immediateLoadedBaseline)
-      setMultiAlignmentResult(data)
-      alignmentResultSourceRef.current = { kind: 'loaded', name, genomeKeys: includeKeys }
-      setAlignmentViewError(null)
-
-      const loadedRefQuery = refGenomeKey ? String(loadedRowByGenomeKey.get(refGenomeKey)?.query || '').trim() : ''
-      const loadedTgtQuery = tgtGenomeKey ? String(loadedRowByGenomeKey.get(tgtGenomeKey)?.query || '').trim() : ''
-      setRefInput(loadedRefQuery)
-      setTgtInput(loadedTgtQuery)
-      setRefResolved(null)
-      setTgtResolved(null)
-      setRefError(null)
-      setTgtError(null)
-
-      const activeAlignmentGenomeKeys = new Set(nextAlignmentRows.map((row) => String(row?.genome_key || '').trim()).filter(Boolean))
-      for (const genomeKey of activeAlignmentGenomeKeys) {
-        if (!loadedRowByGenomeKey.has(genomeKey)) {
-          handleGenomeFocusGeneSelect(genomeKey, null)
-        }
-      }
-
-      const resolvedLoadedRows = await Promise.all(loadedRows.map(async (row) => {
-        const genomeKey = String(row?.genome_key || row?.genome || '').trim()
-        const query = String(row?.query || '').trim()
-        const selectedTranscriptId = String(row?.transcript_id || '').trim()
-        if (!genomeKey || !query) return null
-        const resolved = await resolveAlignmentInput(genomeKey, query, {
-          auto: true,
-          selectedTranscriptId,
-          preferSelectedTranscriptId: true,
-        })
-        if (resolved?.gene) {
-          handleGenomeFocusGeneSelect(genomeKey, resolved.gene)
-        }
-        return {
-          genomeKey,
-          query,
-          selectedTranscriptId,
-          resolved,
-        }
-      }))
-
-      const nextLoadedBaseline = {}
-      for (const item of resolvedLoadedRows) {
-        if (!item?.genomeKey) continue
-        nextLoadedBaseline[item.genomeKey] = {
-          genomeKey: item.genomeKey,
-          query: item.query || '',
-          geneId: String(item?.resolved?.gene?.id || '').trim(),
-          geneName: String(item?.resolved?.gene?.name || '').trim(),
-          selectedTranscriptId: item.selectedTranscriptId || '',
-        }
-      }
-      setLoadedAlignmentBaselineByGenome(nextLoadedBaseline)
-
-      return { ok: true, excludedCount: data.excluded_count || 0 }
-    } catch (e) {
-      return { ok: false, error: e?.message || 'Load failed' }
-    }
-  }, [config, buildAlignmentInputRow, refGenomeKey, tgtGenomeKey, resolveAlignmentInput, handleGenomeFocusGeneSelect])
+  const handleLoadAlignment = useCallback((...args) => loadAlignmentWorkspace({
+      alignmentInputsRef,
+      alignmentResultSourceRef,
+      buildAlignmentInputRow,
+      config,
+      configRef,
+      handleGenomeFocusGeneSelect,
+      inactiveSelectedSpeciesRef,
+      refGenomeKey,
+      resolveAlignmentInput,
+      setAlignmentInputs,
+      setAlignmentViewError,
+      setConfig,
+      setInactiveSelectedSpecies,
+      setLoadedAlignmentBaselineByGenome,
+      setMultiAlignmentResult,
+      setRefError,
+      setRefInput,
+      setRefResolved,
+      setTgtError,
+      setTgtInput,
+      setTgtResolved,
+      tgtGenomeKey,
+  }, ...args), [config, buildAlignmentInputRow, refGenomeKey, tgtGenomeKey, resolveAlignmentInput, handleGenomeFocusGeneSelect])
 
   const collapseSourceOptions = useMemo(
     () => (alignmentInputs || []).map((row) => ({
@@ -3243,143 +2229,32 @@ function App() {
     setSelectedFallbackScreenshotTarget(null)
   }, [])
 
-  const handleFallbackScreenshotSave = useCallback(async ({ filename, directory, format, scale, quality, target }) => {
-    if (!target?.buildExportSnapshot) {
-      return { ok: false, error: 'Screenshot target is no longer available.' }
-    }
-
-    try {
-      const snapshot = await target.buildExportSnapshot()
-      if (!snapshot?.svgMarkup) {
-        return { ok: false, error: 'Failed to build screenshot export.' }
-      }
-
-      let payload
-      if (format === 'svg') {
-        payload = {
-          directory,
-          filename,
-          format,
-          mime_type: 'image/svg+xml',
-          encoding: 'utf8',
-          data: snapshot.svgMarkup,
-        }
-      } else {
-        const electronBridge = typeof window !== 'undefined' ? window.electronAPI : null
-        let raster = null
-
-        if (snapshot.htmlMarkup && typeof electronBridge?.captureHtmlSnapshot === 'function') {
-          try {
-            raster = await electronBridge.captureHtmlSnapshot({
-              htmlMarkup: snapshot.htmlMarkup,
-              width: snapshot.width,
-              height: snapshot.height,
-              format,
-              scale,
-              quality,
-              backgroundColor: snapshot.backgroundColor || (isLight ? '#ffffff' : '#111827'),
-            })
-          } catch {
-            raster = null
-          }
-        }
-
-        if (!raster) {
-          raster = await rasterizeSvgMarkup({
-            svgMarkup: snapshot.svgMarkup,
-            width: snapshot.width,
-            height: snapshot.height,
-            format,
-            scale,
-            quality: format === 'jpeg' ? Math.max(0.7, Math.min(1, quality / 100)) : undefined,
-            backgroundColor: snapshot.backgroundColor || (isLight ? '#ffffff' : '#111827'),
-          })
-        }
-        payload = {
-          directory,
-          filename,
-          format,
-          mime_type: raster.mimeType,
-          encoding: 'base64',
-          data: raster.base64,
-        }
-      }
-
-      const response = await fetch(`${API_BASE}/api/exports/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data?.ok) {
-        return { ok: false, error: data?.detail || 'Failed to save screenshot.' }
-      }
-      return { ok: true, path: data.path, filename: data.filename }
-    } catch (error) {
-      return { ok: false, error: error?.message || 'Failed to export screenshot.' }
-    }
-  }, [isLight])
+  const handleFallbackScreenshotSave = useCallback((...args) => saveFallbackScreenshot({ isLight }, ...args), [isLight])
 
   // Detect changes between current config and savedConfigRef, apply cascading clears,
   // trigger selective browser reloads, and reset alignment state as needed.
   // Returns the (possibly cascaded) config to save.
-  const applyConfigCascade = () => {
-    const prev = savedConfigRef.current
-    const curr = config
-
-    if (!prev) return curr
-
-    const refChanged = curr.ref_fasta !== prev.ref_fasta || curr.ref_gff !== prev.ref_gff
-    const tgtChanged = curr.target_fasta !== prev.target_fasta || curr.target_gff !== prev.target_gff
-
-    // Cascade: clear dependent fields that weren't explicitly updated.
-    // If GFF changed but index didn't change → stale index, clear it.
-    // If GFF changed AND index also changed → new index was set alongside new GFF, keep it.
-    let cascaded = { ...curr }
-    if (curr.ref_gff !== prev.ref_gff && curr.ref_index === prev.ref_index) cascaded.ref_index = ''
-    if (curr.target_gff !== prev.target_gff && curr.target_index === prev.target_index) cascaded.target_index = ''
-    if (refChanged || tgtChanged) cascaded.homologies_file = ''
-
-    if (cascaded.ref_index !== curr.ref_index ||
-      cascaded.target_index !== curr.target_index ||
-      cascaded.homologies_file !== curr.homologies_file) {
-      setConfig(cascaded)
-    }
-
-    // Browser track reloads
-    if (refChanged) setRefBrowserReloadKey(k => k + 1)
-    if (tgtChanged) setTgtBrowserReloadKey(k => k + 1)
-
-    // Selective alignment/neighbourhood reset
-    if (refChanged || tgtChanged) {
-      setAlignment(null)
-      setMultiAlignmentResult(null)
-      setLastSuccessfulMultiAlignmentSignature('')
-      setAlignmentViewError(null)
-      setNeighbourhoodData(null)
-
-      setLoadedParams(null)
-      setRecentItems([])
-      Promise.all([
-        fetch(`${API_BASE}/api/recent/clear`, { method: 'POST' }),
-        fetch(`${API_BASE}/api/cache/clear`, { method: 'POST' })
-      ]).catch(console.error)
-
-      if (refChanged) {
-        setRefResolved(null)
-        setRefInput('')
-        setBrowserRefGene(null)
-        setBrowserRefViewport(null)
-      }
-      if (tgtChanged) {
-        setTgtResolved(null)
-        setTgtInput('')
-        setBrowserTgtGene(null)
-      }
-    }
-
-    return cascaded
-  }
+  const applyConfigCascade = (...args) => applyAppConfigCascade({
+      config,
+      savedConfigRef,
+      setAlignment,
+      setAlignmentViewError,
+      setBrowserRefGene,
+      setBrowserRefViewport,
+      setBrowserTgtGene,
+      setConfig,
+      setLastSuccessfulMultiAlignmentSignature,
+      setLoadedParams,
+      setMultiAlignmentResult,
+      setNeighbourhoodData,
+      setRecentItems,
+      setRefBrowserReloadKey,
+      setRefInput,
+      setRefResolved,
+      setTgtBrowserReloadKey,
+      setTgtInput,
+      setTgtResolved,
+  }, ...args)
 
   const handleRetryBackendCheck = useCallback(async () => {
     try {
@@ -4218,174 +3093,24 @@ function App() {
 	  // — for a change applied on a delay, which may find the world already in that state
 	  // by the time it runs. Without it the delayed change flips whatever it finds and
 	  // takes back a selection something else has since made.
-	  const handleSpeciesPillToggle = useCallback(async (species, source = 'pill', options = {}) => {
-	    if (!species) return { ok: false, reason: 'missing_species' }
-	    const desired = options?.desired || ''
-
-	    // A tutorial keeps its own set of active genomes, so choosing one here must not
-	    // reach the user's real selection.
-	    if (tutorialConfig) {
-	      toggleTutorialGenome(species, desired)
-	      return { ok: true }
-	    }
-
-	    const key = speciesItemKey(species)
-	    const currentConfig = configRef.current || config
-	    const active = dedupeSpeciesList(currentConfig?.active_species)
-	    const inactive = dedupeSpeciesList(inactiveSelectedSpeciesRef.current)
-	    if (desired) {
-	      const chosen = active.some((item) => speciesItemKey(item) === key)
-	        || inactive.some((item) => speciesItemKey(item) === key)
-	      if ((desired === 'selected' && chosen) || (desired === 'deselected' && !chosen)) {
-	        return { ok: true, reason: 'already_in_desired_state' }
-	      }
-	    }
-	    const viewCapacity = getViewActiveCapacity(currentView)
-	    const activeIndex = active.findIndex((item) => speciesItemKey(item) === key)
-	    const inactiveIndex = inactive.findIndex((item) => speciesItemKey(item) === key)
-	    // The selector's tick means "chosen at all", active or not, so unticking there takes
-	    // the genome out outright. Going through the pill logic below only demoted an active
-	    // genome to inactive — still ticked — and once nothing was left active, the next
-	    // click fell through to activation and put it straight back.
-	    const fromSelector = source === 'selector' || source === 'selector_remove'
-	    if (fromSelector && (activeIndex >= 0 || inactiveIndex >= 0)) {
-	      const nextActive = active.filter((item) => speciesItemKey(item) !== key)
-	      const nextInactive = inactive.filter((item) => speciesItemKey(item) !== key)
-	      let nextFocus = buildFocusFromActive(nextActive, {
-	        primaryKey: dualViewFocusRef.current.primaryKey === key ? '' : dualViewFocusRef.current.primaryKey,
-	        secondaryKey: dualViewFocusRef.current.secondaryKey === key ? '' : dualViewFocusRef.current.secondaryKey,
-	      })
-
-	      suppressViewSyncRef.current = true
-	      try {
-	        setInactiveSelectedSpecies(nextInactive)
-	        persistNextPreviousSessionGenomes([...nextActive, ...nextInactive], { ...currentConfig, active_species: nextActive })
-	        if (
-	          nextFocus.primaryKey !== dualViewFocusRef.current.primaryKey ||
-	          nextFocus.secondaryKey !== dualViewFocusRef.current.secondaryKey
-	        ) {
-	          dualViewFocusRef.current = nextFocus
-	          setDualViewFocus(nextFocus)
-	        }
-		        const nextConfig = getAlignedGenomeConfigForView(
-		          withNextPreviousSessionGenomes(
-		            { ...currentConfig, active_species: nextActive },
-		            [...nextActive, ...nextInactive]
-		          ),
-	          currentView,
-	          nextFocus
-	        )
-	        const activeChanged = !speciesListsEqualByKey(currentConfig?.active_species || [], nextConfig?.active_species || [])
-	        if (activeChanged || hasGenomeAssignmentChanges(currentConfig, nextConfig)) {
-	          await handleBrowserConfigChange(nextConfig)
-	        }
-	        return { ok: true, deselected: true }
-	      } finally {
-	        suppressViewSyncRef.current = false
-	      }
-	    }
-
-	    let nextActive = active
-    let nextInactive = inactive
-    let nextFocus = buildFocusFromActive(active, dualViewFocusRef.current)
-    const contextFullyActive = getContextFullyActiveSpecies(active, currentView, nextFocus)
-    const contextFullyActiveKeys = new Set(contextFullyActive.map((item) => speciesItemKey(item)))
-    const isGloballyActive = activeIndex >= 0
-    const isFullyActive = isGloballyActive && contextFullyActiveKeys.has(key)
-    const isSemiActive = isGloballyActive && !isFullyActive
-
-    if (isSemiActive) {
-      if ((Number.isFinite(viewCapacity) && viewCapacity <= 0) || (Number.isFinite(viewCapacity) && viewCapacity > 0 && contextFullyActive.length >= viewCapacity)) {
-        const removed = active[activeIndex]
-        nextActive = active.filter((item) => speciesItemKey(item) !== key)
-        nextInactive = prependUniqueSpecies(inactive, removed)
-        if (nextFocus.primaryKey === key) {
-          nextFocus.primaryKey = nextFocus.secondaryKey || ''
-          nextFocus.secondaryKey = ''
-        } else if (nextFocus.secondaryKey === key) {
-          nextFocus.secondaryKey = ''
-        }
-        nextFocus = buildFocusFromActive(nextActive, nextFocus)
-      } else {
-        nextInactive = inactive.filter((item) => speciesItemKey(item) !== key)
-        if (viewCapacity === 1) {
-          nextFocus.primaryKey = key
-          nextFocus.secondaryKey = ''
-        } else if (viewCapacity >= 2) {
-          if (!nextFocus.primaryKey) {
-            nextFocus.primaryKey = key
-          } else if (!nextFocus.secondaryKey || nextFocus.secondaryKey === nextFocus.primaryKey) {
-            nextFocus.secondaryKey = key
-          }
-        }
-        nextFocus = buildFocusFromActive(nextActive, nextFocus)
-      }
-    } else if (isFullyActive) {
-      const removed = active[activeIndex]
-      nextActive = active.filter((item) => speciesItemKey(item) !== key)
-      nextInactive = prependUniqueSpecies(inactive, removed)
-      if (nextFocus.primaryKey === key) {
-        nextFocus.primaryKey = nextFocus.secondaryKey || ''
-        nextFocus.secondaryKey = ''
-      } else if (nextFocus.secondaryKey === key) {
-        nextFocus.secondaryKey = ''
-      }
-      nextFocus = buildFocusFromActive(nextActive, nextFocus)
-    } else {
-      if (source === 'selector' && currentView !== 'genome_browser' && currentView !== 'structural_variation' && active.length > 0) {
-	        const appendedInactive = appendUniqueSpecies(inactive, species)
-	        setInactiveSelectedSpecies(appendedInactive)
-	        persistNextPreviousSessionGenomes([...active, ...appendedInactive], currentConfig)
-	        return { ok: true, activated: false, reason: 'added_inactive' }
-      }
-
-      if (Number.isFinite(viewCapacity) && viewCapacity > 0 && contextFullyActive.length >= viewCapacity) {
-        return {
-          ok: false,
-          reason: 'view_limit_reached',
-          message: 'Deactivate one active genome in this view before activating another.',
-        }
-      }
-
-      nextActive = appendUniqueSpecies(active, species)
-      nextInactive = inactive.filter((item) => speciesItemKey(item) !== key)
-      if (viewCapacity === 1) {
-        nextFocus.primaryKey = key
-        nextFocus.secondaryKey = ''
-      } else if (!nextFocus.primaryKey && nextActive.length > 0) {
-        nextFocus.primaryKey = speciesItemKey(nextActive[0])
-      }
-      nextFocus = buildFocusFromActive(nextActive, nextFocus)
-    }
-
-    suppressViewSyncRef.current = true
-    try {
-      setInactiveSelectedSpecies(nextInactive)
-      if (
-        nextFocus.primaryKey !== dualViewFocusRef.current.primaryKey ||
-        nextFocus.secondaryKey !== dualViewFocusRef.current.secondaryKey
-      ) {
-        dualViewFocusRef.current = nextFocus
-        setDualViewFocus(nextFocus)
-      }
-
-	      const nextConfig = getAlignedGenomeConfigForView(
-	        withNextPreviousSessionGenomes(
-	          { ...currentConfig, active_species: nextActive },
-	          [...nextActive, ...nextInactive]
-	        ),
-	        currentView,
-	        nextFocus
-      )
-      const activeChanged = !speciesListsEqualByKey(currentConfig?.active_species || [], nextConfig?.active_species || [])
-      if (activeChanged || hasGenomeAssignmentChanges(currentConfig, nextConfig)) {
-        await handleBrowserConfigChange(nextConfig)
-      }
-      return { ok: true, activated: activeIndex < 0 }
-    } finally {
-      suppressViewSyncRef.current = false
-    }
-  }, [
+	  const handleSpeciesPillToggle = useCallback((...args) => toggleSpeciesPill({
+	      buildFocusFromActive,
+	      config,
+	      configRef,
+	      currentView,
+	      dualViewFocusRef,
+	      getAlignedGenomeConfigForView,
+	      getContextFullyActiveSpecies,
+	      handleBrowserConfigChange,
+	      hasGenomeAssignmentChanges,
+	      inactiveSelectedSpeciesRef,
+	      persistNextPreviousSessionGenomes,
+	      setDualViewFocus,
+	      setInactiveSelectedSpecies,
+	      suppressViewSyncRef,
+	      toggleTutorialGenome,
+	      tutorialConfig,
+	  }, ...args), [
     buildFocusFromActive, config, currentView, getAlignedGenomeConfigForView,
     getContextFullyActiveSpecies, hasGenomeAssignmentChanges, persistNextPreviousSessionGenomes,
     toggleTutorialGenome, tutorialConfig,
@@ -4503,78 +3228,20 @@ function App() {
     }
   }, [applyingGenomePlaylistId, handleApplyPlaylistFromSelector, resolveLocalSpeciesForPlaylist])
 
-  const handleSpeciesPillReorder = useCallback(async ({
-    source,
-    target,
-    sourceKey = '',
-    targetKey = '',
-    insertPosition = 'before',
-  }) => {
-    const normalizedSourceKey = sourceKey || speciesItemKey(source)
-    const normalizedTargetKey = targetKey || speciesItemKey(target)
-    if (!normalizedSourceKey || !normalizedTargetKey || normalizedSourceKey === normalizedTargetKey) return
-
-    const currentConfig = configRef.current || config
-    const active = dedupeSpeciesList(currentConfig?.active_species)
-    const inactive = dedupeSpeciesList(inactiveSelectedSpeciesRef.current)
-    const sourceInActive = active.some((item) => speciesItemKey(item) === normalizedSourceKey)
-    const targetInActive = active.some((item) => speciesItemKey(item) === normalizedTargetKey)
-    if (!targetInActive) return
-
-    let nextActive = active
-    let nextInactive = inactive
-
-    if (sourceInActive) {
-      const orderedKeys = active.map((item) => speciesItemKey(item))
-      const reorderedKeys = reorderWithInsertPosition(orderedKeys, normalizedSourceKey, normalizedTargetKey, insertPosition)
-      if (orderedKeys.join('|') === reorderedKeys.join('|')) return
-      const byKey = new Map(active.map((item) => [speciesItemKey(item), item]))
-      nextActive = reorderedKeys.map((key) => byKey.get(key)).filter(Boolean)
-    } else {
-      const sourceSpecies = inactive.find((item) => speciesItemKey(item) === normalizedSourceKey) || source
-      if (!sourceSpecies) return
-      const targetIndex = active.findIndex((item) => speciesItemKey(item) === normalizedTargetKey)
-      if (targetIndex < 0) return
-      const insertionIndex = insertPosition === 'after' ? targetIndex + 1 : targetIndex
-      nextActive = [...active]
-      nextActive.splice(insertionIndex, 0, sourceSpecies)
-      nextActive = dedupeSpeciesList(nextActive)
-      nextInactive = inactive.filter((item) => speciesItemKey(item) !== normalizedSourceKey)
-    }
-
-    const first = nextActive[0] ? speciesItemKey(nextActive[0]) : ''
-    const second = nextActive[1] ? speciesItemKey(nextActive[1]) : ''
-    const nextFocus = buildFocusFromActive(nextActive, { primaryKey: first, secondaryKey: second })
-
-    suppressViewSyncRef.current = true
-    try {
-      setInactiveSelectedSpecies(nextInactive)
-      if (
-        nextFocus.primaryKey !== dualViewFocusRef.current.primaryKey ||
-        nextFocus.secondaryKey !== dualViewFocusRef.current.secondaryKey
-      ) {
-        dualViewFocusRef.current = nextFocus
-        setDualViewFocus(nextFocus)
-      }
-
-		      const nextConfig = getAlignedGenomeConfigForView(
-		        withNextPreviousSessionGenomes(
-		          { ...currentConfig, active_species: nextActive },
-		          [...nextActive, ...nextInactive]
-		        ),
-	        currentView,
-	        nextFocus
-      )
-      if (
-        !speciesListsEqualByKey(currentConfig?.active_species || [], nextConfig?.active_species || []) ||
-        hasGenomeAssignmentChanges(currentConfig, nextConfig)
-      ) {
-        await handleBrowserConfigChange(nextConfig)
-      }
-    } finally {
-      suppressViewSyncRef.current = false
-    }
-  }, [buildFocusFromActive, config, currentView, getAlignedGenomeConfigForView, hasGenomeAssignmentChanges, handleBrowserConfigChange])
+  const handleSpeciesPillReorder = useCallback((...args) => reorderSpeciesPills({
+      buildFocusFromActive,
+      config,
+      configRef,
+      currentView,
+      dualViewFocusRef,
+      getAlignedGenomeConfigForView,
+      handleBrowserConfigChange,
+      hasGenomeAssignmentChanges,
+      inactiveSelectedSpeciesRef,
+      setDualViewFocus,
+      setInactiveSelectedSpecies,
+      suppressViewSyncRef,
+  }, ...args), [buildFocusFromActive, config, currentView, getAlignedGenomeConfigForView, hasGenomeAssignmentChanges, handleBrowserConfigChange])
 
   const handleGenomeWheelPromote = useCallback(async (sourceKey, action, source) => {
     const currentConfig = tutorialConfig || configRef.current || config
@@ -4606,117 +3273,30 @@ function App() {
     }
   }, [buildFocusFromActive, config, tutorialConfig, getAlignedGenomeConfigForView, handleBrowserConfigChange])
 
-  const handleStructuralVariationGenomeOrderChange = useCallback(async (orderedSpecies, options = {}) => {
-    const currentConfig = configRef.current || config
-    const active = dedupeSpeciesList(currentConfig?.active_species)
-    const inactive = dedupeSpeciesList(inactiveSelectedSpeciesRef.current)
-    const byKey = new Map([...active, ...inactive].map((species) => [speciesItemKey(species), species]))
-    const hasOption = (name) => Object.prototype.hasOwnProperty.call(options || {}, name)
-    const deactivated = dedupeSpeciesList(options?.deactivateSpecies || [])
-      .map((species) => byKey.get(speciesItemKey(species)) || species)
-      .filter(Boolean)
-    const deactivatedKeys = new Set(deactivated.map((species) => speciesItemKey(species)))
-    const ordered = dedupeSpeciesList(orderedSpecies || [])
-      .map((species) => byKey.get(speciesItemKey(species)) || species)
-      .filter((species) => !deactivatedKeys.has(speciesItemKey(species)))
-      .filter(Boolean)
-    if (!ordered.length && !options?.allowEmpty) return
-
-    const orderedKeys = new Set(ordered.map((species) => speciesItemKey(species)))
-    const preservedActive = active.filter((species) => {
-      const key = speciesItemKey(species)
-      return !orderedKeys.has(key) && !deactivatedKeys.has(key)
-    })
-    const nextActive = dedupeSpeciesList([
-      ...ordered,
-      ...preservedActive,
-    ])
-    const nextInactive = dedupeSpeciesList([
-      ...deactivated,
-      ...inactive.filter((species) => {
-        const key = speciesItemKey(species)
-        return !orderedKeys.has(key) && !deactivatedKeys.has(key)
-      }),
-    ])
-    const nextFocus = buildFocusFromActive(nextActive, {
-      primaryKey: nextActive[0] ? speciesItemKey(nextActive[0]) : '',
-      secondaryKey: nextActive[1] ? speciesItemKey(nextActive[1]) : '',
-    })
-    const nextSvAnchorKey = hasOption('anchorKey')
-      ? String(options.anchorKey || '')
-      : (ordered[0] ? speciesItemKey(ordered[0]) : svAnchorSpeciesKey)
-    const nextSvSecondKey = hasOption('secondKey')
-      ? String(options.secondKey || '')
-      : (ordered[1] ? speciesItemKey(ordered[1]) : svSecondSpeciesKey)
-    const nextSvThirdKey = hasOption('thirdKey')
-      ? String(options.thirdKey || '')
-      : (ordered[2] ? speciesItemKey(ordered[2]) : svThirdSpeciesKey)
-    const nextSvRegionId = options?.clearRegion ? '' : (hasOption('regionId') ? String(options.regionId || '') : svAnchorRegionId)
-    const nextSvRegionExplicitlySelected = options?.clearRegion
-      ? false
-      : (hasOption('regionExplicitlySelected') ? Boolean(options.regionExplicitlySelected) : svRegionExplicitlySelected)
-    const svStateChanged =
-      nextSvAnchorKey !== svAnchorSpeciesKey ||
-      nextSvSecondKey !== svSecondSpeciesKey ||
-      nextSvThirdKey !== svThirdSpeciesKey ||
-      nextSvRegionId !== svAnchorRegionId ||
-      nextSvRegionExplicitlySelected !== svRegionExplicitlySelected
-
-    if (
-      !svStateChanged &&
-      speciesListsEqualByKey(active, nextActive) &&
-      speciesListsEqualByKey(inactive, nextInactive) &&
-      nextFocus.primaryKey === dualViewFocusRef.current.primaryKey &&
-      nextFocus.secondaryKey === dualViewFocusRef.current.secondaryKey
-    ) {
-      return
-    }
-
-    suppressViewSyncRef.current = true
-    try {
-      if (nextSvAnchorKey !== svAnchorSpeciesKey) setSvAnchorSpeciesKey(nextSvAnchorKey)
-      if (nextSvSecondKey !== svSecondSpeciesKey) setSvSecondSpeciesKey(nextSvSecondKey)
-      if (nextSvThirdKey !== svThirdSpeciesKey) setSvThirdSpeciesKey(nextSvThirdKey)
-      if (nextSvRegionId !== svAnchorRegionId) setSvAnchorRegionId(nextSvRegionId)
-      if (nextSvRegionExplicitlySelected !== svRegionExplicitlySelected) {
-        setSvRegionExplicitlySelected(nextSvRegionExplicitlySelected)
-      }
-      const immediateFullyActiveKeys = nextSvAnchorKey && nextSvAnchorKey !== SV_NO_ANCHOR_KEY
-        ? [
-            nextSvAnchorKey,
-            ...(nextSvRegionExplicitlySelected ? [nextSvSecondKey, nextSvThirdKey] : []),
-          ].filter(Boolean)
-        : []
-      setSvFullyActiveSpeciesKeys((prev) => (
-        sameStringArrayItems(prev, immediateFullyActiveKeys) ? prev : immediateFullyActiveKeys
-      ))
-      setInactiveSelectedSpecies(nextInactive)
-      if (
-        nextFocus.primaryKey !== dualViewFocusRef.current.primaryKey ||
-        nextFocus.secondaryKey !== dualViewFocusRef.current.secondaryKey
-      ) {
-        dualViewFocusRef.current = nextFocus
-        setDualViewFocus(nextFocus)
-      }
-
-      const nextConfig = getAlignedGenomeConfigForView(
-        withNextPreviousSessionGenomes(
-          { ...currentConfig, active_species: nextActive },
-          [...nextActive, ...nextInactive],
-        ),
-        'structural_variation',
-        nextFocus,
-      )
-      if (
-        !speciesListsEqualByKey(currentConfig?.active_species || [], nextConfig?.active_species || []) ||
-        hasGenomeAssignmentChanges(currentConfig, nextConfig)
-      ) {
-        await handleBrowserConfigChange(nextConfig)
-      }
-    } finally {
-      suppressViewSyncRef.current = false
-    }
-  }, [
+  const handleStructuralVariationGenomeOrderChange = useCallback((...args) => changeStructuralVariationGenomeOrder({
+      buildFocusFromActive,
+      config,
+      configRef,
+      dualViewFocusRef,
+      getAlignedGenomeConfigForView,
+      handleBrowserConfigChange,
+      hasGenomeAssignmentChanges,
+      inactiveSelectedSpeciesRef,
+      setDualViewFocus,
+      setInactiveSelectedSpecies,
+      setSvAnchorRegionId,
+      setSvAnchorSpeciesKey,
+      setSvFullyActiveSpeciesKeys,
+      setSvRegionExplicitlySelected,
+      setSvSecondSpeciesKey,
+      setSvThirdSpeciesKey,
+      suppressViewSyncRef,
+      svAnchorRegionId,
+      svAnchorSpeciesKey,
+      svRegionExplicitlySelected,
+      svSecondSpeciesKey,
+      svThirdSpeciesKey,
+  }, ...args), [
     buildFocusFromActive,
     config,
     getAlignedGenomeConfigForView,
@@ -4729,54 +3309,13 @@ function App() {
     svRegionExplicitlySelected,
   ])
 
-  const handleStructuralVariationPillToggle = useCallback(async (species, source = 'pill') => {
-    if (!species) return { ok: false, reason: 'missing_species' }
-    const key = speciesItemKey(species)
-    const anchorKey = svAnchorSpecies ? speciesItemKey(svAnchorSpecies) : ''
-    const secondKey = svSecondSpecies ? speciesItemKey(svSecondSpecies) : ''
-    const thirdKey = svThirdSpecies ? speciesItemKey(svThirdSpecies) : ''
-
-    if (anchorKey && key === anchorKey) {
-      await handleStructuralVariationGenomeOrderChange([], {
-        allowEmpty: true,
-        deactivateSpecies: [species],
-        anchorKey: SV_NO_ANCHOR_KEY,
-        secondKey: '',
-        thirdKey: '',
-        clearRegion: true,
-      })
-      return { ok: true, deactivated: true }
-    }
-
-    if (secondKey && key === secondKey) {
-      const promotedThird = svThirdSpecies || null
-      await handleStructuralVariationGenomeOrderChange(
-        [svAnchorSpecies, promotedThird].filter(Boolean),
-        {
-          deactivateSpecies: [species],
-          anchorKey,
-          secondKey: promotedThird ? speciesItemKey(promotedThird) : '',
-          thirdKey: '',
-        },
-      )
-      return { ok: true, deactivated: true }
-    }
-
-    if (thirdKey && key === thirdKey) {
-      await handleStructuralVariationGenomeOrderChange(
-        [svAnchorSpecies, svSecondSpecies].filter(Boolean),
-        {
-          deactivateSpecies: [species],
-          anchorKey,
-          secondKey,
-          thirdKey: '',
-        },
-      )
-      return { ok: true, deactivated: true }
-    }
-
-    return handleSpeciesPillToggle(species, source)
-  }, [
+  const handleStructuralVariationPillToggle = useCallback((...args) => toggleStructuralVariationPill({
+      handleSpeciesPillToggle,
+      handleStructuralVariationGenomeOrderChange,
+      svAnchorSpecies,
+      svSecondSpecies,
+      svThirdSpecies,
+  }, ...args), [
     handleSpeciesPillToggle,
     handleStructuralVariationGenomeOrderChange,
     svAnchorSpecies,
@@ -5003,126 +3542,19 @@ function App() {
 
   // "Use Homology" — toggle real Compara-homology links in the Neighbourhood view,
   // auto-downloading any missing-but-available homology TSV files first.
-  const handleNeighbourhoodUseHomologyClick = useCallback(async () => {
-    if (neighbourhoodUseHomology) {
-      setNeighbourhoodUseHomology(false)
-      setNeighbourhoodHomologyPairLoading({})
-      return
-    }
-
-    const eligibleGenomes = neighbourhoodGenomes.filter((species) => {
-      const availability = neighbourhoodHomologyAvailabilityByGenome?.[speciesItemKey(species)]
-      return availability === 'local' || availability === 'downloadable'
-    })
-    if (!eligibleGenomes.length) return
-
-    // Mark every adjacent, enabled genome pair as "loading" immediately so the view can
-    // blank out old links and show a spinner right away, covering both the download
-    // wait (below) and the subsequent /api/neighbourhood fetch once homology mode flips on.
-    const enabledKeysForLoading = neighbourhoodGenomes
-      .map((species) => speciesItemKey(species))
-      .filter((key) => key && !neighbourhoodDisabledByGenome?.[key])
-    const seedLoadingPairKeys = []
-    for (let i = 0; i < enabledKeysForLoading.length - 1; i += 1) {
-      const pk = buildNeighbourhoodPairKey(enabledKeysForLoading[i], enabledKeysForLoading[i + 1])
-      if (pk) seedLoadingPairKeys.push(pk)
-    }
-    if (seedLoadingPairKeys.length) {
-      setNeighbourhoodHomologyPairLoading((prev) => {
-        const next = { ...prev }
-        for (const pk of seedLoadingPairKeys) next[pk] = true
-        return next
-      })
-    }
-
-    const downloadableGenomes = eligibleGenomes.filter((species) => (
-      neighbourhoodHomologyAvailabilityByGenome?.[speciesItemKey(species)] === 'downloadable'
-    ))
-
-    if (downloadableGenomes.length) {
-      if (!config?.output_dir) {
-        setNeighbourhoodHomologyError('Set an Output Directory in Configuration before downloading homology data.')
-        setNeighbourhoodHomologyPairLoading({})
-        return
-      }
-      setNeighbourhoodHomologyError('')
-
-      await Promise.all(downloadableGenomes.map(async (species) => {
-        const key = speciesItemKey(species)
-        const provider = normalizeGenomeProvider(species)
-        const speciesKey = String(species?.species_key || '').trim()
-        const assembly = getAssemblyAccession(species)
-        setNeighbourhoodHomologyAvailabilityByGenome((prev) => ({ ...prev, [key]: 'downloading' }))
-        try {
-          const filesRes = await fetch(`${API_BASE}/api/remote/files/${encodeURIComponent(speciesKey)}/${encodeURIComponent(assembly)}?provider=${encodeURIComponent(provider)}&file_types=homology`)
-          if (!filesRes.ok) throw new Error('Could not fetch homology file info')
-          const files = await filesRes.json()
-          const file = Array.isArray(files) ? files.find((f) => f?.type === 'homology') : null
-          if (!file) throw new Error('No homology file found')
-
-          const res = await fetch(`${API_BASE}/api/remote/download`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              url: file.url,
-              filename: file.filename,
-              provider,
-              species_key: speciesKey,
-              assembly,
-              file_type: 'homology',
-              output_dir: config.output_dir,
-              scientific_name: species.scientific_name || '',
-              common_name: species.common_name || '',
-              display_name: species.display_name || '',
-              display_name_reason: species.display_name_reason || '',
-              assembly_name: species.assembly_name || '',
-              source_database: species.source_database || '',
-              equivalent_accessions: species.equivalent_accessions || [],
-              ...datasetReleaseDownloadMetadata(file, species),
-            }),
-          })
-          const data = await res.json().catch(() => ({}))
-          if (!res.ok) throw new Error(data?.detail || 'Failed to start homology download')
-
-          if (data?.status === 'already_exists' || data?.status === 'completed') {
-            setNeighbourhoodHomologyAvailabilityByGenome((prev) => ({ ...prev, [key]: 'local' }))
-          } else if (data?.task_id) {
-            setNeighbourhoodHomologyDownloadTaskByGenome((prev) => ({ ...prev, [key]: data.task_id }))
-          } else {
-            setNeighbourhoodHomologyAvailabilityByGenome((prev) => ({ ...prev, [key]: 'download_failed' }))
-          }
-        } catch {
-          setNeighbourhoodHomologyAvailabilityByGenome((prev) => ({ ...prev, [key]: 'download_failed' }))
-        }
-      }))
-
-      // Wait for the /api/remote/tasks poller (above) to resolve every triggered
-      // download to 'local' or 'download_failed' before switching modes on, so the
-      // very first homology-mode fetch already has the files it needs.
-      const downloadKeys = downloadableGenomes.map((species) => speciesItemKey(species))
-      const deadline = Date.now() + 120000
-      while (Date.now() < deadline) {
-        const availability = neighbourhoodHomologyAvailabilityByGenomeRef.current || {}
-        const stillWaiting = downloadKeys.some((key) => availability[key] === 'downloading')
-        if (!stillWaiting) break
-        await new Promise((resolve) => setTimeout(resolve, 400))
-      }
-    }
-
-    const finalAvailability = neighbourhoodHomologyAvailabilityByGenomeRef.current || {}
-    const unavailableKeys = neighbourhoodGenomes
-      .map((species) => speciesItemKey(species))
-      .filter((key) => {
-        const state = finalAvailability[key]
-        return state === 'unavailable' || state === 'download_failed' || state === 'downloading'
-      })
-    setNeighbourhoodHomologyError(
-      unavailableKeys.length
-        ? `${unavailableKeys.length} of ${neighbourhoodGenomes.length} genomes lack homology data — those links will use approximate matching instead.`
-        : ''
-    )
-    setNeighbourhoodUseHomology(true)
-  }, [neighbourhoodUseHomology, neighbourhoodGenomes, neighbourhoodHomologyAvailabilityByGenome, config?.output_dir])
+  const handleNeighbourhoodUseHomologyClick = useCallback((...args) => seedNeighbourhoodFromHomologyHit({
+      config,
+      neighbourhoodDisabledByGenome,
+      neighbourhoodGenomes,
+      neighbourhoodHomologyAvailabilityByGenome,
+      neighbourhoodHomologyAvailabilityByGenomeRef,
+      neighbourhoodUseHomology,
+      setNeighbourhoodHomologyAvailabilityByGenome,
+      setNeighbourhoodHomologyDownloadTaskByGenome,
+      setNeighbourhoodHomologyError,
+      setNeighbourhoodHomologyPairLoading,
+      setNeighbourhoodUseHomology,
+  }, ...args), [neighbourhoodUseHomology, neighbourhoodGenomes, neighbourhoodHomologyAvailabilityByGenome, config?.output_dir])
 
   // Auto-populate focus genes for genomes that don't have one yet, using the first
   // (primary) enabled genome's focus gene as the sole source — never the reverse, and
@@ -5567,172 +3999,7 @@ function App() {
     return next
   }, [alignmentInputs])
 
-  const alignmentDisplayRows = useMemo(() => {
-    try {
-      const loadedRows = Array.isArray(multiAlignmentResult?.rows) ? multiAlignmentResult.rows : []
-      return loadedRows.map((rawRow) => {
-        const genomeKey = String(rawRow?.genome_key || rawRow?.genome || '').trim()
-        const inputRow = alignmentInputByGenomeKey.get(genomeKey) || null
-        const baseline = loadedAlignmentBaselineByGenome?.[genomeKey] || null
-        const resolved = inputRow?.status === 'resolved' ? inputRow.resolved : null
-        const resolvedTranscripts = Array.isArray(resolved?.transcripts) ? resolved.transcripts : []
-        const selectedTranscriptId = String(
-          inputRow?.settings?.selectedTranscriptId
-          || resolved?.selectedTranscriptId
-          || baseline?.selectedTranscriptId
-          || rawRow?.transcript_id
-          || ''
-        ).trim()
-        const selectedTranscript = resolvedTranscripts.find((tx) => String(tx?.id || '').trim() === selectedTranscriptId) || null
-        const selectedTranscriptCoordLabel = selectedTranscript
-          ? `${String(selectedTranscript.chrom || rawRow?.chrom || '').trim()}:${Math.min(Number(selectedTranscript.start), Number(selectedTranscript.end))}-${Math.max(Number(selectedTranscript.start), Number(selectedTranscript.end))} (${String(selectedTranscript.strand || rawRow?.strand || '+')})`
-          : ''
-        const geneLabel = String(
-          resolved?.gene?.name
-          || resolved?.gene?.id
-          || baseline?.geneName
-          || baseline?.geneId
-          || rawRow?.query
-          || rawRow?.transcript_id
-          || genomeKey
-        ).trim()
-
-        const baseRow = {
-          ...rawRow,
-          transcript_id: selectedTranscriptId || String(rawRow?.transcript_id || '').trim(),
-          gene_label: geneLabel,
-          loaded_gene_id: String(baseline?.geneId || '').trim(),
-          selected_transcript_coord_label: selectedTranscriptCoordLabel,
-          boundary_status: 'unknown',
-          boundary_message: '',
-          coverage_status: 'full',
-          not_aligned_bp_left: 0,
-          not_aligned_bp_right: 0,
-          covered_column_start: null,
-          covered_column_end: null,
-          no_coverage: false,
-          display_features: Array.isArray(rawRow?.features) ? rawRow.features : [],
-        }
-
-        try {
-          if (!resolved || !selectedTranscript) {
-            return baseRow
-          }
-
-          const baselineTranscriptId = String(
-            baseline?.selectedTranscriptId
-            || rawRow?.transcript_id
-            || ''
-          ).trim()
-          const isSwitchedTranscript = Boolean(
-            baseline
-            && selectedTranscriptId
-            && baselineTranscriptId
-            && selectedTranscriptId !== baselineTranscriptId
-          )
-          const transcriptSpan = getTranscriptSpan(selectedTranscript)
-          const coveredStart = Math.min(Number(rawRow?.genomic_start), Number(rawRow?.genomic_end))
-          const coveredEnd = Math.max(Number(rawRow?.genomic_start), Number(rawRow?.genomic_end))
-          let coverageStatus = 'full'
-          let boundaryStatus = 'unknown'
-          let boundaryMessage = ''
-          let notAlignedBpLeft = 0
-          let notAlignedBpRight = 0
-          let coveredColumnStart = null
-          let coveredColumnEnd = null
-          let noCoverage = false
-          let displayFeatures = Array.isArray(rawRow?.features) ? rawRow.features : []
-
-          if (baseline && transcriptSpan && Number.isFinite(coveredStart) && Number.isFinite(coveredEnd)) {
-            const overlapWindow = {
-              start: Math.max(transcriptSpan.start, coveredStart),
-              end: Math.min(transcriptSpan.end, coveredEnd),
-            }
-            boundaryStatus = getTranscriptBoundaryStatus(transcriptSpan, coveredStart, coveredEnd)
-            if (isSwitchedTranscript) {
-              if (boundaryStatus === 'within') boundaryMessage = 'Transcript matches on or within boundaries'
-              else if (boundaryStatus === 'partial') boundaryMessage = 'Transcript partially overlaps boundaries'
-              else if (boundaryStatus === 'outside') boundaryMessage = 'Transcript outside boundaries'
-            }
-            if (String(transcriptSpan.strand || rawRow?.strand || '+') === '-') {
-              notAlignedBpLeft = Math.max(0, Math.round(transcriptSpan.end - coveredEnd))
-              notAlignedBpRight = Math.max(0, Math.round(coveredStart - transcriptSpan.start))
-            } else {
-              notAlignedBpLeft = Math.max(0, Math.round(coveredStart - transcriptSpan.start))
-              notAlignedBpRight = Math.max(0, Math.round(transcriptSpan.end - coveredEnd))
-            }
-            if (notAlignedBpLeft > 0 && notAlignedBpRight > 0) coverageStatus = 'truncated_both'
-            else if (notAlignedBpLeft > 0) coverageStatus = 'truncated_left'
-            else if (notAlignedBpRight > 0) coverageStatus = 'truncated_right'
-            if (boundaryStatus === 'within') {
-              coverageStatus = 'full'
-              notAlignedBpLeft = 0
-              notAlignedBpRight = 0
-            } else if (boundaryStatus === 'outside') {
-              coverageStatus = 'outside'
-              noCoverage = true
-            }
-            if (isSwitchedTranscript) {
-              const genomicToAlign = buildAlignmentGenomicToColumnMap(
-                rawRow?.aligned_sequence,
-                rawRow?.genomic_start,
-                rawRow?.genomic_end,
-                rawRow?.strand
-              )
-              const projectedFeatures = buildProjectedTranscriptFeatures(selectedTranscript, genomicToAlign)
-              if (projectedFeatures.length > 0) {
-                displayFeatures = projectedFeatures
-              }
-              if (boundaryStatus === 'partial') {
-                const coveredRange = overlapWindow.start <= overlapWindow.end
-                  ? getCoveredAlignmentColumnRange(genomicToAlign, overlapWindow)
-                  : null
-                if (coveredRange) {
-                  coveredColumnStart = coveredRange.start
-                  coveredColumnEnd = coveredRange.end
-                }
-              }
-            }
-          }
-
-          return {
-            ...baseRow,
-            boundary_status: boundaryStatus,
-            boundary_message: boundaryMessage,
-            coverage_status: coverageStatus,
-            not_aligned_bp_left: notAlignedBpLeft,
-            not_aligned_bp_right: notAlignedBpRight,
-            covered_column_start: coveredColumnStart,
-            covered_column_end: coveredColumnEnd,
-            no_coverage: noCoverage,
-            display_features: displayFeatures,
-          }
-        } catch (error) {
-          console.error('Failed to derive alignment display row:', genomeKey, error)
-          return {
-            ...baseRow,
-            boundary_status: 'unknown',
-            boundary_message: '',
-            no_coverage: false,
-          }
-        }
-      })
-    } catch (error) {
-      console.error('Failed to derive alignment display rows:', error)
-      return (Array.isArray(multiAlignmentResult?.rows) ? multiAlignmentResult.rows : []).map((rawRow) => ({
-        ...rawRow,
-        gene_label: String(rawRow?.query || rawRow?.transcript_id || rawRow?.genome_key || rawRow?.genome || '').trim(),
-        loaded_gene_id: '',
-        coverage_status: 'full',
-        not_aligned_bp_left: 0,
-        not_aligned_bp_right: 0,
-        covered_column_start: null,
-        covered_column_end: null,
-        no_coverage: false,
-        display_features: Array.isArray(rawRow?.features) ? rawRow.features : [],
-      }))
-    }
-  }, [multiAlignmentResult?.rows, alignmentInputByGenomeKey, loadedAlignmentBaselineByGenome, alignmentGlobalFlanks])
+  const alignmentDisplayRows = useMemo((...args) => computeAlignmentDisplayRows({ alignmentInputByGenomeKey, loadedAlignmentBaselineByGenome, multiAlignmentResult }, ...args), [multiAlignmentResult?.rows, alignmentInputByGenomeKey, loadedAlignmentBaselineByGenome, alignmentGlobalFlanks])
 
   const alignmentDisplayMetaByGenomeKey = useMemo(() => {
     const next = {}
@@ -6104,999 +4371,240 @@ function App() {
     return handleSpeciesPillToggle(species, source, options)
   }, [handleSpeciesPillToggle])
 
-  const handleSelectorConfigChange = useCallback(async (configUpdate) => {
-    const currentConfig = configRef.current || config
-    const rawConfigWithSystemPlaylists = typeof configUpdate === 'function'
-      ? configUpdate(currentConfig)
-      : configUpdate
-    if (!rawConfigWithSystemPlaylists) return
-    const manualBatchAddedKeys = new Set(
-      Array.isArray(rawConfigWithSystemPlaylists.__manual_batch_added_keys)
-        ? rawConfigWithSystemPlaylists.__manual_batch_added_keys
-        : []
-    )
-    const removedGenomeKeys = Array.isArray(rawConfigWithSystemPlaylists.__removed_genome_keys)
-      ? rawConfigWithSystemPlaylists.__removed_genome_keys
-      : []
-    const {
-      __manual_batch_added_keys: _manualBatchAddedKeys,
-      __removed_genome_keys: _removedGenomeKeys,
-      ...rawNextConfig
-    } = rawConfigWithSystemPlaylists
-
-    const previousActive = dedupeSpeciesList(currentConfig?.active_species)
-    const previousKeys = new Set(previousActive.map((species) => speciesItemKey(species)))
-    let nextActive = dedupeSpeciesList(rawNextConfig?.active_species)
-    let nextInactive = dedupeSpeciesList(inactiveSelectedSpeciesRef.current)
-
-    // A removed genome has to leave the selected-but-inactive list before the
-    // session snapshot below is rebuilt from it, or it is written straight back
-    // and returns on the next launch.
-    if (removedGenomeKeys.length > 0) {
-      const survivors = nextInactive.filter(
-        (species) => !removedGenomeKeys.some((key) => genomeKeysMatch(species, key))
-      )
-      if (survivors.length !== nextInactive.length) {
-        nextInactive = survivors
-        setInactiveSelectedSpecies(survivors)
-      }
-    }
-
-    suppressViewSyncRef.current = true
-    try {
-      const newlyAdded = nextActive.filter((species) => !previousKeys.has(speciesItemKey(species)))
-      if (newlyAdded.length > 0 && (previousActive.length > 0 || manualBatchAddedKeys.size > 0)) {
-        // Preserve the current view. A manual batch with no previous selection
-        // activates its first genome and appends the rest as selected/inactive.
-        const additionsToKeepActive = previousActive.length === 0
-          ? newlyAdded.filter((species) => manualBatchAddedKeys.has(speciesItemKey(species))).slice(0, 1)
-          : []
-        const additionsToKeepActiveKeys = new Set(additionsToKeepActive.map((species) => speciesItemKey(species)))
-        const additionsToMakeInactive = newlyAdded.filter(
-          (species) => !additionsToKeepActiveKeys.has(speciesItemKey(species))
-        )
-        const inactiveAdditionKeys = new Set(additionsToMakeInactive.map((species) => speciesItemKey(species)))
-        nextActive = nextActive.filter((species) => !inactiveAdditionKeys.has(speciesItemKey(species)))
-        for (const species of additionsToMakeInactive) {
-          nextInactive = appendUniqueSpecies(nextInactive, species)
-        }
-        if (additionsToMakeInactive.length > 0) setInactiveSelectedSpecies(nextInactive)
-      }
-
-      const nextFocus = buildFocusFromActive(nextActive, dualViewFocusRef.current)
-      if (
-        nextFocus.primaryKey !== dualViewFocusRef.current.primaryKey ||
-        nextFocus.secondaryKey !== dualViewFocusRef.current.secondaryKey
-      ) {
-        dualViewFocusRef.current = nextFocus
-        setDualViewFocus(nextFocus)
-      }
-
-      const alignedConfig = getAlignedGenomeConfigForView(
-        withNextPreviousSessionGenomes(
-          { ...rawNextConfig, active_species: nextActive },
-          [...nextActive, ...nextInactive]
-        ),
-        currentView,
-        nextFocus
-      )
-      await handleBrowserConfigChange(alignedConfig)
-    } finally {
-      suppressViewSyncRef.current = false
-    }
-  }, [buildFocusFromActive, config, currentView, getAlignedGenomeConfigForView])
+  const handleSelectorConfigChange = useCallback((...args) => applySelectorConfigChange({
+      buildFocusFromActive,
+      config,
+      configRef,
+      currentView,
+      dualViewFocusRef,
+      getAlignedGenomeConfigForView,
+      handleBrowserConfigChange,
+      inactiveSelectedSpeciesRef,
+      setDualViewFocus,
+      setInactiveSelectedSpecies,
+      suppressViewSyncRef,
+  }, ...args), [buildFocusFromActive, config, currentView, getAlignedGenomeConfigForView])
 
   const homologyGenomes = useMemo(() => dedupeSpeciesList(config?.active_species || []), [config?.active_species])
   const homologyWorkspace = useHomologyWorkspace({ genomes: homologyGenomes, localGenomes: topBarSpecies, outputDir: config?.output_dir, enabled: currentView === 'homology' })
 
   return (
-    <div className={`h-screen flex flex-col ${themeStyles.bg} ${themeStyles.text}`}>
-      {config.show_fps_counter && <FpsCounter />}
-      {/* Header */}
-      <header
-        /* The pills strip ends in the assembly badges, which already sit at the foot of
-           the pills; a full `pb-4` under that read as a gap rather than as breathing
-           room. With no strip below them the button rows still want the full padding. */
-        className={`${themeStyles.header} border-b px-6 ${headerCollapsed ? 'py-3 cursor-pointer' : `pt-4 ${showsPillsStrip ? 'pb-2' : 'pb-4'}`} flex-none rounded-xl relative`}
-        onClick={headerCollapsed ? () => setHeaderCollapsed(false) : undefined}
-      >
-        <div className={`flex flex-col ${headerCollapsed ? 'gap-0' : 'gap-3'} w-full h-full`}>
-          <div className={`flex items-start justify-between gap-4 w-full ${headerCollapsed ? '' : 'h-full'}`}>
-            <div className="min-w-0 flex-1 pr-2">
-              <div className={`min-w-0 overflow-hidden ${themeStyles.text} flex ${headerCollapsed ? 'items-end' : 'items-center'} gap-1`}>
-                <span className="flex shrink-0 items-center gap-1.5">
-                  <img src="ensembl-logotype-blue.svg" alt="Ensembl" className="h-6" />
-                  <span className={`leading-none font-normal ${isLight ? 'text-gray-900' : 'text-white'}`} style={{fontSize: '30px'}}>Go</span>
-                </span>
-                {headerCollapsed && (
-                  <h1
-                    className={`ml-2 min-w-0 truncate font-normal leading-none ${isLight ? 'text-gray-900' : 'text-white'}`}
-                    style={{ fontSize: '24px' }}
-                    title={currentViewTitle}
-                  >
-                    {currentViewTitle}
-                  </h1>
-                )}
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    if (!headerCollapsed) trackAchievement('topbar.collapse')
-                    setHeaderCollapsed((prev) => !prev)
-                  }}
-                  className="w-8 h-8 shrink-0 rounded-md border-0 bg-transparent text-[#0099ff] flex items-center justify-center transition-colors hover:bg-[#0099ff]/10"
-                  title={headerCollapsed ? 'Expand top bar' : 'Collapse top bar'}
-                  aria-label={headerCollapsed ? 'Expand top bar' : 'Collapse top bar'}
-                >
-                  <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                    {headerCollapsed ? <polyline points="6 9 12 15 18 9" /> : <polyline points="18 15 12 9 6 15" />}
-                  </svg>
-                </button>
-              </div>
-              {!headerCollapsed && (
-                <div className="mt-2 min-w-0 flex items-start gap-3">
-                  {currentViewButtonId && (
-                    <span
-                      aria-hidden="true"
-                      className="w-11 h-11 shrink-0 rounded-lg bg-[#0099ff] text-white flex items-center justify-center overflow-hidden"
-                    >
-                      <AppButtonIcon buttonId={currentViewButtonId} isLight={isLight} />
-                    </span>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <h1
-                      className={`min-w-0 truncate font-normal leading-none ${isLight ? 'text-gray-900' : 'text-white'}`}
-                      style={{ fontSize: '24px' }}
-                      title={currentViewTitle}
-                    >
-                      {currentViewTitle}
-                    </h1>
-                    <p className={`text-sm ${themeStyles.subtext} mt-1 text-left leading-snug whitespace-normal break-words`}>
-                      {currentViewDescription}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-            {!headerCollapsed && !shouldShowWindowsBackendSetup && (
-              <div className="shrink-0 flex items-start gap-2">
-                <div className="flex items-start gap-1.5">
-                  <div className="relative">
-                  <div
-                    ref={topBarScrollRef}
-                    className="overflow-x-auto overflow-y-hidden hide-scrollbar"
-                    style={{ maxWidth: TOP_BAR_VIEWPORT_PX }}
-                  >
-                    <div className="flex flex-col items-start gap-2 w-max">
-                  {topBarButtonRows.map((row, rowIndex) => (
-                    <div
-                      key={`topbar-row-${rowIndex}`}
-                      className="grid gap-2 justify-items-start"
-                      style={{ gridTemplateColumns: `repeat(${topBarButtonLayout.columns}, ${TOP_BAR_BUTTON_PX}px)` }}
-                    >
-                      {row.map((buttonId) => {
-                        const buttonMeta = APP_BUTTON_META[buttonId]
-                        if (!buttonMeta) return null
-                        const isActionButton = buttonMeta.kind === 'action'
-                        const isSelectedView = buttonMeta.kind === 'data_view' && buttonMeta.viewId === currentView
-                        const isActionActive = isActionButton && (
-                          (buttonId === 'screenshot_toggle' && screenshotMode) ||
-                          (buttonId === 'genome_playlist' && genomePlaylistPopoverOpen)
-                        )
-                        const isTopButtonActive = isSelectedView || isActionActive
-                        const isActionDisabled = isActionButton && buttonId === 'screenshot_toggle' && !screenshotAvailable
-                        const isDragging = draggedTopButtonId === buttonId
-                        const isDropTarget = Boolean(
-                          dragOverTopButtonId &&
-                          draggedTopButtonId &&
-                          dragOverTopButtonId === buttonId &&
-                          draggedTopButtonId !== buttonId
-                        )
-                        const insertLineColor = isLight ? 'rgba(0, 153, 255, 0.92)' : 'rgba(125, 211, 252, 0.92)'
-                        const buttonNode = (
-                          <button
-                            key={buttonId}
-                            data-tour-id={`app-button-${buttonId}`}
-                            ref={buttonId === 'screenshot_toggle'
-                              ? screenshotActionButtonRef
-                              : (buttonId === 'genome_playlist' ? genomePlaylistActionButtonRef : null)}
-                            onClick={() => {
-                              if (topBarDragMovedRef.current) {
-                                topBarDragMovedRef.current = false
-                                return
-                              }
-                              if (isActionDisabled) return
-                              handleTopBarButtonClick(buttonId)
-                            }}
-                            draggable
-                            onDragStart={(event) => {
-                              event.dataTransfer.effectAllowed = 'move'
-                              event.dataTransfer.setData('text/plain', buttonId)
-                              setDraggedTopButtonId(buttonId)
-                              setDragOverTopButtonId(buttonId)
-                              setDragTopInsertPosition('before')
-                              topBarDragMovedRef.current = false
-                            }}
-                            onDragOver={(event) => {
-                              if (!draggedTopButtonId || draggedTopButtonId === buttonId) return
-                              event.preventDefault()
-                              event.dataTransfer.dropEffect = 'move'
-                              const rect = event.currentTarget.getBoundingClientRect()
-                              const nextInsertPosition = event.clientX < (rect.left + rect.width / 2) ? 'before' : 'after'
-                              setDragOverTopButtonId(buttonId)
-                              setDragTopInsertPosition(nextInsertPosition)
-                              topBarDragMovedRef.current = true
-                            }}
-                            onDrop={(event) => {
-                              event.preventDefault()
-                              const source = draggedTopButtonId || event.dataTransfer.getData('text/plain')
-                              reorderTopBarButtons(source, buttonId, dragTopInsertPosition)
-                              setDraggedTopButtonId('')
-                              setDragOverTopButtonId('')
-                              setDragTopInsertPosition('before')
-                              topBarDragMovedRef.current = false
-                            }}
-                            onDragEnd={() => {
-                              setDraggedTopButtonId('')
-                              setDragOverTopButtonId('')
-                              setDragTopInsertPosition('before')
-                              setTimeout(() => { topBarDragMovedRef.current = false }, 0)
-                            }}
-                            className={`w-11 h-11 rounded-lg flex items-center justify-center transition-all duration-200 relative ${(isTopButtonActive && !isActionDisabled)
-                              ? (isActionButton
-                                ? 'bg-[#bfe6ff] text-[#006fbf] shadow-md shadow-[#0099ff]/25 border-2 border-[#0099ff]'
-                                : 'bg-[#0077cc] text-white shadow-md shadow-[#0077cc]/40 border-2 border-white/40')
-                              : (isActionDisabled
-                                ? 'bg-[#6b7280] text-white/60 border-2 border-transparent cursor-not-allowed'
-                                : (isActionButton
-                                  ? 'bg-[#e1f4ff] text-[#0077cc] hover:text-[#005f9f] hover:bg-[#cbeeff] border-2 border-[#0099ff]'
-                                  : 'bg-[#0099ff] text-white/80 hover:text-white hover:bg-[#0088ee] border-2 border-transparent'))
-                              }`}
-                            style={{
-                              opacity: isDragging ? 0.62 : 1,
-                              boxShadow: isDropTarget
-                                ? (dragTopInsertPosition === 'before'
-                                  ? `inset 3px 0 0 ${insertLineColor}`
-                                  : `inset -3px 0 0 ${insertLineColor}`)
-                                : undefined,
-                              cursor: isActionDisabled ? 'not-allowed' : 'pointer',
-                            }}
-                            title={buttonId === 'theme_toggle'
-                              ? (isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode')
-                              : buttonId === 'genome_playlist'
-                                ? 'Choose a genome playlist'
-                              : buttonId === 'screenshot_toggle'
-                                ? (screenshotAvailable
-                                  ? (screenshotMode ? 'Cancel screenshot capture' : 'Capture a screenshot from this view')
-                                  : 'No exportable screenshot panels are available in this view')
-                              : buttonMeta.label}
-                          >
-                            {buttonId === 'track_manager' ? (
-                              <span style={{ display: 'inline-flex', transform: 'scale(0.76)' }}>
-                                <AppButtonIcon buttonId={buttonId} isLight={isLight} />
-                              </span>
-                            ) : (
-                              <AppButtonIcon buttonId={buttonId} isLight={isLight} />
-                            )}
-                            {isTopButtonActive && !isActionDisabled && (
-                              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-6 h-[3px] rounded-full bg-white shadow-sm"></span>
-                            )}
-                          </button>
-                        )
-                        return buttonNode
-                      })}
-                    </div>
-                  ))}
-                    </div>
-                  </div>
-
-                  {/* The playlist popover. It hangs off this wrapper rather than off its
-                      button because the button sits inside the horizontally scrolling
-                      strip, which clips anything that drops below its rows. Placed from
-                      the button's measured edges instead; see the effect that sets
-                      `genomePlaylistPopoverPosition`. */}
-                  {activeAppButtons.includes('genome_playlist') && (
-                  <div
-                    ref={genomePlaylistPopoverRef}
-                    data-tour-id={genomePlaylistPopoverOpen ? 'app-playlist-popover' : undefined}
-                    style={genomePlaylistPopoverPosition}
-                    className={`absolute w-72 origin-top-right rounded-xl border shadow-2xl z-50 overflow-hidden transition-all duration-200 ${genomePlaylistPopoverOpen
-                      ? 'opacity-100 translate-y-0 pointer-events-auto'
-                      : 'opacity-0 -translate-y-2 pointer-events-none'
-                    } ${isLight ? 'bg-white border-gray-200 text-gray-900' : 'bg-gray-900 border-gray-700 text-gray-100'}`}
-                  >
-                    <div className={`px-4 py-3 border-b ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700 bg-gray-800'}`}>
-                      <div className="text-sm font-bold">Genome Playlists</div>
-                    </div>
-                    <div className="max-h-80 overflow-y-auto themed-scrollbar">
-                      {sortedGenomePlaylists.length === 0 ? (
-                        <div className={`px-4 py-4 text-sm ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                          No playlists yet.
-                        </div>
-                      ) : sortedGenomePlaylists.map((playlist) => {
-                        const isSelectedPlaylist = String(config?.selected_genome_playlist_id || '') === playlist.id
-                        const isApplying = applyingGenomePlaylistId === playlist.id
-                        return (
-                          <button
-                            key={playlist.id}
-                            data-tour-id={`app-playlist-option-${playlistTourSlug(playlist.name)}`}
-                            type="button"
-                            disabled={Boolean(applyingGenomePlaylistId)}
-                            onClick={() => handleTopBarPlaylistSelect(playlist)}
-                            className={`w-full px-4 py-3 text-left transition-colors border-b last:border-b-0 ${isLight
-                              ? 'border-gray-100 hover:bg-blue-50 disabled:hover:bg-white'
-                              : 'border-gray-800 hover:bg-blue-900/20 disabled:hover:bg-gray-900'
-                            } ${isSelectedPlaylist ? (isLight ? 'bg-blue-50' : 'bg-blue-900/20') : ''}`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="min-w-0 flex-1">
-                                <div className={`text-sm font-semibold truncate ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>{playlist.name}</div>
-                                <div className={`text-xs mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                  {(playlist.genomes || []).length} genome{(playlist.genomes || []).length === 1 ? '' : 's'}
-                                </div>
-                              </div>
-                              {isApplying ? (
-                                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                              ) : isSelectedPlaylist ? (
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className={isLight ? 'text-blue-600' : 'text-blue-300'}>
-                                  <path d="M20 6 9 17l-5-5" />
-                                </svg>
-                              ) : null}
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  )}
-
-                  {/* One tall arrow over whichever end the strip can still scroll to.
-                      Drawn full height of the rows and stretched vertically, so it reads
-                      as "the strip continues this way" rather than as another app
-                      button. Overlaid, not placed beside the grid, so that appearing and
-                      disappearing never moves the buttons. */}
-                  {[
-                    { side: 'left', show: topBarScroll.canLeft, dir: -1, points: '15 18 9 12 15 6', label: 'Scroll app buttons left' },
-                    { side: 'right', show: topBarScroll.canRight, dir: 1, points: '9 18 15 12 9 6', label: 'Scroll app buttons right' },
-                  ].filter((arrow) => arrow.show).map((arrow) => (
-                    <button
-                      key={arrow.side}
-                      type="button"
-                      onClick={() => scrollTopBarButtons(arrow.dir)}
-                      className={`absolute inset-y-0 ${arrow.side === 'left' ? 'left-0' : 'right-0'} flex items-center justify-center text-[#0099ff] hover:text-[#0077cc] transition-colors cursor-pointer`}
-                      style={{
-                        width: TOP_BAR_SCROLL_ARROW_PX,
-                        background: `linear-gradient(to ${arrow.side === 'left' ? 'right' : 'left'}, ${themeStyles.headerBgColor} 55%, ${themeStyles.headerBgFade})`,
-                      }}
-                      title={arrow.label}
-                      aria-label={arrow.label}
-                    >
-                      <svg
-                        width="18" height="40" viewBox="0 0 24 24" preserveAspectRatio="none"
-                        fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-                      >
-                        <polyline points={arrow.points} />
-                      </svg>
-                    </button>
-                  ))}
-
-                  {/* The organiser drawer. Anchored to the scroll viewport's own wrapper
-                      and pulled out by its padding and border, so the preview grid inside
-                      starts on exactly the same pixel as the real buttons above it and
-                      each preview column sits under the button it stands for. `mt-3` is
-                      the flex gap between the button rows and the pills strip, so the
-                      drawer's header band starts where the strip starts, and its height
-                      is the strip's height less this border — the two share a top and a
-                      bottom edge. */}
-                  <div
-                    ref={appOrganiserPanelRef}
-                    style={{
-                      left: -(DRAWER_PADDING_X + DRAWER_BORDER_PX),
-                      width: TOP_BAR_VIEWPORT_PX + 2 * (DRAWER_PADDING_X + DRAWER_BORDER_PX),
-                    }}
-                    className={`absolute top-full mt-3 origin-top-right rounded-xl border shadow-2xl z-50 transition-all duration-200 ${appOrganiserOpen
-                      ? 'opacity-100 translate-y-0 pointer-events-auto'
-                      : 'opacity-0 -translate-y-2 pointer-events-none'
-                    } ${isLight ? 'bg-white border-gray-200 text-gray-900' : 'bg-gray-900 border-gray-700 text-gray-100'}`}
-                  >
-                    <div
-                      className={`flex items-center border-b rounded-t-xl ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700 bg-gray-800'}`}
-                      style={{
-                        height: PILLS_STRIP_HEIGHT - DRAWER_BORDER_PX,
-                        paddingLeft: DRAWER_PADDING_X,
-                        paddingRight: DRAWER_PADDING_X,
-                      }}
-                    >
-                      <div className="text-lg font-bold">Organise Apps</div>
-                    </div>
-                    <div
-                      className="max-h-[60vh] overflow-y-auto themed-scrollbar py-4"
-                      style={{ paddingLeft: DRAWER_PADDING_X, paddingRight: DRAWER_PADDING_X }}
-                    >
-                      <AppOrganiserPanel
-                        theme={theme}
-                        activeAppButtons={activeAppButtons}
-                        onChange={handleAppOrganiserChange}
-                        previewScrollRef={organiserScrollRef}
-                      />
-                    </div>
-                  </div>
-                  </div>
-
-                  <div
-                    className="flex flex-col gap-2 justify-end"
-                    style={{
-                      height: topBarButtonRows.length * TOP_BAR_BUTTON_PX
-                        + Math.max(0, topBarButtonRows.length - 1) * TOP_BAR_GAP_PX,
-                    }}
-                  >
-                    <div className="h-11 flex items-end">
-                      <button
-                        ref={appOrganiserButtonRef}
-                        type="button"
-                        onClick={() => {
-                          if (!appOrganiserOpen) trackAchievement('organiser.opened')
-                          setAppOrganiserOpen((prev) => !prev)
-                        }}
-                        className="w-6 h-6 rounded-md border-0 bg-transparent text-[#0099ff] flex items-center justify-center transition-colors hover:bg-[#0099ff]/10"
-                        title={appOrganiserOpen ? 'Close the app organiser' : 'Organise apps'}
-                        aria-label={appOrganiserOpen ? 'Close the app organiser' : 'Organise apps'}
-                        aria-expanded={appOrganiserOpen}
-                      >
-                        <svg
-                          width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                          strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"
-                          className={`transition-transform duration-200 ${appOrganiserOpen ? 'rotate-180' : ''}`}
-                        >
-                          <polyline points="6 9 12 15 18 9" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-
-                </div>
-                {/* Ensembl logo. Sized to the space left beside the app buttons rather
-                    than to a round number: 80px is as tall as it can be without the mark
-                    outgrowing the two button rows and pushing the header down. */}
-                <img
-                  src="ensembl-e-blue.svg"
-                  alt="Ensembl"
-                  className="h-20 self-center"
-                />
-              </div>
-            )}
-
-          </div>
-
-          {showsPillsStrip && (
-            <div
-              data-tour-id="app-genome-pills"
-              className={`border-t ${isLight ? 'border-gray-200' : 'border-gray-700'}`}
-              style={{
-                // A tutorial reserves this strip's place without showing anything in it,
-                // so that ticking the first genome does not change the header height
-                // under the rows being selected. That reservation stays blank; only the
-                // ordinary empty app gets the message.
-                visibility: (topBarSpecies.length === 0 && !showNoGenomesMessage) ? 'hidden' : undefined,
-                backgroundColor: isLight ? '#f1f3f5' : '#1E2938',
-                borderRadius: '0.5rem',
-                paddingLeft: PILLS_STRIP_PADDING_X,
-                paddingRight: PILLS_STRIP_PADDING_X,
-                paddingTop: PILLS_STRIP_PADDING_TOP,
-                paddingBottom: PILLS_STRIP_PADDING_BOTTOM,
-              }}
-            >
-              <SelectedSpeciesPillsBar
-                theme={theme}
-                config={config}
-                onToggleSpecies={currentView === 'structural_variation' ? handleStructuralVariationPillToggle : handleSpeciesPillToggle}
-                onRemoveSpecies={handleRemoveSpeciesFromList}
-                onReorderSpecies={handleSpeciesPillReorder}
-                mode={topListMode}
-                selectedSpeciesKeys={selectedSpeciesKeysForView}
-                semiSelectedSpeciesKeys={semiSelectedSpeciesKeysForView}
-                speciesList={topBarSpecies}
-                primarySpeciesKey={speciesItemKey(refSpecies)}
-                reserveRowHeight={reserveTutorialSelectorPills}
-                emptyState={showNoGenomesMessage ? (
-                  <NoGenomesPillsMessage isLight={isLight} onOpenView={handleTopBarButtonClick} />
-                ) : null}
-                trailing={(
-                  <ActiveTasksButton
-                    theme={theme}
-                    onOpenDownloads={currentView === 'download' ? null : () => handleTopBarButtonClick('download')}
-                  />
-                )}
-              />
-            </div>
-          )}
-
-        </div>
-      </header>
-
-      {/* Main content container with flex-grow to fill remaining height */}
-      <div
-        ref={setMainContentNode}
-        data-tutorial-page-scroll={['genome_selector', 'genome_browser'].includes(currentView) ? 'true' : undefined}
-        className={`relative min-h-0 flex-grow w-full ${currentView === 'notes' ? 'py-6 pl-6 pr-0' : 'p-6'} ${(currentView === 'genome_browser' || currentView === 'alignment' || currentView === 'structural_variation' || currentView === 'genome_selector') ? `overflow-y-auto overflow-x-hidden themed-scrollbar ${isLight ? 'themed-scrollbar-light' : 'themed-scrollbar-dark'}` : 'overflow-hidden'}`}
-      >
-        {shouldRenderFallbackContentWrapper ? (
-          <div ref={setActiveViewContentNode} className="h-full">
-            {shouldShowWindowsBackendSetup ? (
-            <WindowsBackendSetupView
-              backendRuntime={backendRuntime}
-              onClose={() => setBackendSetupOpen(false)}
-              onRetryCheck={handleRetryBackendCheck}
-              onRetryLaunch={handleRetryBackendLaunch}
-            />
-          ) : !configLoaded ? (
-            <div className={`flex h-full items-center justify-center text-center ${isLight ? 'text-gray-600' : 'text-gray-300'}`} role="status" aria-live="polite">
-              Loading saved configuration…
-            </div>
-          ) : currentView === 'home' ? (
-            /* ========== HOME VIEW ========== */
-            <div className="h-full">
-              <HomeView
-                theme={theme}
-                onNavigate={(viewId) => setCurrentView(viewId)}
-              />
-            </div>
-          ) : currentView === 'alignment' ? (
-            /* ========== FEATURE ALIGNMENT VIEW ========== */
-            <ErrorBoundary>
-              <div data-screenshot-capture="view" className="min-h-full flex items-start gap-4">
-              {/* Main content - Alignment area */}
-              <div className="flex-1 min-w-0 flex flex-col">
-                {alignmentViewError && (
-                  <div className="bg-red-900/50 border border-red-700 rounded-lg p-4 mb-4 flex-none">
-                    <p className="text-red-300">{alignmentViewError}</p>
-                  </div>
-                )}
-
-                {alignmentViewLoading && (
-                  <div className={`${themeStyles.panel} rounded-lg p-12 text-center flex-grow flex flex-col items-center justify-center`}>
-                    <div className={`animate-spin w-8 h-8 border-4 ${isLight ? 'border-[#0099ff]' : 'border-blue-500'} border-t-transparent rounded-full mb-4`}></div>
-                    <p className={themeStyles.subtext}>Running feature alignment...</p>
-                  </div>
-                )}
-
-                {!alignmentViewLoading && !multiAlignmentResult && !alignmentViewError && (
-                  <div className={`${themeStyles.panel} rounded-lg p-12 text-center flex-grow flex flex-col items-center justify-center`}>
-                    <img
-                      src="ensembl-e-blue.svg"
-                      alt="Ensembl"
-                      className="mb-4"
-                      style={{
-                        width: '160px',
-                        height: '160px'
-                      }}
-                    />
-                    <h2 className="text-xl font-semibold mb-2">No alignment loaded</h2>
-                    <p className={themeStyles.subtext}>
-                      {alignmentPreparedCount >= 2
-                        ? 'Click Run alignment in the panel on the right to align the selected gene regions.'
-                        : 'Search for genes here, or select genes in Genome Browser. At least two genomes are needed.'}
-                    </p>
-                  </div>
-                )}
-
-                {multiAlignmentResult && !alignmentViewLoading && (
-                  <>
-                    <MultiAlignmentPanel
-                      key={alignmentViewerDisplayKey}
-                      result={multiAlignmentResult ? { ...multiAlignmentResult, rows: alignmentDisplayRows } : multiAlignmentResult}
-                      theme={theme}
-                      collapseIntrons={collapseIntrons}
-                      collapseSourceGenomeKey={collapseSource}
-                      collapseSourceOptions={collapseSourceOptions}
-                      onCollapseSourceChange={setCollapseSource}
-                      onCollapseIntronsChange={setCollapseIntrons}
-                    />
-                    <div className="mt-4">
-                      <FeatureLegend theme={theme} horizontal={true} defaultExpanded={true} />
-                    </div>
-                  </>
-                )}
-              </div>
-              {/* Controls, on the right like the other views' drawers */}
-              <div
-                className="flex-shrink-0 self-start transition-[width] duration-300 ease-out"
-                style={{ width: alignmentSidebarCollapsed ? '42px' : '360px' }}
-              >
-                <MultiAlignmentSidebar
-                  theme={theme}
-                  rows={alignmentInputs}
-                  genomeColorsByKey={alignmentGenomeColorsByKey}
-                  rowDisplayMetaByGenomeKey={alignmentDisplayMetaByGenomeKey}
-                  globalFlanks={alignmentGlobalFlanks}
-                  globalFlanksLocked={alignmentGlobalFlanksLocked}
-                  globalFlankMax={alignmentGlobalFlankMax}
-                  collapsed={alignmentSidebarCollapsed}
-                  runSettings={alignmentRunSettings}
-                  loading={alignmentViewLoading}
-                  runDisabled={alignmentRunDisabled}
-                  alignedGenomeCount={alignedGenomeCount}
-                  unalignedGenomeCount={unalignedGenomeCount}
-                  showUpdateNotice={alignmentNeedsRerun}
-                  warnings={alignmentNeedsRerun ? [] : (multiAlignmentResult?.warnings || [])}
-                  onSearchAll={handleAlignmentSearchAll}
-                  onRowQueryChange={handleAlignmentRowQueryChange}
-                  onResolveRow={handleAlignmentResolveRow}
-                  onRowSettingChange={handleAlignmentRowSettingChange}
-                  onGlobalFlanksChange={handleAlignmentGlobalFlanksChange}
-                  onGlobalFlanksLockToggle={handleAlignmentGlobalFlanksLockToggle}
-                  onGlobalFlankMaxChange={handleAlignmentGlobalFlankMaxChange}
-                  onRunSettingsChange={handleAlignmentRunSettingsChange}
-                  onRunAlignment={runMultiAlignment}
-                  onSaveAlignment={handleSaveAlignment}
-                  onLoadAlignment={() => setLoadAlignmentModalOpen(true)}
-                  hasResult={Boolean(multiAlignmentResult)}
-                  onToggleCollapsed={() => setAlignmentSidebarCollapsed((prev) => !prev)}
-                />
-              </div>
-
-              </div>
-            </ErrorBoundary>
-          ) : currentView === 'sequence' ? (
-            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Sequence…</div>}><SequenceView theme={theme} config={config} genomes={config?.active_species || []} startingPoints={genomeStartingPoints} onGenomeChange={setSequenceGenomeKey} incoming={sequenceViewEntry} onIncomingConsumed={() => setSequenceViewEntry(null)} onFocusLocationSelect={handleGenomeFocusLocationSelect} onNavigateToBrowser={() => setCurrentView('genome_browser')} /></React.Suspense></ErrorBoundary>
-          ) : currentView === 'alignment_explorer' ? (
-            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Alignment Explorer…</div>}><AlignmentExplorerView theme={theme} config={config} genomes={config?.active_species || []} topBarGenomes={topBarSpecies} onAddGenome={handleSpeciesPillToggle} incoming={explorerIncoming} onIncomingConsumed={() => setExplorerIncoming(null)} onOpenGenome={handleOpenAlignmentExplorerLoci} /></React.Suspense></ErrorBoundary>
-          ) : currentView === 'gene_trees' ? (
-            <ErrorBoundary><React.Suspense fallback={<div className="p-6 text-gray-400">Loading Gene Trees…</div>}><GeneTreesView theme={theme} config={config} genomes={config?.active_species || []} topBarGenomes={topBarSpecies} onAddGenome={handleSpeciesPillToggle} incoming={geneTreesIncoming} onIncomingConsumed={() => setGeneTreesIncoming(null)} /></React.Suspense></ErrorBoundary>
-          ) : currentView === 'neighbourhood' ? (
-            /* ========== NEIGHBOURHOOD VIEW ========== */
-            <div className="h-full">
-              <NeighbourhoodView
-                theme={theme}
-                config={config}
-                genomes={neighbourhoodGenomes}
-                disabledByGenome={neighbourhoodDisabledByGenome}
-                focusGeneByGenome={focusGeneByGenome}
-                queryByGenome={neighbourhoodQueryStateByGenome}
-                trackByGenome={neighbourhoodTrackStateByGenome}
-                linksByPair={neighbourhoodLinksByPair}
-                loadingByGenome={neighbourhoodLoadingStateByGenome}
-                errorByGenome={neighbourhoodErrorStateByGenome}
-                onQueryChange={(genomeKey, value) => {
-                  const key = String(genomeKey || '').trim()
-                  if (!key) return
-                  setNeighbourhoodQueryByGenome((prev) => ({ ...prev, [key]: value }))
-                  setNeighbourhoodErrorByGenome((prev) => ({ ...prev, [key]: null }))
-                }}
-                onResolveGenome={handleNeighbourhoodResolveGenome}
-                onSearchAll={handleNeighbourhoodSearchAll}
-                onLinkSelect={handleNeighbourhoodLinkSelect}
-                onFlipGenome={handleNeighbourhoodFlipGenome}
-                onSwapAdjacent={handleNeighbourhoodSwapAdjacent}
-                onToggleGenome={handleNeighbourhoodToggleGenome}
-                useHomology={neighbourhoodUseHomology}
-                homologyLinksByPair={neighbourhoodHomologyLinksByPair}
-                homologyAvailabilityByGenome={neighbourhoodHomologyAvailabilityByGenome}
-                homologyFilters={neighbourhoodHomologyFilters}
-                homologyError={neighbourhoodHomologyError}
-                onToggleUseHomology={handleNeighbourhoodUseHomologyClick}
-                onHomologyFiltersChange={setNeighbourhoodHomologyFilters}
-                homologyPairLoading={neighbourhoodHomologyPairLoading}
-                noHitGenomeKeys={neighbourhoodNoHitGenomeKeys}
-              />
-            </div>
-          ) : currentView === 'homology' ? (
-            /* ========== HOMOLOGY VIEW ========== */
-            <div className="h-full">
-              <HomologyView
-                theme={theme}
-                config={config}
-                genomes={homologyGenomes}
-                localGenomes={homologyWorkspace.availableGenomes}
-                workspace={homologyWorkspace}
-                onToggleGenome={handleSpeciesPillToggle}
-                onOpenGene={async (genome, gene) => {
-                  const key = speciesItemKey(genome)
-                  if (!key || !gene?.id) return
-                  await handleGenomeWheelPromote(key, 'add', genome)
-                  setBrowserGeneEntry({ genomeKey: key, gene })
-                  setCurrentView('genome_browser')
-                }}
-              />
-            </div>
-          ) : currentView === 'feature_explorer' ? (
-            /* ========== FEATURE EXPLORER VIEW ========== */
-            <div className="h-full">
-              <FeatureExplorerView
-              key={featureExplorerActiveGenomeKey || 'feature-explorer-empty'}
-              theme={theme}
-              config={config}
-              genomeKey={featureExplorerActiveGenomeKey}
-              selectedGenome={featureExplorerActiveGenome}
-              focusGene={featureExplorerActiveGenomeKey ? (focusGeneByGenome?.[featureExplorerActiveGenomeKey] || null) : null}
-              seedQuery={featureExplorerSeedQuery}
-              onFocusGene={(gene) => handleGenomeFocusGeneSelect(featureExplorerActiveGenomeKey, gene)}
-              genomes={featureExplorerAvailableGenomes}
-              focusGeneByGenome={focusGeneByGenome}
-              onSelectGenome={handleFeatureExplorerGenomeSelect}
-              screenshotMode={currentView === 'feature_explorer' ? screenshotMode : false}
-              onScreenshotModeChange={setScreenshotMode}
-              onScreenshotAvailabilityChange={handleScreenshotAvailabilityChange}
-              screenshotToggleButtonRef={screenshotActionButtonRef}
-              />
-            </div>
-          ) : currentView === 'stats' ? (
-            /* ========== STATS VIEW ========== */
-            <div className="h-full">
-              <StatsView
-                theme={theme}
-                config={config}
-                onConfigChange={handleConfigurationChange}
-                listedGenomes={topBarSpecies}
-                activeGenomeKeys={statsActiveGenomeKeys}
-              />
-            </div>
-          ) : currentView === 'structural_variation' ? (
-            /* ========== STRUCTURAL VARIATION VIEW ========== */
-            <div className="min-h-full">
-              <StructuralVariationView
-                key={structuralVariationViewKey}
-                theme={theme}
-                config={config}
-                refSpecies={svAnchorSpecies}
-                tgtSpecies={svSecondSpecies}
-                thirdSpecies={svThirdSpecies}
-                activeSpecies={dedupeSpeciesList(config?.active_species || [])}
-                inactiveSpecies={inactiveSelectedSpecies}
-                thirdGenomeId={svThirdSpecies ? speciesItemKey(svThirdSpecies) : ''}
-                refPillLabel={svAnchorPillLabel}
-                tgtPillLabel={svSecondPillLabel}
-                thirdPillLabel={svThirdPillLabel}
-                onRefPillClick={() => svAnchorSpecies ? handleStructuralVariationPillToggle(svAnchorSpecies) : null}
-                onTgtPillClick={() => svSecondSpecies ? handleStructuralVariationPillToggle(svSecondSpecies) : null}
-                onThirdPillClick={() => svThirdSpecies ? handleStructuralVariationPillToggle(svThirdSpecies) : null}
-                onGenomeOrderChange={handleStructuralVariationGenomeOrderChange}
-                onAlignmentAvailabilityChange={handleSvAlignmentAvailabilityChange}
-                selectedAnchorRegionId={svAnchorRegionId}
-                regionExplicitlySelected={svRegionExplicitlySelected}
-                onSelectedAnchorRegionIdChange={(nextRegionId, options = {}) => {
-                  setSvAnchorRegionId(String(nextRegionId || ''))
-                  setSvRegionExplicitlySelected(Boolean(options.explicit))
-                }}
-                onOpenGenomeSelector={() => setCurrentView('download')}
-                browserRefGene={browserRefGene}
-                browserRefViewport={browserRefViewport}
-                savedViewportRef={svSavedViewportRef}
-              />
-            </div>
-          ) : currentView === 'download' ? (
-            /* ========== DOWNLOAD VIEW ========== */
-            <div className="h-full">
-              <DownloadView
-                config={config}
-                theme={theme}
-                screenshotMode={currentView === 'download' ? screenshotMode : false}
-                onScreenshotModeChange={setScreenshotMode}
-                onScreenshotAvailabilityChange={handleScreenshotAvailabilityChange}
-                screenshotToggleButtonRef={screenshotActionButtonRef}
-              />
-            </div>
-          ) : currentView === 'genome_selector' ? (
-            /* ========== GENOME SELECTOR VIEW ========== */
-            <div className="min-h-full">
-              <GenomeSelectorView
-                config={selectorPlaylistConfig}
-                onConfigChange={handleSelectorConfigChange}
-                onToggleSpecies={handleSpeciesToggleFromSelector}
-                onApplyPlaylist={handleApplyPlaylistFromSelector}
-                selectedSpeciesList={selectorSelectedSpecies}
-                tutorialListPresentation={tutorialRuntime.selectorListPresentation}
-                tutorialDialogRequest={tutorialRuntime.dialogRequest}
-                tutorialCustomGenomeRequest={tutorialRuntime.customGenomeRequest}
-                theme={theme}
-                screenshotMode={currentView === 'genome_selector' ? screenshotMode : false}
-                onScreenshotModeChange={setScreenshotMode}
-                onScreenshotAvailabilityChange={handleScreenshotAvailabilityChange}
-                screenshotToggleButtonRef={screenshotActionButtonRef}
-                scrollContainerNode={mainContentNode}
-              />
-            </div>
-          ) : currentView === 'tutorials' ? (
-            /* ========== TUTORIALS VIEW ========== */
-            <div className="h-full">
-              <TutorialsView
-                theme={theme}
-                config={config}
-                onOpenConfiguration={() => setCurrentView('configuration')}
-              />
-            </div>
-          ) : currentView === 'achievements' ? (
-            /* ========== ACHIEVEMENTS VIEW ========== */
-            <div className="h-full">
-              <AchievementsView
-                theme={theme}
-                focusId={achievementFocusId}
-                onFocusHandled={() => setAchievementFocusId('')}
-              />
-            </div>
-          ) : currentView === 'help' ? (
-            /* ========== HELP VIEW ========== */
-            <div className="h-full">
-              <HelpView
-                theme={theme}
-              />
-            </div>
-          ) : currentView === 'notes' ? (
-            /* ========== NOTES VIEW ========== */
-            <div className="h-full">
-              <NotesView
-                theme={theme}
-                config={config}
-                topBarSpecies={topBarSpecies}
-                activeSpecies={dedupeSpeciesList(config?.active_species || [])}
-                onGenomeFocusGeneSelect={handleGenomeFocusGeneSelect}
-                onGenomeFocusLocationSelect={handleGenomeFocusLocationSelect}
-                onNavigateToBrowser={() => setCurrentView('genome_browser')}
-                onAddGenome={handleSpeciesPillToggle}
-                onRedownloadGenome={() => setCurrentView('download')}
-              />
-            </div>
-          ) : currentView === 'track_manager' ? (
-            /* ========== TRACK MANAGER VIEW ========== */
-            <div className="h-full">
-              <TrackManagerView
-                theme={theme}
-                config={config}
-                inactiveSpecies={inactiveSelectedSpecies}
-                tutorialTrackRequest={tutorialRuntime.trackRequest}
-                onTutorialTracksRegistered={tutorialRuntime.reportRegisteredTracks}
-              />
-            </div>
-          ) : currentView === 'genome_browser' ? null : (
-            /* ========== CONFIGURATION VIEW ========== */
-            <ConfigurationView
-              config={config}
-              onConfigChange={handleConfigurationChange}
-              onSave={handleConfigSaved}
-              theme={theme}
-            />
-          )}
-          </div>
-        ) : null}
-
-        {/* Genome Browser - always mounted, hidden when not active, to preserve state.
-            Only render after config has loaded so browsers fetch the correct genome data. */}
-        {!shouldShowWindowsBackendSetup && configLoaded && (
-          <div className="w-full h-full" style={{ display: currentView === 'genome_browser' ? 'block' : 'none' }}>
-            <ErrorBoundary>
-              <GenomeBrowserView
-                listedGenomes={topBarSpecies}
-                onPromoteGenome={handleGenomeWheelPromote}
-                theme={theme}
-                config={config}
-                isActive={currentView === 'genome_browser'}
-                allowBackgroundPrep={currentView !== 'download'}
-                alignmentOverlay={null}
-                onClearAlignmentOverlay={() => { }}
-                onRefGeneSelect={handleRefGeneSelect}
-                onTgtGeneSelect={handleTgtGeneSelect}
-                onRefViewportChange={reportBrowserRefViewport}
-                refReloadKey={refBrowserReloadKey}
-                tgtReloadKey={tgtBrowserReloadKey}
-                externalRefGene={browserRefGene}
-                externalTgtGene={browserTgtGene}
-                externalFocusGenesByGenome={focusGeneByGenome}
-                externalFocusLocationsByGenome={browserLocationFocusByGenome}
-                incomingGene={browserGeneEntry}
-                onIncomingGeneConsumed={handleBrowserGeneEntryConsumed}
-                onGeneFocusByGenomeChange={setBrowserFocusByGenome}
-                onClearFocusedGenes={handleClearAllFocusedGenes}
-                screenshotMode={currentView === 'genome_browser' ? screenshotMode : false}
-                onScreenshotModeChange={setScreenshotMode}
-                onScreenshotAvailabilityChange={handleScreenshotAvailabilityChange}
-                screenshotToggleButtonRef={screenshotActionButtonRef}
-              />
-            </ErrorBoundary>
-          </div>
-        )}
-
-        <ScreenshotSelectionOverlay
-          active={usingFallbackScreenshot && Boolean(fallbackScreenshotTarget)}
-          theme={theme}
-          containerRef={fallbackScreenshotOverlayRef}
-          scrollContainerRef={fallbackScreenshotOverlayRef}
-          targets={fallbackScreenshotTargets}
-          instructions="Click on the highlighted area to export"
-          highlightSingleTarget={true}
-          selectSingleTargetOnClick={true}
-          onSelect={(target) => {
-            setSelectedFallbackScreenshotTarget(target)
-            setScreenshotMode(false)
-          }}
-          onCancel={() => {
-            setScreenshotMode(false)
-            setSelectedFallbackScreenshotTarget(null)
-          }}
-        />
-      </div>
-
-      {/* ── Alignment save/load modals ────────────────────────────────── */}
-      {saveAlignmentModalOpen && (
-        <SaveAlignmentModal
-          open={saveAlignmentModalOpen}
-          theme={theme}
-          result={multiAlignmentResult}
-          activeSpeciesByKey={activeSpeciesByKey}
-          onSave={handleDoSaveAlignment}
-          onClose={() => setSaveAlignmentModalOpen(false)}
-        />
-      )}
-      {loadAlignmentModalOpen && (
-        <LoadAlignmentModal
-          open={loadAlignmentModalOpen}
-          theme={theme}
-          apiBase={API_BASE}
-          outputDir={config?.output_dir || ''}
-          activeGenomes={dedupeSpeciesList(config?.active_species || [])}
-          inactiveGenomes={dedupeSpeciesList(inactiveSelectedSpecies)}
-          onLoad={handleLoadAlignment}
-          onClose={() => setLoadAlignmentModalOpen(false)}
-        />
-      )}
-      <AchievementToastHost
-        isLight={isLight}
-        onOpen={(achievementId) => {
-          setAchievementFocusId(achievementId || '')
-          handleTopBarButtonClick('achievements')
-        }}
-      />
-      <ScreenshotExportModal
-        open={Boolean(selectedFallbackScreenshotTarget)}
-        theme={theme}
-        target={selectedFallbackScreenshotTarget}
-        outputDir={defaultFallbackScreenshotDir}
-        onSave={handleFallbackScreenshotSave}
-        onClose={handleFallbackScreenshotModalClose}
-      />
-      {outputDirNotification && (
-        <div
-          role="status"
-          data-output-dir-notification="true"
-          data-tutorial-notification="true"
-          aria-live="polite"
-          className="fixed right-4 top-24 z-50 max-w-[calc(100vw-32px)] break-words rounded-lg border border-emerald-400 bg-emerald-500/90 px-6 py-4 text-white shadow-lg backdrop-blur-sm sm:right-6 sm:max-w-md"
-        >
-          <div className="flex items-start gap-3">
-            <svg
-              className="mt-0.5 shrink-0"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              aria-hidden="true"
-            >
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" strokeLinecap="round" strokeLinejoin="round" />
-              <polyline points="22 4 12 14.01 9 11.01" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span className="min-w-0 font-medium break-words">
-              Output directory set: <span className="font-mono">{outputDirNotification}</span>
-            </span>
-          </div>
-        </div>
-      )}
-      <GettingStartedOutputDirPrompt
-        open={Boolean(
-          configLoaded &&
-          currentView === 'home' &&
-          !String(userConfig?.output_dir || '').trim() &&
-          !gettingStartedOutputDirDismissed &&
-          !shouldShowWindowsBackendSetup &&
-          !tutorialRuntime.isRunning
-        )}
-        outputDir={userConfig?.output_dir || ''}
-        workingDir={userConfig?.working_dir || ''}
-        theme={theme}
-        onSave={handleGettingStartedOutputDir}
-        onSkip={() => setGettingStartedOutputDirDismissed(true)}
-      />
-    </div >
+    renderAppLayout({
+        AlignmentExplorerView,
+        ErrorBoundary,
+        FpsCounter,
+        GeneTreesView,
+        PILLS_STRIP_HEIGHT,
+        PILLS_STRIP_PADDING_BOTTOM,
+        PILLS_STRIP_PADDING_TOP,
+        PILLS_STRIP_PADDING_X,
+        SequenceView,
+        achievementFocusId,
+        activeAppButtons,
+        activeSpeciesByKey,
+        alignedGenomeCount,
+        alignmentDisplayMetaByGenomeKey,
+        alignmentDisplayRows,
+        alignmentGenomeColorsByKey,
+        alignmentGlobalFlankMax,
+        alignmentGlobalFlanks,
+        alignmentGlobalFlanksLocked,
+        alignmentInputs,
+        alignmentNeedsRerun,
+        alignmentPreparedCount,
+        alignmentRunDisabled,
+        alignmentRunSettings,
+        alignmentSidebarCollapsed,
+        alignmentViewError,
+        alignmentViewLoading,
+        alignmentViewerDisplayKey,
+        appOrganiserButtonRef,
+        appOrganiserOpen,
+        appOrganiserPanelRef,
+        applyingGenomePlaylistId,
+        backendRuntime,
+        browserGeneEntry,
+        browserLocationFocusByGenome,
+        browserRefGene,
+        browserRefViewport,
+        browserTgtGene,
+        collapseIntrons,
+        collapseSource,
+        collapseSourceOptions,
+        config,
+        configLoaded,
+        currentView,
+        currentViewButtonId,
+        currentViewDescription,
+        currentViewTitle,
+        defaultFallbackScreenshotDir,
+        dragOverTopButtonId,
+        dragTopInsertPosition,
+        draggedTopButtonId,
+        explorerIncoming,
+        fallbackScreenshotOverlayRef,
+        fallbackScreenshotTarget,
+        fallbackScreenshotTargets,
+        featureExplorerActiveGenome,
+        featureExplorerActiveGenomeKey,
+        featureExplorerAvailableGenomes,
+        featureExplorerSeedQuery,
+        focusGeneByGenome,
+        geneTreesIncoming,
+        genomePlaylistActionButtonRef,
+        genomePlaylistPopoverOpen,
+        genomePlaylistPopoverPosition,
+        genomePlaylistPopoverRef,
+        genomeStartingPoints,
+        gettingStartedOutputDirDismissed,
+        handleAlignmentGlobalFlankMaxChange,
+        handleAlignmentGlobalFlanksChange,
+        handleAlignmentGlobalFlanksLockToggle,
+        handleAlignmentResolveRow,
+        handleAlignmentRowQueryChange,
+        handleAlignmentRowSettingChange,
+        handleAlignmentRunSettingsChange,
+        handleAlignmentSearchAll,
+        handleAppOrganiserChange,
+        handleApplyPlaylistFromSelector,
+        handleBrowserGeneEntryConsumed,
+        handleClearAllFocusedGenes,
+        handleConfigSaved,
+        handleConfigurationChange,
+        handleDoSaveAlignment,
+        handleFallbackScreenshotModalClose,
+        handleFallbackScreenshotSave,
+        handleFeatureExplorerGenomeSelect,
+        handleGenomeFocusGeneSelect,
+        handleGenomeFocusLocationSelect,
+        handleGenomeWheelPromote,
+        handleGettingStartedOutputDir,
+        handleLoadAlignment,
+        handleNeighbourhoodFlipGenome,
+        handleNeighbourhoodLinkSelect,
+        handleNeighbourhoodResolveGenome,
+        handleNeighbourhoodSearchAll,
+        handleNeighbourhoodSwapAdjacent,
+        handleNeighbourhoodToggleGenome,
+        handleNeighbourhoodUseHomologyClick,
+        handleOpenAlignmentExplorerLoci,
+        handleRefGeneSelect,
+        handleRemoveSpeciesFromList,
+        handleRetryBackendCheck,
+        handleRetryBackendLaunch,
+        handleSaveAlignment,
+        handleScreenshotAvailabilityChange,
+        handleSelectorConfigChange,
+        handleSpeciesPillReorder,
+        handleSpeciesPillToggle,
+        handleSpeciesToggleFromSelector,
+        handleStructuralVariationGenomeOrderChange,
+        handleStructuralVariationPillToggle,
+        handleSvAlignmentAvailabilityChange,
+        handleTgtGeneSelect,
+        handleTopBarButtonClick,
+        handleTopBarPlaylistSelect,
+        headerCollapsed,
+        homologyGenomes,
+        homologyWorkspace,
+        inactiveSelectedSpecies,
+        isLight,
+        loadAlignmentModalOpen,
+        mainContentNode,
+        multiAlignmentResult,
+        neighbourhoodDisabledByGenome,
+        neighbourhoodErrorStateByGenome,
+        neighbourhoodGenomes,
+        neighbourhoodHomologyAvailabilityByGenome,
+        neighbourhoodHomologyError,
+        neighbourhoodHomologyFilters,
+        neighbourhoodHomologyLinksByPair,
+        neighbourhoodHomologyPairLoading,
+        neighbourhoodLinksByPair,
+        neighbourhoodLoadingStateByGenome,
+        neighbourhoodNoHitGenomeKeys,
+        neighbourhoodQueryStateByGenome,
+        neighbourhoodTrackStateByGenome,
+        neighbourhoodUseHomology,
+        organiserScrollRef,
+        outputDirNotification,
+        refBrowserReloadKey,
+        refSpecies,
+        reorderTopBarButtons,
+        reportBrowserRefViewport,
+        reserveTutorialSelectorPills,
+        runMultiAlignment,
+        saveAlignmentModalOpen,
+        screenshotActionButtonRef,
+        screenshotAvailable,
+        screenshotMode,
+        scrollTopBarButtons,
+        selectedFallbackScreenshotTarget,
+        selectedSpeciesKeysForView,
+        selectorPlaylistConfig,
+        selectorSelectedSpecies,
+        semiSelectedSpeciesKeysForView,
+        sequenceViewEntry,
+        setAchievementFocusId,
+        setActiveViewContentNode,
+        setAlignmentSidebarCollapsed,
+        setAppOrganiserOpen,
+        setBackendSetupOpen,
+        setBrowserFocusByGenome,
+        setBrowserGeneEntry,
+        setCollapseIntrons,
+        setCollapseSource,
+        setCurrentView,
+        setDragOverTopButtonId,
+        setDragTopInsertPosition,
+        setDraggedTopButtonId,
+        setExplorerIncoming,
+        setGeneTreesIncoming,
+        setGettingStartedOutputDirDismissed,
+        setHeaderCollapsed,
+        setLoadAlignmentModalOpen,
+        setMainContentNode,
+        setNeighbourhoodErrorByGenome,
+        setNeighbourhoodHomologyFilters,
+        setNeighbourhoodQueryByGenome,
+        setSaveAlignmentModalOpen,
+        setScreenshotMode,
+        setSelectedFallbackScreenshotTarget,
+        setSequenceGenomeKey,
+        setSequenceViewEntry,
+        setSvAnchorRegionId,
+        setSvRegionExplicitlySelected,
+        shouldRenderFallbackContentWrapper,
+        shouldShowWindowsBackendSetup,
+        showNoGenomesMessage,
+        showsPillsStrip,
+        sortedGenomePlaylists,
+        statsActiveGenomeKeys,
+        structuralVariationViewKey,
+        svAnchorPillLabel,
+        svAnchorRegionId,
+        svAnchorSpecies,
+        svRegionExplicitlySelected,
+        svSavedViewportRef,
+        svSecondPillLabel,
+        svSecondSpecies,
+        svThirdPillLabel,
+        svThirdSpecies,
+        tgtBrowserReloadKey,
+        theme,
+        themeStyles,
+        topBarButtonLayout,
+        topBarButtonRows,
+        topBarDragMovedRef,
+        topBarScroll,
+        topBarScrollRef,
+        topBarSpecies,
+        topListMode,
+        tutorialRuntime,
+        unalignedGenomeCount,
+        userConfig,
+        usingFallbackScreenshot,
+    })
   )
 }
 

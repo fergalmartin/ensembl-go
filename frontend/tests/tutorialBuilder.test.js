@@ -5,7 +5,7 @@ import { readSources } from './helpers/readSource.js'
 
 const builder = readFileSync(new URL('../src/components/TutorialBuilderOverlay.jsx', import.meta.url), 'utf8')
 const provider = readFileSync(new URL('../src/hooks/useTutorial.jsx', import.meta.url), 'utf8')
-const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')
+const app = readSources('src/App.jsx', 'src/app', 'src/components/app-shell')
 const api = readFileSync(new URL('../src/tutorials/demoGenomeApi.js', import.meta.url), 'utf8')
 const selector = readSources('src/components/GenomeSelectorView.jsx', 'src/components/genome-selector')
 

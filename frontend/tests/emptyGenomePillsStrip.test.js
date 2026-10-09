@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readSources } from './helpers/readSource.js'
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
-const app = read('../src/App.jsx')
+const app = readSources('src/App.jsx', 'src/app', 'src/components/app-shell')
 const pills = read('../src/components/SelectedSpeciesPillsBar.jsx')
 const message = read('../src/components/NoGenomesPillsMessage.jsx')
 

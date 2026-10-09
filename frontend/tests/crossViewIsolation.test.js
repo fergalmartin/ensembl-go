@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFile } from 'node:fs/promises'
+import { readSources } from './helpers/readSource.js'
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
 
 test('Neighbourhood gene completion cannot run from another view', async () => {
-  const app = await source('src/App.jsx')
+  const app = readSources('src/App.jsx', 'src/app', 'src/components/app-shell')
   const start = app.indexOf('// Auto-populate focus genes for genomes')
   const end = app.indexOf('// Independent cleanup:', start)
 
