@@ -12,12 +12,11 @@ from fastapi import HTTPException  # noqa: E402
 
 import main  # noqa: E402
 import gff_index  # noqa: E402
-from main import (  # noqa: E402
+from main import CustomAnnotationRequest, import_custom_annotation  # noqa: E402
+from routes.custom_genomes import (  # noqa: E402
     ConvertAnnotationRequest,
-    CustomAnnotationRequest,
     convert_custom_annotation,
     custom_conversion_status,
-    import_custom_annotation,
 )
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "annotation"

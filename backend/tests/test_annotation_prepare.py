@@ -16,7 +16,7 @@ import main  # noqa: E402
 import gff_index  # noqa: E402
 from annotation.convert import conversion_required, prepare_annotation  # noqa: E402
 from annotation.normalize import normalize_annotation  # noqa: E402
-from main import (  # noqa: E402
+from routes.custom_genomes import (  # noqa: E402
     PrepareAnnotationRequest,
     custom_conversion_status,
     prepare_custom_annotation,

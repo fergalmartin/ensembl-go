@@ -16,6 +16,7 @@ from manual_genome_config import (  # noqa: E402
     save_manual_genome_config,
 )
 import main  # noqa: E402
+import routes.custom_genomes  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
 
@@ -485,8 +486,8 @@ class AnnotationPreparationProgressTests(unittest.TestCase):
                 (FIXTURES / "stringtie.gtf").read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-            with main._validation_tasks_guard:
-                main._validation_tasks[task_id] = {
+            with routes.custom_genomes._validation_tasks_guard:
+                routes.custom_genomes._validation_tasks[task_id] = {
                     "status": "running",
                     "progress": 0.0,
                     "stage": "starting",
@@ -494,18 +495,18 @@ class AnnotationPreparationProgressTests(unittest.TestCase):
                     "counters": {},
                 }
             try:
-                report = main._run_validation_task(task_id, {
+                report = routes.custom_genomes._run_validation_task(task_id, {
                     "kind": "prepare",
                     "annotation_path": str(annotation),
                 })
-                status = main.custom_validation_status(task_id)
+                status = routes.custom_genomes.custom_validation_status(task_id)
                 self.assertTrue(report["converted"])
                 self.assertEqual(status["stage"], "registering")
                 self.assertGreaterEqual(status["progress"], 98)
                 self.assertGreater(status["counters"]["genes"], 0)
             finally:
-                with main._validation_tasks_guard:
-                    main._validation_tasks.pop(task_id, None)
+                with routes.custom_genomes._validation_tasks_guard:
+                    routes.custom_genomes._validation_tasks.pop(task_id, None)
 
 
 class ManualGenomeConfigEndpointTests(unittest.TestCase):
@@ -515,8 +516,8 @@ class ManualGenomeConfigEndpointTests(unittest.TestCase):
             fasta = root / "genome.fa"
             fasta.write_text(">chr1\nA\n", encoding="utf-8")
             destination = root / "manual-genomes.json"
-            saved = asyncio.run(main.write_manual_genome_config(
-                main.ManualGenomeConfigSaveRequest(
+            saved = asyncio.run(routes.custom_genomes.write_manual_genome_config(
+                routes.custom_genomes.ManualGenomeConfigSaveRequest(
                     path=str(destination),
                     genomes=[{
                         "species": "Test species",
@@ -525,8 +526,8 @@ class ManualGenomeConfigEndpointTests(unittest.TestCase):
                     }],
                 )
             ))
-            loaded = asyncio.run(main.read_manual_genome_config(
-                main.ManualGenomeConfigReadRequest(path=str(destination))
+            loaded = asyncio.run(routes.custom_genomes.read_manual_genome_config(
+                routes.custom_genomes.ManualGenomeConfigReadRequest(path=str(destination))
             ))
             self.assertEqual(saved["count"], 1)
             self.assertTrue(loaded["ok"])
@@ -537,8 +538,8 @@ class ManualGenomeConfigEndpointTests(unittest.TestCase):
             fasta = Path(temp_dir) / "genome.fa"
             fasta.write_text(">chr1\nA\n", encoding="utf-8")
             with self.assertRaises(HTTPException) as caught:
-                asyncio.run(main.write_manual_genome_config(
-                    main.ManualGenomeConfigSaveRequest(
+                asyncio.run(routes.custom_genomes.write_manual_genome_config(
+                    routes.custom_genomes.ManualGenomeConfigSaveRequest(
                         path=str(Path(temp_dir) / "genomes.txt"),
                         genomes=[{
                             "species": "Test species",
@@ -555,7 +556,7 @@ class ManualGenomeConfigEndpointTests(unittest.TestCase):
             fasta = root / "genome.fa"
             fasta.write_text(">chr1\nA\n", encoding="utf-8")
             destination = root / "genomes.json"
-            request = main.ManualGenomeConfigSaveRequest(
+            request = routes.custom_genomes.ManualGenomeConfigSaveRequest(
                 path=str(destination),
                 genomes=[{
                     "species": "Test species",
@@ -563,18 +564,18 @@ class ManualGenomeConfigEndpointTests(unittest.TestCase):
                     "files": {"fasta": str(fasta)},
                 }],
             )
-            asyncio.run(main.write_manual_genome_config(request))
+            asyncio.run(routes.custom_genomes.write_manual_genome_config(request))
             # The default mode never clobbers; the UI turns this into a choice.
             with self.assertRaises(HTTPException) as caught:
-                asyncio.run(main.write_manual_genome_config(request))
+                asyncio.run(routes.custom_genomes.write_manual_genome_config(request))
             self.assertEqual(caught.exception.status_code, 409)
             self.assertIn("genomes.json", caught.exception.detail)
 
     def test_read_reports_a_missing_file_as_404(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with self.assertRaises(HTTPException) as caught:
-                asyncio.run(main.read_manual_genome_config(
-                    main.ManualGenomeConfigReadRequest(
+                asyncio.run(routes.custom_genomes.read_manual_genome_config(
+                    routes.custom_genomes.ManualGenomeConfigReadRequest(
                         path=str(Path(temp_dir) / "absent.json")
                     )
                 ))

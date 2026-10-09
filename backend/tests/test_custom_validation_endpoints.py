@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi import HTTPException  # noqa: E402
 
-from main import (  # noqa: E402
+from routes.custom_genomes import (  # noqa: E402
     ValidateAnnotationRequest,
     ValidateGenomeRequest,
     custom_sniff_annotation,
