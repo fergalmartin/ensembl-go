@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.genome_removal  # noqa: E402
 import local_inventory  # noqa: E402
 
 ASSEMBLY = "GCA_000005845.2"
@@ -33,13 +34,13 @@ def _write(path: Path, payload: bytes = b"\x1f\x8bFAKE") -> Path:
 
 
 def _delete(root: Path, **kwargs):
-    request = main.DeleteLocalFilesRequest(
+    request = routes.genome_removal.DeleteLocalFilesRequest(
         output_dir=str(root),
         species_key=SPECIES,
         assembly=ASSEMBLY,
         **kwargs,
     )
-    return main.delete_local_files(request)
+    return routes.genome_removal.delete_local_files(request)
 
 
 class LegacyLayoutDeleteTests(unittest.TestCase):

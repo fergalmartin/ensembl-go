@@ -20,6 +20,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.genome_removal  # noqa: E402
 import local_inventory  # noqa: E402
 import config_store  # noqa: E402
 import removal_rules  # noqa: E402
@@ -324,16 +325,16 @@ class EndpointTests(unittest.TestCase):
         }
 
     def _preview(self, root: Path, descriptors, entries):
-        request = main.GenomeRemovalRequest(output_dir=str(root), genomes=descriptors)
+        request = routes.genome_removal.GenomeRemovalRequest(output_dir=str(root), genomes=descriptors)
         with patch.object(config_store, "load_config", return_value=self._config(root, entries)):
-            return asyncio.run(main.preview_genome_removal(request))
+            return asyncio.run(routes.genome_removal.preview_genome_removal(request))
 
     def _remove(self, root: Path, descriptors, entries, plan_token=""):
-        request = main.GenomeRemovalRequest(
+        request = routes.genome_removal.GenomeRemovalRequest(
             output_dir=str(root), genomes=descriptors, plan_token=plan_token
         )
         with patch.object(config_store, "load_config", return_value=self._config(root, entries)):
-            return asyncio.run(main.remove_genome_data(request))
+            return asyncio.run(routes.genome_removal.remove_genome_data(request))
 
     def _manual_fixture(self, root: Path):
         home = root / "my-genomes"
@@ -342,7 +343,7 @@ class EndpointTests(unittest.TestCase):
         _write(home / "genome.fa.fai", "index")
         _write_index(home / "genes.gff3.index.db", gff)
         entry = _entry(home)
-        descriptor = main.GenomeRemovalDescriptor(
+        descriptor = routes.genome_removal.GenomeRemovalDescriptor(
             genome_key="manual::My_species::asm1",
             species_key="My_species",
             assembly="asm1",
@@ -392,9 +393,9 @@ class EndpointTests(unittest.TestCase):
             config = self._config(root, [entry])
             config["active_species"] = [entry]
 
-            request = main.GenomeRemovalRequest(output_dir=str(root), genomes=[descriptor])
+            request = routes.genome_removal.GenomeRemovalRequest(output_dir=str(root), genomes=[descriptor])
             with patch.object(config_store, "load_config", return_value=config):
-                result = asyncio.run(main.remove_genome_data(request))
+                result = asyncio.run(routes.genome_removal.remove_genome_data(request))
 
             self.assertEqual(result["results"][0]["status"], "deleted")
             self.assertFalse((home / "genome.fa.fai").exists())
@@ -462,7 +463,7 @@ class EndpointTests(unittest.TestCase):
             (asm_dir / "GCA_000005845.2.genome_manifest.json").write_text(
                 json.dumps({"manifest_version": 2, "assembly": "GCA_000005845.2"}), encoding="utf-8"
             )
-            descriptor = main.GenomeRemovalDescriptor(
+            descriptor = routes.genome_removal.GenomeRemovalDescriptor(
                 genome_key="ensembl::Test_species::GCA_000005845.2",
                 species_key="Test_species",
                 assembly="GCA_000005845.2",
@@ -517,7 +518,7 @@ class EndpointTests(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
-            descriptor = main.GenomeRemovalDescriptor(
+            descriptor = routes.genome_removal.GenomeRemovalDescriptor(
                 species_key="Test_species", assembly="GCA_000005845.2", provider="ensembl"
             )
 
@@ -533,7 +534,7 @@ class EndpointTests(unittest.TestCase):
     def test_path_traversal_in_the_descriptor_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir).resolve()
-            descriptor = main.GenomeRemovalDescriptor(
+            descriptor = routes.genome_removal.GenomeRemovalDescriptor(
                 species_key="../../etc", assembly="passwd", provider="ensembl"
             )
             with self.assertRaises(main.HTTPException) as ctx:
@@ -542,9 +543,9 @@ class EndpointTests(unittest.TestCase):
 
     def test_empty_request_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            request = main.GenomeRemovalRequest(output_dir=str(Path(tmpdir).resolve()), genomes=[])
+            request = routes.genome_removal.GenomeRemovalRequest(output_dir=str(Path(tmpdir).resolve()), genomes=[])
             with self.assertRaises(main.HTTPException) as ctx:
-                asyncio.run(main.preview_genome_removal(request))
+                asyncio.run(routes.genome_removal.preview_genome_removal(request))
             self.assertEqual(ctx.exception.status_code, 400)
 
 

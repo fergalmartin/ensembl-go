@@ -12,12 +12,8 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
-from main import (  # noqa: E402
-    DeleteSingleFileRequest,
-    SaveExportRequest,
-    delete_single_local_file,
-    save_export_file,
-)
+from main import SaveExportRequest, save_export_file  # noqa: E402
+from routes.genome_removal import DeleteSingleFileRequest, delete_single_local_file  # noqa: E402
 from routes.config import MkdirRequest, create_directory  # noqa: E402
 from routes.tracks import _validate_trackhub_data_url  # noqa: E402
 from gff_index import find_transcript_fast  # noqa: E402

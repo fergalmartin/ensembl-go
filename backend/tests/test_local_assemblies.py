@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.genome_removal  # noqa: E402
 import routes.downloads  # noqa: E402
 import local_inventory  # noqa: E402
 import gff_index  # noqa: E402
@@ -123,7 +124,7 @@ class LocalAssembliesTests(unittest.TestCase):
             (asm_dir / "GCA_000005845.2.softmasked.fa.bgz").write_bytes(b"\x1f\x8bFAKE")
             (asm_dir / "GCA_000005845.2.gff3.bgz").write_bytes(b"\x1f\x8bFAKE")
 
-            result = main.check_local_files(str(root), "Test_species", "GCA_000005845.2")
+            result = routes.genome_removal.check_local_files(str(root), "Test_species", "GCA_000005845.2")
 
         self.assertIn("fasta", result["types"])
         self.assertIn("gff3", result["types"])

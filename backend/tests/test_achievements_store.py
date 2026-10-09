@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import achievements_store as store  # noqa: E402
 import main  # noqa: E402
+import routes.genome_removal  # noqa: E402
 import routes.downloads  # noqa: E402
 import demo_genome  # noqa: E402
 import routes.achievements  # noqa: E402
@@ -284,7 +285,7 @@ class AchievementEndpointTests(unittest.TestCase):
             asm_dir = elsewhere / "local_data" / "Felis_catus" / "GCA_000181335.5"
             asm_dir.mkdir(parents=True)
             (asm_dir / "GCA_000181335.5.softmasked.fa.gz").write_bytes(b"x")
-            main.delete_local_files(main.DeleteLocalFilesRequest(
+            routes.genome_removal.delete_local_files(routes.genome_removal.DeleteLocalFilesRequest(
                 output_dir=str(elsewhere), species_key="Felis_catus", assembly="GCA_000181335.5",
             ))
             self.assertNotIn("genome.deleted", _get()["store"]["distinct"])
@@ -301,7 +302,7 @@ class AchievementEndpointTests(unittest.TestCase):
     def test_deleting_a_genome_is_counted(self):
         with _app() as (root, _cache):
             _legacy_genome(root)
-            main.delete_local_files(main.DeleteLocalFilesRequest(
+            routes.genome_removal.delete_local_files(routes.genome_removal.DeleteLocalFilesRequest(
                 output_dir=str(root / "out"), species_key="Felis_catus", assembly="GCA_000181335.5",
             ))
             self.assertEqual(
