@@ -1,10 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { API_BASE } from '../backendRuntime'
-import { genomeKeyCandidates, getGenomeKey } from '../utils/genomeIdentity'
-
-function speciesItemKey(species) {
-  return getGenomeKey(species)
-}
+import { genomeKeyCandidates } from '../utils/genomeIdentity'
+import { speciesItemKey } from '../app/genomeLists.js'
 
 function formatDate(isoStr) {
   if (!isoStr) return ''

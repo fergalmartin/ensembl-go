@@ -53,6 +53,8 @@ import {
     resolveWheelAction,
     noteWheelGestureOrigin,
 } from '../utils/browsingControls'
+import { speciesItemKey } from '../app/genomeLists.js'
+import { hasFiniteGeneCoords } from '../app/geneFocus.js'
 
 /** Shared empties keep absent notes and track registries stable across frames. */
 const EMPTY_NOTE_COUNTS = Object.freeze({})
@@ -150,10 +152,6 @@ function buildGenomePillLabel(species) {
     return assembly ? `${name} — ${assembly}` : name
 }
 
-function speciesItemKey(species) {
-    return getGenomeKey(species)
-}
-
 // `findScrollHost`, `stickyControlsInset` and `panelAlignmentAnchor` are shared
 // with the left-hand scroll rail, which has to put a genome's dot at exactly the
 // scroll position this file's alignment scrolls to.
@@ -169,13 +167,6 @@ function dedupeSpeciesList(speciesList) {
         out.push(species)
     }
     return out
-}
-
-function hasFiniteGeneCoords(gene) {
-    return Boolean(gene) &&
-        Number.isFinite(Number(gene.start)) &&
-        Number.isFinite(Number(gene.end)) &&
-        String(gene.chrom || '').trim().length > 0
 }
 
 function geneFivePrime(gene) {
@@ -1397,7 +1388,6 @@ export default function GenomeBrowserView({
             setNotesPanelOpenByPanel((prev) => (prev[key] ? { ...prev, [key]: false } : prev))
         }
     }, [focusedGeneSignature, panels, selectedGenes, openNoteIdByPanel])
-
 
     const isFocusDrawerOpen = useCallback(
         (panelKey) => focusDrawerOpenByPanel[panelKey] !== false,
@@ -3937,7 +3927,6 @@ export default function GenomeBrowserView({
                 onSave={handleScreenshotSave}
                 onClose={handleScreenshotModalClose}
             />
-
 
         </div>
     )

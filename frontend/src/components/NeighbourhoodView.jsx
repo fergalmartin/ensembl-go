@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, Component } from 'react'
 import { trackAchievement } from '../achievements/tracker.js'
 import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
-import { getGenomeKey } from '../utils/genomeIdentity'
 import { genomeColorResolver } from '../genomeColorSchemes'
 import {
   markWheelHandled,
@@ -11,6 +10,8 @@ import {
 } from '../utils/browsingControls'
 import { useResumableState } from '../hooks/useResumableState.js'
 import NeighbourhoodControls from './NeighbourhoodControls'
+import { speciesItemKey } from '../app/genomeLists.js'
+import { normalizeGeneToken } from '../app/geneFocus.js'
 
 /**
  * The track is panned in raw pixels, so the genome browser's 2x wheel
@@ -37,10 +38,6 @@ const extractPathData = (svgRaw) => {
   return match?.[2] || ''
 }
 const RESET_ICON_PATH_D = extractPathData(iconResetRaw)
-
-function speciesItemKey(species) {
-  return getGenomeKey(species)
-}
 
 function formatSpeciesLabel(species) {
   if (!species) return ''
@@ -71,10 +68,6 @@ function normalizeGenes(rawGenes) {
       if (aStart !== bStart) return aStart - bStart
       return String(a?.id || '').localeCompare(String(b?.id || ''))
     })
-}
-
-function normalizeGeneToken(value) {
-  return String(value || '').trim().toLowerCase()
 }
 
 function formatHomologyType(rawType) {

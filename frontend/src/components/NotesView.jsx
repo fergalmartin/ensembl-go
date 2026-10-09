@@ -57,6 +57,7 @@ import {
 } from '../utils/recentNoteActivity'
 import { beginWheelGesture, normalizeWheelDelta } from '../utils/browsingControls'
 import { useResumableState } from '../hooks/useResumableState.js'
+import { CloseGlyph } from './focusDrawerChrome'
 
 function Chevron({ open, size = 14 }) {
     return (
@@ -484,14 +485,6 @@ function TrashGlyph({ size = 18 }) {
     return (
         <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M4 7h16M10 7V5h4v2M6 7l1 13h10l1-13" />
-        </svg>
-    )
-}
-
-function CloseGlyph({ size = 15 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" />
         </svg>
     )
 }

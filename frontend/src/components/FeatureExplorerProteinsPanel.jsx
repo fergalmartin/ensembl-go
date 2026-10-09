@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE } from '../backendRuntime'
 import FeatureSectionHeader, { featureSectionClass, quietIconButtonClass } from './FeatureSection'
+import { transcriptDisplayId as displayId } from './feature-explorer/featureExplorerModel.js'
 
 const AA_CELL_WIDTH = 14          // px per amino acid cell
 const MIN_AAS_PER_WINDOW = 40
@@ -53,12 +54,6 @@ function hexLuminance(hexColor) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
-}
-
-function displayId(rawId) {
-  const text = String(rawId || '')
-  if (text.length <= 26) return text
-  return `${text.slice(0, 23)}...`
 }
 
 // ── Protein property computation ──────────────────────────────────────────────

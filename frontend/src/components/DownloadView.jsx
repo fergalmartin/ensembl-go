@@ -33,11 +33,10 @@ import {
     fileTypeLabel,
     fileTypeTooltip,
 } from '../utils/genomeFileTypes'
+import { SELECTOR_REFRESH_EVENT, readPendingSelectorGenomeIds, writePendingSelectorGenomeIds } from '../app/appLayout.js'
 
 const PAGE_SIZE = 50
 const DL_PAGE_SIZE = 10
-const SELECTOR_PENDING_GENOMES_STORAGE_KEY = 'ensembl_selector_pending_genomes'
-const SELECTOR_REFRESH_EVENT = 'ensembl:selector-refresh'
 
 // Groups that form the "Vertebrates" super-category in the sidebar
 const VERTEBRATE_GROUPS = new Set(['Mammals', 'Fish', 'Birds', 'Reptiles', 'Amphibians'])
@@ -145,26 +144,6 @@ const pickPreferredTask = (tasks) => {
         }
     }
     return best
-}
-
-const readPendingSelectorGenomeIds = () => {
-    if (typeof window === 'undefined' || !window.sessionStorage) return new Set()
-    try {
-        const raw = window.sessionStorage.getItem(SELECTOR_PENDING_GENOMES_STORAGE_KEY)
-        const parsed = JSON.parse(raw || '[]')
-        return new Set(Array.isArray(parsed) ? parsed.map((entry) => String(entry || '').trim()).filter(Boolean) : [])
-    } catch {
-        return new Set()
-    }
-}
-
-const writePendingSelectorGenomeIds = (ids) => {
-    if (typeof window === 'undefined' || !window.sessionStorage) return
-    try {
-        window.sessionStorage.setItem(SELECTOR_PENDING_GENOMES_STORAGE_KEY, JSON.stringify(Array.from(ids)))
-    } catch {
-        // ignore session storage failures
-    }
 }
 
 const formatCatalogTimestamp = (value) => {
@@ -2364,7 +2343,6 @@ export default function DownloadView({
 
     // Panel collapse state
     const [speciesCollapsed, setSpeciesCollapsed] = useState(false)
-
 
     // ---------------------------------------------------------------------------
     // Data fetching

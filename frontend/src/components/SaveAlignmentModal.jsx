@@ -1,9 +1,4 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getGenomeKey } from '../utils/genomeIdentity'
-
-function speciesItemKey(species) {
-  return getGenomeKey(species)
-}
 
 function buildDefaultName(result, activeSpeciesByKey) {
   if (!result) return 'alignment'

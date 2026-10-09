@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useHorizontalPillScroll from './useHorizontalPillScroll'
-import { getGenomeKey } from '../utils/genomeIdentity'
 import { genomeColorResolver } from '../genomeColorSchemes'
 import { genomePillColors } from '../utils/genomePillColors'
 import GenomePill, { genomePillLabels } from './GenomePill'
+import { speciesItemKey as itemKey } from '../app/genomeLists.js'
 
 function formatScientificName(species) {
     if (species.display_name) return species.display_name
@@ -24,10 +24,6 @@ function formatAssembly(assemblyName, truncate = true) {
         return assemblyName.substring(0, 7) + '...'
     }
     return assemblyName
-}
-
-function itemKey(species) {
-    return getGenomeKey(species)
 }
 
 /** The height of the pills themselves: 12px text on a 16px line with `py-1.5` and a 1px

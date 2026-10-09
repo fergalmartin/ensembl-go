@@ -23,6 +23,12 @@ import {
 } from '../utils/locationFocus'
 import { FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from './FocusGeneDrawer'
 import { FOCUS_DETAIL_WIDTH } from './FocusTranscriptDetail'
+import { CloseGlyph } from './focusDrawerChrome'
+import { EyeGlyph } from './focusDrawerChrome'
+import { CopyGlyph } from './focusDrawerChrome'
+import { VerticalChevronGlyph } from './focusDrawerChrome'
+import { TargetGlyph } from './focusDrawerChrome'
+import { PlusGlyph } from './focusDrawerChrome'
 
 export const LOCATION_DRAWER_WIDTH = FOCUS_DRAWER_WIDTH
 export const LOCATION_DRAWER_RAIL_WIDTH = FOCUS_DRAWER_RAIL_WIDTH
@@ -48,64 +54,10 @@ const FEATURE_SECTIONS = [
     { id: 'genes', label: 'Genes', empty: 'No genes in this location.' },
 ]
 
-function CopyGlyph({ size = 13 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="5" y="5" width="14" height="16" rx="2.2" />
-            <path d="M9 3h6v4H9z" />
-        </svg>
-    )
-}
-
-function EyeGlyph({ hidden = false, size = 15 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
-            <circle cx="12" cy="12" r="3" />
-            {hidden && <path d="M3 3l18 18" />}
-        </svg>
-    )
-}
-
-/** The browser's own re-centre mark, at list size: "put this on screen". */
-function TargetGlyph({ size = 15 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="6.5" />
-            <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
-            <path d="M12 1.5v3.5M12 19v3.5M1.5 12h3.5M19 12h3.5" />
-        </svg>
-    )
-}
-
-function VerticalChevronGlyph({ pointsDown, size = 16 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points={pointsDown ? '6 9 12 15 18 9' : '18 15 12 9 6 15'} />
-        </svg>
-    )
-}
-
 function StepGlyph({ back = false, size = 14 }) {
     return (
         <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <polyline points={back ? '15 6 9 12 15 18' : '9 6 15 12 9 18'} />
-        </svg>
-    )
-}
-
-function CloseGlyph({ size = 15 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" />
-        </svg>
-    )
-}
-
-function PlusGlyph({ size = 14 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-            <path d="M12 5v14M5 12h14" />
         </svg>
     )
 }
@@ -344,7 +296,6 @@ export default function FocusLocationDrawer({
         for (const child of list.children) observer.observe(child)
         return () => observer.disconnect()
     })
-
 
     const HEADER_BUTTON = { width: 26, height: 22 }
     const stickyBandStyle = { position: 'sticky', top: -Math.max(0, stickyTopInset), zIndex: 2 }

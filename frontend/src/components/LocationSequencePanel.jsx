@@ -12,6 +12,7 @@ import {
     sequenceChunks,
     wrapSequence,
 } from '../utils/locationFocus'
+import { CloseGlyph } from './focusDrawerChrome'
 
 // Lines the box shows while it is a preview. Enough to see what the sequence
 // looks like; short enough that the sections under it stay on screen.
@@ -28,14 +29,6 @@ const SEQUENCE_BOX_MIN_PX = 220
 // Lines added each time an expanded box is scrolled to its end. A megabase is
 // some sixteen thousand lines and the DOM does not need them all at once.
 const LINE_PAGE = 240
-
-function CloseGlyph({ size = 15 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" />
-        </svg>
-    )
-}
 
 function CopyGlyph({ size = 13 }) {
     return (

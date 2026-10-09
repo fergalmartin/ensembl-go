@@ -6,6 +6,7 @@ import {
     computeTranscriptMetadata,
     getTranscriptFeatureAvailability,
 } from '../utils/transcriptSequenceFeatures'
+import { CloseGlyph } from './focusDrawerChrome'
 
 // Wide enough that a 60-character FASTA line fits without wrapping or
 // horizontal scrolling, once the type selector and padding are accounted for.
@@ -14,14 +15,6 @@ export const FOCUS_DETAIL_WIDTH = 540
 /** Lines rendered before the reader asks for more. A whole gene's genomic
  *  sequence runs to thousands of them, and the DOM does not need all of it. */
 const LINE_PAGE = 240
-
-function CloseGlyph({ size = 15 }) {
-    return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" />
-        </svg>
-    )
-}
 
 function CopyGlyph({ size = 13 }) {
     return (

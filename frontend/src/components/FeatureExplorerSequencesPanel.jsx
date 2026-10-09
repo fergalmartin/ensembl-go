@@ -8,6 +8,7 @@ import { parseExonStateKey } from './featureExplorerExonUtils'
 
 import { API_BASE } from '../backendRuntime'
 import FeatureSectionHeader, { featureSectionClass, quietIconButtonClass } from './FeatureSection'
+import { transcriptDisplayId } from './feature-explorer/featureExplorerModel.js'
 const BASE_CELL_WIDTH = 14
 const BASE_BUFFER = 220
 const MIN_BASES_PER_WINDOW = 40
@@ -60,12 +61,6 @@ const FEATURE_TYPE_TO_COLOR = {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
-}
-
-function transcriptDisplayId(rawId) {
-  const text = String(rawId || '')
-  if (text.length <= 26) return text
-  return `${text.slice(0, 23)}...`
 }
 
 function normalizeBase(base) {

@@ -12,10 +12,10 @@ import { appendMembers, groupTypeCounts, groupsContainingTrack, groupsForAssembl
 import { rangeBetween } from '../utils/fileSelection'
 import FileBrowserModal from './FileBrowserModal'
 import useTutorial from '../hooks/useTutorial'
-import { TUTORIAL_TRACK_PRESETS } from '../utils/tutorialTrackRegistry'
 
 import { API_BASE } from '../backendRuntime'
 import { genomeKeysMatch, getGenomeKey, normalizeGenomeProvider, trackAssemblyKey } from '../utils/genomeIdentity'
+import { normalizeVcfDisplayMode } from './genome-browser/trackSettings.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -376,13 +376,6 @@ function normalizeBigWigDisplayMode(mode, dataType = 'rna_seq') {
     if (token === 'line_plot' || token === 'bar_chart') return 'signal_plot'
     if (token === 'signal_plot' || token === 'zoned_heatmap') return token
     return BIGWIG_DEFAULTS[normalizedType].display_mode
-}
-
-function normalizeVcfDisplayMode(mode) {
-    let token = String(mode || '').trim().toLowerCase()
-    if (token === 'block_lollipop' || token === 'block-lollipop') token = 'adaptive'
-    if (token === 'ensembl' || token === 'lollipop' || token === 'density') token = 'density_lollipop'
-    return token === 'adaptive' || token === 'density_lollipop' ? token : 'density_lollipop'
 }
 
 function normalizeHexColor(value, fallback) {
@@ -1153,7 +1146,6 @@ function GenomeComboBox({ value, onChange, genomeOptions, isLight }) {
     useEffect(() => {
         setInputValue(genomeDisplayText(value, genomeOptions))
     }, [value, genomeOptions])
-
 
     useEffect(() => {
         const handleClick = (e) => {

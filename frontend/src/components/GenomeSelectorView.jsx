@@ -56,7 +56,6 @@ import {
 import {
     GENOME_FILE_EDITOR_TYPES,
     MANUAL_GENOME_FILE_EDITOR_TYPES,
-    canonicalBundleFiles,
     localFileTypeLabel,
     orderBundleFileTypes,
 } from '../utils/genomeFileTypes'
@@ -68,7 +67,6 @@ import {
     joinPath,
     prepareAnnotation,
     stripGffSuffix,
-    toSpeciesKey,
 } from '../utils/customGenomeImport'
 import {
     bundleMissingFileReport,
@@ -93,6 +91,7 @@ import {
     selectableItems,
     toggleRemovalFlag,
 } from '../utils/genomeRemovalSelection'
+import { SELECTOR_REFRESH_EVENT, readPendingSelectorGenomeIds, writePendingSelectorGenomeIds } from '../app/appLayout.js'
 
 const FASTA_EXTENSIONS = ['.fa', '.fna', '.fasta', '.fa.gz', '.fna.gz', '.fasta.gz', '.fa.bgz', '.fna.bgz', '.fasta.bgz']
 // GFF3 loads directly; GFF and GTF are accepted too but must be converted into
@@ -111,30 +110,8 @@ const BULK_SELECT_CONFIRM_THRESHOLD = 50
 // Genomes per remove-data call, so a long run reports progress as it goes.
 const REMOVAL_CHUNK_SIZE = 8
 const PLAYLIST_ALL_ID = '__all__'
-const SELECTOR_PENDING_GENOMES_STORAGE_KEY = 'ensembl_selector_pending_genomes'
-const SELECTOR_REFRESH_EVENT = 'ensembl:selector-refresh'
 const todayIsoDate = () => new Date().toISOString().slice(0, 10)
 const defaultCustomAnnotationLabel = () => `custom ${todayIsoDate()}`
-
-const readPendingSelectorGenomeIds = () => {
-    if (typeof window === 'undefined' || !window.sessionStorage) return new Set()
-    try {
-        const raw = window.sessionStorage.getItem(SELECTOR_PENDING_GENOMES_STORAGE_KEY)
-        const parsed = JSON.parse(raw || '[]')
-        return new Set(Array.isArray(parsed) ? parsed.map((entry) => String(entry || '').trim()).filter(Boolean) : [])
-    } catch {
-        return new Set()
-    }
-}
-
-const writePendingSelectorGenomeIds = (ids) => {
-    if (typeof window === 'undefined' || !window.sessionStorage) return
-    try {
-        window.sessionStorage.setItem(SELECTOR_PENDING_GENOMES_STORAGE_KEY, JSON.stringify(Array.from(ids)))
-    } catch {
-        // Ignore storage failures; the task poller still refreshes completed downloads.
-    }
-}
 
 const IconChevron = ({ open, size = 14 }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }} aria-hidden="true">
@@ -421,14 +398,10 @@ function GenomeFileEditor({
     )
 }
 
-
-
 const DEFAULT_BUNDLE_FILENAME = 'ensembl-go-genomes.json'
-
 
 // Strips any annotation extension, so a GTF does not derive an index named
 // `<name>.gtf.gz.gff3.index.db`.
-
 
 const manualIndexFilename = (genomeLabel = '', assemblyLabel = '', annotationPath = '') => {
     const labelStem = [genomeLabel, assemblyLabel]
@@ -441,7 +414,6 @@ const manualIndexFilename = (genomeLabel = '', assemblyLabel = '', annotationPat
     const annotationStem = stripGffSuffix(basenameFromPath(annotationPath)) || 'genome'
     return `${labelStem || annotationStem}.gff3.index.db`
 }
-
 
 const itemKey = (item) => {
     return getGenomeKey(item)
