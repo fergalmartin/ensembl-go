@@ -15,6 +15,7 @@ import {
 import { tutorialDimColor } from '../src/utils/overlayGeometry.js'
 import { withoutTutorialSandboxFields } from '../src/tutorials/sandbox.js'
 import { readFileSync } from 'node:fs'
+import { readBackendSources } from './helpers/readSource.js'
 
 const overlay = readFileSync(new URL('../src/components/TutorialOverlay.jsx', import.meta.url), 'utf8')
 const provider = readFileSync(new URL('../src/hooks/useTutorial.jsx', import.meta.url), 'utf8')
@@ -23,7 +24,8 @@ const screenshot = readFileSync(new URL('../src/components/ScreenshotSelectionOv
 const main = readFileSync(new URL('../src/main.jsx', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')
 const backendDemo = readFileSync(new URL('../../backend/demo_genome.py', import.meta.url), 'utf8')
-const backendMain = readFileSync(new URL('../../backend/main.py', import.meta.url), 'utf8')
+// The whole backend app, so the assertion survives code moving out of main.py.
+const backendMain = readBackendSources()
 const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8')
 const builder = readFileSync(new URL('../src/components/TutorialBuilderOverlay.jsx', import.meta.url), 'utf8')
 

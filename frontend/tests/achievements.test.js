@@ -10,10 +10,10 @@ import { APP_BUTTON_META, DATA_VIEW_BUTTON_IDS, DEFAULT_ACTIVE_APP_BUTTONS } fro
 import { setTutorialSandboxActive } from '../src/tutorials/sandbox.js'
 import { browserControlKey } from '../src/achievements/browserControls.js'
 import * as tracker from '../src/achievements/tracker.js'
+import { readBackendSources } from './helpers/readSource.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const srcRoot = path.join(here, '..', 'src')
-const backendRoot = path.join(here, '..', '..', 'backend')
 const lock = JSON.parse(fs.readFileSync(path.join(srcRoot, 'achievements', 'achievements.lock.json'), 'utf8'))
 
 // ── The promises made to people who have unlocked things ─────────────────────
@@ -107,9 +107,7 @@ test('every event in the catalogue is recorded by a call site', () => {
     .filter((file) => !file.startsWith(path.join(srcRoot, 'achievements') + path.sep))
     .map((file) => fs.readFileSync(file, 'utf8'))
     .join('\n')
-  const backendSource = ['main.py', 'achievements_store.py']
-    .map((file) => fs.readFileSync(path.join(backendRoot, file), 'utf8'))
-    .join('\n')
+  const backendSource = readBackendSources()
   const missing = []
   for (const achievement of ACHIEVEMENTS) {
     for (const { name, source } of ruleNames(achievement.rule)) {

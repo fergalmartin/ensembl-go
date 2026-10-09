@@ -112,7 +112,17 @@ class GenomeDisplayLabelTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(main.download_manager, "_species_cache", [summary]):
+            # The catalogue's assembly name, supplied here rather than read from
+            # whatever catalogue happens to be cached on the machine running the tests.
+            catalog = {
+                "Acleris_sparsana": {
+                    "scientific_name": "Acleris sparsana",
+                    "common_name": "Moths",
+                    "assemblies": {accession: {"name": "ilAclSpar1.1_alternate_haplotype"}},
+                }
+            }
+            with patch.object(main.download_manager, "_species_cache", [summary]), \
+                    patch.object(main.download_manager, "species_data", catalog):
                 results = main.list_local_assemblies(str(root))
 
         self.assertEqual(len(results), 1)

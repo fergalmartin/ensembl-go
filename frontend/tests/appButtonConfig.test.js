@@ -79,8 +79,8 @@ test('Sequence is a normal data view now that it ships switched on', () => {
 })
 
 test("the backend's copy of the default matches this one", async () => {
-  const { readFile } = await import('node:fs/promises')
-  const source = await readFile(new URL('../../backend/main.py', import.meta.url), 'utf8')
+  const { readBackendSources } = await import('./helpers/readSource.js')
+  const source = readBackendSources()
   const block = source.match(/"active_app_buttons": \[([\s\S]*?)\]/)
   assert.ok(block, 'backend DEFAULT_CONFIG should define active_app_buttons')
   const backendIds = [...block[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1])

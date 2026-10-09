@@ -27,7 +27,7 @@ BLOCK_TRANSCRIPTS_PER_PAGE = 8
 BLOCK_SEGMENTS_PER_RESPONSE = 20_000
 
 
-class ImportRequest(BaseModel):
+class AlignmentImportRequest(BaseModel):
     path: str = ''
     format: str = 'auto'
     content: Optional[str] = Field(default=None, max_length=20_000_000)
@@ -187,7 +187,7 @@ def create_router(cache_root=None, annotation_provider=None, gene_provider=None,
                 'export_formats': AlignmentStore.EXPORT_FORMATS, **native_capabilities()}
 
     @router.post('/datasets')
-    def register(payload: ImportRequest):
+    def register(payload: AlignmentImportRequest):
         source, fp = None, None
         if payload.path:
             source = Path(payload.path).expanduser().resolve()
