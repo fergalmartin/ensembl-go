@@ -8,7 +8,14 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
-from main import _list_sv_datasets, _select_sv_dataset, _sv_public_dataset, _sv_records_match, _sv_registry_cache  # noqa: E402
+import routes.sv  # noqa: E402
+from routes.sv import (  # noqa: E402
+    _list_sv_datasets,
+    _select_sv_dataset,
+    _sv_public_dataset,
+    _sv_records_match,
+    _sv_registry_cache,
+)
 
 
 class StructuralVariationDatasetSelectionTests(unittest.TestCase):
@@ -22,7 +29,7 @@ class StructuralVariationDatasetSelectionTests(unittest.TestCase):
     """
 
     def setUp(self):
-        patcher = patch.object(main, "SV_BUILTIN_DATASETS_ENABLED", True)
+        patcher = patch.object(routes.sv, "SV_BUILTIN_DATASETS_ENABLED", True)
         patcher.start()
         self.addCleanup(patcher.stop)
         # The registry cache is module-global; clear it on the way in and out so

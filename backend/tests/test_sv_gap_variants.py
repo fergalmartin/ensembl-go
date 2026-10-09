@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import _build_sv_gap_variants  # noqa: E402
+from routes.sv import _build_sv_gap_variants  # noqa: E402
 
 
 class StructuralVariationGapVariantTests(unittest.TestCase):
