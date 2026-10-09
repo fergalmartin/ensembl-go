@@ -227,7 +227,7 @@ class TrackHubIntegrationTests(unittest.TestCase):
                 }
             )
 
-            with patch("main._resolve_species_assembly_dir", return_value=asm_dir), \
+            with patch("data_paths._resolve_species_assembly_dir", return_value=asm_dir), \
                 patch("main._find_existing_trackhub_track", return_value=None), \
                 patch("main._trackhub_download_sync", side_effect=_fake_download), \
                 patch("main.register_track", register_mock):

@@ -205,6 +205,7 @@ from security_utils import (
     validate_remote_download_url,
     validate_trackhub_data_url,
 )
+import data_paths
 import app_paths
 
 def log_progress(msg: str):
@@ -419,7 +420,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _ENSEMBL_HOST = "ftp.ebi.ac.uk"
 _ENSEMBL_PATH_PREFIX = "/pub/ensemblorganisms/"
 _NCBI_FTP_HOST = "ftp.ncbi.nlm.nih.gov"
@@ -483,69 +483,6 @@ async def enforce_local_origin(request: Request, call_next):
     return await call_next(request)
 
 
-def _validate_path_segment(name: str, value: str) -> str:
-    value = (value or "").strip()
-    if not value or value in {".", ".."} or not _SAFE_SEGMENT_RE.match(value):
-        raise HTTPException(status_code=400, detail=f"Invalid {name}: {value!r}")
-    return value
-
-
-def _resolve_local_data_root(output_dir: str) -> Path:
-    output_root = Path(output_dir).expanduser().resolve()
-    local_data = output_root / "local_data"
-    if local_data.exists() and local_data.is_symlink():
-        raise HTTPException(status_code=400, detail="local_data may not be a symlink")
-    return local_data.resolve()
-
-
-def _resolve_species_assembly_dir(
-    output_dir: str,
-    species_key: str,
-    assembly: str,
-    provider: str = DEFAULT_PROVIDER,
-) -> Path:
-    root = _resolve_local_data_root(output_dir)
-    safe_species = _validate_path_segment("species_key", species_key)
-    safe_assembly = _validate_path_segment("assembly", assembly)
-    candidate = root
-    normalized_provider = normalize_provider(provider)
-    for segment in storage_path_parts(normalized_provider, safe_species, safe_assembly):
-        candidate = candidate / _validate_path_segment("path segment", segment)
-    candidate = candidate.resolve()
-    try:
-        candidate.relative_to(root)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid species/assembly path")
-    return candidate
-
-
-def _validate_download_url(url: str) -> str:
-    return validate_remote_download_url(url)
-
-
-def _is_assembly_report_filename(filename: str) -> bool:
-    return is_assembly_report_filename(filename)
-
-
-def _is_metadata_filename(filename: str) -> bool:
-    return is_metadata_filename(filename)
-
-
-def _find_assembly_report_file(assembly_dir: Path) -> Optional[Path]:
-    if not assembly_dir or not assembly_dir.is_dir():
-        return None
-    candidates = sorted(
-        [p for p in assembly_dir.iterdir() if p.is_file() and _is_metadata_filename(p.name)],
-        key=lambda p: p.name,
-    )
-    return candidates[0] if candidates else None
-    return url
-
-
-def _sanitize_filename(filename: str) -> str:
-    return sanitize_leaf_filename(filename)
-
-
 def _resolve_allowed_homology_path(path_value: str) -> Path:
     """Resolve and validate a homology table path from configured local data."""
     candidate = Path(path_value).expanduser().resolve()
@@ -580,7 +517,7 @@ def _resolve_allowed_homology_path(path_value: str) -> Path:
     output_dir = (cfg.get("output_dir") or "").strip()
     if output_dir:
         try:
-            local_root = _resolve_local_data_root(output_dir)
+            local_root = data_paths._resolve_local_data_root(output_dir)
             candidate.relative_to(local_root)
             return candidate
         except Exception:
@@ -4271,7 +4208,7 @@ def _homology_source_path(species: Dict[str, Any], cfg: Dict[str, Any]) -> str:
     if not output_dir or species.get("is_manual"):
         return ""
     assembly = str(species.get("assembly") or species.get("gca") or "").strip()
-    local_dir = _resolve_species_assembly_dir(output_dir, species.get("species_key") or "", assembly,
+    local_dir = data_paths._resolve_species_assembly_dir(output_dir, species.get("species_key") or "", assembly,
                                             provider=species.get("provider") or DEFAULT_PROVIDER)
     release = str(species.get("dataset_release_key") or "").strip()
     if not release:
@@ -4283,7 +4220,7 @@ def _homology_source_path(species: Dict[str, Any], cfg: Dict[str, Any]) -> str:
             return ""
         directory = local_dir / "datasets"
         for part in parts:
-            directory = directory / _validate_path_segment("dataset release", part)
+            directory = directory / data_paths._validate_path_segment("dataset release", part)
     else:
         # Older session records may identify their release only through the annotation.
         directory = local_dir
@@ -6219,7 +6156,7 @@ def _output_dir_playlist_store_path(output_dir: Any) -> Optional[Path]:
     if not output_dir_text:
         return None
     try:
-        return _resolve_local_data_root(output_dir_text) / OUTPUT_DIR_PLAYLISTS_FILENAME
+        return data_paths._resolve_local_data_root(output_dir_text) / OUTPUT_DIR_PLAYLISTS_FILENAME
     except Exception:
         return None
 
@@ -6350,7 +6287,7 @@ def _output_dir_config_store_path(output_dir: Any) -> Optional[Path]:
     if not output_dir_text:
         return None
     try:
-        return _resolve_local_data_root(output_dir_text) / OUTPUT_DIR_CONFIG_FILENAME
+        return data_paths._resolve_local_data_root(output_dir_text) / OUTPUT_DIR_CONFIG_FILENAME
     except Exception:
         return None
 
@@ -7087,7 +7024,7 @@ def clear_local_data(request: ClearDataRequest):
     if not request.output_dir:
         raise HTTPException(status_code=400, detail="Output directory not configured")
     
-    local_data_dir = _resolve_local_data_root(request.output_dir)
+    local_data_dir = data_paths._resolve_local_data_root(request.output_dir)
     
     if not local_data_dir.exists():
         return {"status": "ok", "message": "Directory does not exist, nothing to clear"}
@@ -7105,7 +7042,7 @@ def _default_file_browser_path() -> Path:
         config = load_config()
         output_dir = str(config.get("output_dir") or "").strip()
         if output_dir:
-            local_data = _resolve_local_data_root(output_dir)
+            local_data = data_paths._resolve_local_data_root(output_dir)
             local_data.mkdir(parents=True, exist_ok=True)
             return local_data
     except Exception:
@@ -7594,7 +7531,7 @@ def _resolve_download_dir(
     dataset_release_source: str = "",
     dataset_release_date: str = "",
 ) -> Tuple[Path, Path, str, str, str]:
-    asm_dir = _resolve_species_assembly_dir(output_dir, species_key, assembly, provider=provider)
+    asm_dir = data_paths._resolve_species_assembly_dir(output_dir, species_key, assembly, provider=provider)
     if _download_scope_for_type(file_type) == "assembly":
         return asm_dir, asm_dir / "assembly", "", "", ""
     source, date, release_key = _dataset_release_parts(
@@ -7622,7 +7559,7 @@ def _classify_local_download_file(path: Path) -> str:
         return "cdna_index"
     if ("pep" in lower or "protein" in lower) and lower.endswith((".fa.bgz.fai", ".fa.gz.fai", ".fa.fai", ".fa.bgz.gzi", ".fa.gz.gzi")):
         return "protein_index"
-    if _is_metadata_filename(lower):
+    if data_paths._is_metadata_filename(lower):
         return "metadata"
     if _has_any_suffix(lower, GFF3_DOWNLOAD_SUFFIXES):
         return "gff3"
@@ -7649,7 +7586,7 @@ def _gca_prefixed_filename(filename: str, assembly: str, file_type: Optional[str
         return f"{assembly}.{filename}"
     if file_type == "gff3" and filename in ("genes.gff3.gz", "genes.gff3.bgz"):
         return f"{assembly}.gff3{Path(filename).suffix}"
-    if file_type == "metadata" and _is_assembly_report_filename(filename):
+    if file_type == "metadata" and data_paths._is_assembly_report_filename(filename):
         return f"{assembly}.assembly_report.txt"
     return f"{assembly}.{filename}" if not filename.startswith(assembly) else filename
 
@@ -8021,10 +7958,10 @@ def _prepare_download(
     import uuid
     spawns: List[Tuple[str, Path, str, List[str]]] = []
     task_id = str(uuid.uuid4())
-    _validate_download_url(request.url)
+    data_paths._validate_download_url(request.url)
     provider = normalize_provider(request.provider)
     # Rename file with GCA prefix
-    local_filename = _sanitize_filename(
+    local_filename = data_paths._sanitize_filename(
         _gca_prefixed_filename(request.filename, request.assembly, request.file_type)
     )
     requested_release_key = str(request.dataset_release_key or "").strip()
@@ -8110,7 +8047,7 @@ def _prepare_download(
             )
             if metadata_files:
                 metadata_file = metadata_files[0]
-                metadata_filename = _sanitize_filename(
+                metadata_filename = data_paths._sanitize_filename(
                     _gca_prefixed_filename(metadata_file.filename, request.assembly, "metadata")
                 )
                 metadata_dir = asm_dir / "assembly"
@@ -8173,7 +8110,7 @@ def _prepare_download(
 async def import_custom_annotation(request: CustomAnnotationRequest):
     """Copy a user-provided GFF3 into an existing assembly as a managed dataset release."""
     provider = normalize_provider(request.provider)
-    asm_dir = _resolve_species_assembly_dir(
+    asm_dir = data_paths._resolve_species_assembly_dir(
         request.output_dir,
         request.species_key,
         request.assembly,
@@ -8223,7 +8160,7 @@ async def import_custom_annotation(request: CustomAnnotationRequest):
 
     dest_dir = asm_dir / "datasets" / "custom" / safe_label
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_filename = _sanitize_filename(_gca_prefixed_filename(source.name, request.assembly, "gff3"))
+    dest_filename = data_paths._sanitize_filename(_gca_prefixed_filename(source.name, request.assembly, "gff3"))
     dest = dest_dir / dest_filename
     conversion_summary: Dict[str, Any] = {}
 
@@ -8250,7 +8187,7 @@ async def import_custom_annotation(request: CustomAnnotationRequest):
 
         dest = Path(conversion.output_path)
         dest_filename = dest.name
-        original_copy = dest_dir / _sanitize_filename("source_" + source.name)
+        original_copy = dest_dir / data_paths._sanitize_filename("source_" + source.name)
         try:
             if source.resolve() != original_copy.resolve():
                 shutil.copy2(source, original_copy)
@@ -8354,7 +8291,7 @@ async def set_dataset_default(request: DatasetDefaultRequest):
     if not release_key:
         raise HTTPException(status_code=400, detail="dataset_release_key is required")
 
-    asm_dir = _resolve_species_assembly_dir(
+    asm_dir = data_paths._resolve_species_assembly_dir(
         request.output_dir,
         request.species_key,
         request.assembly,
@@ -8430,7 +8367,7 @@ async def cancel_downloads(request: CancelDownloadRequest):
         implicit_metadata = "metadata" not in file_types
         file_types.add("metadata")
     filenames = {
-        _sanitize_filename(str(value or "").strip())
+        data_paths._sanitize_filename(str(value or "").strip())
         for value in (request.filenames or [])
         if str(value or "").strip()
     }
@@ -8447,7 +8384,7 @@ async def cancel_downloads(request: CancelDownloadRequest):
         task_type = str(task.file_type or "").strip()
         if file_types and task_type not in file_types:
             continue
-        task_filename = _sanitize_filename(str(task.filename or "").strip())
+        task_filename = data_paths._sanitize_filename(str(task.filename or "").strip())
         if filenames and task_type != "metadata" and task_filename and task_filename not in filenames:
             continue
         if filenames and task_type == "metadata" and not implicit_metadata and task_filename and task_filename not in filenames:
@@ -8765,7 +8702,7 @@ def check_local_files(
     dataset_release_key: str = "",
 ):
     """Check which file types already exist in local_data for a species/assembly."""
-    local_dir = _resolve_species_assembly_dir(output_dir, species_key, assembly, provider=provider)
+    local_dir = data_paths._resolve_species_assembly_dir(output_dir, species_key, assembly, provider=provider)
     found: List[str] = []
     scanned: Dict[str, Any] = {}
     if local_dir.is_dir():
@@ -9286,7 +9223,7 @@ def list_local_assemblies(output_dir: str):
     on mount — so on the event loop a single large or slow-disk collection stalled the
     entire backend every time the user moved between views.
     """
-    local_root = _resolve_local_data_root(output_dir)
+    local_root = data_paths._resolve_local_data_root(output_dir)
     results = []
     if not local_root.is_dir():
         return results
@@ -9549,11 +9486,11 @@ class DeleteLocalFilesRequest(BaseModel):
 def delete_local_files(request: DeleteLocalFilesRequest):
     """Delete downloaded local files for a species/assembly."""
     provider = normalize_provider(request.provider)
-    asm_dir = _resolve_species_assembly_dir(request.output_dir, request.species_key, request.assembly, provider=provider)
+    asm_dir = data_paths._resolve_species_assembly_dir(request.output_dir, request.species_key, request.assembly, provider=provider)
     if not asm_dir.is_dir():
         raise HTTPException(status_code=404, detail="Assembly directory not found")
     manifest = _load_genome_manifest(asm_dir, request.assembly)
-    local_root = _resolve_local_data_root(request.output_dir)
+    local_root = data_paths._resolve_local_data_root(request.output_dir)
     if request.dataset_release_key:
         source, date, release_key = _dataset_release_parts(
             provider,
@@ -9628,7 +9565,7 @@ class DeleteSingleFileRequest(BaseModel):
 @app.delete("/api/remote/local-file")
 async def delete_single_local_file(request: DeleteSingleFileRequest):
     """Delete a single local file from a managed species/assembly directory."""
-    asm_dir = _resolve_species_assembly_dir(
+    asm_dir = data_paths._resolve_species_assembly_dir(
         request.output_dir,
         request.species_key,
         request.assembly,
@@ -9732,7 +9669,7 @@ def _plan_downloaded_removal(
 ) -> None:
     """Add a download-managed assembly directory's files to *plan*."""
     try:
-        asm_dir = _resolve_species_assembly_dir(
+        asm_dir = data_paths._resolve_species_assembly_dir(
             output_dir,
             descriptor.species_key,
             descriptor.assembly,
@@ -9921,7 +9858,7 @@ async def remove_genome_data(request: GenomeRemovalRequest):
 
         config = load_config()
         output_dir = str(request.output_dir or config.get("output_dir") or "").strip()
-        local_root = _resolve_local_data_root(output_dir) if output_dir else None
+        local_root = data_paths._resolve_local_data_root(output_dir) if output_dir else None
 
         results: List[Dict[str, Any]] = []
         for descriptor, plan in zip(request.genomes, plans):
@@ -9938,7 +9875,7 @@ async def remove_genome_data(request: GenomeRemovalRequest):
             failed.extend(skipped)
 
             try:
-                asm_dir = _resolve_species_assembly_dir(
+                asm_dir = data_paths._resolve_species_assembly_dir(
                     output_dir,
                     descriptor.species_key,
                     descriptor.assembly,
@@ -11067,7 +11004,7 @@ def _get_genome_metadata_path(genome: str) -> Optional[str]:
         return None
 
     assembly_dir = Path(gff_path).expanduser().resolve().parent
-    fallback = _find_assembly_report_file(assembly_dir)
+    fallback = data_paths._find_assembly_report_file(assembly_dir)
     if fallback:
         return str(fallback.resolve())
     return None
@@ -13153,7 +13090,7 @@ def gene_trees_library_path() -> Path:
     output_dir = str(load_config().get("output_dir") or "").strip()
     if output_dir:
         try:
-            return _resolve_local_data_root(output_dir) / "gene_trees_index.sqlite"
+            return data_paths._resolve_local_data_root(output_dir) / "gene_trees_index.sqlite"
         except Exception:
             logger.warning("Gene trees: output_dir %s is unusable; using the cache", output_dir)
     return app_paths.CACHE_DIR / "gene_trees" / "gene_trees_index.sqlite"
@@ -17269,7 +17206,7 @@ def _sv_registry_store_path(output_dir: Any) -> Optional[Path]:
     if not output_dir_text:
         return None
     try:
-        return _resolve_local_data_root(output_dir_text) / SV_ALIGNMENT_REGISTRY_FILENAME
+        return data_paths._resolve_local_data_root(output_dir_text) / SV_ALIGNMENT_REGISTRY_FILENAME
     except Exception:
         return None
 
@@ -17279,7 +17216,7 @@ def _sv_alignment_scan_dir(output_dir: Any) -> Optional[Path]:
     if not output_dir_text:
         return None
     try:
-        return _resolve_local_data_root(output_dir_text) / SV_ALIGNMENT_SCAN_DIRNAME
+        return data_paths._resolve_local_data_root(output_dir_text) / SV_ALIGNMENT_SCAN_DIRNAME
     except Exception:
         return None
 
@@ -17841,7 +17778,7 @@ def _sv_local_assembly_signature(output_dir: Any) -> Tuple[Any, ...]:
     index land, and it is the only thing the sequence-name derivation reads.
     """
     try:
-        local_root = _resolve_local_data_root(output_dir) if output_dir else None
+        local_root = data_paths._resolve_local_data_root(output_dir) if output_dir else None
     except Exception:
         return ()
     if not local_root or not local_root.is_dir():
@@ -17871,7 +17808,7 @@ def _sv_local_assembly_index(output_dir: Any) -> List[Dict[str, Any]]:
 
     entries: List[Dict[str, Any]] = []
     try:
-        local_root = _resolve_local_data_root(output_dir) if output_dir else None
+        local_root = data_paths._resolve_local_data_root(output_dir) if output_dir else None
     except Exception:
         local_root = None
     if local_root and local_root.is_dir():
@@ -20924,7 +20861,7 @@ def _output_dir_track_registry_store_path(output_dir: Any) -> Optional[Path]:
     if not output_dir_text:
         return None
     try:
-        return _resolve_local_data_root(output_dir_text) / OUTPUT_DIR_TRACK_REGISTRY_FILENAME
+        return data_paths._resolve_local_data_root(output_dir_text) / OUTPUT_DIR_TRACK_REGISTRY_FILENAME
     except Exception:
         return None
 
@@ -21236,7 +21173,7 @@ def _output_dir_user_notes_store_path(output_dir: Any) -> Optional[Path]:
     if not output_dir_text:
         return None
     try:
-        return _resolve_local_data_root(output_dir_text) / OUTPUT_DIR_USER_NOTES_FILENAME
+        return data_paths._resolve_local_data_root(output_dir_text) / OUTPUT_DIR_USER_NOTES_FILENAME
     except Exception:
         return None
 
@@ -22142,7 +22079,7 @@ def _output_dir_achievements_path(output_dir: Any) -> Optional[Path]:
     if not text:
         return None
     try:
-        path = _resolve_local_data_root(text) / achievements_store.ACHIEVEMENTS_FILENAME
+        path = data_paths._resolve_local_data_root(text) / achievements_store.ACHIEVEMENTS_FILENAME
     except Exception:
         return None
     if TUTORIAL_WORKSPACE_DIR in path.parts:
@@ -22374,7 +22311,7 @@ def _seed_achievements_from_inventory(doc: Dict[str, Any], config: Dict[str, Any
     if not output_dir:
         return False
     try:
-        local_root = _resolve_local_data_root(output_dir)
+        local_root = data_paths._resolve_local_data_root(output_dir)
     except Exception:
         return False
     if not local_root.is_dir():
@@ -22413,7 +22350,7 @@ def _record_download_achievement(request: "DownloadRequest") -> None:
         if not key:
             return
         try:
-            asm_dir = _resolve_species_assembly_dir(request.output_dir, request.species_key, request.assembly, provider=provider)
+            asm_dir = data_paths._resolve_species_assembly_dir(request.output_dir, request.species_key, request.assembly, provider=provider)
             manifest = _load_genome_manifest(asm_dir, request.assembly)
         except Exception:
             asm_dir, manifest = None, {}
@@ -23138,7 +23075,7 @@ async def _run_trackhub_import_task(task_id: str, output_dir: str, item: TrackHu
             raise RuntimeError("species_key and assembly are required for track hub imports.")
 
         filename = _trackhub_output_filename(source_meta, data_url, track_type)
-        asm_dir = _resolve_species_assembly_dir(output_dir, species_key, assembly, provider=provider)
+        asm_dir = data_paths._resolve_species_assembly_dir(output_dir, species_key, assembly, provider=provider)
         trackhub_dir = asm_dir / "trackhub"
         destination = (trackhub_dir / filename).resolve()
         try:
