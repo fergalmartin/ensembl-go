@@ -205,142 +205,9 @@ from security_utils import (
     validate_remote_download_url,
     validate_trackhub_data_url,
 )
+import file_io
 import data_paths
 import app_paths
-
-def log_progress(msg: str):
-    """Print progress message with flush for immediate output."""
-    print(f"[PROGRESS] {msg}", flush=True)
-
-
-def open_maybe_gz(filepath, mode: str = 'r') -> IO:
-    """Open a file, transparently handling gzip compression.
-
-    Detects gzip/BGZF by extension (.gz/.bgz) and opens accordingly.
-    Works for both compressed and uncompressed files.
-    Accepts both str and Path objects.
-    """
-    filepath = str(filepath)
-    is_text = 'b' not in mode
-    if filepath.endswith(('.gz', '.bgz')):
-        gz_mode = mode if ('t' in mode or 'b' in mode) else mode + 't'
-        return gzip.open(filepath, gz_mode, encoding='utf-8' if is_text else None)
-    return open(filepath, mode, encoding='utf-8' if is_text else None)
-
-
-def _is_bgzipped(filepath: str) -> bool:
-    """Check if a file is bgzip-compressed (not plain gzip)."""
-    try:
-        with open(filepath, 'rb') as f:
-            header = f.read(4)
-            # bgzip files start with the gzip magic bytes 1f 8b,
-            # followed by 08 (deflate) and 04 (FEXTRA flag set)
-            return header[:4] == b'\x1f\x8b\x08\x04'
-    except Exception:
-        return False
-
-
-def ensure_fasta_index(fasta_path: str, force_reindex: bool = False) -> str:
-    """Ensure a FASTA file is indexed for pysam access.
-
-    Handles plain FASTA, bgzipped (.fa.gz), and regular gzipped (.fa.gz) files.
-    Regular gzip files are decompressed to plain FASTA since pysam requires
-    either plain or bgzip format.
-    Returns the path to use with pysam.FastaFile().
-    """
-    # If the file is gzipped but NOT bgzipped, decompress it first
-    if fasta_path.endswith('.gz') and not _is_bgzipped(fasta_path):
-        plain_path = fasta_path[:-3]  # Remove .gz extension
-        if not os.path.exists(plain_path):
-            log_progress(f"Decompressing {Path(fasta_path).name} (gzip → plain FASTA for indexing)...")
-            try:
-                with gzip.open(fasta_path, 'rb') as gz_in, open(plain_path, 'wb') as f_out:
-                    while True:
-                        chunk = gz_in.read(1024 * 1024 * 16)  # 16MB chunks
-                        if not chunk:
-                            break
-                        f_out.write(chunk)
-                log_progress(f"  ✓ Decompressed to {Path(plain_path).name}")
-            except Exception as e:
-                # Clean up partial file on failure
-                if os.path.exists(plain_path):
-                    os.remove(plain_path)
-                logger.error(f"Failed to decompress FASTA {fasta_path}: {e}")
-                raise
-        fasta_path = plain_path
-
-    fai_path = fasta_path + '.fai'
-    if force_reindex and os.path.exists(fai_path):
-        try:
-            os.remove(fai_path)
-        except Exception:
-            pass
-    if not os.path.exists(fai_path):
-        log_progress(f"Creating FASTA index for {Path(fasta_path).name}...")
-        try:
-            pysam.faidx(fasta_path)
-            log_progress("  ✓ FASTA index created")
-        except Exception as e:
-            logger.error(f"Failed to index FASTA {fasta_path}: {e}")
-            raise
-    return fasta_path
-
-
-class ThreadSafeFasta:
-    """Serialises access to a ``pysam.FastaFile``.
-
-    htslib keeps seek and block-decompression state on the handle, so two threads
-    fetching from the same ``FastaFile`` corrupt each other. htslib then reports
-    ``Failed to retrieve block. (Seeking in a compressed, .gzi unindexed, file?)``
-    and the fetch either raises or hands back the wrong bases — which surfaces as
-    a blank sequence track, or as runs of N and protein X in Feature Explorer.
-
-    Handles are cached per genome and every browse endpoint runs on a threadpool,
-    so sharing one unguarded handle is exactly the situation that triggers it.
-
-    A lock rather than one handle per thread: the ``.fai`` of a fragmented
-    assembly can hold hundreds of thousands of records, and a handle per worker
-    thread would multiply that resident cost.
-    """
-
-    __slots__ = ("_fasta", "_lock")
-
-    def __init__(self, fasta):
-        self._fasta = fasta
-        self._lock = threading.Lock()
-
-    def fetch(self, *args, **kwargs):
-        with self._lock:
-            return self._fasta.fetch(*args, **kwargs)
-
-    def get_reference_length(self, *args, **kwargs):
-        with self._lock:
-            return self._fasta.get_reference_length(*args, **kwargs)
-
-    @property
-    def references(self):
-        with self._lock:
-            return self._fasta.references
-
-    @property
-    def lengths(self):
-        with self._lock:
-            return self._fasta.lengths
-
-    def close(self):
-        with self._lock:
-            self._fasta.close()
-
-    def __getattr__(self, name):
-        # Anything not wrapped explicitly still reads under the lock.
-        with self._lock:
-            return getattr(self._fasta, name)
-
-
-def open_indexed_fasta(fasta_path: str, force_reindex: bool = False) -> ThreadSafeFasta:
-    """Index a FASTA if needed and open it for safe concurrent reads."""
-    indexed_path = ensure_fasta_index(fasta_path, force_reindex=force_reindex)
-    return ThreadSafeFasta(pysam.FastaFile(indexed_path))
 
 
 # Initialize Download Manager
@@ -722,7 +589,7 @@ def find_transcript_fast(gff_path: str, transcript_id: str) -> Optional[SimpleTr
     # Normalize ID for searching
     search_id = transcript_id.replace("transcript:", "").replace("mapped_transcript:", "")
     
-    log_progress(f"  Searching for {search_id} in {Path(gff_path).name}...")
+    file_io.log_progress(f"  Searching for {search_id} in {Path(gff_path).name}...")
 
     # Use grep to find matching lines. The ID is a literal, so -F matches it as a
     # fixed string rather than a regex, and "--" keeps an ID that starts with "-"
@@ -733,11 +600,11 @@ def find_transcript_fast(gff_path: str, transcript_id: str) -> Optional[SimpleTr
             capture_output=True, text=True, timeout=30
         )
     except subprocess.TimeoutExpired:
-        log_progress(f"  ✗ Grep timeout")
+        file_io.log_progress(f"  ✗ Grep timeout")
         return None
     
     if result.returncode != 0 or not result.stdout.strip():
-        log_progress(f"  ✗ Not found")
+        file_io.log_progress(f"  ✗ Not found")
         return None
     
     lines = result.stdout.strip().split('\n')
@@ -794,7 +661,7 @@ def find_transcript_fast(gff_path: str, transcript_id: str) -> Optional[SimpleTr
                     utr_lines.append((feature_type, parts))
     
     if not transcript_line:
-        log_progress(f"  ✗ Transcript line not found")
+        file_io.log_progress(f"  ✗ Transcript line not found")
         return None
     
     # Build transcript object
@@ -846,7 +713,7 @@ def find_transcript_fast(gff_path: str, transcript_id: str) -> Optional[SimpleTr
             strand=utr_parts[6]
         ))
     
-    log_progress(f"  ✓ Found: {chrom}:{start}-{end} ({strand}) with {len(exons)} exons, {len(cds_list)} CDS, {len(utrs)} UTRs")
+    file_io.log_progress(f"  ✓ Found: {chrom}:{start}-{end} ({strand}) with {len(exons)} exons, {len(cds_list)} CDS, {len(utrs)} UTRs")
     
     return SimpleTranscript(
         feature_id=search_id,
@@ -912,16 +779,16 @@ class GenomeData:
     def load_fasta(self, ref_fasta: str, target_fasta: str):
         """Load FASTA files if not already loaded. Handles both plain and bgzipped (.gz) FASTA."""
         if self.ref_fasta_path != ref_fasta:
-            log_progress(f"Loading reference FASTA: {Path(ref_fasta).name}")
-            self.ref_fasta = open_indexed_fasta(ref_fasta)
+            file_io.log_progress(f"Loading reference FASTA: {Path(ref_fasta).name}")
+            self.ref_fasta = file_io.open_indexed_fasta(ref_fasta)
             self.ref_fasta_path = ref_fasta
-            log_progress("  ✓ Reference FASTA loaded")
+            file_io.log_progress("  ✓ Reference FASTA loaded")
 
         if self.target_fasta_path != target_fasta:
-            log_progress(f"Loading target FASTA: {Path(target_fasta).name}")
-            self.target_fasta = open_indexed_fasta(target_fasta)
+            file_io.log_progress(f"Loading target FASTA: {Path(target_fasta).name}")
+            self.target_fasta = file_io.open_indexed_fasta(target_fasta)
             self.target_fasta_path = target_fasta
-            log_progress("  ✓ Target FASTA loaded")
+            file_io.log_progress("  ✓ Target FASTA loaded")
 
 
 genome_data = GenomeData()
@@ -952,12 +819,12 @@ class HomologyMap:
         if self._file_path == file_path and len(self.ref_to_targets) > 0:
             return  # Already loaded
 
-        log_progress(f"Loading homology map: {Path(file_path).name}")
+        file_io.log_progress(f"Loading homology map: {Path(file_path).name}")
         self.ref_to_targets = {}
         self.target_to_ref = {}
         
         try:
-            with open_maybe_gz(file_path, 'r') as f:
+            with file_io.open_maybe_gz(file_path, 'r') as f:
                 for line in f:
                     if line.startswith('#'): continue
                     parts = line.strip().split('\t')
@@ -973,7 +840,7 @@ class HomologyMap:
                             self.target_to_ref[tid] = ref_id
 
             self._file_path = file_path
-            log_progress(f"  ✓ Loaded {len(self.ref_to_targets)} reference entries")
+            file_io.log_progress(f"  ✓ Loaded {len(self.ref_to_targets)} reference entries")
 
         except Exception as e:
             logger.error(f"Failed to load homology file: {e}")
@@ -1040,7 +907,7 @@ class HomologyFileIndex:
 
     def _load(self, file_path: str) -> Dict[str, List[Dict[str, str]]]:
         index: Dict[str, List[Dict[str, str]]] = {}
-        with open_maybe_gz(file_path, 'rt') as f:
+        with file_io.open_maybe_gz(file_path, 'rt') as f:
             reader = csv.DictReader(f, delimiter='\t')
             for row in reader:
                 query_id = (row.get('query_gene_stable_id') or '').strip()
@@ -1071,7 +938,7 @@ class HomologyFileIndex:
                 self._cache.move_to_end(resolved)
                 return cached[1]
 
-        log_progress(f"Indexing homology file: {Path(resolved).name}")
+        file_io.log_progress(f"Indexing homology file: {Path(resolved).name}")
         index = self._load(resolved)
 
         with self._lock:
@@ -1079,7 +946,7 @@ class HomologyFileIndex:
             self._cache.move_to_end(resolved)
             while len(self._cache) > self._max_entries:
                 self._cache.popitem(last=False)
-        log_progress(f"  ✓ Indexed {len(index)} genes from {Path(resolved).name}")
+        file_io.log_progress(f"  ✓ Indexed {len(index)} genes from {Path(resolved).name}")
         return index
 
     def find_homology_pairs(
@@ -1444,7 +1311,7 @@ def create_gff_index(gff_path: str, db_path: str, progress_cb: Optional[Callable
     browser draws a meter from it: a multi-gigabyte annotation takes minutes,
     and an indeterminate spinner for that long is indistinguishable from a hang.
     """
-    log_progress(f"Indexing {Path(gff_path).name} to {Path(db_path).name}...")
+    file_io.log_progress(f"Indexing {Path(gff_path).name} to {Path(db_path).name}...")
 
     def report(stage: str, position: int = 0, total: int = 0) -> None:
         if progress_cb is None:
@@ -1594,7 +1461,7 @@ def create_gff_index(gff_path: str, db_path: str, progress_cb: Optional[Callable
     except OSError:
         total_bytes = 0
 
-    with open_maybe_gz(gff_path, 'r') as f:
+    with file_io.open_maybe_gz(gff_path, 'r') as f:
         position_source = _read_position_source(f)
         lines_until_report = INDEX_PROGRESS_LINE_INTERVAL
         report("parsing", 0, total_bytes)
@@ -1940,15 +1807,15 @@ def create_gff_index(gff_path: str, db_path: str, progress_cb: Optional[Callable
         """)
         igtr_tx_count = int(c.fetchone()[0] or 0)
         if igtr_gene_count > 0 and igtr_tx_count == 0:
-            log_progress("  ! IG/TR sanity check: genes detected but no linked transcripts were indexed")
+            file_io.log_progress("  ! IG/TR sanity check: genes detected but no linked transcripts were indexed")
         else:
-            log_progress(f"  ✓ IG/TR sanity check: {igtr_gene_count} genes, {igtr_tx_count} transcripts")
+            file_io.log_progress(f"  ✓ IG/TR sanity check: {igtr_gene_count} genes, {igtr_tx_count} transcripts")
     except Exception as e:
-        log_progress(f"  ! IG/TR sanity check skipped: {e}")
+        file_io.log_progress(f"  ! IG/TR sanity check skipped: {e}")
 
     conn.commit()
     conn.close()
-    log_progress(f"  ✓ Indexing complete: {count_genes} genes, {len(transcripts_data)} transcripts")
+    file_io.log_progress(f"  ✓ Indexing complete: {count_genes} genes, {len(transcripts_data)} transcripts")
 
 
 def extract_genomic_sequence(
@@ -1968,7 +1835,7 @@ def extract_genomic_sequence(
 
 def run_mafft_alignment(seq1: str, seq2: str) -> Tuple[str, str]:
     """Run MAFFT pairwise alignment."""
-    log_progress(f"Running MAFFT alignment ({len(seq1)}bp vs {len(seq2)}bp)...")
+    file_io.log_progress(f"Running MAFFT alignment ({len(seq1)}bp vs {len(seq2)}bp)...")
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.fa', delete=False) as f:
         input_file = f.name
@@ -1978,7 +1845,7 @@ def run_mafft_alignment(seq1: str, seq2: str) -> Tuple[str, str]:
         # --auto automatically converts to the most appropriate method
         # --quiet suppresses output
         cmd = [app_paths.MAFFT_PATH, "--auto", "--quiet", input_file]
-        log_progress(f"  Running MAFFT...")
+        file_io.log_progress(f"  Running MAFFT...")
         try:
             result = subprocess.run(
                 cmd,
@@ -2012,7 +1879,7 @@ def run_mafft_alignment(seq1: str, seq2: str) -> Tuple[str, str]:
         if current_id:
             aligned[current_id] = "".join(current_seq)
         
-        log_progress(f"  ✓ MAFFT complete ({len(aligned.get('seq1', ''))} positions)")
+        file_io.log_progress(f"  ✓ MAFFT complete ({len(aligned.get('seq1', ''))} positions)")
         return aligned.get("seq1", ""), aligned.get("seq2", "")
     
     finally:
@@ -2069,7 +1936,7 @@ def run_mafft_alignment_multi(
     if len(ordered_sequences) < 2:
         raise RuntimeError("Need at least two sequences for MSA.")
 
-    log_progress(f"Running MAFFT MSA ({len(ordered_sequences)} sequences)...")
+    file_io.log_progress(f"Running MAFFT MSA ({len(ordered_sequences)} sequences)...")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.fa', delete=False) as f:
         input_file = f.name
         for seq_id, seq in ordered_sequences:
@@ -2512,7 +2379,7 @@ def _extract_sequence_for_alignment_row(
         pos = 1
         chunks: List[str] = []
 
-        with open_maybe_gz(source_path, "rt") as handle:
+        with file_io.open_maybe_gz(source_path, "rt") as handle:
             for raw_line in handle:
                 line = str(raw_line or "").strip()
                 if not line:
@@ -2852,7 +2719,7 @@ def load_from_cache(transcript_id: str, target_id: str, ref_flank: int, tgt_flan
         try:
             with open(cache_path) as f:
                 data = json.load(f)
-                log_progress("  ✓ Found exact cache match")
+                file_io.log_progress("  ✓ Found exact cache match")
                 return AlignmentResult(**data)
         except Exception:
             pass
@@ -2862,7 +2729,7 @@ def load_from_cache(transcript_id: str, target_id: str, ref_flank: int, tgt_flan
     if larger:
         path, cached_ref_flank, cached_tgt_flank = larger
         if cached_ref_flank >= ref_flank and cached_tgt_flank >= tgt_flank:
-            log_progress(f"  ✓ Found larger cache (rf{cached_ref_flank}, tf{cached_tgt_flank}), can subset")
+            file_io.log_progress(f"  ✓ Found larger cache (rf{cached_ref_flank}, tf{cached_tgt_flank}), can subset")
             # For now, just return the larger alignment - client handles display
             # A full implementation would extract sub-alignment here
             try:
@@ -2881,9 +2748,9 @@ def save_to_cache(result: AlignmentResult, target_id: str, ref_flank: int, tgt_f
     try:
         with open(cache_path, 'w') as f:
             json.dump(result.model_dump(), f)
-        log_progress(f"  ✓ Saved to cache: {cache_path.name}")
+        file_io.log_progress(f"  ✓ Saved to cache: {cache_path.name}")
     except Exception as e:
-        log_progress(f"  ✗ Failed to save cache: {e}")
+        file_io.log_progress(f"  ✗ Failed to save cache: {e}")
 
 
 # ============ API Endpoints ============
@@ -3141,15 +3008,15 @@ def align_transcripts(request: AlignmentRequest):
     if cache_path and os.path.exists(cache_path):
         try:
             logger.debug("Attempting to load alignment cache: %s", cache_path)
-            log_progress(f"Found compatible cache: {Path(cache_path).name} ({c_ref}/{c_tgt} vs {ref_flank}/{tgt_flank})")
+            file_io.log_progress(f"Found compatible cache: {Path(cache_path).name} ({c_ref}/{c_tgt} vs {ref_flank}/{tgt_flank})")
             with open(cache_path, 'r') as f:
                 data = json.load(f)
                 cached_result = AlignmentResult(**data)
                 
             # Truncate if necessary (if cached flanks > requested)
-            log_progress(f"Adapting cache: {c_ref}->{ref_flank}, {c_tgt}->{tgt_flank}")
+            file_io.log_progress(f"Adapting cache: {c_ref}->{ref_flank}, {c_tgt}->{tgt_flank}")
             final_result = truncate_and_mask_alignment(cached_result, c_ref, c_tgt, ref_flank, tgt_flank)
-            log_progress("  ✓ Loaded and adapted from cache")
+            file_io.log_progress("  ✓ Loaded and adapted from cache")
             return final_result
             
         except Exception as e:
@@ -3159,15 +3026,15 @@ def align_transcripts(request: AlignmentRequest):
             # Log to console/logger
             logger.error(f"Failed to load/adapt cache: {e}")
             logger.error(trace_msg)
-            log_progress(f"  ✗ Cache adaptation failed: {e}")
+            file_io.log_progress(f"  ✗ Cache adaptation failed: {e}")
             # Continue to re-run alignment if cache load fails
     
     ref_fasta = config.get("ref_fasta")
     ref_gff = config.get("ref_gff")
 
-    log_progress(f"\n{'='*60}")
-    log_progress(f"Alignment request: {request.transcript_id}")
-    log_progress(f"{'='*60}")
+    file_io.log_progress(f"\n{'='*60}")
+    file_io.log_progress(f"Alignment request: {request.transcript_id}")
+    file_io.log_progress(f"{'='*60}")
     
     # Get config if not provided in request
     ref_fasta = request.ref_fasta or config.get("ref_fasta")
@@ -3194,14 +3061,14 @@ def align_transcripts(request: AlignmentRequest):
     # target_id already determined above
     
     # Find transcript in reference (fast grep-based lookup)
-    log_progress(f"Searching for transcript in reference GFF3 ({ref_id})...")
+    file_io.log_progress(f"Searching for transcript in reference GFF3 ({ref_id})...")
     
     # Try index first
     ref_tx = None
     ref_index = config.get("ref_index")
     if ref_index and os.path.exists(ref_index):
         ref_tx = find_transcript_in_index(ref_index, ref_id)
-        if ref_tx: log_progress("  ✓ Found in index")
+        if ref_tx: file_io.log_progress("  ✓ Found in index")
         
     if not ref_tx:
         ref_tx = find_transcript_fast(ref_gff, ref_id)
@@ -3213,13 +3080,13 @@ def align_transcripts(request: AlignmentRequest):
         )
     
     # Find transcript in target
-    log_progress(f"Searching for transcript in target GFF3 ({target_id})...")
+    file_io.log_progress(f"Searching for transcript in target GFF3 ({target_id})...")
     
     target_tx = None
     target_index = config.get("target_index")
     if target_index and os.path.exists(target_index):
         target_tx = find_transcript_in_index(target_index, target_id)
-        if target_tx: log_progress("  ✓ Found in index")
+        if target_tx: file_io.log_progress("  ✓ Found in index")
         
     if not target_tx:
         target_tx = find_transcript_fast(target_gff, target_id)
@@ -3240,16 +3107,16 @@ def align_transcripts(request: AlignmentRequest):
     target_strand = target_tx.strand
     
     # Extract sequences
-    log_progress(f"Extracting sequences (ref: {ref_flank}bp, target: {tgt_flank}bp flanking)...")
+    file_io.log_progress(f"Extracting sequences (ref: {ref_flank}bp, target: {tgt_flank}bp flanking)...")
     try:
         ref_seq = extract_genomic_sequence(
             genome_data.ref_fasta, ref_tx.seq_region, ref_start, ref_end, ref_strand, uppercase=False
         )
-        log_progress(f"  ✓ Reference: {len(ref_seq)}bp")
+        file_io.log_progress(f"  ✓ Reference: {len(ref_seq)}bp")
         target_seq = extract_genomic_sequence(
             genome_data.target_fasta, target_tx.seq_region, target_start, target_end, target_strand, uppercase=False
         )
-        log_progress(f"  ✓ Target: {len(target_seq)}bp")
+        file_io.log_progress(f"  ✓ Target: {len(target_seq)}bp")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to extract sequences: {e}")
     
@@ -3309,7 +3176,7 @@ def align_transcripts(request: AlignmentRequest):
         try:
             with open(new_cache_path, 'w') as f:
                 f.write(result.model_dump_json())
-            log_progress(f"  ✓ Saved alignment to cache: {Path(new_cache_path).name}")
+            file_io.log_progress(f"  ✓ Saved alignment to cache: {Path(new_cache_path).name}")
         except Exception as e:
             logger.error(f"Failed to write cache: {e}")
             
@@ -4309,7 +4176,7 @@ async def query_homology_table(path: str = "", gene_query: str = "", limit: int 
     row_limit = max(50, min(50000, int(limit)))
 
     def _query():
-        with open_maybe_gz(table_path, "rt") as handle:
+        with file_io.open_maybe_gz(table_path, "rt") as handle:
             reader = csv.DictReader(handle, delimiter="\t")
             columns = reader.fieldnames or []
             if not columns:
@@ -4507,7 +4374,7 @@ def resolve_gene_anchor_gff(gff_path: str, gene_id: Optional[str] = None, transc
     }
 
     try:
-        with open_maybe_gz(gff_path, "r") as handle:
+        with file_io.open_maybe_gz(gff_path, "r") as handle:
             for line in handle:
                 if not line or line.startswith("#"):
                     continue
@@ -4548,7 +4415,7 @@ def get_gene_neighbourhood_by_gene(gff_path: str, gene_id: str, window_size: int
     center_biotype = ""
 
     try:
-        with open_maybe_gz(gff_path, "r") as handle:
+        with file_io.open_maybe_gz(gff_path, "r") as handle:
             for line in handle:
                 if not line or line.startswith("#"):
                     continue
@@ -4575,7 +4442,7 @@ def get_gene_neighbourhood_by_gene(gff_path: str, gene_id: str, window_size: int
 
     genes: List[GeneSummary] = []
     try:
-        with open_maybe_gz(gff_path, "r") as handle:
+        with file_io.open_maybe_gz(gff_path, "r") as handle:
             for line in handle:
                 if not line or line.startswith("#"):
                     continue
@@ -4811,11 +4678,11 @@ async def get_neighbourhood(
                 )
                 return _result
 
-    log_progress(f"Fetching neighbourhood for {resolved_ref_gene}...")
+    file_io.log_progress(f"Fetching neighbourhood for {resolved_ref_gene}...")
 
     ref_started = time.perf_counter()
     if has_ref_index:
-        log_progress("  ✓ Using Reference Index")
+        file_io.log_progress("  ✓ Using Reference Index")
         ref_genes, ref_center = await run_in_threadpool(
             get_gene_neighbourhood_index_by_gene,
             ref_index,
@@ -4823,7 +4690,7 @@ async def get_neighbourhood(
             window_size,
         )
     else:
-        log_progress("  Using GFF gene scan (Reference)...")
+        file_io.log_progress("  Using GFF gene scan (Reference)...")
         ref_genes, ref_center = await run_in_threadpool(
             get_gene_neighbourhood_by_gene,
             ref_gff,
@@ -4841,7 +4708,7 @@ async def get_neighbourhood(
     if resolved_target_gene and target_gff:
         tgt_started = time.perf_counter()
         if has_tgt_index:
-            log_progress("  ✓ Using Target Index")
+            file_io.log_progress("  ✓ Using Target Index")
             target_genes, target_center = await run_in_threadpool(
                 get_gene_neighbourhood_index_by_gene,
                 target_index,
@@ -4849,7 +4716,7 @@ async def get_neighbourhood(
                 window_size,
             )
         else:
-            log_progress("  Using GFF gene scan (Target)...")
+            file_io.log_progress("  Using GFF gene scan (Target)...")
             target_genes, target_center = await run_in_threadpool(
                 get_gene_neighbourhood_by_gene,
                 target_gff,
@@ -5010,7 +4877,7 @@ async def get_neighbourhood(
 
         homology_links = [HomologyLink(**link) for link in merged_links.values()]
         homology_ms = (time.perf_counter() - homology_started) * 1000
-        log_progress(
+        file_io.log_progress(
             f"  Homology links: {len(homology_links)} (ref_available={ref_homology_available} "
             f"target_available={target_homology_available}, {homology_ms:.1f}ms)"
         )
@@ -5823,8 +5690,8 @@ def _generate_indexes_blocking(request: IndexRequest):
 
         # Prepare Reference FASTA (decompress gzip if needed + index)
         if ref_fasta and os.path.exists(ref_fasta):
-            log_progress("Preparing reference FASTA for sequence browsing...")
-            ensure_fasta_index(ref_fasta)
+            file_io.log_progress("Preparing reference FASTA for sequence browsing...")
+            file_io.ensure_fasta_index(ref_fasta)
 
         # Generate Target Index (if available)
         if target_gff and os.path.exists(target_gff):
@@ -5833,8 +5700,8 @@ def _generate_indexes_blocking(request: IndexRequest):
 
         # Prepare Target FASTA (decompress gzip if needed + index)
         if target_fasta and os.path.exists(target_fasta):
-            log_progress("Preparing target FASTA for sequence browsing...")
-            ensure_fasta_index(target_fasta)
+            file_io.log_progress("Preparing target FASTA for sequence browsing...")
+            file_io.ensure_fasta_index(target_fasta)
 
         # Save config
         save_config(updated_config)
@@ -6958,13 +6825,13 @@ def update_config(config: ConfigUpdate):
         save_path = validate_config_export_path(config.save_path)
         try:
             save_config(merged, save_path)
-            log_progress(f"Configuration saved to: {save_path}")
+            file_io.log_progress(f"Configuration saved to: {save_path}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to save to {save_path}: {e}")
     else:
         # Save to default cache (Auto-save / Session)
         save_config(merged)
-        log_progress(f"Configuration cached: {merged}")
+        file_io.log_progress(f"Configuration cached: {merged}")
 
     return {"status": "ok", "config": merged}
 
@@ -7010,7 +6877,7 @@ async def clear_cache():
         except Exception:
             pass
     _neighbourhood_cache.clear()
-    log_progress(f"Cleared {count} cached alignment files and neighbourhood cache")
+    file_io.log_progress(f"Cleared {count} cached alignment files and neighbourhood cache")
     return {"status": "ok", "cleared": count}
 
 
@@ -7032,10 +6899,10 @@ def clear_local_data(request: ClearDataRequest):
     try:
         import shutil
         shutil.rmtree(local_data_dir, ignore_errors=True)
-        log_progress(f"Wiped local_data directory at {local_data_dir}")
+        file_io.log_progress(f"Wiped local_data directory at {local_data_dir}")
         return {"status": "ok", "message": "All downloaded genomes have been cleared successfully"}
     except Exception as e:
-        log_progress(f"Failed to wipe local_data directory: {e}")
+        file_io.log_progress(f"Failed to wipe local_data directory: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete directory: {e}")
 def _default_file_browser_path() -> Path:
     try:
@@ -11635,7 +11502,7 @@ def _extract_transcript_tags_from_gff(gff_path: str, transcript_ids: set) -> dic
 
     tag_map = {}
     try:
-        with open_maybe_gz(gff_path, 'r') as f:
+        with file_io.open_maybe_gz(gff_path, 'r') as f:
             for line in f:
                 if not remaining:
                     break
@@ -11708,7 +11575,7 @@ def _extract_gene_description_from_gff(gff_path: str, gene_id: str) -> Optional[
     try:
         scanned_lines = 0
         scanned_bytes = 0
-        with open_maybe_gz(gff_path, 'r') as f:
+        with file_io.open_maybe_gz(gff_path, 'r') as f:
             for line in f:
                 scanned_lines += 1
                 scanned_bytes += len(line)
@@ -12098,7 +11965,7 @@ def _get_browse_fasta(genome: str):
         return cached[1]
 
     # ensure_fasta_index may return a decompressed path if the original was gzip (not bgzip)
-    fasta = open_indexed_fasta(fasta_path)
+    fasta = file_io.open_indexed_fasta(fasta_path)
     _fasta_cache[cache_key] = (fasta_path, fasta)
     return fasta
 
@@ -12111,7 +11978,7 @@ def _force_refresh_browse_fasta_index(genome: str, current_fasta: Optional["Thre
     if not fasta_path or not os.path.exists(fasta_path):
         raise HTTPException(status_code=404, detail=f"FASTA not found for {genome} genome.")
 
-    refreshed = open_indexed_fasta(fasta_path, force_reindex=True)
+    refreshed = file_io.open_indexed_fasta(fasta_path, force_reindex=True)
     _fasta_cache[cache_key] = (fasta_path, refreshed)
 
     try:
@@ -13193,7 +13060,7 @@ def gene_trees_fetcher(genome: Dict[str, Any]):
     cached = _fasta_cache.get(cache_key)
     fasta = cached[1] if cached and cached[0] == fasta_path else None
     if fasta is None:
-        fasta = open_indexed_fasta(fasta_path)
+        fasta = file_io.open_indexed_fasta(fasta_path)
         _fasta_cache[cache_key] = (fasta_path, fasta)
     known = set(fasta.references or [])
 
@@ -14897,7 +14764,7 @@ def _extract_protein_ids_from_gff(
     if not remaining or not gff_path or not os.path.exists(gff_path):
         return result
     try:
-        with open_maybe_gz(gff_path, 'r') as f:
+        with file_io.open_maybe_gz(gff_path, 'r') as f:
             for line in f:
                 if not remaining:
                     break
@@ -17281,7 +17148,7 @@ def _sv_assembly_sequence_names(fasta_path: Any) -> List[str]:
     names: List[str] = []
     if path.exists() and path.is_file():
         try:
-            handle = open_indexed_fasta(str(path))
+            handle = file_io.open_indexed_fasta(str(path))
             names = [str(name).strip() for name in (handle.references or []) if str(name).strip()]
         except Exception:
             names = []
@@ -26713,7 +26580,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.host = validate_backend_bind_host(args.host)
 
-    log_progress(f"Starting Ensembl Go Backend on {args.host}:{args.port}...")
+    file_io.log_progress(f"Starting Ensembl Go Backend on {args.host}:{args.port}...")
 
     # Run uvicorn programmatically
     uvicorn.run(app, host=args.host, port=args.port)

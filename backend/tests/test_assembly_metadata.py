@@ -17,6 +17,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import file_io  # noqa: E402
 from stats_utils import compute_fasta_assembly_stats  # noqa: E402
 
 
@@ -50,7 +51,7 @@ class AssemblySizeSourceTests(unittest.TestCase):
 
     def test_lengths_come_from_the_fasta_index_when_there_is_one(self):
         self._write_fai()
-        with patch.object(main, "open_maybe_gz", side_effect=AssertionError("scanned the FASTA")):
+        with patch.object(file_io, "open_maybe_gz", side_effect=AssertionError("scanned the FASTA")):
             stats = compute_fasta_assembly_stats(str(self.fasta))
         self.assertEqual(stats["source"], "fasta_index")
         self.assertEqual(stats["contig_count"], 3)

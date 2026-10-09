@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pysam  # noqa: E402
 
-from main import ThreadSafeFasta, open_indexed_fasta  # noqa: E402
+from file_io import ThreadSafeFasta, open_indexed_fasta  # noqa: E402
 
 #: Large enough to span many BGZF blocks, which is what makes concurrent seeks
 #: on a shared handle collide. A handful of short records never reproduces it.
