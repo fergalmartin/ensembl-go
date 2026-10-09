@@ -1,9 +1,9 @@
-import { getBaseColor } from '../utils/nucleotideStyle'
-import { browserControlKey } from '../achievements/browserControls.js'
-import { trackAchievement } from '../achievements/tracker.js'
+import { getBaseColor } from '../../utils/nucleotideStyle'
+import { browserControlKey } from '../../achievements/browserControls.js'
+import { trackAchievement } from '../../achievements/tracker.js'
 import { Fragment, memo, useRef, useEffect, useId, useLayoutEffect, useState, useCallback, useMemo } from 'react'
-import iconResetRaw from '../assets/icons/icon_reset.svg?raw'
-import iconAnchorRaw from '../assets/icons/icon_anchor.svg?raw'
+import iconResetRaw from '../../assets/icons/icon_reset.svg?raw'
+import iconAnchorRaw from '../../assets/icons/icon_anchor.svg?raw'
 import {
     buildGeneLabelCandidate,
     geneFooterTrackOverflow,
@@ -22,28 +22,28 @@ import {
     getVcfAltAlleleCount,
     getVcfDetailVariantLayout,
     shouldRenderActiveAnchorBase,
-} from '../utils/vcfDetailGeometry'
+} from '../../utils/vcfDetailGeometry'
 // Pure data: which file each of the tutorial's demo tracks is, so a `browserTracks`
 // arrival can name them without carrying registry ids it cannot know.
-import { TRACK_FILENAMES } from '../utils/tutorialModel'
+import { TRACK_FILENAMES } from '../../utils/tutorialModel'
 import {
     VCF_BLOCK_LEVELS,
     buildVcfOverviewWarmupKey,
     buildVcfOverviewWarmupTiles,
     getVcfBlockLevel as selectVcfBlockLevel,
     getVcfViewportIntent,
-} from '../utils/vcfTileStrategy'
+} from '../../utils/vcfTileStrategy'
 import {
     buildDefaultScreenshotName,
     buildForeignObjectMarkup,
     buildSvgDocument,
     escapeXml,
-} from '../utils/screenshotExport'
-import { buildGeneIntervalIndex, sameGeneRange } from '../utils/geneIntervalIndex'
-import InfoGlyph from './InfoGlyph'
-import { registerBrowserViewport } from '../utils/browserTutorialControls'
-import useTutorial from '../hooks/useTutorial'
-import useNearViewport from '../hooks/useNearViewport'
+} from '../../utils/screenshotExport'
+import { buildGeneIntervalIndex, sameGeneRange } from '../../utils/geneIntervalIndex'
+import InfoGlyph from '../InfoGlyph'
+import { registerBrowserViewport } from '../../utils/browserTutorialControls'
+import useTutorial from '../../hooks/useTutorial'
+import useNearViewport from '../../hooks/useNearViewport'
 import { getTranscriptExonSegments } from './genomeBrowserExonSegments'
 import { resolveGeneTranscriptView } from './genomeBrowserTranscriptView'
 import { shouldResetStickyGeneRows } from './genomeBrowserTranscriptLayout'
@@ -60,13 +60,13 @@ import {
     resolveWheelAction,
     isWheelGestureFromChrome,
     isWheelInsideIsolatedOverlay,
-} from '../utils/browsingControls'
-import { bedThickPieces } from '../utils/bedThickRegion'
-import { checkRangeAgainstBounds, parseLocationQuery } from '../utils/locationQuery'
-import { formatZoneLabel, zonedSegments, zonedValueFraction, zoneThresholdsFor } from '../utils/zonedScale'
-import { effectiveMemberTrack, gatherRows, groupRowIdFor, isGroupRowId } from '../utils/trackGroups'
-import { describeSessionTracks, planSessionRestore } from '../utils/sessionTracks'
-import { classifyBiotype } from '../utils/geneBiotypes'
+} from '../../utils/browsingControls'
+import { bedThickPieces } from '../../utils/bedThickRegion'
+import { checkRangeAgainstBounds, parseLocationQuery } from '../../utils/locationQuery'
+import { formatZoneLabel, zonedSegments, zonedValueFraction, zoneThresholdsFor } from '../../utils/zonedScale'
+import { effectiveMemberTrack, gatherRows, groupRowIdFor, isGroupRowId } from '../../utils/trackGroups'
+import { describeSessionTracks, planSessionRestore } from '../../utils/sessionTracks'
+import { classifyBiotype } from '../../utils/geneBiotypes'
 import {
     BOX_SELECT_FILL_FRACTION,
     FOCUS_RANGE_FILL_FRACTION,
@@ -88,20 +88,20 @@ import {
     rulerGeometry,
     rulerTicks,
 } from './genomeBrowserRuler'
-import { FONT_MONO, monoFont, sansFont } from '../utils/typography'
-import { drawPowerGlyph, powerGlyphSvgMarkup } from '../utils/powerGlyph'
-import { noteBubbleGlyphSvgMarkup } from '../utils/noteBubbleGlyph'
-import NoteGlyph from './NoteGlyph'
+import { FONT_MONO, monoFont, sansFont } from '../../utils/typography'
+import { drawPowerGlyph, powerGlyphSvgMarkup } from '../../utils/powerGlyph'
+import { noteBubbleGlyphSvgMarkup } from '../../utils/noteBubbleGlyph'
+import NoteGlyph from '../NoteGlyph'
 
-import { API_BASE } from '../backendRuntime'
-import GeneIndexProgressOverlay from './GeneIndexProgressOverlay'
+import { API_BASE } from '../../backendRuntime'
+import GeneIndexProgressOverlay from '../GeneIndexProgressOverlay'
 import {
     GENE_INDEX_TRACK_HEIGHT,
     geneIndexOverlayBand,
     shouldHoldGeneTrackHeight,
-} from '../utils/geneIndexOverlay'
-import { INDEX_BUILDING_STATUS } from '../utils/browserReadiness'
-import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../sessionResume.js'
+} from '../../utils/geneIndexOverlay'
+import { INDEX_BUILDING_STATUS } from '../../utils/browserReadiness'
+import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../../sessionResume.js'
 import {
     BED_DENSITY_LEVELS,
     BIGBED_BLOCK_LEVELS,
@@ -175,7 +175,7 @@ import {
     isIntervalTrackType,
     joinedGroupHeaderText,
     pickerRowClass,
-} from './genome-browser/browserConstants.js'
+} from './browserConstants.js'
 import {
     BED_TO_BROWSER_OFFSET,
     REV_COMP,
@@ -195,7 +195,7 @@ import {
     smoothVcfDensityBins,
     smoothVcfDensityClasses,
     snapToTile,
-} from './genome-browser/trackData.js'
+} from './trackData.js'
 import {
     bedTrackColors,
     bigBedBlockColor,
@@ -212,7 +212,7 @@ import {
     normalizeSpliceTrackSettings,
     normalizeVcfDisplayMode,
     normalizeVcfSettings,
-} from './genome-browser/trackSettings.js'
+} from './trackSettings.js'
 import {
     annotateSpliceSimilarityLift,
     computeSplicePeakY,
@@ -223,7 +223,7 @@ import {
     spliceJunctionKey,
     spliceSupportBandWeight,
     spliceSupportColor,
-} from './genome-browser/spliceGeometry.js'
+} from './spliceGeometry.js'
 import {
     formatBp,
     formatCoord,
@@ -237,8 +237,8 @@ import {
     getTranscriptLayoutMetrics,
     getTranscriptPopupMetadata,
     hasGeneCoords,
-} from './genome-browser/browserFormat.js'
-import { buildAlignedIntronChevronLayout } from './featureExplorerTranscriptGeometry'
+} from './browserFormat.js'
+import { buildAlignedIntronChevronLayout } from '../featureExplorerTranscriptGeometry'
 import {
     beginCanvasMirror,
     endCanvasMirror,
@@ -247,7 +247,7 @@ import {
     getScrollerVisibleTop,
     measureExpandedFooterLabelWidth,
     scrollScrollerTo,
-} from './genome-browser/canvasText.js'
+} from './canvasText.js'
 
 /* The track picker adds and removes; switching a track on and off is the gutter's job.
  * Each row has one button, Add or Remove, for what it will be once applied, and rows that

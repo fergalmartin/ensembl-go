@@ -15,7 +15,7 @@ import {
   getTranscriptFooterControlState,
   placeGeneFooterWithinViewport,
   placeNonOverlappingGeneLabels,
-} from '../src/components/genomeBrowserLabelLayout.js'
+} from '../src/components/genome-browser/genomeBrowserLabelLayout.js'
 
 test('placeNonOverlappingGeneLabels suppresses colliding labels', () => {
   const placed = placeNonOverlappingGeneLabels([

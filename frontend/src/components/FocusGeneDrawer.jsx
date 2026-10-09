@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { markWheelHandled } from '../utils/browsingControls'
 import InfoGlyph from './InfoGlyph'
 import NoteGlyph from './NoteGlyph'
-import { orderTranscripts, reorderTranscriptIds } from './genomeBrowserTranscriptView'
+import { orderTranscripts, reorderTranscriptIds } from './genome-browser/genomeBrowserTranscriptView'
 import FocusTranscriptDetail, { FOCUS_DETAIL_WIDTH } from './FocusTranscriptDetail'
 import FocusNotesPanel from './FocusNotesPanel'
 import {

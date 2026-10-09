@@ -1,7 +1,7 @@
 // Coordinates and transcripts in the Genome Browser: formatting (one shared
 // Intl.NumberFormat), gene coordinate ranges, transcript popup metadata, intron
 // chevron layout and transcript row metrics. Pure functions.
-import { resolveGeneTranscriptView } from '../genomeBrowserTranscriptView.js'
+import { resolveGeneTranscriptView } from './genomeBrowserTranscriptView.js'
 import { COMPRESSED_TRANSCRIPT_EXON_HEIGHT, COMPRESSED_TRANSCRIPT_MID_OFFSET, COMPRESSED_TRANSCRIPT_MIN_TRACK_HEIGHT, COMPRESSED_TRANSCRIPT_ROW_GAP, COMPRESSED_TRANSCRIPT_ROW_PITCH, COMPRESSED_TRANSCRIPT_TRACK_PADDING, EXON_HEIGHT, FLATTENED_COMPRESSED_TRANSCRIPT_MIN_TRACK_HEIGHT, FLATTENED_COMPRESSED_TRANSCRIPT_TRACK_PADDING, FLATTENED_TRANSCRIPT_MID_OFFSET, FLATTENED_TRANSCRIPT_MIN_TRACK_HEIGHT, FLATTENED_TRANSCRIPT_ROW_GAP, FLATTENED_TRANSCRIPT_ROW_PITCH, FLATTENED_TRANSCRIPT_TRACK_PADDING, TRACK_HEIGHT } from './browserConstants.js'
 
 // Shared for the same reason as the ruler's: this runs per label, per frame.

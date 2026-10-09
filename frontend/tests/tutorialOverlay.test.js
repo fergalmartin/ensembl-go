@@ -19,7 +19,7 @@ import { readBackendSources, readSources } from './helpers/readSource.js'
 
 const overlay = readFileSync(new URL('../src/components/TutorialOverlay.jsx', import.meta.url), 'utf8')
 const provider = readFileSync(new URL('../src/hooks/useTutorial.jsx', import.meta.url), 'utf8')
-const browserView = readFileSync(new URL('../src/components/GenomeBrowserView.jsx', import.meta.url), 'utf8')
+const browserView = readFileSync(new URL('../src/components/genome-browser/GenomeBrowserView.jsx', import.meta.url), 'utf8')
 const screenshot = readFileSync(new URL('../src/components/ScreenshotSelectionOverlay.jsx', import.meta.url), 'utf8')
 const main = readFileSync(new URL('../src/main.jsx', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')
@@ -697,7 +697,7 @@ test('a step that is done drops its highlight rather than holding it through the
 })
 
 test('a gene\'s own transcripts are set from the pill, not toggled', () => {
-  const browser = readSources('src/components/GenomeBrowser.jsx', 'src/components/genome-browser')
+  const browser = readSources('src/components/genome-browser')
   // The pill is DOM over the canvas, so it can carry an anchor directly.
   assert.match(browser, /data-tour-id=\{`browser-gene-transcripts-\$\{control\.id\}`\}/)
   // And it publishes which side of itself the gene is on, which is what lets the arrival
@@ -714,7 +714,7 @@ test('a gene\'s own transcripts are set from the pill, not toggled', () => {
 })
 
 test('Flatten shrinks a track without taking the gene\'s own controls with it', () => {
-  const browser = readSources('src/components/GenomeBrowser.jsx', 'src/components/genome-browser')
+  const browser = readSources('src/components/genome-browser')
   // Flatten is a height control. It used to drop the footer overlay, the expanded footer
   // and the canvas gene label as well, which left a flattened gene with no name on it and
   // no way back — and a tutorial step pointing at that control with nothing to point at.
@@ -755,7 +755,7 @@ test('an arrival sets the gene-class filter as the tutorial, not as the reader',
 })
 
 test("a locus a tutorial asks for lands where the reader can see it", () => {
-  const browser = readSources('src/components/GenomeBrowser.jsx', 'src/components/genome-browser')
+  const browser = readSources('src/components/genome-browser')
   // The drawer overlays the canvas, so a step naming a window around the focused gene
   // centres that gene behind it. Every other "put this on screen" path already goes
   // through frameFocusRange; the tutorial's own goToLocus called animateToView raw.
@@ -766,7 +766,7 @@ test("a locus a tutorial asks for lands where the reader can see it", () => {
   assert.doesNotMatch(body, /animateToView\(start, end/)
 
   // The two halves of this that were already right, kept honest.
-  const view = readFileSync(new URL('../src/components/GenomeBrowserView.jsx', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/genome-browser/GenomeBrowserView.jsx', import.meta.url), 'utf8')
   // Blind to the transcript detail: re-framing every time that panel opens would shuffle
   // the browser under someone who is reading metadata rather than the track.
   assert.match(view, /return isFocusDrawerOpen\(panelKey\) \? FOCUS_DRAWER_WIDTH : FOCUS_DRAWER_RAIL_WIDTH/)
@@ -775,7 +775,7 @@ test("a locus a tutorial asks for lands where the reader can see it", () => {
 })
 
 test("a transcript's hidden state is set from the drawer's own eye button", () => {
-  const browser = readSources('src/components/GenomeBrowser.jsx', 'src/components/genome-browser')
+  const browser = readSources('src/components/genome-browser')
   assert.match(browser, /data-tour-id=\{`browser-gene-hidden-transcripts-\$\{control\.id\}`\}/)
   // aria-pressed is false exactly when the transcript is hidden, so the arrival sets the
   // state rather than toggling whatever it finds — and presses as the tutorial, since the

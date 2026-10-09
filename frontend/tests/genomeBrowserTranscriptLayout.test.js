@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { shouldResetStickyGeneRows } from '../src/components/genomeBrowserTranscriptLayout.js'
+import { shouldResetStickyGeneRows } from '../src/components/genome-browser/genomeBrowserTranscriptLayout.js'
 
 test('leaving expanded or flattened transcript layouts resets their sticky track height', () => {
   assert.equal(

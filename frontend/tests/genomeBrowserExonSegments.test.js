@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { getTranscriptExonSegments } from '../src/components/genomeBrowserExonSegments.js'
+import { getTranscriptExonSegments } from '../src/components/genome-browser/genomeBrowserExonSegments.js'
 
 test('a plain non-coding exon draws as one outlined segment', () => {
   assert.deepEqual(

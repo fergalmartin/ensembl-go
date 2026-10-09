@@ -5,7 +5,7 @@ import {
   orderTranscripts,
   reorderTranscriptIds,
   resolveGeneTranscriptView,
-} from '../src/components/genomeBrowserTranscriptView.js'
+} from '../src/components/genome-browser/genomeBrowserTranscriptView.js'
 
 const tx = (id, isCanonical = false) => ({ id, is_canonical: isCanonical })
 

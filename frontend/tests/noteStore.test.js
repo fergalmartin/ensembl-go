@@ -252,7 +252,7 @@ test('deleting a note while its create is pending removes the eventual server co
 
 test('the genome drawer leaves note editing cleanly and clears transcript pins', () => {
     const drawer = read('components/FocusNotesPanel.jsx')
-    const browser = read('components/GenomeBrowserView.jsx')
+    const browser = read('components/genome-browser/GenomeBrowserView.jsx')
     assert.ok(drawer.includes('if (noteIsBlank(note))'),
         'blank notes still pass through confirmation')
     assert.ok(browser.includes('const handleNoteDelete'),

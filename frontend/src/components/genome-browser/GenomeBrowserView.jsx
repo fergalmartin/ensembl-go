@@ -1,32 +1,32 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { isHedgehogShh } from '../achievements/geneFocus.js'
-import { browserControlKey } from '../achievements/browserControls.js'
-import { trackAchievement } from '../achievements/tracker.js'
+import { isHedgehogShh } from '../../achievements/geneFocus.js'
+import { browserControlKey } from '../../achievements/browserControls.js'
+import { trackAchievement } from '../../achievements/tracker.js'
 import { flushSync } from 'react-dom'
-import useTutorial from '../hooks/useTutorial'
-import { registerBrowserNotes, describeBrowserViewport, browserViewportControls } from '../utils/browserTutorialControls'
-import { linkedGeneFraming } from '../utils/linkedGeneFraming'
+import useTutorial from '../../hooks/useTutorial'
+import { registerBrowserNotes, describeBrowserViewport, browserViewportControls } from '../../utils/browserTutorialControls'
+import { linkedGeneFraming } from '../../utils/linkedGeneFraming'
 import GenomeBrowser from './GenomeBrowser'
-import GenomeWheel from './GenomeWheel'
-import BrowserScrollRail from './BrowserScrollRail'
-import { registerTutorialBrowserHost } from '../utils/tutorialBrowserScene.js'
-import FocusGeneDrawer, { FOCUS_DRAWER_DETAIL_WIDTH, FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from './FocusGeneDrawer'
-import FocusLocationDrawer, { LOCATION_DRAWER_DETAIL_WIDTH } from './FocusLocationDrawer'
-import AssemblyInfoDrawer from './AssemblyInfoDrawer'
-import { hasAssemblyMetadata } from '../utils/assemblyMetadataRows'
-import ScreenshotExportModal from './ScreenshotExportModal'
-import ScreenshotSelectionOverlay from './ScreenshotSelectionOverlay'
+import GenomeWheel from '../GenomeWheel'
+import BrowserScrollRail from '../BrowserScrollRail'
+import { registerTutorialBrowserHost } from '../../utils/tutorialBrowserScene.js'
+import FocusGeneDrawer, { FOCUS_DRAWER_DETAIL_WIDTH, FOCUS_DRAWER_RAIL_WIDTH, FOCUS_DRAWER_WIDTH } from '../FocusGeneDrawer'
+import FocusLocationDrawer, { LOCATION_DRAWER_DETAIL_WIDTH } from '../FocusLocationDrawer'
+import AssemblyInfoDrawer from '../AssemblyInfoDrawer'
+import { hasAssemblyMetadata } from '../../utils/assemblyMetadataRows'
+import ScreenshotExportModal from '../ScreenshotExportModal'
+import ScreenshotSelectionOverlay from '../ScreenshotSelectionOverlay'
 
-import { API_BASE } from '../backendRuntime'
-import { classifyReadiness, readinessRetryDelay } from '../utils/browserReadiness'
-import { genomeColorResolver } from '../genomeColorSchemes'
-import useScreenshotTargets from '../hooks/useScreenshotTargets'
-import { rasterizeSvgMarkup } from '../utils/screenshotExport'
-import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch, trackAssemblyKey } from '../utils/genomeIdentity'
-import { cycleBottomSpacer } from '../utils/genomeWheel'
-import { findScrollHost, stickyControlsInset, panelAlignmentAnchor } from '../utils/browserScrollRail'
-import { resolveBrowserGene } from '../utils/browserGeneNavigation.js'
-import { LOCKED_ICON_PATH, UNLOCKED_ICON_PATH } from '../utils/lockIcons'
+import { API_BASE } from '../../backendRuntime'
+import { classifyReadiness, readinessRetryDelay } from '../../utils/browserReadiness'
+import { genomeColorResolver } from '../../genomeColorSchemes'
+import useScreenshotTargets from '../../hooks/useScreenshotTargets'
+import { rasterizeSvgMarkup } from '../../utils/screenshotExport'
+import { getAssemblyGenomeKey, getGenomeKey, genomeKeysMatch, trackAssemblyKey } from '../../utils/genomeIdentity'
+import { cycleBottomSpacer } from '../../utils/genomeWheel'
+import { findScrollHost, stickyControlsInset, panelAlignmentAnchor } from '../../utils/browserScrollRail'
+import { resolveBrowserGene } from '../../utils/browserGeneNavigation.js'
+import { LOCKED_ICON_PATH, UNLOCKED_ICON_PATH } from '../../utils/lockIcons'
 import {
     DEFAULT_NOTE_SORT_MODE,
     NOTE_TARGET_KIND_LOCATION,
@@ -34,12 +34,12 @@ import {
     buildLocationNoteTarget,
     locationNoteTargetId,
     normalizeNoteGenomeKey,
-} from '../utils/geneNotes'
-import { classifyBiotype } from '../utils/geneBiotypes'
-import { locationSpan } from '../utils/locationFocus'
-import useNoteStore from '../hooks/useNoteStore'
+} from '../../utils/geneNotes'
+import { classifyBiotype } from '../../utils/geneBiotypes'
+import { locationSpan } from '../../utils/locationFocus'
+import useNoteStore from '../../hooks/useNoteStore'
 import { alignBandToBar, getGenomeBrowserPanelSizing } from './genomeBrowserViewportLayout'
-import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../sessionResume.js'
+import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../../sessionResume.js'
 import {
     DRAG_AXIS_THRESHOLD_PX,
     isTextEntryTarget,
@@ -52,9 +52,9 @@ import {
     resolveDragAxis,
     resolveWheelAction,
     noteWheelGestureOrigin,
-} from '../utils/browsingControls'
-import { speciesItemKey } from '../app/genomeLists.js'
-import { hasFiniteGeneCoords } from '../app/geneFocus.js'
+} from '../../utils/browsingControls'
+import { speciesItemKey } from '../../app/genomeLists.js'
+import { hasFiniteGeneCoords } from '../../app/geneFocus.js'
 
 /** Shared empties keep absent notes and track registries stable across frames. */
 const EMPTY_NOTE_COUNTS = Object.freeze({})

@@ -2,8 +2,8 @@
 // configuration, notes or saved sessions are read or written.
 import { Profiler, StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import GenomeBrowserView from '../src/components/GenomeBrowserView.jsx'
-import GenomeBrowser from '../src/components/GenomeBrowser.jsx'
+import GenomeBrowserView from '../src/components/genome-browser/GenomeBrowserView.jsx'
+import GenomeBrowser from '../src/components/genome-browser/GenomeBrowser.jsx'
 import { TutorialProvider } from '../src/hooks/useTutorial.jsx'
 import { NoteStoreProvider } from '../src/hooks/useNoteStore.jsx'
 import { describeBrowserViewport } from '../src/utils/browserTutorialControls.js'

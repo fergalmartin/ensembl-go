@@ -2,7 +2,7 @@
 // Genome Browser canvas. Pure values: importable from Node tests.
 import { NUCLEOTIDE_COLORS } from '../../utils/nucleotideStyle.js'
 import { monoFont, sansFont } from '../../utils/typography.js'
-import { RULER_FONT_SIZE } from '../genomeBrowserRuler.js'
+import { RULER_FONT_SIZE } from './genomeBrowserRuler.js'
 
 export const EMPTY_LIST = Object.freeze([])
 

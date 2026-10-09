@@ -14,7 +14,7 @@ import {
   formatRulerCoord,
   rulerGeometry,
   rulerTicks,
-} from '../src/components/genomeBrowserRuler.js'
+} from '../src/components/genome-browser/genomeBrowserRuler.js'
 
 // ---------------------------------------------------------------------------
 // formatRulerCoord

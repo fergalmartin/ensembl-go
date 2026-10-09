@@ -15,7 +15,7 @@ import {
   getFocusLocationRange,
   isSameChromToken,
   shouldRenderViewportTranscriptStructures,
-} from '../src/components/genomeBrowserViewportLayout.js'
+} from '../src/components/genome-browser/genomeBrowserViewportLayout.js'
 
 test('sequence track height is fixed', () => {
   assert.equal(SEQUENCE_TRACK_HEIGHT, 36)
