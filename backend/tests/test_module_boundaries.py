@@ -57,6 +57,11 @@ def _names_tests_take_from_main(tree):
                 yield node.lineno, alias.name
         elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in aliases:
             yield node.lineno, node.attr
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute) \
+                and isinstance(node.value.value, ast.Name) and node.value.value.id == "self" \
+                and node.value.attr in aliases:
+            # `self.main = main` in setUp, then `self.main.X` in the tests.
+            yield node.lineno, node.attr
         elif isinstance(node, ast.Call):
             func = node.func
             func_name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")

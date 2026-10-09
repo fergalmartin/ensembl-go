@@ -183,14 +183,16 @@ class HomologyApiTests(unittest.TestCase):
     def setUp(self):
         HomologyStoreTests.setUp(self)
         import main
+        import routes.homology  # noqa: E402
         import config_store  # noqa: E402
         self.main = main
+        self.homology = routes.homology
         self.genome_key = 'ensembl::Mus_musculus::GCA_1::dataset::ensembl/2025_12'
         self.genome = {'provider': 'ensembl', 'species_key': 'Mus_musculus', 'assembly': 'GCA_1',
                        'dataset_release_key': 'ensembl/2025_12', 'files': {'homology': str(self.path)}}
         self.config = {'active_species': [self.genome]}
         self.config_patch = patch.object(config_store, 'load_config', return_value=self.config)
-        self.store_patch = patch.object(main, 'homology_search_store', self.store)
+        self.store_patch = patch.object(routes.homology, 'homology_search_store', self.store)
         self.config_patch.start()
         self.store_patch.start()
 
@@ -201,32 +203,32 @@ class HomologyApiTests(unittest.TestCase):
 
     def test_api_keys_access_filters_and_sources(self):
         main = self.main
-        result = main.search_homology_table(main.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1'))
+        result = self.homology.search_homology_table(self.homology.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1'))
         self.assertEqual(result['genome_key'], self.genome_key)
-        self.assertEqual(main.homology_search_sources()['sources'][self.genome_key]['source_token'], result['source_token'])
+        self.assertEqual(self.homology.homology_search_sources()['sources'][self.genome_key]['source_token'], result['source_token'])
         target = next(row for row in result['rows'] if row['values']['ref_gene_stable_id'] == 'D2')
-        focused = main.search_homology_table(main.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1', limit=2,
+        focused = self.homology.search_homology_table(self.homology.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1', limit=2,
                                                                        focus_query_gene_id='M2', focus_target_key=target['target_key']))
         self.assertEqual(focused['focus_row_id'], target['row_id'])
         self.assertEqual(focused['filtered_rows'], result['filtered_rows'])
         with self.assertRaises(main.HTTPException) as error:
-            main.search_homology_table(main.HomologySearchRequest(genome_key=self.genome_key.replace('2025_12', '2024_10'), gene_query='H1'))
+            self.homology.search_homology_table(self.homology.HomologySearchRequest(genome_key=self.genome_key.replace('2025_12', '2024_10'), gene_query='H1'))
         self.assertEqual(error.exception.status_code, 404)
         with self.assertRaises(main.HTTPException):
-            main.search_homology_table(main.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1', min_identity=float('nan')))
+            self.homology.search_homology_table(self.homology.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1', min_identity=float('nan')))
 
     def test_no_file_and_unconfigured_path(self):
         main = self.main
         self.genome['files']['homology'] = ''
         with self.assertRaises(main.HTTPException) as error:
-            main.search_homology_table(main.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1'))
+            self.homology.search_homology_table(self.homology.HomologySearchRequest(genome_key=self.genome_key, gene_query='H1'))
         self.assertEqual(error.exception.status_code, 404)
-        self.assertEqual(main.homology_search_sources()['sources'][self.genome_key]['status'], 'missing')
+        self.assertEqual(self.homology.homology_search_sources()['sources'][self.genome_key]['status'], 'missing')
         with self.assertRaises(main.HTTPException):
-            main._resolve_allowed_homology_path(str(self.path))
+            self.homology._resolve_allowed_homology_path(str(self.path))
 
     def test_legacy_endpoint_contract_remains_unchanged(self):
-        legacy = asyncio.run(self.main.query_homology_table(path=str(self.path), gene_query='BRCA2'))
+        legacy = asyncio.run(self.homology.query_homology_table(path=str(self.path), gene_query='BRCA2'))
         self.assertEqual(legacy['match_scope'], 'query')
         self.assertEqual(legacy['matched_by'], 'exact')
         self.assertEqual(legacy['total_matches'], 4)
@@ -239,12 +241,12 @@ class HomologyApiTests(unittest.TestCase):
         directory = self.root / 'local_data' / 'Mus_musculus' / 'GCA_1' / 'datasets' / 'ensembl' / '2025_12'
         directory.mkdir(parents=True)
         downloaded = directory / 'GCA_1.homology.tsv.gz'
-        self.assertEqual(self.main.homology_search_sources()['sources'][self.genome_key]['status'], 'missing')
+        self.assertEqual(self.homology.homology_search_sources()['sources'][self.genome_key]['status'], 'missing')
         write_tsv(downloaded, self.rows)
-        source = self.main.homology_search_sources()['sources'][self.genome_key]
+        source = self.homology.homology_search_sources()['sources'][self.genome_key]
         self.assertEqual(source['status'], 'ready')
         self.assertEqual(source['path'], str(downloaded.resolve()))
-        result = self.main.search_homology_table(self.main.HomologySearchRequest(genome_key=self.genome_key, gene_query='Brca2'))
+        result = self.homology.search_homology_table(self.homology.HomologySearchRequest(genome_key=self.genome_key, gene_query='Brca2'))
         self.assertEqual(result['total_rows'], 6)
         self.assertEqual(result['source_token'], source['source_token'])
         self.assertEqual(self.genome['files']['homology'], '')
@@ -252,7 +254,7 @@ class HomologyApiTests(unittest.TestCase):
         other = directory.parent / '2024_10'
         other.mkdir()
         write_tsv(other / downloaded.name, self.rows)
-        self.assertEqual(self.main.homology_search_sources()['sources'][self.genome_key]['status'], 'missing')
+        self.assertEqual(self.homology.homology_search_sources()['sources'][self.genome_key]['status'], 'missing')
 
     def test_discovery_handles_legacy_paths_and_annotation_only_release_records(self):
         self.config['output_dir'] = str(self.root)
@@ -262,11 +264,11 @@ class HomologyApiTests(unittest.TestCase):
         downloaded = directory / 'GCA_1.homology.tsv'
         write_tsv(downloaded, self.rows)
         self.genome['files'] = {'homology': ''}
-        self.assertEqual(self.main._homology_source_path(self.genome, self.config), str(downloaded.resolve()))
+        self.assertEqual(self.homology._homology_source_path(self.genome, self.config), str(downloaded.resolve()))
         release = directory / 'datasets' / 'ensembl' / '2025_12'
         release.mkdir(parents=True)
         write_tsv(release / downloaded.name, self.rows)
         self.genome['files']['gff3'] = str(release / 'GCA_1.gff3.gz')
-        self.assertEqual(self.main._homology_source_path(self.genome, self.config), str((release / downloaded.name).resolve()))
+        self.assertEqual(self.homology._homology_source_path(self.genome, self.config), str((release / downloaded.name).resolve()))
         self.genome['dataset_release_key'] = 'ensembl/../../outside'
-        self.assertEqual(self.main._homology_source_path(self.genome, self.config), '')
+        self.assertEqual(self.homology._homology_source_path(self.genome, self.config), '')
