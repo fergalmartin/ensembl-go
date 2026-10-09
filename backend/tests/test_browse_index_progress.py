@@ -29,6 +29,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import gff_index  # noqa: E402
 import config_store  # noqa: E402
 
 
@@ -52,10 +53,10 @@ class IndexProgressTests(unittest.TestCase):
     def tearDown(self):
         deadline = time.time() + 30
         while time.time() < deadline:
-            with main._index_tasks_guard:
+            with gff_index._index_tasks_guard:
                 busy = any(
                     task.get("status") in {"queued", "running"}
-                    for task in main._index_tasks.values()
+                    for task in gff_index._index_tasks.values()
                 )
             if not busy:
                 break
@@ -64,23 +65,23 @@ class IndexProgressTests(unittest.TestCase):
         shutil.rmtree(self.root, ignore_errors=True)
 
     def _clear_tasks(self):
-        with main._index_tasks_guard:
-            main._index_tasks.clear()
+        with gff_index._index_tasks_guard:
+            gff_index._index_tasks.clear()
 
     def _record_task(self, task_id, **fields):
         task = {
             "status": "queued",
-            "db_path": main._normalize_fs_path(str(self.db)),
-            "gff_path": main._normalize_fs_path(str(self.gff)),
-            "gff_signature": main._annotation_signature(str(self.gff)),
+            "db_path": gff_index._normalize_fs_path(str(self.db)),
+            "gff_path": gff_index._normalize_fs_path(str(self.gff)),
+            "gff_signature": gff_index._annotation_signature(str(self.gff)),
             "index_path": None,
             "error": None,
             "progress": None,
             "queued_at": main.now_iso(),
         }
         task.update(fields)
-        with main._index_tasks_guard:
-            main._index_tasks[task_id] = task
+        with gff_index._index_tasks_guard:
+            gff_index._index_tasks[task_id] = task
         return task
 
     # -- regions while the index is still coming ---------------------------
@@ -104,10 +105,10 @@ class IndexProgressTests(unittest.TestCase):
             self.assertEqual(main._get_browse_db_for_regions("reference"), ("", False))
 
     def test_a_built_index_is_handed_over_with_nothing_outstanding(self):
-        main.ensure_gff_index(str(self.gff), str(self.db))
+        gff_index.ensure_gff_index(str(self.gff), str(self.db))
         with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
             db_path, pending = main._get_browse_db_for_regions("reference")
-        self.assertEqual(db_path, main._normalize_fs_path(str(self.db)))
+        self.assertEqual(db_path, gff_index._normalize_fs_path(str(self.db)))
         self.assertFalse(pending)
 
     def test_gene_queries_still_refuse_to_answer_without_an_index(self):
@@ -157,8 +158,8 @@ class IndexProgressTests(unittest.TestCase):
         self._record_task(
             "running",
             status="running",
-            gff_path=main._normalize_fs_path(str(other_gff)),
-            db_path=main._normalize_fs_path(str(self.root / "other.index.db")),
+            gff_path=gff_index._normalize_fs_path(str(other_gff)),
+            db_path=gff_index._normalize_fs_path(str(self.root / "other.index.db")),
         )
         self._record_task("waiting", status="queued")
 
@@ -170,7 +171,7 @@ class IndexProgressTests(unittest.TestCase):
         self.assertEqual(status["queue_length"], 2)
 
     def test_status_reports_a_built_index_as_ready(self):
-        main.ensure_gff_index(str(self.gff), str(self.db))
+        gff_index.ensure_gff_index(str(self.gff), str(self.db))
         with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
             status = main._index_status_for_genome("reference")
         self.assertEqual(status["state"], main.INDEX_STATE_READY)
@@ -188,7 +189,7 @@ class IndexProgressTests(unittest.TestCase):
     def test_asking_for_status_never_starts_a_build(self):
         # Views that only watch progress must not be the thing that begins work.
         with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
-            with patch.object(main, "queue_index_build", side_effect=AssertionError("queued")):
+            with patch.object(gff_index, "queue_index_build", side_effect=AssertionError("queued")):
                 status = main._index_status_for_genome("reference")
         self.assertEqual(status["state"], main.INDEX_STATE_ABSENT)
 
@@ -198,7 +199,7 @@ class IndexProgressTests(unittest.TestCase):
         self._record_task("failed", status="failed", error="bad line 4", completed_at=main.now_iso())
         self.assertEqual(main._index_build_error_for(str(self.gff), str(self.db)), "bad line 4")
 
-        self.assertEqual(main.forget_index_failures(str(self.gff), str(self.db)), 1)
+        self.assertEqual(gff_index.forget_index_failures(str(self.gff), str(self.db)), 1)
         self.assertEqual(main._index_build_error_for(str(self.gff), str(self.db)), "")
 
     def test_replacing_the_annotation_clears_the_failure_by_itself(self):
@@ -217,14 +218,14 @@ class IndexProgressTests(unittest.TestCase):
             self.assertEqual(main._index_build_error_for(str(self.gff), str(self.db)), "bad line 4")
 
     def test_the_task_registry_does_not_grow_without_limit(self):
-        for n in range(main.MAX_FINISHED_INDEX_TASKS + 15):
+        for n in range(gff_index.MAX_FINISHED_INDEX_TASKS + 15):
             self._record_task(f"done-{n:04d}", status="success", completed_at=f"2020-01-01T00:00:{n:02d}Z")
-        main._prune_finished_index_tasks()
-        with main._index_tasks_guard:
-            self.assertEqual(len(main._index_tasks), main.MAX_FINISHED_INDEX_TASKS)
+        gff_index._prune_finished_index_tasks()
+        with gff_index._index_tasks_guard:
+            self.assertEqual(len(gff_index._index_tasks), gff_index.MAX_FINISHED_INDEX_TASKS)
             # The newest are what a caller might still be asking about.
-            self.assertIn("done-0054", main._index_tasks)
-            self.assertNotIn("done-0000", main._index_tasks)
+            self.assertIn("done-0054", gff_index._index_tasks)
+            self.assertNotIn("done-0000", gff_index._index_tasks)
 
     # -- the numbers behind the meter --------------------------------------
 
@@ -236,7 +237,7 @@ class IndexProgressTests(unittest.TestCase):
         big.write_text("".join(rows))
 
         seen = []
-        main.create_gff_index(str(big), str(self.root / "big.index.db"), progress_cb=seen.append)
+        gff_index.create_gff_index(str(big), str(self.root / "big.index.db"), progress_cb=seen.append)
 
         self.assertTrue(seen, "the build reported nothing at all")
         self.assertTrue(any(item["stage"] == "parsing" for item in seen))
@@ -254,8 +255,8 @@ class IndexProgressTests(unittest.TestCase):
             raise RuntimeError("the meter blew up")
 
         db = self.root / "resilient.index.db"
-        main.create_gff_index(str(self.gff), str(db), progress_cb=explode)
-        self.assertTrue(main._is_existing_index_usable(str(db), str(self.gff)))
+        gff_index.create_gff_index(str(self.gff), str(db), progress_cb=explode)
+        self.assertTrue(gff_index._is_existing_index_usable(str(db), str(self.gff)))
 
 
 class ConfigCacheTests(unittest.TestCase):

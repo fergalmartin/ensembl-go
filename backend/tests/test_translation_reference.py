@@ -44,6 +44,7 @@ from translation import (  # noqa: E402
 )
 
 import main  # noqa: E402
+import gff_index  # noqa: E402
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 FASTA_PATH = DATA_DIR / "translation_fixture.fa"
@@ -80,7 +81,7 @@ class TranslationFixtureTestCase(unittest.TestCase):
 
         cls._tmp = tempfile.TemporaryDirectory()
         db_path = str(Path(cls._tmp.name) / "fixture.index.db")
-        main.ensure_gff_index(str(GFF_PATH), db_path, force_rebuild=True)
+        gff_index.ensure_gff_index(str(GFF_PATH), db_path, force_rebuild=True)
         cls.transcripts = {}
         import sqlite3
 

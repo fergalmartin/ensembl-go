@@ -435,7 +435,7 @@ class ExistingIndexerRoundTripTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from main import create_gff_index  # noqa: WPS433 - heavy import, once
+        from gff_index import create_gff_index  # noqa: WPS433 - heavy import, once
         cls.create_gff_index = staticmethod(create_gff_index)
 
     def _round_trip(self, name, **kwargs):

@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import gff_index  # noqa: E402
 import app_state  # noqa: E402
 
 
@@ -33,7 +34,7 @@ def _write_usable_index(db_path: Path, gff_path: Path, version: str = "") -> Non
                 ("source_gff", str(gff_path.resolve())),
                 ("source_mtime_ns", str(stat.st_mtime_ns)),
                 ("source_size", str(stat.st_size)),
-                ("index_format_version", version or main.GFF_INDEX_FORMAT_VERSION),
+                ("index_format_version", version or gff_index.GFF_INDEX_FORMAT_VERSION),
             ],
         )
         conn.commit()
@@ -50,8 +51,8 @@ class LocalAssembliesTests(unittest.TestCase):
             gff_path.write_text("##gff-version 3\n", encoding="utf-8")
             _write_usable_index(db_path, gff_path, version="5")
 
-            with patch.object(main, "create_gff_index") as create_mock:
-                result = main.ensure_gff_index(str(gff_path), str(db_path))
+            with patch.object(gff_index, "create_gff_index") as create_mock:
+                result = gff_index.ensure_gff_index(str(gff_path), str(db_path))
 
             self.assertEqual(result, str(db_path.resolve()))
             create_mock.assert_not_called()
@@ -66,9 +67,9 @@ class LocalAssembliesTests(unittest.TestCase):
             original = b"existing index must survive"
             db_path.write_bytes(original)
 
-            with patch.object(main, "create_gff_index", side_effect=RuntimeError("build failed")):
+            with patch.object(gff_index, "create_gff_index", side_effect=RuntimeError("build failed")):
                 with self.assertRaisesRegex(RuntimeError, "build failed"):
-                    main.ensure_gff_index(str(gff_path), str(db_path))
+                    gff_index.ensure_gff_index(str(gff_path), str(db_path))
 
             self.assertEqual(db_path.read_bytes(), original)
 
@@ -93,9 +94,9 @@ class LocalAssembliesTests(unittest.TestCase):
             results = []
 
             def ensure():
-                results.append(main.ensure_gff_index(str(gff_path), str(db_path)))
+                results.append(gff_index.ensure_gff_index(str(gff_path), str(db_path)))
 
-            with patch.object(main, "create_gff_index", side_effect=fake_create):
+            with patch.object(gff_index, "create_gff_index", side_effect=fake_create):
                 first = threading.Thread(target=ensure)
                 second = threading.Thread(target=ensure)
                 first.start()
@@ -110,7 +111,7 @@ class LocalAssembliesTests(unittest.TestCase):
             self.assertEqual(len(build_paths), 1)
             self.assertNotEqual(build_paths[0], str(db_path))
             self.assertEqual(results, [str(db_path.resolve()), str(db_path.resolve())])
-            self.assertTrue(main._is_existing_index_usable(str(db_path), str(gff_path)))
+            self.assertTrue(gff_index._is_existing_index_usable(str(db_path), str(gff_path)))
 
     def test_check_local_files_accepts_bgz_fasta_and_gff3(self):
         with tempfile.TemporaryDirectory() as tmpdir:

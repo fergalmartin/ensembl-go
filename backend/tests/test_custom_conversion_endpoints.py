@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi import HTTPException  # noqa: E402
 
 import main  # noqa: E402
+import gff_index  # noqa: E402
 from main import (  # noqa: E402
     ConvertAnnotationRequest,
     CustomAnnotationRequest,
@@ -276,7 +277,7 @@ class ConvertedFileIsIndexableTests(unittest.TestCase):
         )))
 
         db_path = str(Path(_tmpdir(self)) / "index.db")
-        main.create_gff_index(result["path"], db_path)
+        gff_index.create_gff_index(result["path"], db_path)
 
         import sqlite3
         conn = sqlite3.connect(db_path)

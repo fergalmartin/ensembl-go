@@ -95,17 +95,18 @@ class RegionTests(unittest.TestCase):
 class FeatureTests(unittest.TestCase):
     def test_matches_the_msa_views_mapper_for_one_genomic_window(self):
         import main
+        import gff_index  # noqa: E402
         for strand in '+-':
             with self.subTest(strand=strand):
                 t = transcript(strand)
                 region, seq = fetch_sequence(plan_region(t, 'genomic', 100, 100), fetch)
                 aligned = gapped(seq)
                 ours = map_features(t, region, aligned, seq)
-                simple = main.SimpleTranscript(
+                simple = gff_index.SimpleTranscript(
                     't', '1', t['start'], t['end'], strand,
-                    [main.SimpleFeature('exon', e['start'], e['end'], strand) for e in t['exons']],
-                    [main.SimpleFeature('CDS', c['start'], c['end'], strand) for c in t['cds']],
-                    [main.SimpleFeature(u['feature_type'], u['start'], u['end'], strand) for u in t['utrs']])
+                    [gff_index.SimpleFeature('exon', e['start'], e['end'], strand) for e in t['exons']],
+                    [gff_index.SimpleFeature('CDS', c['start'], c['end'], strand) for c in t['cds']],
+                    [gff_index.SimpleFeature(u['feature_type'], u['start'], u['end'], strand) for u in t['utrs']])
                 seg = region['segments'][0]
                 theirs = [f.model_dump(exclude={'codon_phase'}) for f in
                           main.map_features_to_alignment(simple, seg['start'], seg['end'], aligned, strand, seq)]
@@ -220,14 +221,15 @@ class MsaViewSharingTests(unittest.TestCase):
     """The MSA view and the Gene Trees view find each other's alignments."""
 
     def _items(self, main):
+        import gff_index  # noqa: E402
         items = []
         for i, strand in enumerate('+-'):
             t = transcript(strand)
-            simple = main.SimpleTranscript(
+            simple = gff_index.SimpleTranscript(
                 f'tx{i}', '1', t['start'], t['end'], strand,
-                [main.SimpleFeature('exon', e['start'], e['end'], strand) for e in t['exons']],
-                [main.SimpleFeature('CDS', c['start'], c['end'], strand) for c in t['cds']],
-                [main.SimpleFeature(u['feature_type'], u['start'], u['end'], strand) for u in t['utrs']])
+                [gff_index.SimpleFeature('exon', e['start'], e['end'], strand) for e in t['exons']],
+                [gff_index.SimpleFeature('CDS', c['start'], c['end'], strand) for c in t['cds']],
+                [gff_index.SimpleFeature(u['feature_type'], u['start'], u['end'], strand) for u in t['utrs']])
             # The MSA view's default window: the gene (here 950-2200), with oriented flanks.
             start, end = main._interval_window_with_oriented_flanks(950, 2200, strand, 100, 60)
             seq, _, _ = fetch('1', start, end)
@@ -239,6 +241,7 @@ class MsaViewSharingTests(unittest.TestCase):
 
     def test_an_msa_row_and_a_gene_tree_row_of_one_transcript_share_a_signature(self):
         import main
+        import gff_index  # noqa: E402
         from dataclasses import asdict
         from unittest.mock import patch
         items = self._items(main)
@@ -251,6 +254,7 @@ class MsaViewSharingTests(unittest.TestCase):
 
     def test_an_msa_run_is_saved_and_reused(self):
         import main
+        import gff_index  # noqa: E402
         from unittest.mock import patch
         items = self._items(main)
         with patch.object(main, '_resolve_browse_genome_context', lambda g: {'species': {'assembly': f'GCA_{g}'}}):
@@ -275,7 +279,8 @@ class MsaTrimTests(unittest.TestCase):
 
     def test_a_gene_running_past_its_selected_transcript_is_cut_back(self):
         import main
-        tx = lambda strand, start, end: main.SimpleTranscript('t', '1', start, end, strand, [main.SimpleFeature('exon', start, end, strand)], [], [])  # noqa: E731
+        import gff_index  # noqa: E402
+        tx = lambda strand, start, end: gff_index.SimpleTranscript('t', '1', start, end, strand, [gff_index.SimpleFeature('exon', start, end, strand)], [], [])  # noqa: E731
         # Row A: a gene window 101-160 whose selected transcript is 111-120 (flanks 5 and 3,
         # so 106-123 is kept); row B: a window that is its transcript plus flanks.
         a_seq, b_seq = 'A' * 60, 'C' * 20

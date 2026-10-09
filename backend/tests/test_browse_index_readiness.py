@@ -22,6 +22,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import gff_index  # noqa: E402
 
 
 TOY_GFF = (
@@ -39,18 +40,18 @@ class BrowseIndexReadinessTests(unittest.TestCase):
         self.gff.write_text(TOY_GFF)
         self.db = self.root / "toy.gff3.index.db"
         self.context = {"db_path": str(self.db), "gff_path": str(self.gff)}
-        with main._index_tasks_guard:
-            main._index_tasks.clear()
+        with gff_index._index_tasks_guard:
+            gff_index._index_tasks.clear()
 
     def tearDown(self):
         # The worker builds into this directory, so let any build it was handed
         # finish before the directory goes away.
         deadline = time.time() + 30
         while time.time() < deadline:
-            with main._index_tasks_guard:
+            with gff_index._index_tasks_guard:
                 busy = any(
                     task.get("status") in {"queued", "running"}
-                    for task in main._index_tasks.values()
+                    for task in gff_index._index_tasks.values()
                 )
             if not busy:
                 break
@@ -60,14 +61,14 @@ class BrowseIndexReadinessTests(unittest.TestCase):
     def _await_index(self, timeout=30.0):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self.db.exists() and main._is_existing_index_usable(str(self.db), str(self.gff)):
+            if self.db.exists() and gff_index._is_existing_index_usable(str(self.db), str(self.gff)):
                 return True
             time.sleep(0.05)
         return False
 
     def test_missing_index_is_reported_rather_than_built_inline(self):
         with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
-            with patch.object(main, "ensure_gff_index", side_effect=AssertionError("built inline")):
+            with patch.object(gff_index, "ensure_gff_index", side_effect=AssertionError("built inline")):
                 with self.assertRaises(HTTPException) as caught:
                     main._get_browse_db("reference")
 
@@ -82,7 +83,7 @@ class BrowseIndexReadinessTests(unittest.TestCase):
             self.assertTrue(self._await_index(), "the queued build never completed")
             self.assertEqual(
                 main._get_browse_db("reference"),
-                main._normalize_fs_path(str(self.db)),
+                gff_index._normalize_fs_path(str(self.db)),
             )
 
     def test_a_second_request_reuses_the_queued_build(self):
@@ -91,8 +92,8 @@ class BrowseIndexReadinessTests(unittest.TestCase):
             for _ in range(3):
                 with self.assertRaises(HTTPException):
                     main._get_browse_db("reference")
-                with main._index_tasks_guard:
-                    task_ids |= set(main._index_tasks)
+                with gff_index._index_tasks_guard:
+                    task_ids |= set(gff_index._index_tasks)
             self.assertEqual(len(task_ids), 1, "each poll queued another build of the same index")
 
     def test_a_pending_index_is_not_reported_as_an_absent_annotation(self):
@@ -116,14 +117,14 @@ class BrowseIndexReadinessTests(unittest.TestCase):
         # The lock a build holds must never be waited on by a request. A build is
         # simulated by holding the rebuild guard while resolving the index.
         with patch.object(main, "_resolve_browse_genome_context", return_value=self.context):
-            main._index_rebuild_guard.acquire()
+            gff_index._index_rebuild_guard.acquire()
             try:
                 started = time.time()
                 with self.assertRaises(HTTPException):
                     main._get_browse_db("reference")
                 self.assertLess(time.time() - started, 2.0)
             finally:
-                main._index_rebuild_guard.release()
+                gff_index._index_rebuild_guard.release()
 
     def test_queue_index_build_is_safe_to_call_from_several_threads(self):
         results = []
@@ -131,7 +132,7 @@ class BrowseIndexReadinessTests(unittest.TestCase):
 
         def worker():
             barrier.wait()
-            results.append(main.queue_index_build(str(self.gff), str(self.db))[0])
+            results.append(gff_index.queue_index_build(str(self.gff), str(self.db))[0])
 
         threads = [threading.Thread(target=worker) for _ in range(4)]
         for thread in threads:

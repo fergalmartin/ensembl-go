@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import gff_index  # noqa: E402
 import app_paths  # noqa: E402
 from stats_utils import choose_stats_cache_path  # noqa: E402
 
@@ -59,12 +60,12 @@ class StatsIndexRecoveryTests(unittest.TestCase):
 
     def test_an_index_built_after_registration_is_picked_up(self):
         db = self.release_dir / "GCF_000001405.40.genomic.gff3.index.db"
-        main.ensure_gff_index(str(self.gff), str(db))
+        gff_index.ensure_gff_index(str(self.gff), str(db))
 
         resolved = main._stats_species_with_index(self._species(), self.cfg)
         self.assertEqual(
-            main._normalize_fs_path(resolved["files"]["index"]),
-            main._normalize_fs_path(str(db)),
+            gff_index._normalize_fs_path(resolved["files"]["index"]),
+            gff_index._normalize_fs_path(str(db)),
         )
 
     def test_an_index_that_does_not_exist_yet_is_not_claimed(self):
@@ -76,7 +77,7 @@ class StatsIndexRecoveryTests(unittest.TestCase):
 
     def test_a_record_that_already_names_a_real_index_is_left_alone(self):
         db = self.release_dir / "explicit.index.db"
-        main.ensure_gff_index(str(self.gff), str(db))
+        gff_index.ensure_gff_index(str(self.gff), str(db))
         species = self._species(index=str(db))
         self.assertIs(main._stats_species_with_index(species, self.cfg), species)
 

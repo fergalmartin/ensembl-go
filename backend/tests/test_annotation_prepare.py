@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi import HTTPException  # noqa: E402
 
 import main  # noqa: E402
+import gff_index  # noqa: E402
 from annotation.convert import conversion_required, prepare_annotation  # noqa: E402
 from annotation.normalize import normalize_annotation  # noqa: E402
 from main import (  # noqa: E402
@@ -156,7 +157,7 @@ class PrepareAnnotationTests(unittest.TestCase):
         result = prepare_annotation(source)
 
         db_path = str(Path(_tmpdir(self)) / "index.db")
-        main.create_gff_index(result["annotation_path"], db_path)
+        gff_index.create_gff_index(result["annotation_path"], db_path)
         conn = sqlite3.connect(db_path)
         self.addCleanup(conn.close)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM genes").fetchone()[0], 2)
@@ -218,7 +219,7 @@ class IndexPathPlacementTests(unittest.TestCase):
         gff.write_text("##gff-version 3\n", encoding="utf-8")
         output_dir = _tmpdir(self)
 
-        resolved = main._resolve_index_path(str(gff), output_dir, "genes.gff3.index.db")
+        resolved = gff_index._resolve_index_path(str(gff), output_dir, "genes.gff3.index.db")
         self.assertEqual(resolved.parent, directory.resolve())
 
     def test_index_never_lands_in_the_output_dir_root(self):
@@ -229,7 +230,7 @@ class IndexPathPlacementTests(unittest.TestCase):
         gff.write_text("x", encoding="utf-8")
         output_dir = Path(_tmpdir(self))
 
-        resolved = main._resolve_index_path(
+        resolved = gff_index._resolve_index_path(
             str(gff), str(output_dir), "custom.gff3.index.db"
         )
         self.assertNotEqual(resolved.parent, output_dir)
@@ -242,7 +243,7 @@ class IndexPathPlacementTests(unittest.TestCase):
         self.addCleanup(os.chmod, directory, 0o700)
         output_dir = Path(_tmpdir(self))
 
-        resolved = main._resolve_index_path(
+        resolved = gff_index._resolve_index_path(
             str(gff), str(output_dir), "genes.gff3.index.db"
         )
         self.assertEqual(resolved.parent, output_dir / "indexes")
@@ -254,7 +255,7 @@ class IndexPathPlacementTests(unittest.TestCase):
         gff = asm_dir / "GCA_000005845.2.gff3"
         gff.write_text("##gff-version 3\n", encoding="utf-8")
 
-        resolved = main._resolve_index_path(str(gff), str(output_dir), "fallback.db")
+        resolved = gff_index._resolve_index_path(str(gff), str(output_dir), "fallback.db")
         self.assertEqual(
             resolved.resolve(),
             (asm_dir / "GCA_000005845.2.gff3.index.db").resolve(),
@@ -262,19 +263,19 @@ class IndexPathPlacementTests(unittest.TestCase):
 
     def test_index_basename_strips_annotation_extensions(self):
         self.assertEqual(
-            main._index_basename_for_annotation("GCA_004027535.1.gtf.gz"),
+            gff_index._index_basename_for_annotation("GCA_004027535.1.gtf.gz"),
             "GCA_004027535.1.gff3.index.db",
         )
         self.assertEqual(
-            main._index_basename_for_annotation("/a/b/genes.gff3.gz"),
+            gff_index._index_basename_for_annotation("/a/b/genes.gff3.gz"),
             "genes.gff3.index.db",
         )
         self.assertEqual(
-            main._index_basename_for_annotation("genes.ensembl.gff3.gz"),
+            gff_index._index_basename_for_annotation("genes.ensembl.gff3.gz"),
             "genes.gff3.index.db",
         )
         self.assertEqual(
-            main._index_basename_for_annotation("annotation.gff"),
+            gff_index._index_basename_for_annotation("annotation.gff"),
             "annotation.gff3.index.db",
         )
 

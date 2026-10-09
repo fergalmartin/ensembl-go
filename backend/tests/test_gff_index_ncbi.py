@@ -7,7 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import create_gff_index, _extract_protein_ids_from_gff  # noqa: E402
+from main import _extract_protein_ids_from_gff  # noqa: E402
+from gff_index import create_gff_index  # noqa: E402
 
 
 class NcbiGffIndexTests(unittest.TestCase):

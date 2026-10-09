@@ -26,6 +26,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import gff_index  # noqa: E402
 import config_store  # noqa: E402
 
 
@@ -58,18 +59,18 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
         shutil.rmtree(self.root, ignore_errors=True)
 
     def _reset_state(self):
-        with main._index_tasks_guard:
-            main._index_tasks.clear()
+        with gff_index._index_tasks_guard:
+            gff_index._index_tasks.clear()
         with main._RECOVERED_INDEX_GUARD:
             main._RECOVERED_INDEX_PATHS.clear()
 
     def _await_quiet_worker(self, timeout=60.0):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            with main._index_tasks_guard:
+            with gff_index._index_tasks_guard:
                 busy = any(
                     task.get("status") in {"queued", "running"}
-                    for task in main._index_tasks.values()
+                    for task in gff_index._index_tasks.values()
                 )
             if not busy:
                 return
@@ -78,7 +79,7 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
     def _build_index(self, name):
         """Build a real index beside the GFF, as the selector's Build does."""
         db = self.release_dir / name
-        main.ensure_gff_index(str(self.gff), str(db))
+        gff_index.ensure_gff_index(str(self.gff), str(db))
         return db
 
     # ── recovering an index the saved entry never learned about ──────────────
@@ -87,8 +88,8 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
         db = self._build_index("GCF_000001405.40.genomic.gff3.index.db")
         resolved = main._resolve_annotation_index(str(self.gff), self.cfg, "GCF_000001405.40")
         self.assertEqual(
-            main._normalize_fs_path(resolved),
-            main._normalize_fs_path(str(db)),
+            gff_index._normalize_fs_path(resolved),
+            gff_index._normalize_fs_path(str(db)),
         )
 
     def test_browsing_uses_the_index_on_disk_when_the_saved_entry_has_none(self):
@@ -104,7 +105,7 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
                 with patch.object(main, "_active_species_item_key", return_value="genome-key"):
                     self.assertEqual(
                         main._get_browse_db("genome-key"),
-                        main._normalize_fs_path(str(db)),
+                        gff_index._normalize_fs_path(str(db)),
                     )
 
     def test_a_stale_saved_index_path_does_not_hide_the_real_one(self):
@@ -114,8 +115,8 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
             str(self.gff), str(removed), self.cfg, {"assembly": "GCF_000001405.40"}
         )
         self.assertEqual(
-            main._normalize_fs_path(resolved),
-            main._normalize_fs_path(str(db)),
+            gff_index._normalize_fs_path(resolved),
+            gff_index._normalize_fs_path(str(db)),
         )
 
     def test_a_genome_with_no_annotation_resolves_to_no_index(self):
@@ -149,7 +150,7 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
                     self._await_quiet_worker()
                     self.assertEqual(
                         main._get_browse_db("genome-key"),
-                        main._normalize_fs_path(
+                        gff_index._normalize_fs_path(
                             main._resolve_annotation_index(str(self.gff), cfg, "GCF_000001405.40")
                         ),
                     )
@@ -158,36 +159,36 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
         # The selector builds to a name derived from the file; the browse path
         # derives its own from the assembly. Two names for one annotation must
         # not mean two parses of a multi-gigabyte GFF3.
-        with main._index_tasks_guard:
-            main._index_tasks["task"] = {
+        with gff_index._index_tasks_guard:
+            gff_index._index_tasks["task"] = {
                 "status": "running",
-                "db_path": main._normalize_fs_path(str(self.release_dir / "selector.index.db")),
-                "gff_path": main._normalize_fs_path(str(self.gff)),
+                "db_path": gff_index._normalize_fs_path(str(self.release_dir / "selector.index.db")),
+                "gff_path": gff_index._normalize_fs_path(str(self.gff)),
             }
         resolved = main._resolve_annotation_index(str(self.gff), self.cfg, "GCF_000001405.40")
         self.assertEqual(Path(resolved).name, "selector.index.db")
 
     def test_queueing_the_same_annotation_under_another_name_reuses_the_build(self):
-        first, _ = main.queue_index_build(str(self.gff), str(self.release_dir / "a.index.db"))
-        second, _ = main.queue_index_build(str(self.gff), str(self.release_dir / "b.index.db"))
+        first, _ = gff_index.queue_index_build(str(self.gff), str(self.release_dir / "a.index.db"))
+        second, _ = gff_index.queue_index_build(str(self.gff), str(self.release_dir / "b.index.db"))
         self.assertEqual(first, second)
 
     # ── a build that cannot succeed must not be retried on every poll ────────
 
     def test_a_failed_build_is_reported_instead_of_queued_again(self):
         db = self.release_dir / "GCF_000001405.40.gff3.index.db"
-        with main._index_tasks_guard:
-            main._index_tasks["failed"] = {
+        with gff_index._index_tasks_guard:
+            gff_index._index_tasks["failed"] = {
                 "status": "failed",
-                "db_path": main._normalize_fs_path(str(db)),
-                "gff_path": main._normalize_fs_path(str(self.gff)),
+                "db_path": gff_index._normalize_fs_path(str(db)),
+                "gff_path": gff_index._normalize_fs_path(str(self.gff)),
                 "error": "unreadable attributes on line 4",
                 "completed_at": main.now_iso(),
             }
 
         context = {"db_path": str(db), "gff_path": str(self.gff)}
         with patch.object(main, "_resolve_browse_genome_context", return_value=context):
-            with patch.object(main, "queue_index_build", side_effect=AssertionError("requeued")):
+            with patch.object(gff_index, "queue_index_build", side_effect=AssertionError("requeued")):
                 with self.assertRaises(HTTPException) as caught:
                     main._get_browse_db("genome-key")
 
@@ -196,18 +197,18 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
 
     def test_a_later_successful_build_clears_the_reported_failure(self):
         db = self._build_index("GCF_000001405.40.gff3.index.db")
-        with main._index_tasks_guard:
-            main._index_tasks["failed"] = {
+        with gff_index._index_tasks_guard:
+            gff_index._index_tasks["failed"] = {
                 "status": "failed",
-                "db_path": main._normalize_fs_path(str(db)),
-                "gff_path": main._normalize_fs_path(str(self.gff)),
+                "db_path": gff_index._normalize_fs_path(str(db)),
+                "gff_path": gff_index._normalize_fs_path(str(self.gff)),
                 "error": "transient disk error",
                 "completed_at": "2020-01-01T00:00:00Z",
             }
-            main._index_tasks["ok"] = {
+            gff_index._index_tasks["ok"] = {
                 "status": "success",
-                "db_path": main._normalize_fs_path(str(db)),
-                "gff_path": main._normalize_fs_path(str(self.gff)),
+                "db_path": gff_index._normalize_fs_path(str(db)),
+                "gff_path": gff_index._normalize_fs_path(str(self.gff)),
                 "error": None,
                 "completed_at": "2030-01-01T00:00:00Z",
             }
