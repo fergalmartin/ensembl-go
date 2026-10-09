@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import (  # noqa: E402
+from routes.vcf import (  # noqa: E402
     VcfBlockTileRequest,
     VcfBlockTilesRequest,
     _build_vcf_block_spans_fast,
@@ -155,11 +155,11 @@ class VcfSettingsTests(unittest.TestCase):
             )
             fake_handle = _FakeVcfHandle([15, 120, 450, 455, 900])
 
-            with patch("main._open_vcf_handle_unlocked", return_value=(fake_handle, (1, 1), str(vcf_path))), \
-                    patch("main._resolve_vcf_chrom", return_value="chr1"), \
-                    patch("main._load_vcf_gene_intervals", return_value=[(0, 260), (700, 760)]), \
-                    patch("main._load_vcf_block_tile_cache", return_value=None), \
-                    patch("main._save_vcf_block_tile_cache", return_value=None):
+            with patch("routes.vcf._open_vcf_handle_unlocked", return_value=(fake_handle, (1, 1), str(vcf_path))), \
+                    patch("routes.vcf._resolve_vcf_chrom", return_value="chr1"), \
+                    patch("routes.vcf._load_vcf_gene_intervals", return_value=[(0, 260), (700, 760)]), \
+                    patch("routes.vcf._load_vcf_block_tile_cache", return_value=None), \
+                    patch("routes.vcf._save_vcf_block_tile_cache", return_value=None):
                 payload = _browse_vcf_block_tiles_sync(request)
 
         tiles = payload.get("tiles") or []

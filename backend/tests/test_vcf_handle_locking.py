@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pysam  # noqa: E402
 
 import main  # noqa: E402
-from main import locked_vcf  # noqa: E402
+from routes.vcf import locked_vcf  # noqa: E402
 
 VCF_BODY = """##fileformat=VCFv4.2
 ##contig=<ID=chr1,length=100000>
@@ -157,6 +157,16 @@ class HandleAccessDisciplineTests(unittest.TestCase):
     """The cached handle must only be reachable through the locking helper."""
 
     @staticmethod
+    def _app_sources():
+        """(name, lines) for every module of the backend app, wherever the VCF code lives."""
+        backend = Path(main.__file__).resolve().parent
+        skip = {"tests", "scripts", "cache", "static", "data", "__pycache__"}
+        for path in sorted(backend.rglob("*.py")):
+            if path.relative_to(backend).parts[0] in skip:
+                continue
+            yield str(path.relative_to(backend)), path.read_text(encoding="utf-8").split("\n")
+
+    @staticmethod
     def _enclosing_def(source, index):
         """Name of the top-level def containing ``source[index]``."""
         for cursor in range(index, -1, -1):
@@ -166,9 +176,9 @@ class HandleAccessDisciplineTests(unittest.TestCase):
         return ""
 
     def test_no_caller_bypasses_the_context_manager(self):
-        source = Path(main.__file__).read_text(encoding="utf-8").split("\n")
         uses = [
-            (index, line.strip())
+            (name, source, index, line.strip())
+            for name, source in self._app_sources()
             for index, line in enumerate(source)
             if "_open_vcf_handle_unlocked(" in line
             and not line.strip().startswith("def ")
@@ -176,21 +186,21 @@ class HandleAccessDisciplineTests(unittest.TestCase):
         self.assertTrue(uses, "the helper vanished; this guard needs updating")
 
         # The only permitted use is inside locked_vcf itself.
-        for index, text in uses:
+        for name, source, index, text in uses:
             self.assertEqual(
                 self._enclosing_def(source, index),
                 "locked_vcf",
-                "line {0} reaches the VCF handle without locked_vcf: {1}".format(
-                    index + 1, text
+                "{0}:{1} reaches the VCF handle without locked_vcf: {2}".format(
+                    name, index + 1, text
                 ),
             )
 
     def test_every_vcf_scan_runs_under_the_context_manager(self):
         # Functions that consume a handle are only ever called from inside a
         # `with locked_vcf(...)` block; this asserts the entry points still are.
-        source = Path(main.__file__).read_text(encoding="utf-8").split("\n")
         entry_points = {
             self._enclosing_def(source, index)
+            for _name, source in self._app_sources()
             for index, line in enumerate(source)
             if "locked_vcf(" in line and "with " in line
         }
@@ -208,7 +218,7 @@ class HandleAccessDisciplineTests(unittest.TestCase):
         )
 
     def test_variant_file_is_only_constructed_in_one_place(self):
-        source = Path(main.__file__).read_text(encoding="utf-8")
+        source = "\n".join("\n".join(lines) for _name, lines in self._app_sources())
         self.assertEqual(
             len(re.findall(r"pysam\.VariantFile\(", source)),
             1,
