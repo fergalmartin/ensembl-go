@@ -12,6 +12,7 @@ import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from urllib.parse import unquote
 
 from fastapi import HTTPException
 
@@ -797,3 +798,144 @@ def _resolve_track_chrom_with_aliases(requested: str, available: List[str], geno
     if variant_matches:
         return sorted(variant_matches, key=lambda v: (len(v), v.lower()))[0]
     return token
+
+
+def _extract_transcript_tags_from_gff(gff_path: str, transcript_ids: set) -> dict:
+    remaining = {str(tid).strip() for tid in (transcript_ids or set()) if str(tid).strip()}
+    if not remaining or not gff_path or not os.path.exists(gff_path):
+        return {}
+
+    tag_map = {}
+    try:
+        with file_io.open_maybe_gz(gff_path, 'r') as f:
+            for line in f:
+                if not remaining:
+                    break
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) < 9:
+                    continue
+                attrs = gff_index._parse_gff_attributes(parts[8])
+                raw_id = attrs.get('ID', '')
+                t_id = raw_id.replace('transcript:', '').replace('mapped_transcript:', '')
+                if not t_id:
+                    t_id = attrs.get('transcript_id', '')
+                if t_id not in remaining:
+                    continue
+                tags = attrs.get('tag', '')
+                tag_map[t_id] = [t.strip() for t in str(tags).split(',') if t.strip()]
+                remaining.discard(t_id)
+    except Exception:
+        return {}
+    return tag_map
+
+
+def _resolve_transcript_tags_for_db(db_path: str, transcript_ids: set) -> dict:
+    if not transcript_ids:
+        return {}
+    source_gff = ""
+    try:
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("SELECT value FROM metadata WHERE key = 'source_gff'")
+        row = c.fetchone()
+        conn.close()
+        source_gff = str(row[0]) if row and row[0] else ""
+    except Exception:
+        source_gff = ""
+    return _extract_transcript_tags_from_gff(source_gff, transcript_ids)
+
+
+_gene_description_cache: Dict[Tuple[str, str], Optional[str]] = {}
+
+
+MAX_DESCRIPTION_FALLBACK_SCAN_LINES = 200000
+
+
+MAX_DESCRIPTION_FALLBACK_SCAN_BYTES = 12 * 1024 * 1024
+
+
+def _normalize_gene_description(value: Any) -> Optional[str]:
+    text = unquote(str(value or "")).strip()
+    return text or None
+
+
+def _extract_gene_description_from_gff(gff_path: str, gene_id: str) -> Optional[str]:
+    target_gene_id = str(gene_id or "").strip()
+    if not target_gene_id or not gff_path or not os.path.exists(gff_path):
+        return None
+
+    gene_feature_types = {
+        'gene',
+        'pseudogene',
+        'ncRNA_gene',
+        'rRNA_gene',
+        'snRNA_gene',
+        'snoRNA_gene',
+        'miRNA_gene',
+        'misc_RNA_gene',
+        'tRNA_gene',
+        'transposable_element_gene',
+        'scRNA_gene',
+        'vault_RNA_gene',
+    }
+
+    try:
+        scanned_lines = 0
+        scanned_bytes = 0
+        with file_io.open_maybe_gz(gff_path, 'r') as f:
+            for line in f:
+                scanned_lines += 1
+                scanned_bytes += len(line)
+                if scanned_lines > MAX_DESCRIPTION_FALLBACK_SCAN_LINES or scanned_bytes > MAX_DESCRIPTION_FALLBACK_SCAN_BYTES:
+                    # Keep lazy fallback bounded so resolve/search requests stay responsive.
+                    return None
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) < 9:
+                    continue
+                attrs = gff_index._parse_gff_attributes(parts[8])
+                raw_id = attrs.get('ID', '')
+                parent_attr = attrs.get('Parent', '')
+                has_gene_id = raw_id.startswith('gene:')
+                is_gene_level = (parts[2] in gene_feature_types) or (has_gene_id and not parent_attr)
+                if not is_gene_level:
+                    continue
+                row_gene_id = raw_id.replace('gene:', '') or attrs.get('gene_id', '')
+                if row_gene_id != target_gene_id:
+                    continue
+                return _normalize_gene_description(
+                    attrs.get('description') or attrs.get('gene_description') or attrs.get('product')
+                )
+    except Exception:
+        return None
+    return None
+
+
+def _resolve_gene_description_for_db(db_path: str, gene_id: str, current_description: Any = None) -> Optional[str]:
+    existing = _normalize_gene_description(current_description)
+    if existing:
+        return existing
+
+    source_gff = ""
+    try:
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("SELECT value FROM metadata WHERE key = 'source_gff'")
+        row = c.fetchone()
+        conn.close()
+        source_gff = str(row[0]) if row and row[0] else ""
+    except Exception:
+        source_gff = ""
+    if not source_gff:
+        return None
+
+    cache_key = (os.path.abspath(source_gff), str(gene_id or ""))
+    if cache_key in _gene_description_cache:
+        return _gene_description_cache[cache_key]
+
+    desc = _extract_gene_description_from_gff(source_gff, str(gene_id or ""))
+    _gene_description_cache[cache_key] = desc
+    return desc
