@@ -64,11 +64,11 @@ Each of the following leaked at least once and had to be handled separately:
 | Not covered | Fix |
 | --- | --- |
 | The backend's idea of which genomes exist | `POST /api/tutorial/session` registers them for the life of the process |
-| Notes | Every notes endpoint resolves its store from `load_config()` — the *real* config. `main._notes_config` swaps in the tutorial workspace while a session is registered, and drops the global store from the merge |
-| The browser's own controls — Detail, Flatten, the gene-class filter, the track master switch | `preTutorialViewRef` in `GenomeBrowserView.jsx` snapshots on the way in and restores on the way out |
+| Notes | Every notes endpoint resolves its store from `load_config()` — the *real* config. `_notes_config` (`backend/routes/notes.py`) swaps in the tutorial workspace while a session is registered, and drops the global store from the merge |
+| The browser's own controls — Detail, Flatten, the gene-class filter, the track master switch | `preTutorialViewRef` in `genome-browser/GenomeBrowserView.jsx` snapshots on the way in and restores on the way out |
 | The focused gene | Lives in App state, not config. `preTutorialBrowserFocusRef` in `App.jsx` |
 | Anything derived from a focused gene | Focusing pushes the name into the comparison-view inputs, which look it up against the user's reference genome |
-| The custom track registry | `/api/tracks` resolves its store from `load_config()`. `main._tracks_config` swaps the workspace in — **and that alone was not enough**, see below |
+| The custom track registry | `/api/tracks` resolves its store from `load_config()`. `_tracks_config` (`backend/routes/tracks.py`) swaps the workspace in — **and that alone was not enough**, see below |
 
 **The rule for anything new:** snapshot and restore if it is the user's, or suppress while
 the sandbox is up if it is meaningless during a tutorial. **Assume a new surface is in this

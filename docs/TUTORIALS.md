@@ -1052,7 +1052,7 @@ have one heading for the whole section rather than a copied string on every step
 | The endpoints | `GET /api/tutorial/authoring`, `POST /api/tutorial/authoring/step`, `POST /api/tutorial/authoring/step-position`, `POST /api/tutorial/authoring/step-size` |
 
 **To turn it off:** set `TUTORIAL_AUTHORING = false` in `authoring.js`, or
-`TUTORIAL_AUTHORING = False` in `main.py`. Either one is enough — the frontend asks the
+`TUTORIAL_AUTHORING = False` in `backend/routes/tutorial.py`. Either one is enough — the frontend asks the
 backend before offering the pencil. To remove it: delete those two files, the two
 endpoints, the `authoringEnabled` / `editStepText` / `editStepPosition` / `editStepSize` values in
 `useTutorial.jsx`, and the
@@ -1268,40 +1268,40 @@ Two other forms:
 
 | Anchor | Where |
 | --- | --- |
-| `app-button-${buttonId}` | [App.jsx](../frontend/src/App.jsx) — one attribute, every app button |
+| `app-button-${buttonId}` | [AppLayout.jsx](../frontend/src/components/app-shell/AppLayout.jsx) — one attribute, every app button |
 | `config-section-outputs`, `config-section-configuration` | [ConfigurationView.jsx](../frontend/src/components/ConfigurationView.jsx) — section headers |
 | `config-output-dir`, `config-save` | ConfigurationView.jsx |
-| `download-search`, `download-file-types`, `download-species-list` | [DownloadView.jsx](../frontend/src/components/DownloadView.jsx) |
-| `download-species-${species.key}`, `download-start-${item.species_key}` | DownloadView.jsx — per genome row |
+| `download-search`, `download-file-types`, `download-species-list` | [DownloadView.jsx](../frontend/src/components/DownloadView.jsx), [DownloadTypeToolbar.jsx](../frontend/src/components/download/DownloadTypeToolbar.jsx) |
+| `download-species-${species.key}`, `download-start-${item.species_key}` | [SpeciesRow.jsx](../frontend/src/components/download/SpeciesRow.jsx), [GenomeRowActions.jsx](../frontend/src/components/download/GenomeRowActions.jsx) — per genome row |
 | `selector-search`, `selector-genome-${species_key}`, `selector-checkbox-${species_key}` | [GenomeSelectorView.jsx](../frontend/src/components/GenomeSelectorView.jsx) |
-| `browser-location-search`, `browser-location-search-field`, `browser-location-search-go`, `browser-region-select`, `browser-expand-transcripts`, `browser-coordinates`, `browser-recenter` | [GenomeBrowser.jsx](../frontend/src/components/GenomeBrowser.jsx) — the per-genome toolbar and the focus bar |
-| `browser-track-gutter`, `browser-track-gf`, `browser-track-gr`, `browser-track-sl` | GenomeBrowser.jsx — markers over the canvas gutter, see below |
-| `browser-gene-note-${bubble.id}` | GenomeBrowser.jsx — the mark drawn on a gene that has notes |
-| `browser-gene-transcripts-${gene.id}` | GenomeBrowser.jsx — the `+N` / X pill under a gene |
-| `browser-gene-hidden-transcripts-${gene.id}` | GenomeBrowser.jsx — the “Show N hidden” label under a gene |
-| `browser-global-controls`, `browser-unfocus`, `browser-tracks-toggle`, `browser-detail`, `browser-flatten` | [GenomeBrowserView.jsx](../frontend/src/components/GenomeBrowserView.jsx) — the bar that applies to every active genome |
+| `browser-location-search`, `browser-location-search-field`, `browser-location-search-go`, `browser-region-select`, `browser-expand-transcripts`, `browser-coordinates`, `browser-recenter` | [BrowserToolbar.jsx](../frontend/src/components/genome-browser/BrowserToolbar.jsx) — the per-genome toolbar and the focus bar |
+| `browser-track-gutter`, `browser-track-gf`, `browser-track-gr`, `browser-track-sl` | [BrowserPanel.jsx](../frontend/src/components/genome-browser/BrowserPanel.jsx) — markers over the canvas gutter, see below |
+| `browser-gene-note-${bubble.id}` | [BrowserPanel.jsx](../frontend/src/components/genome-browser/BrowserPanel.jsx) — the mark drawn on a gene that has notes |
+| `browser-gene-transcripts-${gene.id}` | [BrowserPanel.jsx](../frontend/src/components/genome-browser/BrowserPanel.jsx) — the `+N` / X pill under a gene |
+| `browser-gene-hidden-transcripts-${gene.id}` | [BrowserPanel.jsx](../frontend/src/components/genome-browser/BrowserPanel.jsx) — the “Show N hidden” label under a gene |
+| `browser-global-controls`, `browser-unfocus`, `browser-tracks-toggle`, `browser-detail`, `browser-flatten` | [BrowserViewLayout.jsx](../frontend/src/components/genome-browser/view/BrowserViewLayout.jsx) — the bar that applies to every active genome |
 | `browser-cycle`, `browser-cycle-wheel`, `browser-cycle-rail`, `browser-cycle-genome-${entry.tourId}`, `browser-cycle-action-focus`, `browser-cycle-action-add`, `browser-cycle-cancel`, `browser-cycle-status` | [GenomeWheel.jsx](../frontend/src/components/GenomeWheel.jsx) — the Cycle button and the wheel it raises |
-| `browser-biotype-filter`, `browser-biotype-${key}` | GenomeBrowserView.jsx — the gene-class grid and its four checkboxes |
+| `browser-biotype-filter`, `browser-biotype-${key}` | [BrowserViewLayout.jsx](../frontend/src/components/genome-browser/view/BrowserViewLayout.jsx) — the gene-class grid and its four checkboxes |
 | `focus-transcripts-expand`, `focus-transcript-info-${id}`, `focus-transcript-hide-${id}`, `focus-notes-add`, `[data-focus-drawer-notes]` | [FocusGeneDrawer.jsx](../frontend/src/components/FocusGeneDrawer.jsx) |
-| `browser-focus-window`, `browser-recenter-location`, `[data-location-focus-bar="true"]` | GenomeBrowser.jsx — making the window the location of focus, and the bar that says so |
+| `browser-focus-window`, `browser-recenter-location`, `[data-location-focus-bar="true"]` | [BrowserToolbar.jsx](../frontend/src/components/genome-browser/BrowserToolbar.jsx) — making the window the location of focus, and the bar that says so |
 | `focus-location-dismiss`, `location-info`, `location-strand`, `location-section-${sectionId}`, `location-show-hidden`, `location-notes-add`, `location-note-row-${id}`, `[data-location-drawer="true"]`, `[data-location-drawer-notes="true"]`, `[data-location-drawer-section="genes"]` | [FocusLocationDrawer.jsx](../frontend/src/components/FocusLocationDrawer.jsx) |
 | `location-gene-info-${id}`, `location-gene-focus-${id}`, `location-gene-hide-${id}`, `location-page-prev-${sectionId}`, `location-page-next-${sectionId}`, `[data-drawer-location-gene-row]` | FocusLocationDrawer.jsx — one gene's row in the location's list |
 | `location-gene-detail-focus`, `location-gene-detail-close`, `[data-location-gene-detail]` | [LocationGeneDetail.jsx](../frontend/src/components/LocationGeneDetail.jsx) |
 | `location-sequence-close`, `location-sequence-strand`, `location-sequence-copy`, `location-sequence-copy-all`, `location-sequence-expand`, `[data-location-sequence-panel="true"]` | [LocationSequencePanel.jsx](../frontend/src/components/LocationSequencePanel.jsx) |
 | `focus-sequence-types`, `focus-sequence-${feature.key}` | [FocusTranscriptDetail.jsx](../frontend/src/components/FocusTranscriptDetail.jsx) |
 | `focus-note-title`, `focus-note-body`, `focus-note-save` | [FocusNotesPanel.jsx](../frontend/src/components/FocusNotesPanel.jsx) |
-| `app-genome-pills` | [App.jsx](../frontend/src/App.jsx) — the complete selected-genomes strip |
+| `app-genome-pills` | [AppLayout.jsx](../frontend/src/components/app-shell/AppLayout.jsx) — the complete selected-genomes strip |
 | `genome-pill-${species_key}` | [SelectedSpeciesPillsBar.jsx](../frontend/src/components/SelectedSpeciesPillsBar.jsx) — the top-bar pills |
 | `tutorial-card-${tutorial.id}` | [TutorialsView.jsx](../frontend/src/components/TutorialsView.jsx) |
 | `manual-add-panel`, `manual-add-toggle`, `manual-labels`, `manual-genome-label`, `manual-assembly-label`, `manual-accession`, `manual-index`, `manual-index-path`, `manual-index-browse`, `manual-add-genome` | [GenomeSelectorView.jsx](../frontend/src/components/GenomeSelectorView.jsx) — the add-a-genome form |
-| `manual-fasta`, `manual-annotation`, `manual-homology` and their `-browse` / `-analyse` buttons | `ManualPathRow`, through `tourId` / `analyseTourId` / `browseTourId` props |
+| `manual-fasta`, `manual-annotation`, `manual-homology` and their `-browse` / `-analyse` buttons | [`ManualPathRow`](../frontend/src/components/genome-selector/ManualPathRow.jsx), through `tourId` / `analyseTourId` / `browseTourId` props |
 | `track-manager-view`, `track-manager-header`, `track-manager-add`, `track-manager-filters`, `track-manager-search`, `track-manager-list`, `track-manager-hub` | [TrackManagerView.jsx](../frontend/src/components/TrackManagerView.jsx) — the view and its two halves |
-| `track-wizard`, `track-wizard-browse`, `track-wizard-file`, `track-wizard-type`, `track-wizard-label`, `track-wizard-bigwig`, `track-wizard-vcf`, `track-wizard-genome`, `track-wizard-register`, `track-wizard-back`, `track-wizard-display-mode` | TrackManagerView.jsx — the registration wizard |
-| `track-wizard-datatype`, `track-wizard-display` | `BigWigSettingsEditor`, through `dataTypeTourId` / `displayModeTourId` props — the wizard and an editing track card both render it, and an anchor resolves to the first match |
-| `track-manager-track-${track.id}`, `data-tutorial-track-label` | TrackManagerView.jsx — one registered track's card, addressed by the label the tutorial typed because the registry id is minted at registration |
-| `browser-add-track`, `browser-track-picker`, `browser-track-picker-list`, `browser-track-picker-add`, `browser-track-picker-close` | [GenomeBrowser.jsx](../frontend/src/components/GenomeBrowser.jsx) — showing a registered track on a panel |
-| `browser-toggle-track-${trackId}`, `data-tutorial-track-switch` | GenomeBrowser.jsx — one custom track's gutter switch, an invisible button over the canvas-drawn control calling the same setter. Drawn whenever a tutorial is running, not only for a genome from an embedded recipe |
-| `browser-track-picker-row-${registeredTrack.id}`, `data-tutorial-picker-track` | GenomeBrowser.jsx — one row of the picker, addressed by label for the same reason |
+| `track-wizard`, `track-wizard-browse`, `track-wizard-file`, `track-wizard-type`, `track-wizard-label`, `track-wizard-bigwig`, `track-wizard-vcf`, `track-wizard-genome`, `track-wizard-register`, `track-wizard-back`, `track-wizard-display-mode` | [RegistrationWizard.jsx](../frontend/src/components/track-manager/RegistrationWizard.jsx) — the registration wizard |
+| `track-wizard-datatype`, `track-wizard-display` | [`BigWigSettingsEditor`](../frontend/src/components/track-manager/trackSettingsEditors.jsx), through `dataTypeTourId` / `displayModeTourId` props — the wizard and an editing track card both render it, and an anchor resolves to the first match |
+| `track-manager-track-${track.id}`, `data-tutorial-track-label` | [TrackCard.jsx](../frontend/src/components/track-manager/TrackCard.jsx) — one registered track's card, addressed by the label the tutorial typed because the registry id is minted at registration |
+| `browser-add-track`, `browser-track-picker`, `browser-track-picker-list`, `browser-track-picker-add`, `browser-track-picker-close` | [BrowserToolbar.jsx](../frontend/src/components/genome-browser/BrowserToolbar.jsx), [BrowserPanel.jsx](../frontend/src/components/genome-browser/BrowserPanel.jsx) — showing a registered track on a panel |
+| `browser-toggle-track-${trackId}`, `data-tutorial-track-switch` | [BrowserPanel.jsx](../frontend/src/components/genome-browser/BrowserPanel.jsx) — one custom track's gutter switch, an invisible button over the canvas-drawn control calling the same setter. Drawn whenever a tutorial is running, not only for a genome from an embedded recipe |
+| `browser-track-picker-row-${registeredTrack.id}`, `data-tutorial-picker-track` | [BrowserPanel.jsx](../frontend/src/components/genome-browser/BrowserPanel.jsx) — one row of the picker, addressed by label for the same reason |
 | `file-browser`, `file-browser-path`, `file-browser-list`, `file-browser-entry-${name}`, `file-browser-close` | [FileBrowserModal.jsx](../frontend/src/components/FileBrowserModal.jsx) |
 | `validation-report-${kind}`, `validation-genome-*`, `validation-annotation-*` | [ValidationReportPanel.jsx](../frontend/src/components/ValidationReportPanel.jsx) |
 
@@ -1341,8 +1341,8 @@ A signal is the app telling the tutorial that something real happened.
 | `config.saved` | `handleConfigSaved` in App.jsx | — |
 | `genome.activated` | `toggleTutorialGenome` in useTutorial.jsx — the tutorial's own stand-in for a genome selection, since the real one is not allowed to reach the config | `{ speciesKey }` |
 | `browser.geneFocused` | `handleRefGeneSelect` in App.jsx | `{ gene }` |
-| `browser.noteCreated` | `handleNoteCreate` in GenomeBrowserView.jsx, once the server's id lands | `{ geneId, noteId }` |
-| `browser.regionSearched` | `handleSearch` in GenomeBrowser.jsx, on a successful `chr:start-end` | `{ chrom, start, end }` |
+| `browser.noteCreated` | `handleNoteCreate` in genome-browser/GenomeBrowserView.jsx, once the server's id lands | `{ geneId, noteId }` |
+| `browser.regionSearched` | `runBrowserSearch` in genome-browser/browserSearch.js (the panel's `handleSearch`), on a successful `chr:start-end` | `{ chrom, start, end }` |
 
 **`browser.regionSearched` is what the search step waits on**, and the reasoning
 generalises. The box empties itself on a successful search, so an `input` advance on it
@@ -1537,7 +1537,7 @@ should assume the same.
   broken rather than as the edge of a slice. Every other genome is unaffected.
 - **Notes are written through `load_config()`, not the config override.** So a note taken
   during a tutorial landed in the user's real notes file and outlived the tutorial.
-  `main._notes_config` is the fix: while a tutorial session is registered, the notes
+  `_notes_config` (`backend/routes/notes.py`) is the fix: while a tutorial session is registered, the notes
   endpoints resolve their store against the tutorial's workspace, and the global store is
   left out of the merge entirely. Anything else that reaches for `load_config()` rather
   than for the frontend's configuration is in the same category — assume it is until shown
@@ -1581,13 +1581,13 @@ example. The override is a *frontend configuration* fact. It does not reach:
   `POST /api/tutorial/session`.
 - **Notes.** Every notes endpoint resolves its store from `load_config()` — the *real*
   configuration — so a note taken during a tutorial was written into the user's own notes
-  file and stayed there. `main._notes_config` swaps in the tutorial's workspace while a
+  file and stayed there. `_notes_config` (`backend/routes/notes.py`) swaps in the tutorial's workspace while a
   session is registered, and the global store is dropped from the merge so the user's
   notes are not visible inside the tutorial either.
 - **The custom track registry.** The same shape again: `/api/tracks` resolved its store from
   `load_config()`, so the three tracks the Track Manager tutorial asks the reader to register
   landed in the user's own `track_registry.json` and outlived the run, by then pointing into a
-  deleted workspace. `main._tracks_config` swaps the workspace in, and — because that swap is
+  deleted workspace. `_tracks_config` (`backend/routes/tracks.py`) swaps the workspace in, and — because that swap is
   timing-dependent like every other one here — `register_track` also **refuses outright** to
   put a file that lives inside a tutorial workspace into any other store.
 - **The browser's own controls.** Detail, Flatten, the gene-class filter and the track
@@ -1612,7 +1612,7 @@ There are two, described as `BundledGenome` records in
 `POST /api/tutorial/session` accepts either, and nothing else, still only with files
 inside a tutorial workspace. Everything that used to be a module constant is now a field
 on the record, with the old `DEMO_*` names kept pointing at the demo genome because the
-first tutorial, the download view and a good deal of `main.py` refer to it by them.
+first tutorial, the download view and a good deal of the backend refer to it by them.
 
 ### The demo genome
 
@@ -2133,7 +2133,7 @@ button or its track picker.
 | A `select` action | `tutorialModel.js`, `tutorialDocument.js`, `useTutorial.jsx` — see below |
 | Shared registration | `frontend/src/utils/tutorialTrackRegistry.js`, lifted out of the view so the runtime can register from a step in another app |
 | Demo tracks in the workspace | `install_demo_track_files`, `POST /api/tutorial/demo-tracks` |
-| **The tracks sandbox guard** | `main._tracks_config`, and a refusal in `register_track` |
+| **The tracks sandbox guard** | `_tracks_config` (`backend/routes/tracks.py`), and a refusal in `register_track` |
 | Builder editor sections | **Track Manager on arrival** and **Custom tracks on the panel** |
 
 ### The sandbox did not cover the track registry
@@ -2143,7 +2143,7 @@ the *real* configuration on disk, with no tutorial awareness. A reader registeri
 demo tracks wrote three entries into their own `track_registry.json`, pointing at files inside
 a workspace that is deleted when the tutorial ends.
 
-`main._tracks_config` is the fix, and it is `_notes_config` copied exactly: while a tutorial
+`_tracks_config` (`backend/routes/tracks.py`) is the fix, and it is `_notes_config` copied exactly: while a tutorial
 session is registered the tracks endpoints resolve their store against the tutorial's
 workspace, and `_track_registry_store_paths_for_config` returns *only* that sidecar, so the
 user's own tracks are not listed inside the tutorial either.
@@ -2340,7 +2340,7 @@ step being reached backwards.**
 | --- | --- |
 | 30 target contracts | `frontend/src/tutorialTargets/genomeBrowser.js` — `browser.focusWindow`, `browser.recenterLocation`, `browser.locationFocusBar`, `browser.locationDrawer` and the `location.*` family |
 | Three explicit attributes | `data-location-focus-bar`, `data-location-drawer-notes`, `data-location-drawer-section` — see below |
-| `setLocationFocus` on the panel | `GenomeBrowser.jsx`, published through `registerBrowserViewport`; `describe()` now reports `locationFocus` |
+| `setLocationFocus` on the panel | `genome-browser/tutorialViewport.js`, published through `registerBrowserViewport`; `describe()` now reports `locationFocus` |
 | `setBrowserLocationFocus` | `frontend/src/utils/browserTutorialControls.js` |
 | The `locationFocus` and `locationDetail` arrivals | `tutorialModel.js` validation, applied in `useTutorial.jsx` |
 | Builder fields | **Browser arrival state** gained *Location of focus* and *Beside the location drawer* |

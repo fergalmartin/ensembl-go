@@ -191,17 +191,17 @@ Both are cheap to change later if you disagree.
 
 | Path | UI | Backend | What it does |
 |---|---|---|---|
-| **Manual genome** | [GenomeSelectorView.jsx:2210](../frontend/src/components/GenomeSelectorView.jsx#L2210) `addManualGenome` | *none* | Writes a record into `config.manual_species` / `config.active_species`. No file is read, opened, or checked. |
-| **Custom annotation** | [GenomeSelectorView.jsx:1916](../frontend/src/components/GenomeSelectorView.jsx#L1916) | [`POST /api/remote/custom-annotation`](../backend/main.py#L6425) | `shutil.copy2` the GFF3 into `<assembly>/datasets/custom/<label>/`, register in the manifest. |
+| **Manual genome** | [`addManualGenome`](../frontend/src/components/GenomeSelectorView.jsx) | *none* | Writes a record into `config.manual_species` / `config.active_species`. No file is read, opened, or checked. |
+| **Custom annotation** | [`CustomAnnotationModal`](../frontend/src/components/genome-selector/CustomAnnotationModal.jsx) | [`POST /api/remote/custom-annotation`](../backend/routes/downloads.py) | `shutil.copy2` the GFF3 into `<assembly>/datasets/custom/<label>/`, register in the manifest. |
 
 Neither path parses the file. The first time anything is actually read is when the genome
-browser asks for a region and [`_get_browse_db`](../backend/main.py#L8580) triggers
-[`create_gff_index`](../backend/main.py#L1405) — by which point the user has committed to
+browser asks for a region and [`_get_browse_db`](../backend/genome_context.py) triggers
+[`create_gff_index`](../backend/gff_index.py) — by which point the user has committed to
 the genome and any failure surfaces as an empty gene track, not an error.
 
 ### 1.2 The parser
 
-[`create_gff_index`](../backend/main.py#L1405) is a single-pass GFF3 reader that:
+[`create_gff_index`](../backend/gff_index.py) is a single-pass GFF3 reader that:
 
 - splits attributes on `;` then `=` — **GFF3 syntax only**
 - recognises a fixed allowlist of gene-level (12) and transcript-level (24) SO terms,
@@ -213,20 +213,20 @@ the genome and any failure surfaces as an empty gene track, not an error.
   when a CDS exists; otherwise the raw attribute value is passed through unchanged
 
 There is no GTF path anywhere. `.gtf` appears only in file-type *classification*
-([main.py:6087](../backend/main.py#L6087), [download_manager.py:2614](../backend/download_manager.py#L2614)),
+([`_classify_local_download_file`](../backend/local_inventory.py), [`_classify_annotation_file`](../backend/download_manager.py)),
 never in the indexer.
 
 ### 1.3 Annotation is currently mandatory
 
 Two places hard-require a GFF3, so "genome only" is not reachable:
 
-- [main.py:6955](../backend/main.py#L6955) — `list_local_assemblies` skips any assembly
+- [`list_local_assemblies`](../backend/local_inventory.py) skips any assembly
   without `files["gff3"]`: *"Local assemblies must have a GFF3 to be usable in Genome Selector."*
-- [GenomeSelectorView.jsx:2210](../frontend/src/components/GenomeSelectorView.jsx#L2210) —
+- [`addManualGenome`](../frontend/src/components/GenomeSelectorView.jsx) —
   `addManualGenome` refuses to submit without both FASTA and GFF3.
 
 `/api/browse/regions` already complements gene-derived regions with FASTA contigs
-([main.py:8697](../backend/main.py#L8697)), but it calls `_get_browse_db` first, which
+([`browse_regions`](../backend/routes/browse.py)), but it calls `_get_browse_db` first, which
 404s when no index exists. So the plumbing is nearly there; the gate is at the top.
 
 ---
@@ -261,7 +261,7 @@ Plus these structural defects, all reproducible:
 
 3. **CDS-only transcripts get one fake exon spanning the introns.** Given `mRNA` +
    two `CDS` blocks and no `exon` rows, the parser falls through to
-   [main.py:1741](../backend/main.py#L1741) and emits a *single* exon covering the whole
+   [`create_gff_index`](../backend/gff_index.py) and emits a *single* exon covering the whole
    transcript span. The browser then draws a two-CDS gene sitting inside one contiguous
    exon. This is BRAKER/AUGUSTUS/Tiberius' normal shape.
 
@@ -275,11 +275,11 @@ Plus these structural defects, all reproducible:
 
 6. **Non-coding genes are rendered as coding.** Predictors emit no `biotype`, so gene rows
    get `biotype=''`, and the frontend's `classifyBiotype` returns `'proteinCoding'` for a
-   falsy biotype ([GenomeBrowser.jsx:242](../frontend/src/components/GenomeBrowser.jsx#L242)).
+   falsy biotype ([`classifyBiotype`](../frontend/src/utils/geneBiotypes.js)).
    Every unlabelled ncRNA displays as protein coding.
 
 7. **`.gtf` cannot even be selected.** `GFF3_EXTENSIONS`
-   ([GenomeSelectorView.jsx:26](../frontend/src/components/GenomeSelectorView.jsx#L26)) is
+   ([`genomeSelectorModel.js`](../frontend/src/components/genome-selector/genomeSelectorModel.js)) is
    `['.gff3', '.gff3.gz', '.gff3.bgz']`; the backend's `GFF3_DOWNLOAD_SUFFIXES` allows
    `.gff` but not `.gtf`. Plain `.gff` files are pickable by the backend but not by the
    file browser.
@@ -292,9 +292,9 @@ Plus these structural defects, all reproducible:
    annotation with heavy isoform counts will be memory-hungry.
 
 10. **Parsing logic is duplicated.** At least six independent GFF readers exist
-    ([main.py:727](../backend/main.py#L727), [:3975](../backend/main.py#L3975),
-    [:4033](../backend/main.py#L4033), [:4216](../backend/main.py#L4216),
-    [:8443](../backend/main.py#L8443), [:11024](../backend/main.py#L11024)), each with its
+    ([`find_transcript_fast`](../backend/gff_index.py), [`create_gff_index`](../backend/gff_index.py),
+    [`_extract_protein_ids_from_gff`](../backend/gff_index.py), [`resolve_gene_anchor_gff`](../backend/routes/neighbourhood.py),
+    [`_extract_transcript_tags_from_gff`](../backend/genome_context.py), [`_extract_gene_description_from_gff`](../backend/genome_context.py)), each with its
     own feature-type set and prefix regexes. Any dialect fix has to be applied N times, or
     the readers have to converge.
 
@@ -357,12 +357,12 @@ Applied in order, each recorded in the report so the user sees what was inferred
    transcripts sharing a `gene_id` (GTF) or an overlapping locus on the same strand (last
    resort) collapse into one gene.
 2. **Gene with no transcript** → synthesise one transcript spanning the gene (this already
-   exists at [main.py:1790](../backend/main.py#L1790) and is correct behaviour).
+   exists in [`create_gff_index`](../backend/gff_index.py) and is correct behaviour).
 3. **Transcript with CDS but no exons** → exons = merged CDS blocks ∪ UTR blocks.
    Fixes finding #3.
 4. **Transcript with exons but no CDS** → non-coding, no CDS synthesised. Note this
    contradicts the current `synthesize_cds_from_transcript` fallback
-   ([main.py:1515](../backend/main.py#L1515)), which fabricates a CDS whenever the parent
+   (inside [`create_gff_index`](../backend/gff_index.py)), which fabricates a CDS whenever the parent
    looks coding; that should be narrowed to the RefSeq gene-parented-CDS case it was
    written for.
 5. **Coding transcript, CDS present, UTRs absent** → derive `five_prime_UTR` /
@@ -394,9 +394,9 @@ said so.
 
 Two follow-on edits are needed so the new label is not dropped on the floor:
 - add `sncRNA` (and `lncRNA` if missing) to `BIOTYPE_CLASS`
-  ([GenomeBrowser.jsx:212](../frontend/src/components/GenomeBrowser.jsx#L212))
+  ([`geneBiotypes.js`](../frontend/src/utils/geneBiotypes.js))
 - add `sncrna` → `snoncoding` to `_FALLBACK_BIOTYPE_GROUP_BY_NAME`
-  ([stats_utils.py:46](../backend/stats_utils.py#L46))
+  ([`stats_utils.py`](../backend/stats_utils.py))
 - change `classifyBiotype`'s falsy branch from `'proteinCoding'` to a neutral/unknown
   class, so unlabelled input is never silently coloured as coding (finding #6)
 
@@ -449,7 +449,7 @@ diff-stable.
 
 Both are **optional** — a "Validate" button next to each file picker — and both run as
 background tasks (`task_id` + poll) reusing the pattern already in
-[`_index_worker_loop`](../backend/main.py#L4642), because these are full-file scans.
+[`_index_worker_loop`](../backend/gff_index.py), because these are full-file scans.
 
 ### 4.1 Genome (FASTA) report — `POST /api/custom/validate-genome`
 
@@ -472,7 +472,7 @@ Everything you asked for, plus the checks that predict downstream breakage:
 **Fitness for use**
 - compression state: plain / bgzip / gzip. Plain gzip cannot be used by `pysam` and today
   gets silently decompressed to a full-size copy on disk
-  ([`ensure_fasta_index`](../backend/main.py#L159)) — the report should state the disk
+  ([`ensure_fasta_index`](../backend/file_io.py)) — the report should state the disk
   cost up front.
 - `.fai` present, or creatable
 - duplicate sequence names; empty sequences; names containing whitespace (only the first
@@ -530,15 +530,15 @@ Severity is three-level: **error** (conversion cannot produce a valid model),
 
 Currently blocked in three places; all three are small changes.
 
-1. [main.py:6955](../backend/main.py#L6955) — allow an assembly with a FASTA and no GFF3.
+1. [`list_local_assemblies`](../backend/local_inventory.py) — allow an assembly with a FASTA and no GFF3.
    Mark it `has_annotation: false` in the record.
-2. [GenomeSelectorView.jsx:2210](../frontend/src/components/GenomeSelectorView.jsx#L2210)
-   and the disabled-state on the Add button ([:2816](../frontend/src/components/GenomeSelectorView.jsx#L2816))
+2. [`addManualGenome`](../frontend/src/components/GenomeSelectorView.jsx)
+   and the disabled-state on its Add button
    — require FASTA only.
 3. `_get_browse_db` / `browse_regions` / `browse_genes` — when no annotation is
    configured, return regions from the FASTA `.fai` alone and an empty gene list, instead
    of a 404. `browse_regions` already has the FASTA complement logic
-   ([main.py:8697](../backend/main.py#L8697)); it just needs to survive a missing `db_path`.
+   ([`browse_regions`](../backend/routes/browse.py)); it just needs to survive a missing `db_path`.
 
 The genome browser then shows the sequence track plus whatever BigWig/BigBed/VCF tracks
 the user attaches — which is the case you described. Views that genuinely need genes
@@ -634,7 +634,7 @@ and must not collapse into one entry.
 `import_custom_annotation` gains an optional `convert: true` and, when set, runs the
 conversion and registers the *converted* file as the dataset release, keeping the original
 as `source_path` in the manifest (that field already exists,
-[main.py:6491](../backend/main.py#L6491)).
+written by [`import_custom_annotation`](../backend/routes/downloads.py)).
 
 All paths go through the existing `security_utils` path guards; conversion output is
 confined to the assembly directory.

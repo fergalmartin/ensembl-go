@@ -15,7 +15,7 @@ achievement #1. Whether the view has a top-bar button makes no difference to any
 | Tracker: recording, unlocking, syncing, time | `frontend/src/achievements/tracker.js` |
 | View, medal, unlock toast | `frontend/src/components/achievements/` |
 | Store format, merging, disk | `backend/achievements_store.py` |
-| Store paths, endpoints, download/delete events | `backend/main.py`, section "Achievements" |
+| Store paths, endpoints, download/delete events | `backend/routes/achievements.py` |
 | Tests | `frontend/tests/achievements.test.js`, `backend/tests/test_achievements_store.py` |
 
 ## Adding an achievement

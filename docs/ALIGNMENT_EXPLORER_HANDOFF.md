@@ -193,8 +193,8 @@ Paths below are relative to the repository root.
 
 Application integration:
 
-- `frontend/src/App.jsx`: lazy `alignment_explorer` route, active-genome/config props, MAFFT **Open in Alignment Explorer**, genome-navigation callback.
-- `backend/main.py`: registers the router and supplies `alignment_explorer_annotation_features`, using existing local annotation projection.
+- `frontend/src/App.jsx` (route rendered in `components/app-shell/AppLayout.jsx`): lazy `alignment_explorer` route, active-genome/config props, MAFFT **Open in Alignment Explorer**, genome-navigation callback.
+- `backend/main.py`: registers the router; `backend/package_providers.py` supplies `alignment_explorer_annotation_features`, using existing local annotation projection.
 - Shared toolbar/home/button configuration exposes the view. Existing Cycle and Genome Browser utilities should remain shared rather than duplicated.
 
 ## State and coordinate invariants
@@ -664,7 +664,7 @@ A TSV assigning a genome/contig is authoritative about that relationship, but do
 
 ### Fast path using existing local indexes
 
-Reuse the `.fai`/`.gzi` preparation and `ThreadSafeFasta` infrastructure in `backend/main.py`. Reuse `_build_genome_synonym_index` and the existing chromosome-name resolver; preserve multiple alias candidates rather than guessing. Access these through a small provider interface injected into the Explorer service, avoiding a new circular import from `main.py`.
+Reuse the `.fai`/`.gzi` preparation and `ThreadSafeFasta` infrastructure in `backend/file_io.py`. Reuse `_build_genome_synonym_index` (`backend/genome_context.py`) and the existing chromosome-name resolver; preserve multiple alias candidates rather than guessing. Access these through a small provider interface injected into the Explorer service, avoiding a new circular import from `main.py`.
 
 For coordinate-bearing MAF rows:
 

@@ -14,7 +14,7 @@ know which knobs exist.
 ## One path for every browser move
 
 Every pan, zoom and locus change a tutorial makes goes through the panel's own
-`animateToView` in `GenomeBrowser.jsx`, reached through the module registry in
+`animateToView` (`animateBrowserToView` in `genome-browser/viewMotion.js`, bound in `GenomeBrowser.jsx`), reached through the module registry in
 `utils/browserTutorialControls.js` (`panByWindows`, `zoomBy`, `goToLocus`). Nothing in that
 registry does any work of its own. That is deliberate: **a tutorial's pan travels at the
 same speed and stops at the same edges as one the reader performs.**
@@ -43,7 +43,7 @@ new kind of move is needed, publish it on the panel's registry entry and let it 
 
 | Constant | Value | What it paces |
 | --- | --- | --- |
-| `TUTORIAL_MOVE_MS` (`GenomeBrowser.jsx`) | 700 ms | A tutorial move with no `durationMs` |
+| `TUTORIAL_MOVE_MS` (`genome-browser/browserConstants.js`) | 700 ms | A tutorial move with no `durationMs` |
 | `BROWSER_MOVE_MS` (`useTutorial.jsx`) | — | The action path's default |
 | `SETTLE_MS` | — | The gap after a move before anything else happens |
 

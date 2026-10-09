@@ -7,7 +7,8 @@ their protein FASTAs.
 
 Rules live in [`backend/translation.py`](../backend/translation.py) — pure functions, no
 FastAPI or SQLite — and the genome plumbing (which genetic code a contig uses, reading CDS
-bases out of the FASTA) sits next to the endpoint in `backend/main.py`.
+bases out of the FASTA) is in [`backend/transcript_translation.py`](../backend/transcript_translation.py),
+which the Feature Explorer, sequence view and structure panel all call.
 
 ## The rules
 

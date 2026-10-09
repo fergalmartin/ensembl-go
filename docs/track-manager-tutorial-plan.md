@@ -153,7 +153,7 @@ who registered the three demo tracks would write three entries into their own
 ends, and they would still be there afterwards.
 
 That is precisely the category `docs/TUTORIALS.md` warns about — "anything that reaches for
-`load_config()` rather than for the frontend's configuration" — and `main._notes_config` is
+`load_config()` rather than for the frontend's configuration" — and `_notes_config` (`backend/routes/notes.py`) is
 the precedent to copy exactly: while a tutorial session is registered, the tracks endpoints
 resolve their store against the tutorial's workspace, and the user's own registry is left
 out entirely so the tutorial's list shows only the tutorial's tracks.

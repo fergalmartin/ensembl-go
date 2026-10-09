@@ -22,7 +22,7 @@ not true is the `fasta.fetch` call itself, which is 0-based half-open; that
 conversion happens in `_read_window` and nowhere else.
 
 `/api/browse/sequence` is 0-based half-open. It is a different dialect, and the
-trap it sets is documented at `frontend/src/components/genomeBrowserExonSegments.js:1-17`.
+trap it sets is documented at `frontend/src/components/genome-browser/genomeBrowserExonSegments.js:1-17`.
 Nothing in this subsystem speaks it.
 
 **Rows are all the same height, except where one carries a lane.** A uniform row
@@ -435,7 +435,7 @@ Both queues are `TileScheduler` from the alignment explorer
 does bounded LRU, priorities, per-task cancellation and retry with backoff.
 
 **Sequence runs at concurrency 1.** Every read of a genome's FASTA is serialised
-behind a lock on the backend (`ThreadSafeFasta`, `backend/main.py:269`), so a
+behind a lock on the backend (`ThreadSafeFasta`, `backend/file_io.py`), so a
 second worker would not read in parallel. It would only let a chunk the reader
 has already scrolled past sit in front of the one they are waiting for. At one,
 the queue is ours to order and abandoning a stale request genuinely brings the
@@ -979,7 +979,7 @@ codon and a splice site stays a splice site over the bases they belong to.
 
 ### Codons and splice sites are verified, not assumed
 
-All of them come from `_build_tx_feature_intervals` (`backend/main.py:12614`),
+All of them come from `_build_tx_feature_intervals` (`backend/sequence_windows.py`),
 which emits a start codon only where the bases read `ATG`, a stop only where they
 read `TAA`, `TAG` or `TGA`, and a splice site only where the dinucleotide is
 canonical `GT`/`AG`. A non-canonical junction is therefore not marked, silently.
