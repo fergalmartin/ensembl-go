@@ -1,10 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 
 import { resolveSvFeatureTrackGenomeIds, resolveSvFeatureWindowChrom } from '../src/utils/svFeatureTrackIdentity.js'
+import { readSources } from './helpers/readSource.js'
 
-const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
 
 test('SV feature tracks use release-specific genome IDs for both haplotypes', () => {
   const ids = resolveSvFeatureTrackGenomeIds({
@@ -37,7 +36,7 @@ test('legacy aliases remain compatibility fallbacks only when species are absent
 })
 
 test('GF, GR, and SL are wired to the same resolved genome for every SV band', async () => {
-  const view = await source('src/components/StructuralVariationView.jsx')
+  const view = readSources('src/components/StructuralVariationView.jsx', 'src/components/structural-variation')
 
   assert.match(view, /resolveSvFeatureTrackGenomeIds\(\{[\s\S]*?referenceSpecies: refSpecies,[\s\S]*?topSpecies: tgtSpecies/)
   assert.match(view, /sequenceGenomeId=\{topBrowseGenomeId\}/)
@@ -47,7 +46,7 @@ test('GF, GR, and SL are wired to the same resolved genome for every SV band', a
 })
 
 test('canonical feature loading retains data and retries transient failures', async () => {
-  const view = await source('src/components/StructuralVariationView.jsx')
+  const view = readSources('src/components/StructuralVariationView.jsx', 'src/components/structural-variation')
 
   assert.equal([...view.matchAll(/const featureTrackRetryRef = useRef/g)].length, 1)
   assert.ok([...view.matchAll(/retryState\.timer = setTimeout/g)].length >= 2)
@@ -55,7 +54,7 @@ test('canonical feature loading retains data and retries transient failures', as
 })
 
 test('a chrom-less ribbon viewport cannot mask either haplotype feature window', async () => {
-  const view = await source('src/components/StructuralVariationView.jsx')
+  const view = readSources('src/components/StructuralVariationView.jsx', 'src/components/structural-variation')
 
   assert.equal(resolveSvFeatureWindowChrom('11', { chrom: '' }, null), '11')
   assert.equal(resolveSvFeatureWindowChrom('', { chrom: '' }, { chrom: 'chr11' }), 'chr11')
@@ -68,6 +67,6 @@ test('a chrom-less ribbon viewport cannot mask either haplotype feature window',
 })
 
 test('the structural-variation view renders the three-genome JavaScript view', async () => {
-  const view = await source('src/components/StructuralVariationView.jsx')
+  const view = readSources('src/components/StructuralVariationView.jsx', 'src/components/structural-variation')
   assert.match(view, /<StructuralVariationThreeGenomeView/)
 })

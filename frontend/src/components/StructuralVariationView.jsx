@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE } from '../backendRuntime'
 import { resolveGenomeColor } from '../genomeColorSchemes'
-import { getGenomeKey } from '../utils/genomeIdentity'
 import {
   beginWheelGesture,
   findNearestScrollable,
@@ -18,7 +17,6 @@ import {
   getSvAuxTrackTransform,
 } from '../utils/svAuxTrackTransform'
 import { resolveSvFeatureTrackGenomeIds, resolveSvFeatureWindowChrom } from '../utils/svFeatureTrackIdentity'
-import { FONT_MONO } from '../utils/typography'
 import useDelayedFlag from '../hooks/useDelayedFlag'
 import {
   buildBrowserGeneSeedKey,
@@ -34,7 +32,6 @@ import {
   formatSvGenomeOptionLabel,
   getOutgoingSvAlignments,
   getSvAlignmentsForPair,
-  getSvGenomeDisplayName,
   speciesGenomeKey,
 } from '../utils/svCatalog'
 import {
@@ -48,30 +45,104 @@ import StructuralVariationFeatureBand from './StructuralVariationFeatureBand'
 
 // Register the Beta web component (ens-sv-alignments + ens-sv-alignments-image)
 import '../lib/ensembl-sv/alignments/variant-alignments.js'
-
-// ── Layout constants ──────────────────────────────────────────────────────────
-// Keep the same band + gene-track geometry as before so the genome bands
-// look identical to the rest of the app.
-const PLOT_PAD_X    = 2
-
-const MIN_VIEW_SPAN = 50
-const MAX_VIEW_SPAN = 50_000_000
-const BUFFER_PAD_MIN    = 120_000
-const BUFFER_PAD_RATIO  = 1.5
-const BUFFER_MARGIN_RATIO = 0.16
-const WHEEL_COMMIT_DEBOUNCE_MS = 180
-
-/**
- * Feel parameters for every pan/zoom surface in this view — the alignment
- * panel, the workspace, the gene bands, and the <ens-sv-alignments> web
- * component, which used to have its own (4x faster) zoom rate.
- */
-const SV_BROWSING_TUNING = Object.freeze({
-  zoomSensitivity: 0.0012,
-  pinchSensitivity: 0.0016,
-  panAmplification: 1.6,
-  zoomAtExtentHandoff: false,
-})
+import {
+  ALIGNMENT_PANEL_COMPACT_HEIGHT,
+  ALIGNMENT_PANEL_HEIGHT,
+  BUFFER_MARGIN_RATIO,
+  BUFFER_PAD_MIN,
+  BUFFER_PAD_RATIO,
+  PLOT_PAD_X,
+  SV_AUX_TRACK_CACHE_VERSION,
+  SV_AUX_TRACK_RENDER_HALO_MAX_BP,
+  SV_AUX_TRACK_RENDER_HALO_WINDOWS,
+  SV_BIGBED_DETAIL_FETCH_BATCH_SIZE,
+  SV_BIGBED_DETAIL_FETCH_PER_TRACK,
+  SV_BIGBED_DETAIL_MAX_FEATURES_PER_TILE,
+  SV_BIGBED_DETAIL_PREFETCH_MIN_TILES,
+  SV_BIGBED_DETAIL_PREFETCH_RATIO,
+  SV_BIGBED_FEATURE_TILE_SPAN,
+  SV_BROWSING_TUNING,
+  SV_DATA_TRACK_FETCH_DEBOUNCE_MS,
+  SV_EXTERNAL_VIEWPORT_EVENT_GUARD_MS,
+  SV_FILE_BROWSER_EXTENSIONS,
+  SV_GENOME_GROUP_LABELS,
+  SV_RIBBON_INTERVAL_MAX_VIEW_SPAN,
+  SV_SIGNAL_CONTROL_WIDTH,
+  SV_SIGNAL_FALLBACK_FETCH_BATCH_SIZE,
+  SV_SIGNAL_LOD_LEVELS,
+  SV_SIGNAL_OVERVIEW_FETCH_BATCH_SIZE,
+  SV_SIGNAL_RENDER_MAX_BINS,
+  SV_SIGNAL_TARGET_FETCH_BATCH_SIZE,
+  SV_SIGNAL_TOGGLE_RADIUS,
+  SV_SIGNAL_TRACK_GAP,
+  SV_SIGNAL_TRACK_HEIGHT,
+  SV_TRANSIENT_RETRY_LIMIT,
+  SV_TRIO_DEFAULT_REF_WINDOW,
+  WHEEL_COMMIT_DEBOUNCE_MS,
+} from './structural-variation/svConstants.js'
+import {
+  abbreviateMetadataValue,
+  buildCuratedSvIntervalRows,
+  buildSvGenomePayload,
+  buildSvRuntimeEndpoint,
+  clamp,
+  dedupeSvSpeciesList,
+  formatBp,
+  formatCoord,
+  getSpeciesDisplayName,
+  getSvCatalogGenomeDisplayName,
+  getSvGenomeAccessionLabel,
+  getSvLoadingMode,
+  getSvOptionTooltip,
+  getSvRuntimeAssembly,
+  getSvTransientRetryDelay,
+  svGenomeOptionNaming,
+  svSpeciesSelectionKey,
+  updateObjectSlot,
+} from './structural-variation/svFormat.js'
+import {
+  alignmentSupportsAnchorRegion,
+  buildCenteredTargetWindow,
+  buildChromWindow,
+  buildSvAnchorRegionOptions,
+  buildWindowForAnchorRegion,
+  centerWindowOnRange,
+  constrainWindowToZoomLimits,
+  deriveAutoTargetWindowFromBuffer,
+  formatSvRegionAvailabilityLabel,
+  getResolvedChromSize,
+  getSvRegionKey,
+  getSvRegionLength,
+  getWindowKey,
+  normalizeSvChromToken,
+  panWindowByPixels,
+  parseRegionInput,
+  quantizeCeil,
+  quantizeFloor,
+  svBlocksToFeatureBandAlignments,
+  svBufferMatchesAlignment,
+  svBufferMatchesRefWindow,
+  svRegionsMatch,
+  transformOuterWindowFromReferenceChange,
+  withWindowChrom,
+  zoomWindowAround,
+} from './structural-variation/svWindows.js'
+import {
+  buildSvRibbonIntervalMarks,
+  buildSvSignalPath,
+  getSvDataTrackKey,
+  getSvDataTrackLabel,
+  getSvDataTracksForSide,
+  getSvSignalLevel,
+  getSvSignalTracksForSide,
+  projectSvRibbonFeatureTiles,
+  projectSvSignalTilesCascade,
+  selectSvFetchPlansFairly,
+  svBigBedFeatureTileKey,
+  svNormalizeBigBedFeature,
+  svSignalTileKey,
+  trimSvRibbonFeatureCache,
+} from './structural-variation/svTracks.js'
 
 /**
  * Depends on the scheme id alone, never on `config` — that object gets a fresh
@@ -85,44 +156,6 @@ function useBrowsingControls(config) {
     [schemeId]
   )
 }
-const SV_EXTERNAL_VIEWPORT_EVENT_GUARD_MS = 400
-const ALIGNMENT_PANEL_HEIGHT = 168
-const ALIGNMENT_PANEL_COMPACT_HEIGHT = 132
-const SV_DATA_TRACK_FETCH_DEBOUNCE_MS = 50
-const SV_BIGBED_FEATURE_TILE_SPAN = 120_000
-const SV_BIGBED_DETAIL_PREFETCH_RATIO = 1.25
-const SV_BIGBED_DETAIL_PREFETCH_MIN_TILES = 4
-const SV_BIGBED_DETAIL_FETCH_BATCH_SIZE = 24
-const SV_BIGBED_DETAIL_FETCH_PER_TRACK = 12
-const SV_BIGBED_DETAIL_MAX_FEATURES_PER_TILE = 3000
-const SV_RIBBON_INTERVAL_MAX_VIEW_SPAN = 1_500_000
-const SV_RIBBON_INTERVAL_MAX_FEATURES = 4000
-const SV_RIBBON_INTERVAL_MAX_MARKS = 900
-const SV_RIBBON_MAX_CACHE_TILES = 800
-const SV_RIBBON_MAX_CACHE_FEATURES = 120_000
-const SV_SIGNAL_TRACK_HEIGHT = 38
-const SV_SIGNAL_TRACK_GAP = 2
-const SV_SIGNAL_CONTROL_WIDTH = 50
-const SV_SIGNAL_TOGGLE_RADIUS = 11
-const SV_SIGNAL_TARGET_FETCH_BATCH_SIZE = 10
-const SV_SIGNAL_FALLBACK_FETCH_BATCH_SIZE = 6
-const SV_SIGNAL_OVERVIEW_FETCH_BATCH_SIZE = 4
-const SV_AUX_TRACK_RENDER_HALO_WINDOWS = 2
-const SV_AUX_TRACK_RENDER_HALO_MAX_BP = 1_000_000
-const SV_SIGNAL_RENDER_MAX_BINS = 8000
-const SV_AUX_TRACK_CACHE_VERSION = 'sv-aux-20260630-1'
-const SV_TRANSIENT_RETRY_LIMIT = 6
-const SV_TRANSIENT_RETRY_BASE_MS = 250
-const SV_SIGNAL_LOD_LEVELS = [
-  { id: 'L0', minBpPerPx: 1000, bpPerBin: 10000, binsPerTile: 500 },
-  { id: 'L1', minBpPerPx: 100, bpPerBin: 1000, binsPerTile: 512 },
-  { id: 'L2', minBpPerPx: 10, bpPerBin: 100, binsPerTile: 512 },
-  { id: 'L3', minBpPerPx: 2, bpPerBin: 10, binsPerTile: 512 },
-  { id: 'L4', minBpPerPx: 0, bpPerBin: 1, binsPerTile: 1024 },
-]
-const DEFAULT_SV_LOADING_MODE = 'eager'
-const SV_LOADING_MODE_STORAGE_KEY = 'svLoadingMode'
-let svReferenceRegionsPromise = null
 
 const IconUpDown = ({ open, size = 12 }) => (
   <svg
@@ -138,199 +171,6 @@ const IconUpDown = ({ open, size = 12 }) => (
   </svg>
 )
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value))
-}
-
-function getSvTransientRetryDelay(attempt) {
-  return Math.min(4000, SV_TRANSIENT_RETRY_BASE_MS * (2 ** Math.max(0, attempt - 1)))
-}
-
-function formatCoord(value) {
-  return Number(value || 0).toLocaleString()
-}
-
-function formatBp(span) {
-  const n = Number(span || 0)
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2)} Mb`
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)} kb`
-  return `${Math.round(n)} bp`
-}
-
-function isLikelySequenceMetadataValue(value) {
-  const text = String(value || '').trim()
-  if (text.length < 28 || /\s/.test(text)) return false
-  const sequenceChars = text.match(/[ACGTURYKMSWBDHVN.-]/gi)?.length || 0
-  return sequenceChars / Math.max(1, text.length) >= 0.88
-}
-
-function abbreviateMetadataValue(value) {
-  const text = String(value || '').trim()
-  if (!text) return { display: '', full: '', abbreviated: false }
-  const shouldAbbreviate = isLikelySequenceMetadataValue(text) || (text.length > 96 && !/\s/.test(text))
-  if (!shouldAbbreviate) return { display: text, full: text, abbreviated: false }
-  const edgeLength = text.length > 80 ? 8 : 5
-  return {
-    display: `${text.slice(0, edgeLength)}...${text.slice(-edgeLength)}`,
-    full: text,
-    abbreviated: true,
-  }
-}
-
-function formatSvFeatureLocation(chrom, start, end) {
-  const safeChrom = String(chrom || '').trim()
-  const s = Number(start)
-  const e = Number(end)
-  if (!safeChrom || !Number.isFinite(s) || !Number.isFinite(e)) return ''
-  const displayStart = Math.max(1, Math.floor(s) + 1)
-  const displayEnd = Math.max(displayStart, Math.floor(e))
-  return displayStart === displayEnd
-    ? `${safeChrom}:${formatCoord(displayStart)}`
-    : `${safeChrom}:${formatCoord(displayStart)}-${formatCoord(displayEnd)}`
-}
-
-function formatSvStrand(value) {
-  const text = String(value || '').trim()
-  if (text === '+') return '+ (forward)'
-  if (text === '-') return '- (reverse)'
-  if (/^(forward|reverse)$/i.test(text)) return text.toLowerCase()
-  return 'Unknown'
-}
-
-function formatSvVariantType(value) {
-  const text = String(value || '').trim()
-  if (!text) return ''
-  return text
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (match) => match.toUpperCase())
-}
-
-function formatSvBoolean(value) {
-  const text = String(value || '').trim()
-  if (/^(true|yes|1)$/i.test(text)) return 'Yes'
-  if (/^(false|no|0)$/i.test(text)) return 'No'
-  return text
-}
-
-function getSvChangedAlleleSegment(refAllele, altAllele, variantType) {
-  const ref = String(refAllele || '')
-  const alt = String(altAllele || '')
-  const type = String(variantType || '').trim().toLowerCase()
-  if (!ref || !alt) return { label: '', value: '' }
-
-  let prefix = 0
-  while (
-    prefix < ref.length &&
-    prefix < alt.length &&
-    ref[prefix].toUpperCase() === alt[prefix].toUpperCase()
-  ) {
-    prefix += 1
-  }
-
-  let suffix = 0
-  while (
-    suffix < ref.length - prefix &&
-    suffix < alt.length - prefix &&
-    ref[ref.length - 1 - suffix].toUpperCase() === alt[alt.length - 1 - suffix].toUpperCase()
-  ) {
-    suffix += 1
-  }
-
-  const refChanged = ref.slice(prefix, ref.length - suffix)
-  const altChanged = alt.slice(prefix, alt.length - suffix)
-  if (type.includes('deletion') && refChanged) {
-    return { label: 'Deleted sequence', value: refChanged.toUpperCase() }
-  }
-  if (type.includes('insertion') && altChanged) {
-    return { label: 'Inserted sequence', value: altChanged.toUpperCase() }
-  }
-  return { label: '', value: '' }
-}
-
-function formatSvAlleleValue(value) {
-  return String(value || '').trim().toUpperCase()
-}
-
-function getSvFeatureExtraMap(feature) {
-  return feature?.extra_fields_map && typeof feature.extra_fields_map === 'object'
-    ? feature.extra_fields_map
-    : {}
-}
-
-function getSvFeatureExtraValue(extraMap, name) {
-  const wanted = String(name || '').trim().toLowerCase()
-  for (const [key, value] of Object.entries(extraMap || {})) {
-    if (String(key || '').trim().toLowerCase() === wanted) {
-      return String(value ?? '').trim()
-    }
-  }
-  return ''
-}
-
-function isGenericBigBedFieldName(name) {
-  return /^field\d+$/i.test(String(name || '').trim()) || /^extra[_\s-]?\d+$/i.test(String(name || '').trim())
-}
-
-function formatBigBedFieldLabel(name) {
-  const text = String(name || '').trim()
-  if (!text || isGenericBigBedFieldName(text)) return ''
-  return text
-    .replace(/[_-]+/g, ' ')
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/\b\w/g, (match) => match.toUpperCase())
-}
-
-function buildCuratedSvIntervalRows(feature, context = {}) {
-  const f = feature || {}
-  const extrasMap = getSvFeatureExtraMap(f)
-  const field5 = getSvFeatureExtraValue(extrasMap, 'field5')
-  const field6 = getSvFeatureExtraValue(extrasMap, 'field6')
-  const field7 = getSvFeatureExtraValue(extrasMap, 'field7')
-  const field8 = getSvFeatureExtraValue(extrasMap, 'field8')
-  const field10 = getSvFeatureExtraValue(extrasMap, 'field10')
-  const field11 = getSvFeatureExtraValue(extrasMap, 'field11')
-  const field12 = getSvFeatureExtraValue(extrasMap, 'field12')
-  const looksLikeSvInterval = Boolean(field5 || field6 || field7 || field8 || field10 || field11)
-
-  const location = formatSvFeatureLocation(context.chrom || f.chrom, f.start, f.end)
-  const rows = [
-    ['Track', context.trackLabel || ''],
-    ['Side', context.side || ''],
-    ['Location', location],
-    ['Strand', formatSvStrand(f.strand)],
-  ]
-
-  if (f.has_name && String(f.name || '').trim()) {
-    rows.push(['Name', String(f.name).trim()])
-  }
-  if (f.has_score && String(f.score ?? '').trim()) {
-    rows.push(['Score', String(f.score).trim()])
-  }
-
-  if (looksLikeSvInterval) {
-    const changedAllele = getSvChangedAlleleSegment(field7, field8, field6)
-    rows.push(
-      ['Variant key', field5],
-      ['Variant type', formatSvVariantType(field6)],
-      ['Reference allele', formatSvAlleleValue(field7)],
-      ['Alternate allele', formatSvAlleleValue(field8)],
-      [changedAllele.label, changedAllele.value],
-      ['Consequence', formatSvVariantType(field10)],
-      ['Length', field11],
-      ['Present', formatSvBoolean(field12)],
-    )
-  } else {
-    for (const [name, value] of Object.entries(extrasMap)) {
-      const label = formatBigBedFieldLabel(name)
-      const text = String(value ?? '').trim()
-      if (label && text) rows.push([label, text])
-    }
-  }
-
-  return rows.filter(([, value]) => String(value ?? '').trim())
-}
-
 function CopyGlyph({ size = 13 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -338,210 +178,6 @@ function CopyGlyph({ size = 13 }) {
       <path d="M9 3h6v4H9z" />
     </svg>
   )
-}
-
-function buildSvRuntimeEndpoint(path, alignmentId = '', outputDir = '') {
-  const params = new URLSearchParams()
-  if (alignmentId) params.set('alignment_id', alignmentId)
-  if (outputDir) params.set('output_dir', outputDir)
-  const query = params.toString()
-  return query ? `${API_BASE}${path}?${query}` : `${API_BASE}${path}`
-}
-
-function sameArrayItems(left, right) {
-  if (left === right) return true
-  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
-  return left.every((item, index) => item === right[index])
-}
-
-function updateObjectSlot(prev, key, value) {
-  const current = prev?.[key]
-  if (current === value || sameArrayItems(current, value)) return prev
-  return { ...prev, [key]: value }
-}
-
-function composeSvGenomeLabel(name, assembly) {
-  const safeName = String(name || '').trim() || 'Genome'
-  const safeAssembly = String(assembly || '').trim()
-  if (!safeAssembly || normalizeAssemblyLabel(safeAssembly) === normalizeAssemblyLabel(safeName)) return safeName
-  return `${safeName} - ${safeAssembly}`
-}
-
-function getSpeciesDisplayName(species) {
-  const name = String(
-    species?.display_name
-    || species?.common_name
-    || species?.scientific_name
-    || species?.name
-    || 'Genome',
-  ).trim()
-  const assembly = species?.assembly_name || species?.assembly || species?.gca || species?.accession || ''
-  return composeSvGenomeLabel(name, assembly)
-}
-
-function getSvCatalogGenomeDisplayName(genome) {
-  const name = String(
-    genome?.display_name
-    || genome?.common_name
-    || genome?.scientific_name
-    || genome?.name
-    || getSvGenomeDisplayName(genome),
-  ).trim()
-  const assembly = genome?.assembly_name || genome?.assembly || genome?.gca || genome?.accession || ''
-  return composeSvGenomeLabel(name, assembly)
-}
-
-function getSvGenomeAccessionLabel(genomeOrSpecies) {
-  return String(
-    genomeOrSpecies?.gca
-    || genomeOrSpecies?.accession
-    || genomeOrSpecies?.assembly
-    || '',
-  ).trim()
-}
-
-function getSvOptionTooltip(option) {
-  if (!option) return ''
-  const genome = option.species || option.genome || {}
-  const label = option.label || getSpeciesDisplayName(option.species) || getSvCatalogGenomeDisplayName(option.genome)
-  const accession = getSvGenomeAccessionLabel(genome)
-  const aliases = Array.isArray(option.genome?.aliases) ? option.genome.aliases : []
-  return [label, accession, ...aliases.slice(0, 4)].filter(Boolean).join(' | ')
-}
-
-function getSvRegionKey(region) {
-  return String(region?.id || region?.chrom || region?.label || '').trim()
-}
-
-function compareSvRegionLabels(left, right) {
-  const a = String(left || '').trim()
-  const b = String(right || '').trim()
-  const normalize = (value) => value.toLowerCase().replace(/^chr/, '')
-  const aa = normalize(a)
-  const bb = normalize(b)
-  const special = { x: 23, y: 24, m: 25, mt: 25 }
-  const an = /^\d+$/.test(aa) ? Number(aa) : special[aa]
-  const bn = /^\d+$/.test(bb) ? Number(bb) : special[bb]
-  if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn
-  if (Number.isFinite(an)) return -1
-  if (Number.isFinite(bn)) return 1
-  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
-}
-
-function alignmentSupportsAnchorRegion(alignment, regionId) {
-  const wanted = String(regionId || '').trim()
-  if (!wanted) return true
-  return (alignment?.reference_regions || []).some((region) => getSvRegionKey(region) === wanted)
-}
-
-function svRegionsMatch(left, right) {
-  const a = normalizeSvChromToken(left)
-  const b = normalizeSvChromToken(right)
-  return Boolean(a && b && a.toLowerCase() === b.toLowerCase())
-}
-
-function buildSvAnchorRegionOptions(outgoingAlignments) {
-  const byKey = new Map()
-  for (const alignment of outgoingAlignments || []) {
-    if (!alignment?.supported) continue
-    for (const region of alignment.reference_regions || []) {
-      const key = getSvRegionKey(region)
-      if (!key) continue
-      const existing = byKey.get(key) || {
-        ...region,
-        id: key,
-        chrom: region?.chrom || key,
-        label: region?.label || region?.chrom || key,
-        alignmentIds: [],
-      }
-      existing.alignmentIds = Array.from(new Set([...(existing.alignmentIds || []), alignment.id]))
-      byKey.set(key, existing)
-    }
-  }
-  return Array.from(byKey.values()).sort((a, b) => compareSvRegionLabels(a.label || a.chrom, b.label || b.chrom))
-}
-
-function getSvRegionLength(region) {
-  const indexed = Number(region?.indexed_length)
-  if (Number.isFinite(indexed) && indexed > 0) return indexed
-  const length = Number(region?.length || region?.end)
-  if (Number.isFinite(length) && length > 0) return length
-  const start = Number(region?.start)
-  const end = Number(region?.end)
-  if (Number.isFinite(start) && Number.isFinite(end) && end > start) return end - start
-  return 0
-}
-
-function alignmentRegionForOption(alignment, option) {
-  const key = getSvRegionKey(option)
-  return (alignment?.reference_regions || []).find((region) => getSvRegionKey(region) === key) || null
-}
-
-function formatSvRegionAvailabilityLabel(region, outgoingAlignments) {
-  const supportingAlignments = (outgoingAlignments || []).filter((alignment) => (
-    alignment?.supported && alignmentRegionForOption(alignment, region)
-  ))
-  const targetGenomes = []
-  for (const alignment of supportingAlignments) {
-    const genome = alignment?.target_genome
-    if (!genome) continue
-    if (targetGenomes.some((existing) => catalogGenomeMatchesSpecies(existing, genome))) continue
-    targetGenomes.push(genome)
-  }
-  const alignmentCount = supportingAlignments.length
-  const genomeCount = targetGenomes.length
-  const alignmentLabel = alignmentCount === 1 ? 'alignment' : 'alignments'
-  const genomeLabel = genomeCount === 1 ? 'genome' : 'genomes'
-  return `${alignmentCount} ${alignmentLabel}, ${genomeCount} ${genomeLabel}`
-}
-
-async function buildWindowForAnchorRegion(region, chromSizes, currentWindow, currentChromSize) {
-  const rawChrom = String(region?.chrom || region?.label || region?.id || '').trim()
-  if (!rawChrom) return null
-  const chrom = getResolvedChromName(chromSizes || {}, rawChrom) || rawChrom
-  const chromSize = getResolvedChromSize(chromSizes || {}, chrom)
-    || getSvRegionLength(region)
-    || (chrom === currentWindow?.chrom ? currentChromSize : null)
-  const start = Number(region?.start)
-  const end = Number(region?.end)
-  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
-    return constrainWindowToZoomLimits({ chrom, start, end }, chromSize || currentChromSize)
-  }
-  let next = buildRegionIdentifierWindow(chrom, chromSize)
-  if (!next) {
-    next = await buildRegionIdentifierWindowFromBrowseRegions(rawChrom)
-  }
-  return next ? constrainWindowToZoomLimits(next, chromSize || currentChromSize) : null
-}
-
-function getSvRuntimeAssembly(species) {
-  return species?.assembly_name || species?.assembly || species?.gca || species?.accession || species?.key || ''
-}
-
-function buildSvGenomePayload(species, fallbackGenome = null) {
-  const fallback = fallbackGenome || {}
-  return {
-    provider: species?.provider || fallback.provider || '',
-    species_key: species?.species_key || fallback.species_key || '',
-    assembly: species?.assembly || species?.gca || species?.accession || fallback.assembly || fallback.gca || fallback.accession || '',
-    gca: species?.gca || fallback.gca || '',
-    accession: species?.accession || species?.assembly || species?.gca || fallback.accession || fallback.assembly || fallback.gca || '',
-    assembly_name: species?.assembly_name || fallback.assembly_name || fallback.display_name || '',
-    scientific_name: species?.scientific_name || fallback.scientific_name || '',
-    common_name: species?.common_name || fallback.common_name || '',
-    display_name: species?.display_name || fallback.display_name || getSpeciesDisplayName(species) || getSvGenomeDisplayName(fallback),
-    genome_key: speciesGenomeKey(species) || fallback.genome_key || fallback.id || '',
-    aliases: [
-      speciesGenomeKey(species),
-      species?.assembly,
-      species?.gca,
-      species?.accession,
-      species?.assembly_name,
-      species?.display_name,
-      ...(species?.equivalent_accessions || []),
-      ...(fallback.aliases || []),
-    ].filter(Boolean),
-  }
 }
 
 function CenterAlignmentIcon({ className = '' }) {
@@ -585,815 +221,6 @@ function SelectionZoomIcon({ className = '' }) {
       <path d="M21 16.8v5.2M18.4 19.4h5.2" strokeWidth="2.2" />
     </svg>
   )
-}
-
-function normalizeAlignmentBlock(alignment) {
-  const refStart = Number(alignment?.reference?.start)
-  const refLength = Number(alignment?.reference?.length)
-  const altStart = Number(alignment?.alt?.start)
-  const altLength = Number(alignment?.alt?.length)
-  if (!Number.isFinite(refStart) || !Number.isFinite(refLength) || refLength <= 0) return null
-  if (!Number.isFinite(altStart) || !Number.isFinite(altLength) || altLength <= 0) return null
-  return {
-    refStart,
-    refEnd: refStart + refLength - 1,
-    refLength,
-    altStart,
-    altEnd: altStart + altLength - 1,
-    altLength,
-    isInversion: String(alignment?.reference?.strand || '+') !== String(alignment?.alt?.strand || '+'),
-  }
-}
-
-function svBlocksToFeatureBandAlignments(blocks) {
-  if (!Array.isArray(blocks)) return []
-  return blocks
-    .map((block) => {
-      const refStart = Number(block?.ref_start ?? NaN)
-      const refEnd = Number(block?.ref_end ?? NaN)
-      const altStart = Number(block?.tgt_start ?? NaN)
-      const altEnd = Number(block?.tgt_end ?? NaN)
-      if (
-        !Number.isFinite(refStart) ||
-        !Number.isFinite(refEnd) ||
-        !Number.isFinite(altStart) ||
-        !Number.isFinite(altEnd)
-      ) {
-        return null
-      }
-      const refLo = Math.min(refStart, refEnd)
-      const refHi = Math.max(refStart, refEnd)
-      const altLo = Math.min(altStart, altEnd)
-      const altHi = Math.max(altStart, altEnd)
-      return {
-        id: String(block?.chain_id || `${refLo}:${altLo}`),
-        type: block?.type || 'match',
-        reference: {
-          start: refLo,
-          length: Math.max(1, refHi - refLo),
-          strand: 'forward',
-        },
-        alt: {
-          start: altLo,
-          length: Math.max(1, altHi - altLo),
-          strand: String(block?.strand || '+') === '-' ? 'reverse' : 'forward',
-        },
-      }
-    })
-    .filter(Boolean)
-}
-
-function buildCenteredTargetWindow(refWindow, currentTgtWindow, alignments, tgtChromSize = null) {
-  if (!refWindow?.chrom || !currentTgtWindow?.chrom || !alignments?.length) return null
-
-  const refCenter = refWindow.start + ((refWindow.end - refWindow.start) / 2)
-  const tgtCenter = currentTgtWindow.start + ((currentTgtWindow.end - currentTgtWindow.start) / 2)
-
-  let bestMatchAlignment = null
-  let bestMatchScore = Infinity
-  let bestAlignment = null
-  let bestScore = Infinity
-
-  for (const alignment of alignments) {
-    const block = normalizeAlignmentBlock(alignment)
-    if (!block) continue
-
-    const refDistance = refCenter < block.refStart
-      ? block.refStart - refCenter
-      : refCenter > block.refEnd
-        ? refCenter - block.refEnd
-        : 0
-    const altMidpoint = (block.altStart + block.altEnd) / 2
-    const tieBreaker = Math.abs(altMidpoint - tgtCenter) / 1_000_000
-    const score = refDistance + tieBreaker
-
-    if (score < bestScore) {
-      bestScore = score
-      bestAlignment = block
-    }
-
-    if (!block.isInversion && score < bestMatchScore) {
-      bestMatchScore = score
-      bestMatchAlignment = block
-    }
-  }
-
-  const anchorAlignment = bestMatchAlignment || bestAlignment
-  if (!anchorAlignment) return null
-
-  const refAnchor = clamp(refCenter, anchorAlignment.refStart, anchorAlignment.refEnd)
-  const fraction = anchorAlignment.refEnd > anchorAlignment.refStart
-    ? (refAnchor - anchorAlignment.refStart) / (anchorAlignment.refEnd - anchorAlignment.refStart)
-    : 0.5
-  const altAnchor = anchorAlignment.isInversion
-    ? anchorAlignment.altEnd - (fraction * (anchorAlignment.altEnd - anchorAlignment.altStart))
-    : anchorAlignment.altStart + (fraction * (anchorAlignment.altEnd - anchorAlignment.altStart))
-
-  return centerWindowOnRange(
-    currentTgtWindow.chrom,
-    altAnchor,
-    Math.max(1, refWindow.end - refWindow.start),
-    tgtChromSize,
-    1,
-  )
-}
-
-function normalizeAssemblyLabel(value) {
-  return (value || '').toLowerCase().replace(/[^a-z0-9]+/g, '')
-}
-
-const SV_TRIO_DEFAULT_REF_WINDOW = {
-  chrom: '11',
-  start: 49_490_090,
-  end: 49_945_992,
-}
-
-function normalizeSvChromToken(value) {
-  return String(value || '').replace(/^chr/i, '')
-}
-
-function transformOuterWindowFromReferenceChange(currentRefWindow, nextRefWindow, currentOuterWindow, outerChromSize) {
-  if (!currentRefWindow || !nextRefWindow || !currentOuterWindow) return currentOuterWindow
-  const currentRefSpan = Math.max(1, Number(currentRefWindow.end) - Number(currentRefWindow.start))
-  const nextRefSpan = Math.max(1, Number(nextRefWindow.end) - Number(nextRefWindow.start))
-  const currentOuterSpan = Math.max(1, Number(currentOuterWindow.end) - Number(currentOuterWindow.start))
-  const spanRatio = nextRefSpan / currentRefSpan
-
-  if (!Number.isFinite(spanRatio) || spanRatio <= 0) return currentOuterWindow
-
-  if (Math.abs(spanRatio - 1) < 0.0001) {
-    const shift = Number(nextRefWindow.start) - Number(currentRefWindow.start)
-    return constrainWindowToZoomLimits({
-      chrom: currentOuterWindow.chrom,
-      start: Math.round(Number(currentOuterWindow.start) + shift),
-      end: Math.round(Number(currentOuterWindow.end) + shift),
-    }, outerChromSize)
-  }
-
-  const denominator = currentRefSpan - nextRefSpan
-  const anchorFraction = denominator
-    ? clamp((Number(nextRefWindow.start) - Number(currentRefWindow.start)) / denominator, 0, 1)
-    : 0.5
-  const nextOuterSpan = Math.max(MIN_VIEW_SPAN, Math.round(currentOuterSpan * spanRatio))
-  const outerAnchor = Number(currentOuterWindow.start) + (currentOuterSpan * anchorFraction)
-  const nextOuterStart = Math.round(outerAnchor - (nextOuterSpan * anchorFraction))
-  return constrainWindowToZoomLimits({
-    chrom: currentOuterWindow.chrom,
-    start: nextOuterStart,
-    end: nextOuterStart + nextOuterSpan,
-  }, outerChromSize)
-}
-
-function quantizeFloor(value, step) {
-  const s = Math.max(1, Math.round(step))
-  return Math.floor(value / s) * s
-}
-
-function quantizeCeil(value, step) {
-  const s = Math.max(1, Math.round(step))
-  return Math.ceil(value / s) * s
-}
-
-function overlaps(aStart, aEnd, bStart, bEnd) {
-  return aEnd >= bStart && aStart <= bEnd
-}
-
-function parseRegionInput(value) {
-  const raw = String(value || '').trim()
-  if (!raw) return null
-  const cleaned = raw.replace(/\s+/g, '')
-  const match = cleaned.match(/^([^:]+):([\d,]+)-([\d,]+)$/)
-  if (!match) return cleaned ? { chrom: cleaned, bareChrom: true } : null
-  const chrom = String(match[1] || '').trim()
-  const start = Number(String(match[2] || '').replace(/,/g, ''))
-  const end = Number(String(match[3] || '').replace(/,/g, ''))
-  if (!chrom || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
-  return { chrom, start, end }
-}
-
-function buildRegionIdentifierWindow(chrom, chromSize, maxSpan = 1_000_000) {
-  const resolvedChrom = String(chrom || '').trim()
-  const length = Math.floor(Number(chromSize) || 0)
-  if (!resolvedChrom || length <= 0) return null
-  if (length <= maxSpan) {
-    return { chrom: resolvedChrom, start: 1, end: Math.max(2, length) }
-  }
-  const span = Math.min(maxSpan, length)
-  const center = Math.max(1 + span / 2, Math.min(length - span / 2, length / 3))
-  const start = Math.max(1, Math.round(center - span / 2))
-  const end = Math.min(length, start + span)
-  return { chrom: resolvedChrom, start, end: Math.max(start + 1, end) }
-}
-
-function getMaxAllowedSpan(chromSize = null, minStart = 1) {
-  if (Number.isFinite(chromSize) && chromSize > minStart) {
-    return Math.min(MAX_VIEW_SPAN, Math.max(MIN_VIEW_SPAN, Math.round(chromSize) - minStart))
-  }
-  return MAX_VIEW_SPAN
-}
-
-function zoomWindowAround(window, factor, anchorFraction = 0.5, minStart = 1, chromSize = null) {
-  if (!window) return null
-  const span = Math.max(1, (window.end || 0) - (window.start || 0))
-  const frac = clamp(anchorFraction, 0, 1)
-  const maxSpan = getMaxAllowedSpan(chromSize, minStart)
-  const nextSpan = Math.round(clamp(span * factor, MIN_VIEW_SPAN, maxSpan))
-  const anchorBp = (window.start || 0) + (span * frac)
-  let start = Math.round(anchorBp - (nextSpan * frac))
-  if (start < minStart) start = minStart
-  let end = start + nextSpan
-  if (Number.isFinite(chromSize) && chromSize > minStart && end > chromSize) {
-    end = Math.round(chromSize)
-    start = Math.max(minStart, end - nextSpan)
-  }
-  return { ...window, start, end }
-}
-
-function panWindowByPixels(window, deltaPx, viewportWidth, minStart = 1, chromSize = null) {
-  if (!window || !Number.isFinite(deltaPx)) return window
-  const width = Math.max(1, Math.round(viewportWidth || 0))
-  const span = Math.max(1, (window.end || 0) - (window.start || 0))
-  const bpPerPx = span / width
-  let start = Math.round((window.start || 0) + (deltaPx * bpPerPx))
-  if (start < minStart) start = minStart
-  let end = start + span
-  if (Number.isFinite(chromSize) && chromSize > minStart && end > chromSize) {
-    end = Math.round(chromSize)
-    start = Math.max(minStart, end - span)
-  }
-  return { ...window, start, end }
-}
-
-function centerWindowOnRange(chrom, center, span, chromSize = null, minStart = 1) {
-  if (!chrom || !Number.isFinite(center) || !Number.isFinite(span) || span <= 0) return null
-  const windowSpan = Math.round(clamp(span, MIN_VIEW_SPAN, getMaxAllowedSpan(chromSize, minStart)))
-  let start = Math.round(center - (windowSpan / 2))
-  if (start < minStart) start = minStart
-  let end = start + windowSpan
-  if (Number.isFinite(chromSize) && chromSize > 0 && end > chromSize) {
-    end = Math.round(chromSize)
-    start = Math.max(minStart, end - windowSpan)
-  }
-  return { chrom, start, end }
-}
-
-function withWindowChrom(window, fallbackChrom = '') {
-  if (!window) return null
-  const minStart = 1
-  const normalizedStart = Math.max(minStart, Number(window.start) || minStart)
-  const normalizedEnd = Math.max(normalizedStart + 1, Number(window.end) || (normalizedStart + 1))
-  if (window.chrom) {
-    return {
-      ...window,
-      start: normalizedStart,
-      end: normalizedEnd,
-    }
-  }
-  return {
-    ...window,
-    chrom: fallbackChrom || '',
-    start: normalizedStart,
-    end: normalizedEnd,
-  }
-}
-
-function getResolvedChromSize(chromSizes, chrom) {
-  if (!chromSizes || !chrom) return null
-  if (chromSizes[chrom]) return Number(chromSizes[chrom]) || null
-
-  const raw = String(chrom).trim()
-  if (!raw) return null
-  const canonical = raw.toLowerCase()
-  const stripChr = canonical.startsWith('chr') ? canonical.slice(3) : canonical
-  const addChr = canonical.startsWith('chr') ? canonical : `chr${canonical}`
-
-  for (const [key, value] of Object.entries(chromSizes)) {
-    const resolved = String(key || '').trim().toLowerCase()
-    if (!resolved) continue
-    const resolvedStrip = resolved.startsWith('chr') ? resolved.slice(3) : resolved
-    if (resolved === canonical || resolved === stripChr || resolved === addChr || resolvedStrip === stripChr) {
-      return Number(value) || null
-    }
-  }
-
-  return null
-}
-
-function getResolvedChromName(chromSizes, chrom) {
-  if (!chromSizes || !chrom) return ''
-  if (Object.prototype.hasOwnProperty.call(chromSizes, chrom)) return chrom
-
-  const raw = String(chrom).trim()
-  if (!raw) return ''
-  const canonical = raw.toLowerCase()
-  const stripChr = canonical.startsWith('chr') ? canonical.slice(3) : canonical
-  const addChr = canonical.startsWith('chr') ? canonical : `chr${canonical}`
-
-  for (const key of Object.keys(chromSizes)) {
-    const resolved = String(key || '').trim().toLowerCase()
-    if (!resolved) continue
-    const resolvedStrip = resolved.startsWith('chr') ? resolved.slice(3) : resolved
-    if (resolved === canonical || resolved === stripChr || resolved === addChr || resolvedStrip === stripChr) {
-      return String(key)
-    }
-  }
-
-  return raw
-}
-
-function tokenVariants(value) {
-  const text = String(value || '').trim().toLowerCase()
-  if (!text) return new Set()
-  const out = new Set([text])
-  if (text.startsWith('chr') && text.length > 3) out.add(text.slice(3))
-  else out.add(`chr${text}`)
-  if (['m', 'mt', 'chrm', 'chrmt'].includes(text)) {
-    out.add('m')
-    out.add('mt')
-    out.add('chrm')
-    out.add('chrmt')
-  }
-  return out
-}
-
-function intersectsTokenSet(left, right) {
-  for (const value of left) {
-    if (right.has(value)) return true
-  }
-  return false
-}
-
-function resolveRegionFromBrowseRegions(regions, rawChrom) {
-  const token = String(rawChrom || '').trim()
-  if (!token || !Array.isArray(regions)) return null
-  const canonical = token.toLowerCase()
-  const stripChr = canonical.startsWith('chr') ? canonical.slice(3) : canonical
-  const addChr = canonical.startsWith('chr') ? canonical : `chr${canonical}`
-  let region = regions.find((r) => r.chrom === token)
-  if (region) return region
-
-  region = regions.find((r) => {
-    const rc = String(r.chrom || '').toLowerCase()
-    if (rc === canonical || rc === stripChr || rc === addChr) return true
-    const rcStrip = rc.startsWith('chr') ? rc.slice(3) : rc
-    return rcStrip === stripChr
-  })
-  if (region) return region
-
-  const queryTokens = tokenVariants(token)
-  const synonymCandidates = regions.filter((r) => {
-    const regionTokens = tokenVariants(r.chrom)
-    if (intersectsTokenSet(queryTokens, regionTokens)) return true
-    const synonyms = Array.isArray(r.synonyms) ? r.synonyms : []
-    return synonyms.some((synonym) => intersectsTokenSet(queryTokens, tokenVariants(synonym)))
-  })
-  if (synonymCandidates.length === 1) return synonymCandidates[0]
-
-  if (['m', 'mt', 'chrm', 'chrmt'].includes(canonical)) {
-    return regions.find((r) => {
-      const rc = String(r.chrom || '').toLowerCase()
-      const rcStrip = rc.startsWith('chr') ? rc.slice(3) : rc
-      return rc === 'mt' || rc === 'm' || rc === 'chrm' || rc === 'chrmt' || rcStrip === 'mt' || rcStrip === 'm'
-    }) || null
-  }
-
-  return null
-}
-
-async function fetchSvReferenceRegions() {
-  if (!svReferenceRegionsPromise) {
-    svReferenceRegionsPromise = fetch(`${API_BASE}/api/browse/regions?genome=reference`)
-      .then((res) => (res.ok ? res.json() : []))
-      .catch(() => [])
-  }
-  return svReferenceRegionsPromise
-}
-
-async function buildRegionIdentifierWindowFromBrowseRegions(chrom) {
-  const regions = await fetchSvReferenceRegions()
-  const region = resolveRegionFromBrowseRegions(regions, chrom)
-  return buildRegionIdentifierWindow(region?.chrom, region?.end)
-}
-
-function getWindowKey(window) {
-  if (!window?.chrom) return ''
-  return `${window.chrom}:${window.start}-${window.end}`
-}
-
-function getSvDataTrackKey(track) {
-  return String(track?.id || `${track?.side || ''}:${track?.type || ''}:${track?.path || ''}`).trim()
-}
-
-function getSvDataTrackLabel(track) {
-  const label = String(track?.label || '').trim()
-  if (label) return label
-  return 'SV intervals'
-}
-
-function getSvDataTracksForSide(bufferData, side) {
-  const tracks = bufferData?.tracks?.[side]
-  if (!Array.isArray(tracks)) return []
-  return tracks.filter((track) => {
-    const type = String(track?.type || '').toLowerCase()
-    return track?.path && type === 'bigbed'
-  })
-}
-
-function getSvSignalTracksForSide(bufferData, side) {
-  const tracks = bufferData?.tracks?.[side]
-  if (!Array.isArray(tracks)) return []
-  return tracks.filter((track) => {
-    const type = String(track?.type || '').toLowerCase()
-    return track?.path && type === 'bigwig'
-  })
-}
-
-function svBigBedFeatureKey(feature) {
-  const start = Number(feature?.start) || 0
-  const end = Number(feature?.end) || 0
-  const name = String(feature?.name || '')
-  const strand = String(feature?.strand || '.')
-  const score = String(feature?.score ?? '')
-  const color = String(feature?.itemRgb || feature?.color || '')
-  const blockCount = String(feature?.block_count ?? '')
-  const blockSizes = String(feature?.block_sizes || '')
-  const blockStarts = String(feature?.block_starts || '')
-  const renderKind = String(feature?.render_kind || feature?._render_kind || '')
-  return `${start}|${end}|${name}|${strand}|${score}|${color}|${blockCount}|${blockSizes}|${blockStarts}|${renderKind}`
-}
-
-function svNormalizeBigBedFeature(feature) {
-  if (!feature || typeof feature !== 'object') return null
-  const start = Number(feature?.start)
-  const end = Number(feature?.end)
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
-  const exonBlocks = Array.isArray(feature?.exon_blocks) ? feature.exon_blocks : []
-  const cdsBlocks = Array.isArray(feature?.cds_blocks) ? feature.cds_blocks : []
-  const renderKind = String(feature?.render_kind || '').trim().toLowerCase() || 'interval'
-  return {
-    ...feature,
-    start,
-    end,
-    _key: svBigBedFeatureKey(feature),
-    _render_kind: renderKind,
-    _structure_valid: feature?.structure_valid === true,
-    _exon_blocks: exonBlocks,
-    _cds_blocks: cdsBlocks,
-  }
-}
-
-function svBigBedFeatureTileKey(trackId, chrom, tileStart, tileEnd) {
-  return `${SV_AUX_TRACK_CACHE_VERSION}:svbbft:${trackId}|${chrom}|${tileStart}|${tileEnd}`
-}
-
-function selectSvFetchPlansFairly(plans, maxTotal, maxPerGroup = maxTotal) {
-  if (!Array.isArray(plans) || plans.length === 0 || maxTotal <= 0) return []
-  const queues = new Map()
-  for (const plan of plans) {
-    const groupKey = String(plan?.trackKey || plan?.tileKey || '')
-    if (!queues.has(groupKey)) queues.set(groupKey, [])
-    queues.get(groupKey).push(plan)
-  }
-
-  const selected = []
-  const selectedPerGroup = new Map()
-  let madeProgress = true
-  while (selected.length < maxTotal && madeProgress) {
-    madeProgress = false
-    for (const [groupKey, queue] of queues.entries()) {
-      if (selected.length >= maxTotal) break
-      const groupCount = selectedPerGroup.get(groupKey) || 0
-      if (groupCount >= maxPerGroup || queue.length === 0) continue
-      selected.push(queue.shift())
-      selectedPerGroup.set(groupKey, groupCount + 1)
-      madeProgress = true
-    }
-  }
-  return selected
-}
-
-function getSvSignalLevel(bpPerPx) {
-  for (const level of SV_SIGNAL_LOD_LEVELS) {
-    if (bpPerPx >= level.minBpPerPx) return level
-  }
-  return SV_SIGNAL_LOD_LEVELS[SV_SIGNAL_LOD_LEVELS.length - 1]
-}
-
-function svSignalTileKey(trackId, chrom, levelId, tileStart) {
-  return `${SV_AUX_TRACK_CACHE_VERSION}:svsig:${trackId}|${chrom}|${levelId}|${tileStart}`
-}
-
-function projectSvSignalTiles(cache, trackId, chrom, level, visStart, visEnd, outBins) {
-  const empty = { bins: Array(outBins).fill(null), populated: new Uint8Array(outBins), has_data: false, min: null, max: null, coverage: 0, error: '' }
-  if (!chrom || visEnd <= visStart || outBins <= 0) return empty
-  const visSpan = Math.max(1, visEnd - visStart)
-  const tileSpan = level.bpPerBin * level.binsPerTile
-  const firstTile = Math.floor(visStart / tileSpan) * tileSpan
-  const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-  const out = Array(outBins).fill(null)
-  const populated = new Uint8Array(outBins)
-  let hasData = false
-  let bestError = ''
-
-  for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-    const tile = cache.get(svSignalTileKey(trackId, chrom, level.id, tileStart))
-    if (!tile) continue
-    if (tile?.error && !bestError) bestError = String(tile.error)
-    const bins = Array.isArray(tile?.bins) ? tile.bins : []
-    const bpPerBin = Math.max(1, Number(tile?.bpPerBin || level.bpPerBin))
-    for (let i = 0; i < bins.length; i += 1) {
-      const gStart = Number(tile.start || tileStart) + i * bpPerBin
-      const gEnd = gStart + bpPerBin
-      if (gEnd < visStart || gStart > visEnd) continue
-      let x1 = Math.floor(((gStart - visStart) / visSpan) * outBins)
-      let x2 = Math.ceil(((gEnd - visStart) / visSpan) * outBins)
-      x1 = Math.max(0, Math.min(outBins - 1, x1))
-      x2 = Math.max(x1 + 1, Math.min(outBins, x2))
-      for (let x = x1; x < x2; x += 1) populated[x] = 1
-      const value = Number(bins[i])
-      if (!Number.isFinite(value)) continue
-      hasData = true
-      for (let x = x1; x < x2; x += 1) {
-        out[x] = out[x] === null ? value : Math.max(out[x], value)
-      }
-    }
-  }
-
-  let populatedCount = 0
-  for (let i = 0; i < outBins; i += 1) if (populated[i]) populatedCount += 1
-  const observed = out.filter((value) => typeof value === 'number' && Number.isFinite(value))
-  return {
-    bins: out,
-    populated,
-    has_data: hasData,
-    min: observed.length ? Math.min(...observed) : null,
-    max: observed.length ? Math.max(...observed) : null,
-    coverage: populatedCount / Math.max(1, outBins),
-    error: bestError,
-  }
-}
-
-function projectSvSignalTilesCascade(cache, trackId, chrom, targetLevel, visStart, visEnd, outBins) {
-  const targetIndex = Math.max(0, SV_SIGNAL_LOD_LEVELS.findIndex((level) => level.id === targetLevel.id))
-  const fine = projectSvSignalTiles(cache, trackId, chrom, targetLevel, visStart, visEnd, outBins)
-  if (fine.coverage >= 0.99 || targetIndex <= 0) return fine
-  const mergedBins = [...fine.bins]
-  const mergedPopulated = new Uint8Array(outBins)
-  let popCount = 0
-  for (let i = 0; i < outBins; i += 1) {
-    mergedPopulated[i] = fine.populated[i] ? 1 : 0
-    if (mergedPopulated[i]) popCount += 1
-  }
-  let bestError = fine.error
-  for (let levelIndex = targetIndex - 1; levelIndex >= 0 && popCount < outBins; levelIndex -= 1) {
-    const coarse = projectSvSignalTiles(cache, trackId, chrom, SV_SIGNAL_LOD_LEVELS[levelIndex], visStart, visEnd, outBins)
-    if (!bestError && coarse.error) bestError = coarse.error
-    for (let i = 0; i < outBins; i += 1) {
-      if (mergedPopulated[i] || !coarse.populated[i]) continue
-      mergedBins[i] = coarse.bins[i]
-      mergedPopulated[i] = 1
-      popCount += 1
-    }
-  }
-  const observed = mergedBins.filter((value) => typeof value === 'number' && Number.isFinite(value))
-  return {
-    bins: mergedBins,
-    populated: mergedPopulated,
-    has_data: observed.length > 0,
-    min: observed.length ? Math.min(...observed) : null,
-    max: observed.length ? Math.max(...observed) : null,
-    coverage: popCount / Math.max(1, outBins),
-    error: bestError,
-  }
-}
-
-function selectSvOrderStatistic(values, targetIndex) {
-  let left = 0
-  let right = values.length - 1
-  const target = Math.max(0, Math.min(right, targetIndex))
-  while (left < right) {
-    const pivot = values[Math.floor((left + right) / 2)]
-    let low = left
-    let high = right
-    while (low <= high) {
-      while (values[low] < pivot) low += 1
-      while (values[high] > pivot) high -= 1
-      if (low <= high) {
-        const tmp = values[low]
-        values[low] = values[high]
-        values[high] = tmp
-        low += 1
-        high -= 1
-      }
-    }
-    if (target <= high) right = high
-    else if (target >= low) left = low
-    else return values[target]
-  }
-  return values[target]
-}
-
-function buildSvSignalPath(bins, width, height) {
-  const values = (Array.isArray(bins) ? bins : []).filter((value) => typeof value === 'number' && Number.isFinite(value))
-  if (!values.length || width <= 0 || height <= 0) return ''
-  const working = [...values]
-  const lo = Math.min(0, selectSvOrderStatistic(working, Math.floor(working.length * 0.02)) ?? values[0])
-  let hi = selectSvOrderStatistic(working, Math.floor(working.length * 0.98)) ?? values[values.length - 1]
-  if (!Number.isFinite(hi) || hi <= lo) hi = Math.max(...values) + 1
-  const scale = Math.max(1e-9, hi - lo)
-  const gamma = 0.55
-  const baseY = height - 5
-  let path = `M 0 ${baseY}`
-  const binCount = Math.max(1, bins.length)
-  bins.forEach((value, index) => {
-    const x0 = (index / binCount) * width
-    const x1 = ((index + 1) / binCount) * width
-    const numeric = Number(value)
-    const normalized = Number.isFinite(numeric) ? clamp((numeric - lo) / scale, 0, 1) : 0
-    const boosted = Math.pow(normalized, gamma)
-    const y = baseY - boosted * Math.max(6, height - 12)
-    path += ` L ${x0.toFixed(2)} ${y.toFixed(2)} L ${x1.toFixed(2)} ${y.toFixed(2)}`
-  })
-  path += ` L ${width} ${baseY} Z`
-  return path
-}
-
-function projectSvRibbonFeatureTiles(cache, trackKey, chrom, visStart, visEnd) {
-  const tileSpan = SV_BIGBED_FEATURE_TILE_SPAN
-  const firstTile = Math.floor(visStart / tileSpan) * tileSpan
-  const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-  const dedup = new Map()
-  let expectedTiles = 0
-  let fetchedTiles = 0
-
-  for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-    const tileEnd = tileStart + tileSpan
-    expectedTiles += 1
-    const tile = cache.get(svBigBedFeatureTileKey(trackKey, chrom, tileStart, tileEnd))
-    if (!tile) continue
-    fetchedTiles += 1
-    const rows = Array.isArray(tile?.features) ? tile.features : []
-    for (const row of rows) {
-      const normalized = row?._key ? row : svNormalizeBigBedFeature(row)
-      if (!normalized) continue
-      if (normalized.end <= visStart || normalized.start >= visEnd) continue
-      const key = normalized._key || svBigBedFeatureKey(normalized)
-      if (dedup.has(key)) continue
-      dedup.set(key, normalized)
-    }
-  }
-
-  const features = Array.from(dedup.values()).sort((a, b) => (
-    (a.start - b.start)
-    || (a.end - b.end)
-    || String(a?.name || '').localeCompare(String(b?.name || ''))
-    || String(a?._key || '').localeCompare(String(b?._key || ''))
-  ))
-  return {
-    mode: 'features',
-    features: features.slice(0, SV_RIBBON_INTERVAL_MAX_FEATURES),
-    tile_coverage: expectedTiles > 0 ? fetchedTiles / expectedTiles : 0,
-    truncated: features.length > SV_RIBBON_INTERVAL_MAX_FEATURES,
-  }
-}
-
-function trimSvRibbonFeatureCache(cache) {
-  if (!(cache instanceof Map) || !cache.size) return
-  let featureCount = 0
-  for (const tile of cache.values()) {
-    featureCount += Array.isArray(tile?.features) ? tile.features.length : 0
-  }
-  while (cache.size > SV_RIBBON_MAX_CACHE_TILES || featureCount > SV_RIBBON_MAX_CACHE_FEATURES) {
-    const oldestKey = cache.keys().next().value
-    if (oldestKey === undefined) break
-    const oldestTile = cache.get(oldestKey)
-    featureCount -= Array.isArray(oldestTile?.features) ? oldestTile.features.length : 0
-    cache.delete(oldestKey)
-  }
-}
-
-function getSvRibbonIntervalMinWidth(viewSpan, plotWidth) {
-  if (viewSpan <= 1000) return 1
-  const sequenceFloorWidth = Math.max(1, plotWidth / 1000)
-  const maxBoost = Math.max(sequenceFloorWidth, 6)
-  const t = clamp((viewSpan - 1000) / Math.max(1, SV_RIBBON_INTERVAL_MAX_VIEW_SPAN - 1000), 0, 1)
-  return 1 + (maxBoost - 1) * t
-}
-
-function buildSvRibbonIntervalMarks(features, win, plotWidth, lodSpan = null) {
-  const safeFeatures = Array.isArray(features) ? features : []
-  if (!win?.chrom || !safeFeatures.length) return []
-  const viewStart = Number(win.start)
-  const viewEnd = Number(win.end)
-  const span = Math.max(1, viewEnd - viewStart)
-  const effectiveLodSpan = Number.isFinite(lodSpan) && lodSpan > 0 ? lodSpan : span
-  const minWidth = getSvRibbonIntervalMinWidth(effectiveLodSpan, plotWidth * (effectiveLodSpan / span))
-  const useActualWidth = effectiveLodSpan <= 1000
-  const mergeGapPx = effectiveLodSpan > 500_000 ? 1.5 : effectiveLodSpan > 250_000 ? 0.75 : 0
-
-  const items = []
-  for (const feature of safeFeatures) {
-    const start = Number(feature?.start)
-    const end = Number(feature?.end)
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue
-    if (end <= viewStart || start >= viewEnd) continue
-    const x0 = ((start - viewStart) / span) * plotWidth
-    const x1 = ((end - viewStart) / span) * plotWidth
-    const actualX = clamp(x0, 0, plotWidth)
-    const actualW = Math.max(1, clamp(x1, 0, plotWidth) - actualX)
-    const drawW = useActualWidth ? actualW : Math.max(actualW, minWidth)
-    const drawX = clamp(actualX - ((drawW - actualW) / 2), 0, Math.max(0, plotWidth - drawW))
-    items.push({
-      x: drawX,
-      w: Math.min(drawW, plotWidth),
-      actualX,
-      actualW,
-      start,
-      end,
-      features: [feature],
-    })
-  }
-
-  if (mergeGapPx <= 0) return items.slice(0, SV_RIBBON_INTERVAL_MAX_MARKS)
-
-  const merged = []
-  for (const item of items) {
-    const last = merged[merged.length - 1]
-    if (last && item.x <= (last.x + last.w + mergeGapPx)) {
-      const right = Math.max(last.x + last.w, item.x + item.w)
-      last.x = Math.min(last.x, item.x)
-      last.w = right - last.x
-      last.start = Math.min(last.start, item.start)
-      last.end = Math.max(last.end, item.end)
-      last.features.push(...item.features)
-    } else {
-      merged.push({ ...item, features: [...item.features] })
-    }
-  }
-  return merged.slice(0, SV_RIBBON_INTERVAL_MAX_MARKS)
-}
-
-function constrainWindowToZoomLimits(window, chromSize = null, minStart = 1) {
-  if (!window?.chrom || !Number.isFinite(window?.start) || !Number.isFinite(window?.end)) return window
-  const center = (Number(window.start) + Number(window.end)) / 2
-  const span = Math.max(1, Number(window.end) - Number(window.start))
-  return centerWindowOnRange(window.chrom, center, span, chromSize, minStart)
-}
-
-function buildChromWindow(chrom, chromSize, minStart = 1) {
-  if (!chrom || !Number.isFinite(chromSize) || chromSize <= minStart) return null
-  return {
-    chrom,
-    start: minStart,
-    end: Math.max(minStart + 1, Math.round(chromSize)),
-  }
-}
-
-function getSvLoadingMode() {
-  if (typeof window === 'undefined') return DEFAULT_SV_LOADING_MODE
-  const raw = String(window.localStorage?.getItem(SV_LOADING_MODE_STORAGE_KEY) || '').trim().toLowerCase()
-  return raw === 'windowed' ? 'windowed' : DEFAULT_SV_LOADING_MODE
-}
-
-function svBufferMatchesRefWindow(bufferData, refWindow) {
-  if (!bufferData?.ref_chrom || !refWindow?.chrom) return false
-  return normalizeSvChromToken(bufferData.ref_chrom) === normalizeSvChromToken(refWindow.chrom)
-}
-
-function svBufferMatchesAlignment(bufferData, alignmentId = '') {
-  const wanted = String(alignmentId || '').trim()
-  if (!wanted) return true
-  return String(bufferData?.alignment_id || '').trim() === wanted
-}
-
-function deriveAutoTargetWindowFromBuffer(bufferData, refWindow, fallbackWindow = null) {
-  if (!refWindow || !bufferData) return fallbackWindow
-  if (!svBufferMatchesRefWindow(bufferData, refWindow)) return null
-  const segments = Array.isArray(bufferData?.segments) && bufferData.segments.length
-    ? bufferData.segments
-    : Array.isArray(bufferData?.blocks)
-      ? bufferData.blocks
-      : []
-  if (!segments.length) return fallbackWindow
-
-  let minT = Infinity
-  let maxT = -Infinity
-  for (const seg of segments) {
-    if (!overlaps(seg.ref_start, seg.ref_end, refWindow.start, refWindow.end)) continue
-    const lo = Math.min(seg.tgt_start, seg.tgt_end)
-    const hi = Math.max(seg.tgt_start, seg.tgt_end)
-    if (lo < minT) minT = lo
-    if (hi > maxT) maxT = hi
-  }
-
-  if (!Number.isFinite(minT) || !Number.isFinite(maxT) || maxT <= minT) {
-    return fallbackWindow
-  }
-
-  const refSpan = Math.max(1, refWindow.end - refWindow.start)
-  const targetCenter = (minT + maxT) / 2
-  const targetChromSize = getResolvedChromSize(bufferData?.tgt_chrom_sizes, bufferData?.tgt_chrom)
-  return centerWindowOnRange(bufferData.tgt_chrom, targetCenter, refSpan, targetChromSize, 1)
 }
 
 function StructuralVariationSignalTracks({
@@ -4097,36 +2924,6 @@ function StructuralVariationThreeGenomeView({
   )
 }
 
-function dedupeSvSpeciesList(speciesList) {
-  const out = []
-  const seen = new Set()
-  for (const species of speciesList || []) {
-    const key = speciesGenomeKey(species)
-    if (!species || !key || seen.has(key)) continue
-    seen.add(key)
-    out.push(species)
-  }
-  return out
-}
-
-function svSpeciesSelectionKey(species) {
-  return getGenomeKey(species) || speciesGenomeKey(species)
-}
-
-// The key and label conventions this view uses, handed to the shared option
-// builder so it does not have to guess at either.
-const svGenomeOptionNaming = {
-  keyForSpecies: svSpeciesSelectionKey,
-  labelForSpecies: getSpeciesDisplayName,
-  labelForGenome: getSvCatalogGenomeDisplayName,
-}
-
-const SV_GENOME_GROUP_LABELS = {
-  selected: 'Selected genomes',
-  add: 'Available locally',
-  missing: 'No local data',
-}
-
 /** Render genome options grouped by whether they can be used.
  *
  * Genomes with no local data are listed rather than hidden, so a config naming a
@@ -5464,15 +4261,6 @@ function StructuralVariationRegistrationForm({
       />
     </>
   )
-}
-
-const SV_FILE_BROWSER_EXTENSIONS = {
-  chain_path: ['.bigChain.bb', '.bb'],
-  reference_bigwig_path: ['.bw', '.bigwig'],
-  target_bigwig_path: ['.bw', '.bigwig'],
-  reference_bigbed_path: ['.bb', '.bigbed'],
-  target_bigbed_path: ['.bb', '.bigbed'],
-  config_path: ['.json', '.cfg'],
 }
 
 function StructuralVariationView(props) {

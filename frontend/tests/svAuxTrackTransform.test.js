@@ -1,6 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 
 import {
   buildSvAuxTrackRenderWindow,
@@ -8,6 +7,7 @@ import {
   getSvAuxTrackMatrix,
   getSvAuxTrackTransform,
 } from '../src/utils/svAuxTrackTransform.js'
+import { readSources } from './helpers/readSource.js'
 
 test('SV auxiliary tracks translate cached geometry during a pan preview', () => {
   const transform = getSvAuxTrackTransform(
@@ -72,10 +72,7 @@ test('SV auxiliary tracks render a two-window halo at the original pixel density
 })
 
 test('the trio view projects auxiliary data from committed windows', async () => {
-  const source = await readFile(
-    new URL('../src/components/StructuralVariationView.jsx', import.meta.url),
-    'utf8',
-  )
+  const source = readSources('src/components/StructuralVariationView.jsx', 'src/components/structural-variation')
 
   assert.match(source, /window=\{baseTopWindow\}\s+displayWindow=\{displayTopWindow\}/)
   assert.match(source, /window=\{baseBottomWindow\}\s+displayWindow=\{displayBottomWindow\}/)

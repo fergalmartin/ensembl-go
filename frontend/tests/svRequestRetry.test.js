@@ -7,6 +7,7 @@ import {
   isRetryableSvRequestError,
   shouldStartSvRequest,
 } from '../src/utils/svRequestRetry.js'
+import { readSources } from './helpers/readSource.js'
 import { DataService } from '../src/lib/ensembl-sv/alignments-data/data-service.js'
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
@@ -29,7 +30,7 @@ test('SV retries are limited to transient responses and explicitly retryable cat
 })
 
 test('the three-genome view tracks in-flight requests independently and reserves select-arrow space', async () => {
-  const view = await source('src/components/StructuralVariationView.jsx')
+  const view = readSources('src/components/StructuralVariationView.jsx', 'src/components/structural-variation')
 
   assert.match(view, /const upperInFlightFetchKeyRef = useRef\(''\)/)
   assert.match(view, /const lowerInFlightFetchKeyRef = useRef\(''\)/)
@@ -59,7 +60,7 @@ test('a failed alignment data request is surfaced and can be retried', async () 
 })
 
 test('adding a third genome preserves the loading upper view and waits for a complete lower window', async () => {
-  const view = await source('src/components/StructuralVariationView.jsx')
+  const view = readSources('src/components/StructuralVariationView.jsx', 'src/components/structural-variation')
   const renderer = await source('src/lib/ensembl-sv/alignments/variant-alignments.js')
 
   assert.match(view, /key=\{`javascript\|\$\{pairAlignmentId\}\|\$\{getSvRegionKey\(selectedAnchorRegion\)\}`\}/)
