@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+# ============ Lightweight GFF3 Parser ============
+
+
 class SimpleFeature:
     """Generic genomic feature."""
     feature_type: str  # exon, CDS, five_prime_UTR, three_prime_UTR
@@ -277,6 +280,9 @@ GFF_INDEX_FORMAT_VERSION = "6"
 # the SQLite schema. Version 5 indexes therefore remain safe to read and must
 # not trigger a destructive, multi-genome rebuild during application startup.
 GFF_INDEX_COMPATIBLE_VERSIONS = frozenset({"5", GFF_INDEX_FORMAT_VERSION})
+
+
+# ============ SQLite Indexing ============
 
 
 def _normalize_fs_path(path: str) -> str:

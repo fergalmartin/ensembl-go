@@ -29,6 +29,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Achievements — progress behind the optional Achievements view
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# The store itself — its format, how copies merge, how it reaches disk — is
+# achievements_store.py. What lives here is where the copies are, and the two events
+# only the backend sees: a download finishing (often long after the user has left the
+# Download view) and a genome being deleted.
+#
+# Paths come from the configuration on disk, never from a request, and a tutorial's
+# scratch workspace is never one of them. The sandbox must not be able to award
+# achievements, and must never become the place progress is written.
+#
+# The copies, in the order they are preferred for writing: the output-directory
+# sidecar (beside user_notes.json), the working-directory sidecar, and a fallback in
+# the cache directory for anyone who has not set an output directory yet. Loading
+# reads them all and merges, so progress made before an output directory was chosen
+# follows the user into it on the next write.
+
+
 DEFAULT_ACHIEVEMENTS_FILE = app_paths.CACHE_DIR / achievements_store.ACHIEVEMENTS_FILENAME
 
 
@@ -87,6 +107,8 @@ def _record_achievement_read_warnings(results: List["achievements_store.StoreRea
             config_store.record_config_warning(key, result.detail, result.path)
         elif result.status == "ok":
             config_store.clear_config_warning(key)
+        # "missing" leaves a quarantine warning in place: the file that replaced the
+        # corrupt one is new, and the user should still hear about the old one once.
 
 
 def _load_achievements(config: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], bool]:
@@ -117,6 +139,9 @@ def _mutate_achievements(
             except Exception as exc:
                 logger.warning(f"Failed to save achievements to {primary}: {exc}")
         return doc, False
+
+
+# ── Which organism a downloaded genome is ─────────────────────────────────────
 
 
 _achievement_name_taxids: Optional[Dict[str, int]] = None
@@ -236,6 +261,9 @@ def _achievement_lineage_taxa(doc: Dict[str, Any]) -> List[int]:
     return sorted(union)
 
 
+# ── Events only the backend sees ──────────────────────────────────────────────
+
+
 def _achievements_sandboxed(output_dir: Any = "") -> bool:
     """Whether an event in ``output_dir`` must not count towards the user's achievements.
 
@@ -337,6 +365,9 @@ def _record_deletion_achievement(genome_key: str, output_dir: Any = "") -> None:
         _mutate_achievements(lambda doc: achievements_store.record_deletion(doc, genome_key))
     except Exception as exc:
         logger.warning(f"Achievements: could not record deletion: {exc}")
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
 class AchievementsSyncRequest(BaseModel):

@@ -561,9 +561,6 @@ class IndexRequest(BaseModel):
     target_gff: Optional[str] = None
 
 
-# ============ Lightweight GFF3 Parser ============
-
-
 # ============ Global State (lightweight) ============
 
 class GenomeData:
@@ -856,9 +853,6 @@ def _has_required_structural_fields(structural: Dict[str, Any]) -> bool:
     if structural.get("non_canonical_splice_count") is None:
         return False
     return True
-
-
-# ============ SQLite Indexing ============
 
 
 def extract_genomic_sequence(
@@ -18568,39 +18562,6 @@ async def apply_user_notes_import(payload: NotesImportApplyRequest):
         }
 
     return await run_in_threadpool(_run)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Achievements — progress behind the optional Achievements view
-# ═══════════════════════════════════════════════════════════════════════════════
-#
-# The store itself — its format, how copies merge, how it reaches disk — is
-# achievements_store.py. What lives here is where the copies are, and the two events
-# only the backend sees: a download finishing (often long after the user has left the
-# Download view) and a genome being deleted.
-#
-# Paths come from the configuration on disk, never from a request, and a tutorial's
-# scratch workspace is never one of them. The sandbox must not be able to award
-# achievements, and must never become the place progress is written.
-#
-# The copies, in the order they are preferred for writing: the output-directory
-# sidecar (beside user_notes.json), the working-directory sidecar, and a fallback in
-# the cache directory for anyone who has not set an output directory yet. Loading
-# reads them all and merges, so progress made before an output directory was chosen
-# follows the user into it on the next write.
-
-
-        # "missing" leaves a quarantine warning in place: the file that replaced the
-        # corrupt one is new, and the user should still hear about the old one once.
-
-
-# ── Which organism a downloaded genome is ─────────────────────────────────────
-
-
-# ── Events only the backend sees ──────────────────────────────────────────────
-
-
-# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
 DEFAULT_SPLICE_SETTINGS: Dict[str, Any] = {
