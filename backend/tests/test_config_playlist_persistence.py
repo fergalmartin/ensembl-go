@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.config  # noqa: E402
 import routes.tracks  # noqa: E402
 import config_store  # noqa: E402
 import app_paths  # noqa: E402
@@ -111,7 +112,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                     "output_dir": str(output_dir),
                 })
 
-                payload = asyncio.run(main.list_files("."))
+                payload = asyncio.run(routes.config.list_files("."))
 
             self.assertEqual(Path(payload["current_path"]).resolve(), (output_dir / "local_data").resolve())
             self.assertTrue((output_dir / "local_data").exists())
@@ -120,7 +121,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
     def test_file_browser_reports_when_it_recovered_from_a_missing_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            payload = asyncio.run(main.list_files(str(root / "misspelled-directory")))
+            payload = asyncio.run(routes.config.list_files(str(root / "misspelled-directory")))
 
             self.assertEqual(Path(payload["current_path"]).resolve(), root.resolve())
             self.assertFalse(payload["requested_path_valid"])
@@ -210,7 +211,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
 
-            payload = main.get_output_dir_config(output_dir=str(output_dir))
+            payload = routes.config.get_output_dir_config(output_dir=str(output_dir))
 
             self.assertTrue(payload["found"])
             self.assertEqual(payload["config"]["genome_browser_colors"], colors)
@@ -232,7 +233,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch.object(config_store, "CONFIG_FILE", cache_file):
-                loaded = main.load_custom_config(main.LoadConfigRequest(path=str(config_path)))
+                loaded = routes.config.load_custom_config(routes.config.LoadConfigRequest(path=str(config_path)))
 
             self.assertEqual(loaded["genome_browser_colors"], colors)
             self.assertTrue(loaded["sv_hide_inactive_tracks"])
@@ -262,7 +263,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch.object(config_store, "CONFIG_FILE", cache_file):
-                response = main.update_config(main.ConfigUpdate(
+                response = routes.config.update_config(routes.config.ConfigUpdate(
                     output_dir=str(new_output),
                     genome_browser_colors=config_store.DEFAULT_CONFIG["genome_browser_colors"],
                     show_fps_counter=False,
@@ -295,7 +296,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch.object(config_store, "CONFIG_FILE", cache_file):
-                response = main.update_config(main.ConfigUpdate(
+                response = routes.config.update_config(routes.config.ConfigUpdate(
                     output_dir=str(new_output),
                     genome_playlists=[],
                     selected_genome_playlist_id="__all__",
@@ -318,7 +319,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                     "genome_playlists": [playlist],
                     "selected_genome_playlist_id": playlist["id"],
                 })
-                response = main.update_config(main.ConfigUpdate(
+                response = routes.config.update_config(routes.config.ConfigUpdate(
                     output_dir=str(output_dir),
                     genome_playlists=[],
                     selected_genome_playlist_id="__all__",
@@ -343,7 +344,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                     "genome_playlists": [playlist],
                     "selected_genome_playlist_id": playlist["id"],
                 })
-                response = main.update_config(main.ConfigUpdate(
+                response = routes.config.update_config(routes.config.ConfigUpdate(
                     output_dir=str(output_dir),
                     genome_playlists=[],
                     selected_genome_playlist_id="__all__",
@@ -427,7 +428,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             }), encoding="utf-8")
 
             with patch.object(config_store, "CONFIG_FILE", cache_file):
-                response = main.update_config(main.ConfigUpdate(
+                response = routes.config.update_config(routes.config.ConfigUpdate(
                     working_dir=str(new_working),
                     genome_playlists=[],
                     selected_genome_playlist_id="__all__",
@@ -479,7 +480,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
                 "selected_genome_playlist_id": playlist["id"],
             }), encoding="utf-8")
 
-            state = main.get_config_playlists(output_dir=str(output_dir))
+            state = routes.config.get_config_playlists(output_dir=str(output_dir))
 
             self.assertEqual(state["genome_playlists"][0]["id"], playlist["id"])
 
@@ -500,7 +501,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             palette = ["#123456", "#abcdef"]
 
             with patch.object(config_store, "CONFIG_FILE", cache_file):
-                main.update_config(main.ConfigUpdate(
+                routes.config.update_config(routes.config.ConfigUpdate(
                     genome_default_color="#00b692",
                     genome_colors=assignments,
                     genome_color_palette=palette,

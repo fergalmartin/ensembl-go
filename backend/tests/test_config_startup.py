@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main
+import routes.config  # noqa: E402
 import config_store  # noqa: E402
 import app_state  # noqa: E402
 from download_manager import DownloadManager
@@ -60,9 +61,9 @@ class ConfigStartupTests(unittest.TestCase):
                 patch.object(self.manager, "_build_cache", wraps=self.manager._build_cache) as build:
             config_store.save_config(config)
             self.addCleanup(config_store.invalidate_config_cache)
-            loaded = main.get_config()
-            sidecar = main.get_output_dir_config(config["output_dir"])
-            playlists = main.get_config_playlists(config["output_dir"])
+            loaded = routes.config.get_config()
+            sidecar = routes.config.get_output_dir_config(config["output_dir"])
+            playlists = routes.config.get_config_playlists(config["output_dir"])
 
             build.assert_not_called()
             self.assertIsNone(self.manager._species_cache)

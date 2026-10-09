@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import routes.config  # noqa: E402
 import routes.tutorial  # noqa: E402
 import genome_context  # noqa: E402
 import local_inventory  # noqa: E402
@@ -237,10 +238,10 @@ class TutorialWorkspaceTests(unittest.TestCase):
             demo_genome.reset_tutorial_workspace("")
 
     def test_a_config_pointing_at_the_tutorial_workspace_is_recognised(self):
-        self.assertTrue(main._is_tutorial_workspace_path(f"/somewhere/{demo_genome.TUTORIAL_WORKSPACE_DIR}"))
-        self.assertFalse(main._is_tutorial_workspace_path("/somewhere/real_output"))
-        self.assertFalse(main._is_tutorial_workspace_path(""))
-        self.assertFalse(main._is_tutorial_workspace_path(None))
+        self.assertTrue(routes.config._is_tutorial_workspace_path(f"/somewhere/{demo_genome.TUTORIAL_WORKSPACE_DIR}"))
+        self.assertFalse(routes.config._is_tutorial_workspace_path("/somewhere/real_output"))
+        self.assertFalse(routes.config._is_tutorial_workspace_path(""))
+        self.assertFalse(routes.config._is_tutorial_workspace_path(None))
 
     def test_a_config_pointing_at_the_tutorial_workspace_is_never_saved(self):
         # The guarantee behind the sandbox: whatever the frontend does, and in whatever
@@ -253,8 +254,8 @@ class TutorialWorkspaceTests(unittest.TestCase):
 
             with patch.object(config_store, "CONFIG_FILE", config_file):
                 tutorial_dir = str(Path(real_output_dir) / demo_genome.TUTORIAL_WORKSPACE_DIR)
-                main.update_config(
-                    main.ConfigUpdate(output_dir=tutorial_dir, active_species=[])
+                routes.config.update_config(
+                    routes.config.ConfigUpdate(output_dir=tutorial_dir, active_species=[])
                 )
                 saved = json.loads(config_file.read_text(encoding="utf-8"))
                 self.assertEqual(saved.get("output_dir"), real_output_dir,
@@ -267,7 +268,7 @@ class TutorialWorkspaceTests(unittest.TestCase):
             wanted = str(Path(tmpdir) / "new_genomes")
 
             with patch.object(config_store, "CONFIG_FILE", config_file):
-                main.update_config(main.ConfigUpdate(output_dir=wanted))
+                routes.config.update_config(routes.config.ConfigUpdate(output_dir=wanted))
                 saved = json.loads(config_file.read_text(encoding="utf-8"))
                 self.assertEqual(saved.get("output_dir"), wanted)
 
