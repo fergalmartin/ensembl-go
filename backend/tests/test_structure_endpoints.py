@@ -22,6 +22,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import app_state  # noqa: E402
 import protein_structure as ps  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
@@ -45,7 +46,7 @@ async def call_middleware(req):
 
 class StructureTokenTests(unittest.TestCase):
     def test_viewer_routes_accept_the_token_from_the_query_string(self):
-        with patch.object(main, "API_TOKEN", "secret"):
+        with patch.object(app_state, "API_TOKEN", "secret"):
             for path in ("/structure/viewer", "/structure/assets/viewer.js", "/structure/model/O43175"):
                 allowed = asyncio.run(call_middleware(request(path, query={"token": "secret"})))
                 self.assertEqual(allowed.status_code, 200, path)
@@ -59,19 +60,19 @@ class StructureTokenTests(unittest.TestCase):
     def test_the_query_token_does_not_work_anywhere_else(self):
         # The whole point of confining it to one prefix: a link or a referer leak
         # must not turn into a working credential for the rest of the API.
-        with patch.object(main, "API_TOKEN", "secret"):
+        with patch.object(app_state, "API_TOKEN", "secret"):
             response = asyncio.run(call_middleware(request("/api/config", query={"token": "secret"})))
             self.assertEqual(response.status_code, 401)
 
     def test_the_header_token_is_not_accepted_on_the_viewer_prefix(self):
-        with patch.object(main, "API_TOKEN", "secret"):
+        with patch.object(app_state, "API_TOKEN", "secret"):
             response = asyncio.run(call_middleware(
                 request("/structure/viewer", headers={"x-ensembl-local-token": "secret"})
             ))
             self.assertEqual(response.status_code, 401)
 
     def test_a_non_local_origin_is_refused_before_the_token_is_examined(self):
-        with patch.object(main, "API_TOKEN", "secret"):
+        with patch.object(app_state, "API_TOKEN", "secret"):
             response = asyncio.run(call_middleware(
                 request("/structure/viewer", query={"token": "secret"},
                         headers={"origin": "https://example.org"})
@@ -79,7 +80,7 @@ class StructureTokenTests(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
 
     def test_no_token_configured_means_no_token_required(self):
-        with patch.object(main, "API_TOKEN", ""):
+        with patch.object(app_state, "API_TOKEN", ""):
             self.assertEqual(asyncio.run(call_middleware(request("/structure/viewer"))).status_code, 200)
 
     def test_non_loopback_clients_are_refused_outright(self):
@@ -89,7 +90,7 @@ class StructureTokenTests(unittest.TestCase):
 
 class ViewerAssetTests(unittest.TestCase):
     def test_the_viewer_page_declares_its_own_policy_and_carries_the_token(self):
-        with patch.object(main, "API_TOKEN", "s3cret"):
+        with patch.object(app_state, "API_TOKEN", "s3cret"):
             response = asyncio.run(main.structure_viewer_page())
 
         csp = response.headers["content-security-policy"]

@@ -174,12 +174,7 @@ app.include_router(routes.bigwig.router)
 app.include_router(routes.bed.router)
 app.include_router(routes.long_reads.router)
 app.include_router(routes.splice.router)
-API_TOKEN = os.environ.get("ENSEMBL_LOCAL_API_TOKEN", "").strip()
-API_TOKEN_HEADER = "x-ensembl-local-token"
-# Routes serving the sandboxed 3D structure viewer. Kept off /api because these
-# are framed navigations and third-party subresource fetches rather than calls
-# the app's own fetch wrapper makes; see enforce_local_origin.
-STRUCTURE_VIEWER_PREFIX = "/structure/"
+
 
 # Allow only local renderer origins (Electron file origin is "null")
 app.add_middleware(
@@ -225,13 +220,13 @@ async def enforce_local_origin(request: Request, call_next):
     client_host = getattr(request.client, "host", "") if request.client else ""
     require_loopback_client(client_host)
     guarded = path.startswith("/api") and path != "/api/health"
-    framed = path.startswith(STRUCTURE_VIEWER_PREFIX)
+    framed = path.startswith(app_state.STRUCTURE_VIEWER_PREFIX)
     if guarded or framed:
         origin = request.headers.get("origin")
         referer = request.headers.get("referer")
         if not _is_allowed_origin(origin) or not _is_allowed_referer(referer):
             return JSONResponse(status_code=403, content={"detail": "Forbidden origin"})
-        if API_TOKEN and request.method.upper() != "OPTIONS":
+        if app_state.API_TOKEN and request.method.upper() != "OPTIONS":
             # The structure viewer is loaded as an iframe and then fetches its own
             # assets and model file. Neither a frame navigation nor a fetch the
             # third-party viewer issues on its own behalf can carry a header, so
@@ -239,9 +234,9 @@ async def enforce_local_origin(request: Request, call_next):
             provided = (
                 request.query_params.get("token", "")
                 if framed else
-                request.headers.get(API_TOKEN_HEADER, "")
+                request.headers.get(app_state.API_TOKEN_HEADER, "")
             )
-            if not hmac.compare_digest(provided, API_TOKEN):
+            if not hmac.compare_digest(provided, app_state.API_TOKEN):
                 return JSONResponse(status_code=401, content={"detail": "Missing or invalid local API token"})
     return await call_next(request)
 
@@ -4049,7 +4044,7 @@ def _model_info(model: "protein_structure.AlphaFoldModel", token: str) -> Struct
         sequence_start=model.sequence_start,
         sequence_end=model.sequence_end,
         fragment_count=model.fragment_count,
-        model_url=f"{STRUCTURE_VIEWER_PREFIX}model/{quote(model.accession)}{query}",
+        model_url=f"{app_state.STRUCTURE_VIEWER_PREFIX}model/{quote(model.accession)}{query}",
         afdb_url=ALPHAFOLD_ENTRY_URL.format(accession=model.accession),
     )
 
@@ -4114,7 +4109,7 @@ async def structure_resolve(payload: StructureResolveRequest):
             source=source,
             status="ok",
             protein_length=protein_length,
-            model=_model_info(model, API_TOKEN),
+            model=_model_info(model, app_state.API_TOKEN),
         )
 
     return await run_in_threadpool(_query)
@@ -4758,7 +4753,7 @@ async def structure_viewer_page():
                 "'npm run prepare:structure-viewer' in the frontend directory."
             ),
         )
-    query = f"?token={quote(API_TOKEN)}" if API_TOKEN else ""
+    query = f"?token={quote(app_state.API_TOKEN)}" if app_state.API_TOKEN else ""
     markup = page.read_text(encoding="utf-8").replace("__STRUCTURE_QUERY__", query)
     return HTMLResponse(
         content=markup,

@@ -12,6 +12,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import app_state  # noqa: E402
 from main import SaveExportRequest, save_export_file  # noqa: E402
 from routes.genome_removal import DeleteSingleFileRequest, delete_single_local_file  # noqa: E402
 from routes.config import MkdirRequest, create_directory  # noqa: E402
@@ -42,7 +43,7 @@ class BackendSecurityMiddlewareTests(unittest.TestCase):
         return await main.enforce_local_origin(request, call_next)
 
     def test_health_is_public_but_api_requires_token_when_configured(self):
-        with patch.object(main, "API_TOKEN", "secret"):
+        with patch.object(app_state, "API_TOKEN", "secret"):
             self.assertEqual(asyncio.run(self._call_middleware(self._request("/api/health"))).status_code, 200)
             self.assertEqual(asyncio.run(self._call_middleware(self._request("/api/config"))).status_code, 401)
             self.assertEqual(
@@ -63,7 +64,7 @@ class BackendSecurityMiddlewareTests(unittest.TestCase):
             )
 
     def test_non_local_origin_is_rejected_before_token(self):
-        with patch.object(main, "API_TOKEN", "secret"):
+        with patch.object(app_state, "API_TOKEN", "secret"):
             response = asyncio.run(
                 self._call_middleware(
                     self._request(
