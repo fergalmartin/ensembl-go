@@ -7,7 +7,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bed_index import build_gene_model_rows, looks_like_gene_models  # noqa: E402
-from main import BigBedFeatureTileRequest, BigBedFeatureTilesRequest, browse_bigbed_feature_tiles  # noqa: E402
+from routes.bed import (  # noqa: E402
+    BigBedFeatureTileRequest,
+    BigBedFeatureTilesRequest,
+    browse_bigbed_feature_tiles,
+)
 
 # 1-based, inclusive, as GFF writes them.
 GFF3 = "\n".join([

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import (  # noqa: E402
+from routes.bed import (  # noqa: E402
     BigBedBlockTileRequest,
     BigBedBlockTilesRequest,
     BigBedFeatureTileRequest,
@@ -110,7 +110,7 @@ class BigBedTileEndpointTests(unittest.TestCase):
             bb_path.write_bytes(b"BB")
             fake_module = SimpleNamespace(open=lambda _path: _FakeBigBed())
 
-            with patch("main.pyBigWig", fake_module):
+            with patch("routes.bed.pyBigWig", fake_module):
                 payload = BigBedBlockTilesRequest(
                     path=str(bb_path),
                     chrom="1",
@@ -132,7 +132,7 @@ class BigBedTileEndpointTests(unittest.TestCase):
             bb_path.write_bytes(b"BB")
             fake_module = SimpleNamespace(open=lambda _path: _FakeBigBed())
 
-            with patch("main.pyBigWig", fake_module):
+            with patch("routes.bed.pyBigWig", fake_module):
                 payload = BigBedFeatureTilesRequest(
                     path=str(bb_path),
                     chrom="chr1",
@@ -161,7 +161,7 @@ class BigBedTileEndpointTests(unittest.TestCase):
             bb_path.write_bytes(b"BB")
             fake_module = SimpleNamespace(open=lambda _path: _FakeBigBedBed12ChromStarts())
 
-            with patch("main.pyBigWig", fake_module):
+            with patch("routes.bed.pyBigWig", fake_module):
                 payload = BigBedFeatureTilesRequest(
                     path=str(bb_path),
                     chrom="chr1",
@@ -193,7 +193,7 @@ class BigBedTileEndpointTests(unittest.TestCase):
             bb_path.write_bytes(b"BB")
             fake_module = SimpleNamespace(open=lambda _path: _FakeBigBedBed12ChromStarts())
 
-            with patch("main.pyBigWig", fake_module):
+            with patch("routes.bed.pyBigWig", fake_module):
                 payload = BigBedFeatureTilesRequest(
                     path=str(bb_path),
                     chrom="chr1",

@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bed_index import PlainBedIndex, get_plain_bed_index  # noqa: E402
-from main import (  # noqa: E402
+from routes.bed import (  # noqa: E402
     BigBedBlockTileRequest,
     BigBedBlockTilesRequest,
     BigBedFeatureTileRequest,

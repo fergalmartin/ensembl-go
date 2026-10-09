@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import browse_bed  # noqa: E402
+from routes.bed import browse_bed  # noqa: E402
 
 
 class _FakeBigBed:
@@ -42,7 +42,7 @@ class BrowseBedBigBedTests(unittest.TestCase):
             fake = _FakeBigBed()
             fake_module = SimpleNamespace(open=lambda _path: fake)
 
-            with patch("main.pyBigWig", fake_module):
+            with patch("routes.bed.pyBigWig", fake_module):
                 payload = asyncio.run(
                     browse_bed(
                         genome="reference",
@@ -64,7 +64,7 @@ class BrowseBedBigBedTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             bb_path = Path(tmpdir) / "missing_lib.bb"
             bb_path.write_bytes(b"BB")
-            with patch("main.pyBigWig", None):
+            with patch("routes.bed.pyBigWig", None):
                 with self.assertRaises(HTTPException) as ctx:
                     asyncio.run(
                         browse_bed(
