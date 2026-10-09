@@ -1,7 +1,14 @@
-import { getBaseColor } from '../../utils/nucleotideStyle'
-import { browserControlKey } from '../../achievements/browserControls.js'
 import { trackAchievement } from '../../achievements/tracker.js'
-import { Fragment, memo, useRef, useEffect, useId, useLayoutEffect, useState, useCallback, useMemo } from 'react'
+import {
+  memo,
+  useRef,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useState,
+  useCallback,
+  useMemo,
+} from 'react'
 import iconResetRaw from '../../assets/icons/icon_reset.svg?raw'
 import iconAnchorRaw from '../../assets/icons/icon_anchor.svg?raw'
 import {
@@ -23,7 +30,6 @@ import {
 } from '../../utils/vcfTileStrategy'
 import { buildDefaultScreenshotName } from '../../utils/screenshotExport'
 import { buildGeneIntervalIndex, sameGeneRange } from '../../utils/geneIntervalIndex'
-import InfoGlyph from '../InfoGlyph'
 import { registerBrowserViewport } from '../../utils/browserTutorialControls'
 import useTutorial from '../../hooks/useTutorial'
 import useNearViewport from '../../hooks/useNearViewport'
@@ -59,10 +65,8 @@ import {
 } from './genomeBrowserViewportLayout'
 import { RULER_HEIGHT } from './genomeBrowserRuler'
 import { FONT_MONO } from '../../utils/typography'
-import NoteGlyph from '../NoteGlyph'
 
 import { API_BASE } from '../../backendRuntime'
-import GeneIndexProgressOverlay from '../GeneIndexProgressOverlay'
 import { geneIndexOverlayBand, shouldHoldGeneTrackHeight } from '../../utils/geneIndexOverlay'
 import { INDEX_BUILDING_STATUS } from '../../utils/browserReadiness'
 import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../../sessionResume.js'
@@ -101,10 +105,8 @@ import {
     TUTORIAL_MOVE_MS,
     VCF_LOD_LEVELS,
     VCF_SETTINGS_DEFAULTS,
-    gutterMarkerStyle,
     isGeneModelTrack,
     isIntervalTrackType,
-    pickerRowClass,
 } from './browserConstants.js'
 import {
     REV_COMP,
@@ -126,7 +128,7 @@ import {
     normalizeVcfDisplayMode,
     normalizeVcfSettings,
 } from './trackSettings.js'
-import { formatSpliceMotifForDisplay, spliceJunctionKey } from './spliceGeometry.js'
+import { spliceJunctionKey } from './spliceGeometry.js'
 import {
     formatBp,
     formatCoord,
@@ -163,6 +165,8 @@ import { projectBigBedBlockTiles } from './trackProjection.js'
 import { runBrowserSearch } from './browserSearch.js'
 import { handleBrowserCanvasClick } from './pointerInput.js'
 import { handleBrowserMouseMove } from './pointerInput.js'
+import { renderBrowserToolbar } from './BrowserToolbar.jsx'
+import { renderBrowserPanel } from './BrowserPanel.jsx'
 
 /* The track picker adds and removes; switching a track on and off is the gutter's job.
  * Each row has one button, Add or Remove, for what it will be once applied, and rows that
@@ -6346,398 +6350,56 @@ function GenomeBrowser({
     }
 
     const toolbar = (
-        <div
-            ref={toolbarRef}
-            data-browser-controls="true"
-            // The assembly drawer lines its header band up with this row, so the
-            // drawer reads as sliding out of the genome pill that opened it.
-            data-browser-toolbar="true"
-            data-browser-toolbar-position={effectiveToolbarPosition}
-            data-focus-panel-key={screenshotTargetId || genome}
-            // Control freak counts this genome's toolbar as well as the general control
-            // bar; see achievements/browserControls.js.
-            onClickCapture={(event) => {
-                const key = browserControlKey(event.target)
-                if (key) trackAchievement('browser.control', key)
-            }}
-            onKeyDownCapture={(event) => {
-                if (event.key === 'Enter' && event.target?.dataset?.tourId === 'browser-location-search') {
-                    trackAchievement('browser.control', 'browser-location-search-go')
-                }
-            }}
-            className="flex items-center gap-0 px-3 py-2 border-b flex-none"
-            style={{
-                backgroundColor: colors.infoBg,
-                borderColor: isLight ? '#dee2e6' : '#373a40',
-            }}
-        >
-            {genomePillLabel && (
-                <button
-                    type="button"
-                    data-browser-control="browser-genome-pill"
-                    onClick={() => {
-                        if (!onGenomePillClick) return
-                        if (!genomePillExpanded) trackAchievement('browser.pillInfo')
-                        onGenomePillClick()
-                    }}
-                    disabled={!onGenomePillClick}
-                    className="inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium mr-2 shrink-0"
-                    style={{
-                        backgroundColor: panelPillColor,
-                        color: '#ffffff',
-                        borderColor: 'transparent',
-                        opacity: onGenomePillClick ? 1 : 0.9,
-                        cursor: onGenomePillClick ? 'pointer' : 'default',
-                        width: `${toolbarColumnWidths.genome}px`,
-                    }}
-                    title={onGenomePillClick ? `${genomePillLabel} (click for assembly information)` : genomePillLabel}
-                    aria-expanded={genomePillExpanded}
-                >
-                    <span className="truncate">{genomePillLabel}</span>
-                    {/* Marks the pill as something to read, not just a label.
-                        Only where there is something behind it to open. */}
-                    {onGenomePillClick && (
-                        <span className="ml-auto flex-none pl-1.5 opacity-90">
-                            <InfoGlyph size={13} strokeWidth={2.2} />
-                        </span>
-                    )}
-                </button>
-            )}
-
-            {/* Region selector */}
-            <select
-                data-tour-id="browser-region-select"
-                value={selectedChrom}
-                onChange={(e) => {
-                    const v = e.target.value
-                    if (v === '__show_featureless__') {
-                        setShowFeatureless(true)
-                        return
-                    }
-                    handleRegionChange(v)
-                }}
-                className="text-xs px-2 py-1 rounded border"
-                style={{
-                    backgroundColor: colors.bg,
-                    color: colors.infoText,
-                    borderColor: isLight ? '#ced4da' : '#495057',
-                    width: `${toolbarColumnWidths.region}px`,
-                    flex: `0 0 ${toolbarColumnWidths.region}px`,
-                }}
-            >
-                {sortedRegions.withFeatures.map(r => (
-                    <option key={r.chrom} value={r.chrom}>
-                        {r.display_name || r.chrom} ({r.gene_count} genes, {formatBp(r.length)})
-                    </option>
-                ))}
-                {sortedRegions.featureless.length > 0 && !showFeatureless && (
-                    <option value="__show_featureless__" style={{ fontStyle: 'italic', opacity: 0.7 }}>
-                        + {sortedRegions.featureless.length} featureless region{sortedRegions.featureless.length !== 1 ? 's' : ''}
-                    </option>
-                )}
-                {showFeatureless && sortedRegions.featureless.map(r => (
-                    <option key={r.chrom} value={r.chrom}>
-                        {r.display_name || r.chrom} (no genes, {formatBp(r.length)})
-                    </option>
-                ))}
-            </select>
-
-            {/* Search. The wrapper is anchored as well as the input: the box and its go
-                button are one control to a reader, so a tutorial spotlighting the pair
-                leaves the button inside the lit, clickable area rather than dimmed
-                alongside the field it belongs to. */}
-            <div
-                data-tour-id="browser-location-search-field"
-                className="relative flex items-center gap-0.5 ml-2 mr-0.5 shrink-0"
-                style={{ width: `${toolbarColumnWidths.search}px` }}
-            >
-                <input
-                    data-tour-id="browser-location-search"
-                    type="text"
-                    value={searchInput}
-                    onChange={(e) => {
-                        setSearchInput(e.target.value)
-                        if (searchFeedback) showSearchFeedback(null)
-                    }}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSearch()
-                        else if (e.key === 'Escape' && searchFeedback) showSearchFeedback(null)
-                    }}
-                    placeholder="Gene name or chr:start-end"
-                    aria-invalid={searchFeedback?.tone === 'error' ? 'true' : undefined}
-                    aria-describedby={searchFeedback ? `${screenshotTargetId || 'browser'}-search-feedback` : undefined}
-                    className="text-xs px-2 py-1 rounded border flex-1 min-w-0"
-                    style={{
-                        backgroundColor: colors.bg,
-                        color: colors.infoText,
-                        borderColor: searchFeedback?.tone === 'error'
-                            ? (isLight ? '#dc2626' : '#f87171')
-                            : (isLight ? '#ced4da' : '#495057'),
-                    }}
-                />
-                {searchFeedback && (
-                    <div
-                        id={`${screenshotTargetId || 'browser'}-search-feedback`}
-                        data-tour-id="browser-location-search-feedback"
-                        role={searchFeedback.tone === 'error' ? 'alert' : 'status'}
-                        className="absolute left-0 top-full mt-1 z-40 flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-[11px] leading-snug shadow-lg"
-                        style={{
-                            width: 'max(100%, 340px)',
-                            backgroundColor: searchFeedback.tone === 'error'
-                                ? (isLight ? '#fef2f2' : '#3b1219')
-                                : (isLight ? '#fffbeb' : '#3a2a0a'),
-                            borderColor: searchFeedback.tone === 'error'
-                                ? (isLight ? '#fca5a5' : '#7f1d1d')
-                                : (isLight ? '#fcd34d' : '#78350f'),
-                            color: searchFeedback.tone === 'error'
-                                ? (isLight ? '#991b1b' : '#fecaca')
-                                : (isLight ? '#92400e' : '#fde68a'),
-                        }}
-                    >
-                        <span className="flex-1">{searchFeedback.text}</span>
-                        <button
-                            type="button"
-                            onClick={() => showSearchFeedback(null)}
-                            aria-label="Dismiss"
-                            className="shrink-0 opacity-70 hover:opacity-100"
-                        >✕</button>
-                    </div>
-                )}
-                <button
-                    data-tour-id="browser-location-search-go"
-                    onClick={handleSearch}
-                    className="p-1 rounded transition-opacity hover:opacity-80 flex items-center justify-center"
-                    style={{ backgroundColor: controlAccentColor, color: '#ffffff', width: '28px', height: '28px' }}
-                    title="Go to location"
-                >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="11" cy="11" r="8"></circle>
-                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                    </svg>
-                </button>
-            </div>
-
-            {/* View Controls Group */}
-            <div
-                className="flex items-center gap-1.5 ml-0 pl-0.5 border-l border-gray-300 dark:border-gray-700 shrink-0"
-                style={{ width: `${toolbarColumnWidths.iconGroup}px` }}
-            >
-
-                {/* Focus this window — the location counterpart of clicking a gene */}
-                <button
-                    data-tour-id="browser-focus-window"
-                    data-tutorial-engaged={isLocationFocusVisible ? 'true' : 'false'}
-                    onClick={() => {
-                        trackAchievement('browser.locationFocus')
-                        focusCurrentWindow()
-                    }}
-                    disabled={!selectedChrom}
-                    className="p-1.5 rounded transition-opacity hover:opacity-80 disabled:opacity-50 flex items-center justify-center"
-                    style={{
-                        backgroundColor: controlAccentColor,
-                        color: '#ffffff',
-                        width: '32px', height: '28px',
-                        boxShadow: isLocationFocusVisible ? `0 0 0 2px ${isLight ? '#ffffff' : '#111827'} inset` : 'none',
-                    }}
-                    title={selectedGene
-                        ? 'Focus the current window instead of the gene of focus'
-                        : 'Make the current window the location of focus'}
-                >
-                    <svg width="19" height="19" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                        <path d={RESET_ICON_PATH_D} fill="currentColor" />
-                    </svg>
-                </button>
-
-                {/* Expand / Collapse All — single toggle */}
-                {(() => {
-                    const isWindowExpanded = isViewportTranscriptExpandMode
-                    const transcriptControlsDisabled = isTranscriptCompressionActive
-
-                    return (
-                        <button
-                            data-tour-id="browser-expand-transcripts"
-                            data-tutorial-engaged={isWindowExpanded ? 'true' : 'false'}
-                            onClick={() => {
-                                if (transcriptControlsDisabled) return
-                                if (isWindowExpanded) {
-                                    setIsViewportTranscriptExpandMode(false)
-                                    setExpandedGenes({})
-                                } else {
-                                    setIsViewportTranscriptExpandMode(true)
-                                }
-                            }}
-                            className="p-1.5 rounded transition-opacity hover:opacity-80 disabled:opacity-50 flex items-center justify-center"
-                            disabled={transcriptControlsDisabled || (!isWindowExpanded && genes.length === 0)}
-                            style={{
-                                backgroundColor: transcriptControlsDisabled
-                                    ? (isLight ? '#e5e7eb' : '#374151')
-                                    : controlAccentColor,
-                                color: transcriptControlsDisabled
-                                    ? (isLight ? '#9ca3af' : '#6b7280')
-                                    : '#ffffff',
-                                width: '32px', height: '28px'
-                            }}
-                            title={transcriptControlsDisabled
-                                ? 'Disable Compress to change transcript expansion'
-                                : (isWindowExpanded
-                                    ? 'Return to canonical transcripts'
-                                    : 'Expand transcripts in the current window and surrounding buffer')}
-                        >
-                            {/* Make SVG use the full 24x24 canvas to expand the diagram's visual size */}
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                {isWindowExpanded ? (
-                                    <>
-                                        {/* Top transcript */}
-                                        <line x1="2" y1="5" x2="22" y2="5" strokeWidth="1" />
-                                        <rect x="2" y="3" width="5" height="4" fill="currentColor" stroke="none" />
-                                        <rect x="10" y="3" width="6" height="4" fill="currentColor" stroke="none" />
-                                        <rect x="19" y="3" width="3" height="4" fill="currentColor" stroke="none" />
-                                        {/* Up arrow */}
-                                        <path d="M12 21V10" strokeWidth="3" />
-                                        <path d="M8 14l4-4 4 4" strokeWidth="3" fill="none" />
-                                    </>
-                                ) : (
-                                    <>
-                                        {/* Transcript 1 (top): 3 exons */}
-                                        <line x1="2" y1="4" x2="22" y2="4" strokeWidth="1" />
-                                        <rect x="2" y="2" width="5" height="4" fill="currentColor" stroke="none" />
-                                        <rect x="10" y="2" width="6" height="4" fill="currentColor" stroke="none" />
-                                        <rect x="19" y="2" width="3" height="4" fill="currentColor" stroke="none" />
-
-                                        {/* Transcript 2 (middle): 2 exons skipping middle */}
-                                        <line x1="2" y1="12" x2="22" y2="12" strokeWidth="1" />
-                                        <rect x="2" y="10" width="5" height="4" fill="currentColor" stroke="none" />
-                                        <rect x="19" y="10" width="3" height="4" fill="currentColor" stroke="none" />
-
-                                        {/* Transcript 3 (bottom): 1 long exon (aligned left but not full width) */}
-                                        {/* Fits the first two exons horizontally to show alternative transcript splicing */}
-                                        <rect x="2" y="18" width="14" height="4" fill="currentColor" stroke="none" />
-                                    </>
-                                )}
-                            </svg>
-                        </button>
-                    )
-                })()}
-
-                {/* Flip Track Orientation */}
-                <button
-                    data-browser-control="browser-flip"
-                    data-tutorial-engaged={isFlipped ? 'true' : 'false'}
-                    onClick={toggleFlipped}
-                    className={`p-1.5 rounded transition-opacity flex items-center justify-center hover:opacity-80`}
-                    style={{
-                        backgroundColor: controlAccentColor,
-                        color: '#ffffff',
-                        width: '32px', height: '28px',
-                        // The same pressed ring the focus-window button wears.
-                        boxShadow: isFlipped ? `0 0 0 2px ${isLight ? '#ffffff' : '#111827'} inset` : 'none',
-                    }}
-                    aria-pressed={isFlipped}
-                    title={isFlipped
-                        ? "Reverse complement mode is active. Click to restore 5' to 3'"
-                        : "Flip to 3' to 5' view (reverse complement)"}
-                >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 9a9 9 0 0 0-14.8-4.2L3 8" />
-                        <path d="M3 3v5h5" />
-                        <path d="M3 15a9 9 0 0 0 14.8 4.2l3.2-3.2" />
-                        <path d="M21 21v-5h-5" />
-                        {/* Strikethrough when flipped */}
-                        {isFlipped && (
-                            <line x1="2" y1="2" x2="22" y2="22" stroke="white" strokeWidth="3" />
-                        )}
-                    </svg>
-                </button>
-
-                {/* Flip Vertical Track Layout (Primary/Secondary preset style) */}
-                <button
-                    data-browser-control="browser-strand-layout"
-                    onClick={() => setIsVerticalLayoutFlipped((prev) => !prev)}
-                    className="p-1.5 rounded transition-opacity flex items-center justify-center hover:opacity-80"
-                    style={{
-                        backgroundColor: controlAccentColor,
-                        color: '#ffffff',
-                        width: '32px', height: '28px',
-                        boxShadow: 'none',
-                    }}
-                    title={`Switch to ${isVerticalLayoutFlipped
-                        ? (isPrimaryPanel ? 'primary' : 'secondary')
-                        : (isPrimaryPanel ? 'secondary' : 'primary')
-                        } layout style`}
-                >
-                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M8 20V5" />
-                        <path d="M4.5 8.5L8 5l3.5 3.5" />
-                        <path d="M16 4v15" />
-                        <path d="M12.5 15.5L16 19l3.5-3.5" />
-                    </svg>
-                </button>
-
-                {/* Box-Select Zoom */}
-                <button
-                    data-browser-control="browser-box-zoom"
-                    onClick={() => {
-                        setIsBoxSelectMode(prev => !prev)
-                        setIsSelectingRect(false)
-                        setSelectionRect(null)
-                    }}
-                    className="p-1.5 rounded transition-opacity flex items-center justify-center hover:opacity-80"
-                    style={{
-                        backgroundColor: controlAccentColor,
-                        color: '#ffffff',
-                        width: '32px', height: '28px',
-                        boxShadow: isBoxSelectMode ? `0 0 0 2px ${isLight ? '#ffffff' : '#111827'} inset` : 'none'
-                    }}
-                    title={isBoxSelectMode ? 'Selection mode active: drag to zoom' : 'Activate selection zoom mode'}
-                >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="2.5" y="2.5" width="16" height="16" rx="2.2" strokeWidth="2.2" strokeDasharray="3.2 2.2" />
-                        <path d="M21 16.8v5.2M18.4 19.4h5.2" strokeWidth="2.2" />
-                    </svg>
-                </button>
-
-                {/* Add Custom Track — opens Track Picker (shows registered tracks) */}
-                <button
-                    data-tour-id="browser-add-track"
-                    onClick={() => {
-                        refreshAvailableTracks?.()
-                        setSelectedTrackPickerIds([])
-                        setIsTrackPickerOpen(true)
-                    }}
-                    className="p-1.5 rounded transition-opacity flex items-center justify-center hover:opacity-80"
-                    style={{
-                        backgroundColor: controlAccentColor,
-                        color: '#ffffff',
-                        width: '32px', height: '28px'
-                    }}
-                    title="Add Custom Track"
-                >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 6h6" strokeWidth="2.1" />
-                        <path d="M3 12h10" strokeWidth="2.1" />
-                        <path d="M3 18h14" strokeWidth="2.1" />
-                        <path d="M16 4v6" strokeWidth="2.1" />
-                        <path d="M13 7h6" strokeWidth="2.1" />
-                    </svg>
-                </button>
-            </div>
-
-            {/* Coordinates display */}
-            <button
-                data-tour-id="browser-coordinates"
-                type="button"
-                onClick={() => setIsRulerCollapsed((prev) => !prev)}
-                className="text-xs ml-auto tabular-nums rounded px-1.5 py-1 transition-colors hover:bg-black/5 dark:hover:bg-white/10 text-right truncate shrink-0"
-                style={{
-                    color: colors.rulerText,
-                    width: `${toolbarColumnWidths.coordinates}px`,
-                }}
-                title={isRulerCollapsed ? 'Show coordinate ruler' : 'Hide coordinate ruler'}
-                aria-pressed={isRulerCollapsed}
-            >
-                {chromLabel(selectedChrom)}:{formatCoord(Math.floor(viewStart))}-{formatCoord(Math.ceil(viewEnd))} ({formatBp(Math.ceil(viewEnd - viewStart))})
-            </button>
-        </div>
+        renderBrowserToolbar({
+            RESET_ICON_PATH_D,
+            chromLabel,
+            colors,
+            controlAccentColor,
+            effectiveToolbarPosition,
+            focusCurrentWindow,
+            genes,
+            genome,
+            genomePillExpanded,
+            genomePillLabel,
+            handleRegionChange,
+            handleSearch,
+            isBoxSelectMode,
+            isFlipped,
+            isLight,
+            isLocationFocusVisible,
+            isPrimaryPanel,
+            isRulerCollapsed,
+            isTranscriptCompressionActive,
+            isVerticalLayoutFlipped,
+            isViewportTranscriptExpandMode,
+            onGenomePillClick,
+            panelPillColor,
+            refreshAvailableTracks,
+            screenshotTargetId,
+            searchFeedback,
+            searchInput,
+            selectedChrom,
+            selectedGene,
+            setExpandedGenes,
+            setIsBoxSelectMode,
+            setIsRulerCollapsed,
+            setIsSelectingRect,
+            setIsTrackPickerOpen,
+            setIsVerticalLayoutFlipped,
+            setIsViewportTranscriptExpandMode,
+            setSearchInput,
+            setSelectedTrackPickerIds,
+            setSelectionRect,
+            setShowFeatureless,
+            showFeatureless,
+            showSearchFeedback,
+            sortedRegions,
+            toggleFlipped,
+            toolbarColumnWidths,
+            toolbarRef,
+            viewEnd,
+            viewStart,
+        })
     )
 
     /* Shared by every focus bar, so a new kind of focus is a row of content rather
@@ -7158,974 +6820,94 @@ function GenomeBrowser({
     ), [browsingControls])
 
     return (
-        <div
-            ref={rootRef}
-            className="relative flex flex-col"
-            style={{ flex: '1 0 auto', minHeight: 0 }}
-        >
-
-            {isCustomTrackLabelModalOpen && (
-                <div data-wheel-isolated="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div
-                        className={`w-full max-w-md rounded-xl shadow-2xl border ${isLight ? 'bg-white border-gray-200' : 'bg-gray-800 border-gray-700'}`}
-                    >
-                        <div className={`px-4 py-3 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
-                            <h3 className={`text-sm font-semibold ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>Custom BigWig Label</h3>
-                            <p className={`text-xs mt-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Choose a label for the new track.</p>
-                        </div>
-                        <div className="p-4">
-                            <input
-                                type="text"
-                                value={customTrackLabelInput}
-                                onChange={(e) => setCustomTrackLabelInput(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && canConfirmCustomTrack) handleConfirmAddCustomTrack()
-                                    if (e.key === 'Escape') {
-                                        setIsCustomTrackLabelModalOpen(false)
-                                        setPendingCustomTrackPath('')
-                                        setCustomTrackRenderModeInput(DEFAULT_CUSTOM_TRACK_RENDER_MODE)
-                                    }
-                                }}
-                                className={`w-full px-3 py-2 rounded-lg text-sm border focus:outline-none focus:ring-2 ${isLight
-                                    ? 'bg-white border-gray-300 focus:ring-blue-500/40 focus:border-blue-500'
-                                    : 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500/40 focus:border-blue-500'
-                                    }`}
-                                placeholder=""
-                                autoFocus
-                            />
-                            <div className="mt-3">
-                                <label className={`block text-xs mb-1 ${isLight ? 'text-gray-600' : 'text-gray-300'}`}>
-                                    Rendering mode
-                                </label>
-                                <select
-                                    value={customTrackRenderModeInput}
-                                    onChange={(e) => setCustomTrackRenderModeInput(e.target.value)}
-                                    className={`w-full px-3 py-2 rounded-lg text-sm border focus:outline-none focus:ring-2 ${isLight
-                                        ? 'bg-white border-gray-300 focus:ring-blue-500/40 focus:border-blue-500'
-                                        : 'bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-500/40 focus:border-blue-500'
-                                        }`}
-                                >
-                                    <option value="zoned_heatmap">Zoned Heat Map</option>
-                                    <option value="signal_plot">Signal Plot</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div className={`px-4 py-3 border-t flex justify-end gap-2 ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-900/30'}`}>
-                            <button
-                                onClick={() => {
-                                    setIsCustomTrackLabelModalOpen(false)
-                                    setPendingCustomTrackPath('')
-                                    setCustomTrackRenderModeInput(DEFAULT_CUSTOM_TRACK_RENDER_MODE)
-                                }}
-                                className={`px-3 py-1.5 rounded-md text-sm ${isLight ? 'text-gray-700 hover:bg-gray-200' : 'text-gray-300 hover:bg-gray-700'}`}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleConfirmAddCustomTrack}
-                                disabled={!canConfirmCustomTrack}
-                                className="px-3 py-1.5 rounded-md text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                                Add Track
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Track Picker Modal ─────────────────────────────────────────────────── */}
-            {isTrackPickerOpen && (
-                <div
-                    data-wheel-isolated="true"
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-                    onClick={closeTrackPicker}
-                >
-                    <div
-                        data-tour-id="browser-track-picker"
-                        role="dialog"
-                        aria-modal="true"
-                        aria-label="Add registered track"
-                        className={`w-full max-w-lg rounded-2xl shadow-2xl border flex flex-col max-h-[80vh] ${isLight ? 'bg-white border-gray-200' : 'bg-gray-900 border-gray-700'}`}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        {/* Header */}
-                        <div className={`px-5 py-3.5 border-b flex items-center justify-between flex-none ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
-                            <div>
-                                <h3 className={`text-sm font-semibold ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>Add Registered Track</h3>
-                                <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                    {availableTracks.length === 0
-                                        ? 'No tracks registered. Go to Track Manager to register tracks.'
-                                        : `${availableTracks.length} track${availableTracks.length !== 1 ? 's' : ''}${availableGroups.length ? ` and ${availableGroups.length} group${availableGroups.length !== 1 ? 's' : ''}` : ''} available`
-                                    }
-                                </p>
-                            </div>
-                            <button
-                                onClick={closeTrackPicker}
-                                className={`p-1.5 rounded-lg ${isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-800'}`}
-                            >✕</button>
-                        </div>
-                        {/* Track list */}
-                        <div data-tour-id="browser-track-picker-list" className="flex-1 overflow-y-auto p-3 space-y-1.5">
-                            {availableGroups.length > 0 && (
-                                <div className={`px-1 text-[10px] font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Track groups</div>
-                            )}
-                            {availableGroups.map((group) => {
-                                const onPanel = customTracks.filter((ct) => ct.group?.id === group.id)
-                                const isOnPanel = onPanel.length > 0
-                                const memberCount = (group.members || []).filter((m) => registryTracksById.has(String(m.track_id))).length
-                                const presentIds = new Set(onPanel.map((ct) => String(ct.registryTrackId || '')))
-                                const missing = (group.members || []).filter((m) => registryTracksById.has(String(m.track_id)) && !presentIds.has(String(m.track_id))).length
-                                const pickerId = `${TRACK_PICKER_GROUP_PREFIX}${group.id}`
-                                const pendingAdd = selectedTrackPickerIds.includes(pickerId)
-                                const pendingRemove = pendingPickerRemovals.includes(pickerId)
-                                const willShow = isOnPanel ? !pendingRemove : pendingAdd
-                                const toggle = () => {
-                                    if (!isOnPanel && !memberCount) return
-                                    togglePickerChange(pickerId, isOnPanel)
-                                }
-                                const typeCounts = new Map()
-                                for (const m of group.members || []) {
-                                    const type = registryTracksById.get(String(m.track_id))?.type
-                                    if (type) typeCounts.set(type, (typeCounts.get(type) || 0) + 1)
-                                }
-                                return (
-                                    <div
-                                        key={group.id}
-                                        data-tour-id={`browser-track-picker-group-${group.id}`}
-                                        data-tutorial-picker-group={group.label || ''}
-                                        data-tutorial-engaged={willShow ? 'true' : 'false'}
-                                        aria-pressed={willShow}
-                                        role="button"
-                                        tabIndex={!isOnPanel && !memberCount ? -1 : 0}
-                                        onClick={toggle}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() }
-                                        }}
-                                        className={pickerRowClass(willShow, isLight)}
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${isLight ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 'bg-indigo-900/50 text-indigo-300 border border-indigo-800'}`}>
-                                                group
-                                            </span>
-                                            <span className={`text-sm font-medium flex-1 min-w-0 truncate ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
-                                                {group.label}
-                                            </span>
-                                            {isOnPanel && !pendingRemove && missing > 0 && (
-                                                <button
-                                                    type="button"
-                                                    data-tour-id={`browser-track-picker-group-restore-${group.id}`}
-                                                    aria-pressed={pendingAdd}
-                                                    onClick={(e) => { e.stopPropagation(); togglePickerChange(pickerId, false) }}
-                                                    className={`rounded-md px-1.5 py-1 text-[11px] font-medium ${pendingAdd
-                                                        ? isLight ? 'bg-indigo-100 text-indigo-800' : 'bg-indigo-900/60 text-indigo-200'
-                                                        : isLight ? 'text-indigo-700 hover:bg-indigo-100' : 'text-indigo-300 hover:bg-indigo-900/50'}`}
-                                                    title="Put back the group's tracks that are not on this panel, in group order"
-                                                >
-                                                    {pendingAdd ? `✓ Adding ${missing} missing` : `+ ${missing} missing`}
-                                                </button>
-                                            )}
-                                            <PickerRowButton
-                                                willShow={willShow}
-                                                disabled={!isOnPanel && !memberCount}
-                                                onClick={toggle}
-                                                isLight={isLight}
-                                                tourId={`browser-track-picker-group-toggle-${group.id}`}
-                                            />
-                                        </div>
-                                        <p className={`text-[11px] mt-0.5 truncate ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                            {memberCount} track{memberCount === 1 ? '' : 's'}
-                                            {' · '}{group.layout === 'joined' ? 'one joined row' : 'separate rows'}
-                                            {typeCounts.size ? ` · ${[...typeCounts.entries()].map(([type, n]) => `${n} ${type}`).join(', ')}` : ''}
-                                            {isOnPanel && missing > 0 ? ` · ${missing} not on this panel` : ''}
-                                        </p>
-                                    </div>
-                                )
-                            })}
-                            {availableGroups.length > 0 && availableTracks.length > 0 && (
-                                <div className={`px-1 pt-2 text-[10px] font-semibold uppercase tracking-wide ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Tracks</div>
-                            )}
-                            {availableTracks.length === 0 ? (
-                                <div className={`text-center py-10 text-sm ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
-                                    <p>Open <strong>Track Manager</strong> → click <strong>Add Track</strong> → register your data files.</p>
-                                </div>
-                            ) : availableTracks.map((registeredTrack) => {
-                                // The track on its own; a group's copy of it is the group's.
-                                const addedTrack = customTracks.find((ct) => !ct.group && (
-                                    String(ct.registryTrackId || '') === String(registeredTrack.id || '')
-                                    || (
-                                        String(ct.path || '') === String(registeredTrack.path || '')
-                                        && String(ct.type || 'bigwig') === String(registeredTrack.type || 'bigwig')
-                                    )
-                                ))
-                                const alreadyAdded = Boolean(addedTrack)
-                                const pickerTrackId = String(registeredTrack.id || '')
-                                const willShow = alreadyAdded
-                                    ? !pendingPickerRemovals.includes(pickerTrackId)
-                                    : selectedTrackPickerIds.includes(pickerTrackId)
-                                const toggle = () => togglePickerChange(pickerTrackId, alreadyAdded)
-                                const typeColor = {
-                                    bigwig: '#3b82f6', vcf: '#f59e0b', bed: '#10b981', bigbed: '#059669', gff: '#0891b2',
-                                    splice_junctions: '#8b5cf6', bam: '#ef4444', long_reads: '#ec4899',
-                                }[registeredTrack.type] || '#64748b'
-                                return (
-                                    <div
-                                        key={registeredTrack.id}
-                                        data-tour-id={`browser-track-picker-row-${registeredTrack.id}`}
-                                        data-tutorial-picker-track={registeredTrack.label || ''}
-                                        // On the panel, or will be once applied. A tutorial step that asks the
-                                        // reader to choose several rows reads this to leave alone the ones they
-                                        // have already done — without it, pressing Next after choosing two of
-                                        // three unchose those two on its way past.
-                                        data-tutorial-engaged={willShow ? 'true' : 'false'}
-                                        aria-pressed={willShow}
-                                        onClick={toggle}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() }
-                                        }}
-                                        role="button"
-                                        tabIndex={0}
-                                        className={pickerRowClass(willShow, isLight)}
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <span
-                                                className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
-                                                style={{ backgroundColor: typeColor + '22', color: typeColor, border: `1px solid ${typeColor}44` }}
-                                            >
-                                                {registeredTrack.type}
-                                            </span>
-                                            <span className={`text-sm font-medium flex-1 min-w-0 truncate ${isLight ? 'text-gray-900' : 'text-gray-100'}`}>
-                                                {registeredTrack.label}
-                                            </span>
-                                            <PickerRowButton willShow={willShow} onClick={toggle} isLight={isLight} />
-                                        </div>
-                                        <p className={`text-[11px] font-mono mt-0.5 truncate ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
-                                            {registeredTrack.path}
-                                        </p>
-                                    </div>
-                                )
-                            })}
-                        </div>
-                        {/* Footer: nothing changes until Apply. */}
-                        <div className={`px-5 py-3 border-t flex items-center gap-2 flex-none ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-800 bg-gray-900/50'}`}>
-                            <span data-tour-id="browser-track-picker-summary" className={`text-xs mr-auto ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                {[
-                                    selectedTrackPickerIds.length ? `${selectedTrackPickerIds.length} to add` : '',
-                                    pendingPickerRemovals.length ? `${pendingPickerRemovals.length} to remove` : '',
-                                ].filter(Boolean).join(' · ') || 'No changes'}
-                            </span>
-                            <button
-                                data-tour-id="browser-track-picker-close"
-                                onClick={closeTrackPicker}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${isLight ? 'border-gray-300 text-gray-700 hover:bg-gray-100' : 'border-gray-600 text-gray-300 hover:bg-gray-800'}`}
-                            >Cancel</button>
-                            <button
-                                data-tour-id="browser-track-picker-add"
-                                onClick={applyTrackPickerChanges}
-                                disabled={!pickerHasChanges}
-                                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                                Apply
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {effectiveToolbarPosition === 'top' && toolbar}
-
-            {/* Selected Gene Info Bar (Top) */}
-            {effectiveFocusBarPosition === 'top' && (selectedGeneInfoBar || selectedLocationInfoBar)}
-
-            {/* Canvas container. It has no overflow of its own — note that
-                `overflow-x-hidden` alone would silently promote overflow-y back to
-                `auto` and re-create the inner scrollbar. */}
-            <div
-                ref={containerRef}
-                // Marks the surface that owns its own axis-locked drag, so the
-                // view-level drag-to-scroll fallback stands down here.
-                data-browser-canvas-surface="true"
-                data-focus-panel-key={screenshotTargetId || genome}
-                className="flex-grow relative overflow-visible outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70"
-                style={{
-                    cursor: (isBoxSelectMode || isSelectingRect) ? 'crosshair' : (isDragging ? 'grabbing' : 'grab'),
-                    backgroundColor: colors.bg
-                }}
-                // Focusable so keyboard navigation is scoped to the panel the
-                // user is actually on, and reachable by Tab.
-                tabIndex={0}
-                role="group"
-                aria-label={`${genomePillLabel || label || 'Genome'} browser${selectedChrom ? `, ${selectedChrom}` : ''}`}
-                aria-describedby={keyboardHintId}
-                onKeyDown={handleKeyDown}
-                onMouseDown={handleMouseDown}
-                onMouseMove={isDragging ? undefined : handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleContainerMouseLeave}
-            >
-                <p id={keyboardHintId} className="sr-only">{keyboardHintText}</p>
-
-                <canvas
-                    ref={canvasRef}
-                    onClick={handleCanvasClick}
-                    // The gutter's labels are painted, so the track under the pointer
-                    // names itself through the canvas: a native tooltip, with the same
-                    // look and hover delay as every other control in the app.
-                    title={sidebarTooltip || undefined}
-                    style={{ display: 'block' }}
-                />
-
-                {/* Markers over the track gutter, so a tutorial can point at GF, GR and
-                    SL. They exist only to be spotlit: the gutter is painted on the canvas
-                    and hit-tested by geometry (see drawToggle), so there is no element to
-                    anchor on otherwise, and adding real buttons would mean two code paths
-                    for the same toggle. `pointer-events-none` keeps every click going to
-                    the canvas exactly as before — the tutorial's steps about these are
-                    look-only, and turning tracks on and off is taught through the Tracks
-                    button in the bar above, which is real DOM. */}
-                {/* Only once the tracks have been laid out. Rendered before that it is a
-                    sliver at the top of the panel, and anything measuring it — a tutorial
-                    card placing itself beside it — lands in the wrong place and then jumps
-                    when the real height arrives. */}
-                {gutterMarkerHeight > 0 && (
-                    <div
-                        aria-hidden="true"
-                        data-tour-id="browser-track-gutter"
-                        className="absolute pointer-events-none"
-                        // Down to the foot of the last track rather than the foot of the
-                        // canvas: the canvas keeps whatever empty space the panel has, and
-                        // a spotlight that took in all of it framed mostly nothing.
-                        style={{ left: 0, top: 0, width: LHS_WIDTH, height: gutterMarkerHeight }}
-                    />
-                )}
-                {/* Written out one by one rather than mapped over a list, because the
-                    tutorial's anchor test scans this source for literal `data-tour-id`
-                    attributes — an id that arrives in a variable is invisible to it, and
-                    a renamed anchor would then fail in front of a user instead of in the
-                    suite. */}
-                {layout.forwardBgHeight > 0 && (
-                    <div
-                        aria-hidden="true"
-                        data-tour-id="browser-track-gf"
-                        className="absolute pointer-events-none"
-                        style={gutterMarkerStyle(layout.FORWARD_Y, layout.forwardBgHeight)}
-                    />
-                )}
-                {layout.reverseBgHeight > 0 && (
-                    <div
-                        aria-hidden="true"
-                        data-tour-id="browser-track-gr"
-                        className="absolute pointer-events-none"
-                        style={gutterMarkerStyle(layout.REVERSE_Y, layout.reverseBgHeight)}
-                    />
-                )}
-                {/* The reverse track's band, full width. Nothing points *at* it; it is
-                    what a step's card is placed against when the step spotlights the whole
-                    track and the card would otherwise land on the genes being described. */}
-                {layout.reverseBgHeight > 0 && (
-                    <div
-                        aria-hidden="true"
-                        data-tour-id="browser-track-gr-band"
-                        className="absolute pointer-events-none"
-                        style={{
-                            left: LHS_WIDTH,
-                            top: layout.REVERSE_Y,
-                            width: Math.max(1, viewWidth - LHS_WIDTH),
-                            height: layout.reverseBgHeight,
-                        }}
-                    />
-                )}
-                {showSequenceTrack && layout.SEQUENCE_Y >= 0 && (
-                    <div
-                        aria-hidden="true"
-                        data-tour-id="browser-track-sl"
-                        className="absolute pointer-events-none"
-                        style={gutterMarkerStyle(layout.SEQUENCE_Y, layout.seqBgHeight)}
-                    />
-                )}
-
-                {/* The gene index note. Positioned against the panel rather than
-                    against the genome, so it stays put through a pan or a zoom
-                    instead of sliding away with the coordinates it would
-                    otherwise be pinned to. The canvas underneath stays live. */}
-                {geneIndexOverlayGeometry && (
-                    <GeneIndexProgressOverlay
-                        status={geneIndexStatus}
-                        isLight={isLight}
-                        left={LHS_WIDTH}
-                        width={Math.max(1, viewWidth - LHS_WIDTH)}
-                        top={geneIndexOverlayGeometry.top}
-                        height={geneIndexOverlayGeometry.height}
-                        onRetry={retryGeneIndex}
-                    />
-                )}
-
-                {/* Invisible buttons over the canvas-drawn gutter switches, so a tutorial can
-                    point at one and a reader can press it. The click goes to the same setter
-                    the canvas hit-test uses, so there is still one code path for the control.
-
-                    Gated on a tutorial running rather than on `tutorialRecipeId`: that id is
-                    only set for a genome installed from an embedded dataset recipe, and a
-                    tutorial running on one of the *bundled* genomes — which is how the Track
-                    Manager tutorial reaches the chromosome-1 slice — had no id, so none of
-                    these existed and the gutter was unanchored. */}
-                {tutorialAnchorsActive && [
-                    ['forward', layout.FORWARD_Y + layout.forwardBgHeight / 2, layout.forwardBgHeight > 0],
-                    ['reverse', layout.REVERSE_Y + layout.reverseBgHeight / 2, layout.reverseBgHeight > 0],
-                    ['sequence', layout.SEQUENCE_Y + layout.seqBgHeight / 2, showSequenceTrack && layout.SEQUENCE_Y >= 0],
-                ].filter(([, , visible]) => visible).map(([strand, y]) => (
-                    <button key={strand} data-tour-id={{ forward: 'browser-toggle-forward', reverse: 'browser-toggle-reverse', sequence: 'browser-toggle-sequence' }[strand]}
-                        aria-label={`Toggle ${strand} track`} aria-pressed={!hiddenStrands[strand]}
-                        data-tutorial-engaged={!hiddenStrands[strand] ? 'true' : 'false'}
-                        onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}
-                        onClick={(event) => { event.stopPropagation(); setHiddenStrands((prev) => ({ ...prev, [strand]: !prev[strand] })) }}
-                        className="absolute rounded-full"
-                        style={{ left: LHS_WIDTH - 25, top: y - 12, width: 24, height: 24, background: 'transparent' }} />
-                ))}
-                {/* The same again for each custom track. Addressed by the track's label rather
-                    than by its registry id, which is minted when the track is registered and
-                    cannot be written into a portable document. */}
-                {tutorialAnchorsActive && Object.entries(layout.customTrackLayouts || {}).map(([trackId, trackLayout]) => {
-                    const track = customTracksById.get(trackId)
-                    if (!track) return null
-                    const y = getCustomTrackToggleY(trackLayout)
-                    if (!Number.isFinite(y)) return null
-                    return (
-                        <button key={trackId}
-                            data-tour-id={`browser-toggle-track-${trackId}`}
-                            data-tutorial-track-switch={track.label || ''}
-                            aria-label={`Toggle ${track.label || 'custom'} track`} aria-pressed={track.visible !== false}
-                            data-tutorial-engaged={track.visible !== false ? 'true' : 'false'}
-                            onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}
-                            onClick={(event) => {
-                                event.stopPropagation()
-                                setCustomTracks((prev) => prev.map((entry) => (
-                                    entry.id === trackId ? { ...entry, visible: !entry.visible } : entry
-                                )))
-                            }}
-                            className="absolute rounded-full"
-                            style={{ left: LHS_WIDTH - 25, top: y - 12, width: 24, height: 24, background: 'transparent' }} />
-                    )
-                })}
-
-                {customTrackHoverTooltip && (
-                    <div
-                        className="pointer-events-none fixed z-30 px-2.5 py-1.5 text-[11px] rounded-md shadow-lg"
-                        style={{
-                            left: customTrackHoverTooltip.x + 12,
-                            top: customTrackHoverTooltip.y + 12,
-                            backgroundColor: colors.infoBg,
-                            color: colors.infoText,
-                            border: `1px solid ${isLight ? '#d0d7e2' : '#334155'}`,
-                            backdropFilter: 'blur(2px)',
-                        }}
-                    >
-                        {customTrackHoverTooltip.text}
-                    </div>
-                )}
-
-                {clickedGeneTranscript?.transcript && (
-                    <TranscriptInfoPopup
-                        popup={clickedGeneTranscript}
-                        selectedChrom={selectedChrom}
-                        onMouseEnter={() => {
-                            transcriptPopupHoverRef.current = true
-                            clearTranscriptPopupDismissTimer()
-                        }}
-                        onMouseLeave={() => {
-                            transcriptPopupHoverRef.current = false
-                            scheduleTranscriptPopupDismiss(70)
-                        }}
-                    />
-                )}
-
-                {/* Variant info popup (click on adp_detail variant) */}
-                {clickedVcfVariant && (() => {
-                    const { variant: v, chrom, arrowTargetX, arrowTargetY } = clickedVcfVariant
-                    const popupW = 260
-                    const arrowSize = 8
-                    const gap = 4
-                    // Box sits to the left of the feature; flip right only when near left edge
-                    const spaceLeft = arrowTargetX - arrowSize - gap
-                    const goLeft = spaceLeft >= popupW
-                    const popupLeft = goLeft
-                        ? arrowTargetX - popupW - arrowSize - gap
-                        : arrowTargetX + arrowSize + gap
-                    const typeLabel = v.type === 'snv' ? 'SNV' : v.type === 'ins' ? 'insertion' : v.type === 'del' ? 'deletion' : (v.label || 'variant')
-                    const pos1 = Number(v.pos).toLocaleString()
-                    const displayId = v.id && v.id !== '.' ? v.id : null
-                    return (
-                        <div
-                            className="fixed z-40 rounded-lg shadow-xl text-[12px] leading-relaxed"
-                            style={{
-                                left: popupLeft,
-                                top: arrowTargetY,
-                                transform: 'translateY(-50%)',
-                                width: popupW,
-                                backgroundColor: 'rgba(17, 24, 39, 0.97)',
-                                color: '#f1f5f9',
-                                padding: '10px 14px',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                pointerEvents: 'none',
-                                overflowWrap: 'break-word',
-                                wordBreak: 'break-all',
-                            }}
-                        >
-                            {/* Arrow pointing right toward the feature (on right side when goLeft, left side when flipped) */}
-                            <div style={{
-                                position: 'absolute',
-                                top: '50%',
-                                transform: 'translateY(-50%)',
-                                [goLeft ? 'right' : 'left']: -arrowSize,
-                                width: 0,
-                                height: 0,
-                                borderTop: `${arrowSize}px solid transparent`,
-                                borderBottom: `${arrowSize}px solid transparent`,
-                                [goLeft ? 'borderLeft' : 'borderRight']: `${arrowSize}px solid rgba(17,24,39,0.97)`,
-                            }} />
-                            <div>Variant <span style={{ fontWeight: 700 }}>{displayId || `${chrom}:${pos1}`}</span></div>
-                            <div><span style={{ fontWeight: 700 }}>{typeLabel.toUpperCase()}</span>&nbsp;&nbsp;{chrom}:{pos1}</div>
-                            <div>Alleles <span style={{ fontWeight: 700 }}>{v.ref} {v.alt}</span></div>
-                        </div>
-                    )
-                })()}
-
-                {/* Splice junction info popup (click on arc) */}
-                {clickedSpliceJunction && (() => {
-                    const { junction: j, popupX, popupY } = clickedSpliceJunction
-                    const popupW = 300
-                    const arrowSize = 8
-                    const gap = 4
-                    const popupTop = Math.max(8, popupY - arrowSize - gap)
-                    const support = Number(j?.n_total ?? j?.reads ?? 0)
-                    const canonicalLabel = j?.canonical === true ? 'Canonical' : 'Non-canonical'
-                    const annotationLabel = j?.annotated === true ? 'Annotated' : 'Novel'
-                    const strandRaw = String(j?.strand || '.')
-                    const strandLabel = strandRaw === '+'
-                        ? 'Forward'
-                        : strandRaw === '-'
-                            ? 'Reverse'
-                            : 'Unknown'
-                    const motifLabel = formatSpliceMotifForDisplay(j?.motif, strandRaw)
-                    const span = Math.max(0, (Number(j?.end) || 0) - (Number(j?.start) || 0))
-                    return (
-                        <div
-                            className="fixed z-40 rounded-lg shadow-xl text-[12px] leading-relaxed"
-                            style={{
-                                left: popupX,
-                                top: popupTop,
-                                transform: 'translate(-50%, -100%)',
-                                width: popupW,
-                                backgroundColor: 'rgba(17, 24, 39, 0.97)',
-                                color: '#f1f5f9',
-                                padding: '10px 14px',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                pointerEvents: 'none',
-                                overflowWrap: 'break-word',
-                                wordBreak: 'break-word',
-                            }}
-                        >
-                            <div style={{
-                                position: 'absolute',
-                                bottom: -arrowSize,
-                                left: '50%',
-                                transform: 'translateX(-50%)',
-                                width: 0,
-                                height: 0,
-                                borderTop: `${arrowSize}px solid rgba(17,24,39,0.97)`,
-                                borderLeft: `${arrowSize}px solid transparent`,
-                                borderRight: `${arrowSize}px solid transparent`,
-                            }} />
-                            <div>Junction <span style={{ fontWeight: 700 }}>{chromLabel(selectedChrom)}:{formatCoord(j?.start)}-{formatCoord(j?.end)}</span></div>
-                            <div>Support <span style={{ fontWeight: 700 }}>{support.toLocaleString()}</span></div>
-                            <div>Class <span style={{ fontWeight: 700 }}>{canonicalLabel}</span></div>
-                            <div>Status <span style={{ fontWeight: 700 }}>{annotationLabel}</span></div>
-                            <div>Motif <span style={{ fontWeight: 700 }}>{motifLabel}</span></div>
-                            <div>Strand <span style={{ fontWeight: 700 }}>{strandLabel}</span></div>
-                            <div>Intron span <span style={{ fontWeight: 700 }}>{span.toLocaleString()} bp</span></div>
-                        </div>
-                    )
-                })()}
-
-                {/* BigBed feature info popup (click on detail feature) */}
-                {clickedBigBedFeature && (() => {
-                    const { feature: f, popupX, popupY } = clickedBigBedFeature
-                    const popupW = 320
-                    const arrowSize = 8
-                    const gap = 4
-                    const popupTop = Math.max(8, popupY - arrowSize - gap)
-                    const start = Number(f?.start)
-                    const end = Number(f?.end)
-                    const strandRaw = String(f?.strand || '.')
-                    const strandLabel = strandRaw === '+'
-                        ? 'Forward'
-                        : strandRaw === '-'
-                            ? 'Reverse'
-                            : 'Unknown'
-                    const scoreNum = Number(f?.score)
-                    // A file with no score (GFF's ".") is reported as parsed to "0"; say so
-                    // rather than claim a score of zero.
-                    const scoreLabel = f?.has_score === false
-                        ? '—'
-                        : Number.isFinite(scoreNum)
-                            ? scoreNum.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                            : (String(f?.score || '').trim() || '—')
-                    // Named where the file names them (a BigBed's autoSql, a GFF's type,
-                    // source and attributes); otherwise listed together, as before.
-                    const rawExtraValues = Array.isArray(f?.extra_fields) ? f.extra_fields : []
-                    const rawExtraNames = Array.isArray(f?.extra_field_names) ? f.extra_field_names : []
-                    const namedExtras = rawExtraNames.length === rawExtraValues.length
-                        ? rawExtraValues
-                            .map((value, i) => ({ name: String(rawExtraNames[i] || '').trim(), value: String(value || '').trim() }))
-                            .filter((row) => row.value && row.name && !/^extra_\d+$/.test(row.name))
-                        : []
-                    const extraFields = rawExtraValues
-                        .map((v) => String(v || '').trim())
-                        .filter(Boolean)
-                        .filter((v) => !namedExtras.some((row) => row.value === v))
-                    const featureName = String(f?.name || '').trim()
-                    // Features are held in the browser's frame, [first base, last base + 1).
-                    const spanLabel = Number.isFinite(start) && Number.isFinite(end) && end > start
-                        ? `${formatCoord(start)}-${formatCoord(end - 1)}`
-                        : '—'
-                    const exonBlocks = Array.isArray(f?._exon_blocks)
-                        ? f._exon_blocks
-                        : (Array.isArray(f?.exon_blocks) ? f.exon_blocks : [])
-                    const cdsBlocks = Array.isArray(f?._cds_blocks)
-                        ? f._cds_blocks
-                        : (Array.isArray(f?.cds_blocks) ? f.cds_blocks : [])
-                    const isTranscriptModel = (
-                        (String(f?._render_kind || f?.render_kind || '').toLowerCase() === 'transcript')
-                        && ((f?._structure_valid === true) || (f?.structure_valid === true) || exonBlocks.length > 0)
-                    )
-                    const cdsSpanStart = cdsBlocks.length > 0
-                        ? Math.min(...cdsBlocks.map((block) => Number(block?.start)).filter((v) => Number.isFinite(v)))
-                        : null
-                    const cdsSpanEnd = cdsBlocks.length > 0
-                        ? Math.max(...cdsBlocks.map((block) => Number(block?.end)).filter((v) => Number.isFinite(v)))
-                        : null
-                    return (
-                        <div
-                            className="fixed z-40 rounded-lg shadow-xl text-[12px] leading-relaxed"
-                            style={{
-                                left: popupX,
-                                top: popupTop,
-                                transform: 'translate(-50%, -100%)',
-                                width: popupW,
-                                backgroundColor: 'rgba(17, 24, 39, 0.97)',
-                                color: '#f1f5f9',
-                                padding: '10px 14px',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                pointerEvents: 'none',
-                                overflowWrap: 'break-word',
-                                wordBreak: 'break-word',
-                            }}
-                        >
-                            <div style={{
-                                position: 'absolute',
-                                bottom: -arrowSize,
-                                left: '50%',
-                                transform: 'translateX(-50%)',
-                                width: 0,
-                                height: 0,
-                                borderTop: `${arrowSize}px solid rgba(17,24,39,0.97)`,
-                                borderLeft: `${arrowSize}px solid transparent`,
-                                borderRight: `${arrowSize}px solid transparent`,
-                            }} />
-                            <div>Feature <span style={{ fontWeight: 700 }}>{featureName || `${chromLabel(selectedChrom)}:${spanLabel}`}</span></div>
-                            <div>Region <span style={{ fontWeight: 700 }}>{chromLabel(selectedChrom)}:{spanLabel}</span></div>
-                            <div>Score <span style={{ fontWeight: 700 }}>{scoreLabel}</span></div>
-                            <div>Strand <span style={{ fontWeight: 700 }}>{strandLabel}</span></div>
-                            <div>Model <span style={{ fontWeight: 700 }}>{isTranscriptModel ? 'Transcript-like' : 'Interval'}</span></div>
-                            {f?._thick && (
-                                <div>Thick <span style={{ fontWeight: 700 }}>
-                                    {f._thick.end > f._thick.start
-                                        ? `${formatCoord(f._thick.start)}-${formatCoord(f._thick.end - 1)}`
-                                        : 'None (all thin)'}
-                                </span></div>
-                            )}
-                            {isTranscriptModel && (
-                                <>
-                                    <div>Exons <span style={{ fontWeight: 700 }}>{exonBlocks.length}</span></div>
-                                    <div>CDS <span style={{ fontWeight: 700 }}>
-                                        {(Number.isFinite(cdsSpanStart) && Number.isFinite(cdsSpanEnd))
-                                            ? `${formatCoord(cdsSpanStart)}-${formatCoord(cdsSpanEnd - 1)} (${cdsBlocks.length} block${cdsBlocks.length === 1 ? '' : 's'})`
-                                            : 'None'}
-                                    </span></div>
-                                </>
-                            )}
-                            {namedExtras.map((row) => (
-                                <div key={row.name} style={{ overflowWrap: 'anywhere' }}>
-                                    {row.name} <span style={{ fontWeight: 700 }}>{row.value}</span>
-                                </div>
-                            ))}
-                            {extraFields.length > 0 && (
-                                <div style={{ overflowWrap: 'anywhere' }}>Extra <span style={{ fontWeight: 700 }}>{extraFields.join(' | ')}</span></div>
-                            )}
-                        </div>
-                    )
-                })()}
-
-                {/* Sequence base info popup (click on sequence track base) */}
-                {clickedSeqBase && (() => {
-                    const { bp, base, popupX, popupY } = clickedSeqBase
-                    const pos1 = bp.toLocaleString()
-                    const baseColor = getBaseColor(base, colors)
-                    const popupW = 'max-content'
-                    return (
-                        <div
-                            className="fixed z-40 rounded-lg shadow-xl text-[12px]"
-                            style={{
-                                left: popupX,
-                                top: popupY,
-                                transform: 'translateX(-50%)',
-                                backgroundColor: 'rgba(17, 24, 39, 0.97)',
-                                color: '#f1f5f9',
-                                padding: '5px 10px',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                pointerEvents: 'none',
-                                whiteSpace: 'nowrap',
-                                width: popupW,
-                            }}
-                        >
-                            {chromLabel(selectedChrom)}:{pos1}&nbsp;&nbsp;<span style={{ fontWeight: 700, color: baseColor }}>{base.toUpperCase()}</span>
-                        </div>
-                    )
-                })()}
-
-                {/* Beta-style transcript expansion controls */}
-                {transcriptFooterOverlay.controls.map(control => {
-                    const controlBaseColor = control.isDimmed
-                        ? (isLight ? '#94a3b8' : '#64748b')
-                        : panelPillColor
-                    const controlTextColor = control.isDimmed
-                        ? (isLight ? '#1f2937' : '#e5e7eb')
-                        : colors.pillText
-                    return (
-                        <Fragment key={control.id}>
-                        {control.isExpandedControl && control.geneLabel && (
-                            <span
-                                aria-hidden="true"
-                                className="absolute font-sans whitespace-nowrap pointer-events-none"
-                                style={{
-                                    left: control.x,
-                                    top: control.geneLabelY - EXPANDED_FOOTER_LABEL_TOP_OFFSET,
-                                    minHeight: 11,
-                                    padding: '0 2px',
-                                    borderRadius: 2,
-                                    backgroundColor: control.trackBackground || colors.bg,
-                                    color: colors.geneLabelText,
-                                    fontSize: '11px',
-                                    lineHeight: '11px',
-                                    zIndex: 12,
-                                }}
-                            >
-                                {control.geneLabel}
-                            </span>
-                        )}
-                        {control.hasPrimary && (
-                        <button
-                            // DOM over the canvas, so a tutorial can point at it without
-                            // the marker-div trick the track gutter needs. `engaged` is
-                            // what lets an arrival set the gene's transcripts rather than
-                            // toggle them: the pill shows a collapse action exactly when
-                            // the gene is already expanded.
-                            data-tour-id={`browser-gene-transcripts-${control.id}`}
-                            data-tutorial-engaged={control.action === 'collapse' ? 'true' : 'false'}
-                            onClick={(e) => {
-                                e.stopPropagation()
-                                const expand = control.action !== 'collapse'
-                                // The focused gene's expand state belongs to the
-                                // drawer, so this pill drives that instead of the
-                                // panel-local map — one state, two controls.
-                                if (control.isFocused) {
-                                    onFocusTranscriptViewChangeRef.current?.({ expanded: expand })
-                                } else {
-                                    setExpandedGenes(prev => ({
-                                        ...prev,
-                                        [control.id]: expand ? control.totalTranscripts : 1,
-                                    }))
-                                }
-                                if (expand) {
-                                    requestTranscriptPillFocus(control.id, {
-                                        limit: control.totalTranscripts,
-                                        waitForTranscripts: !transcriptCache[control.id],
-                                        // Park the first transcript at the top of the
-                                        // window: with a long set, chasing the bottom
-                                        // scrolls the gene's start out of sight.
-                                        preferBottomVisible: false,
-                                        // Match focused-gene navigation: centre the gene and
-                                        // size the genomic window around its displayed bounds.
-                                        preserveHorizontalViewport: false,
-                                    })
-                                    fetchTranscripts(control.id)
-                                } else {
-                                    requestTranscriptPillFocus(control.id, {
-                                        limit: 1,
-                                        preserveHorizontalViewport: true,
-                                    })
-                                }
-                            }}
-                            title={control.title}
-                            aria-label={control.title}
-                            className="absolute p-0 m-0 border-0 font-semibold transition-opacity hover:opacity-85"
-                            style={{
-                                left: control.controlX,
-                                top: control.y,
-                                width: control.width,
-                                minWidth: control.width,
-                                height: TRANSCRIPT_FOOTER_CONTROL_HEIGHT,
-                                minHeight: TRANSCRIPT_FOOTER_CONTROL_HEIGHT,
-                                borderRadius: 1,
-                                backgroundColor: controlBaseColor,
-                                color: controlTextColor,
-                                fontSize: '10px',
-                                lineHeight: '1',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                cursor: 'pointer',
-                                zIndex: 10,
-                                opacity: control.isDimmed ? 0.8 : 1,
-                            }}
-                        >
-                            {control.label}
-                        </button>
-                        )}
-
-                        {/* Hidden transcripts survive collapsing and unfocusing, so
-                            the way back has to live on the gene itself. */}
-                        {control.hiddenCount > 0 && (
-                            <button
-                                // The way back, and the only thing on screen saying a
-                                // transcript is missing at all — so a tutorial has to be
-                                // able to point at it.
-                                data-tour-id={`browser-gene-hidden-transcripts-${control.id}`}
-                                onClick={(e) => {
-                                    e.stopPropagation()
-                                    onGeneTranscriptViewChangeRef.current?.(control.id, { hidden: [], ghostId: null })
-                                }}
-                                title={`Show ${control.hiddenCount} hidden transcript${control.hiddenCount === 1 ? '' : 's'}`}
-                                aria-label={`Show ${control.hiddenCount} hidden transcript${control.hiddenCount === 1 ? '' : 's'}`}
-                                className="absolute p-0 m-0 border-0 font-semibold transition-opacity hover:opacity-85"
-                                style={{
-                                    left: control.controlX + (control.hasPrimary ? control.width + CONTROL_GAP_PX : 0),
-                                    top: control.y,
-                                    width: control.restoreWidth,
-                                    minWidth: control.restoreWidth,
-                                    height: TRANSCRIPT_FOOTER_CONTROL_HEIGHT,
-                                    minHeight: TRANSCRIPT_FOOTER_CONTROL_HEIGHT,
-                                    borderRadius: 1,
-                                    backgroundColor: 'transparent',
-                                    border: `1px solid ${controlBaseColor}`,
-                                    color: controlBaseColor,
-                                    fontSize: '10px',
-                                    lineHeight: '1',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    cursor: 'pointer',
-                                    zIndex: 10,
-                                    opacity: control.isDimmed ? 0.8 : 1,
-                                }}
-                            >
-                                {control.restoreLabel}
-                            </button>
-                        )}
-                        </Fragment>
-                    )
-                })}
-
-                {/* One bubble per gene the user has written about. Above the
-                    footer pills in the stack, because it sits at the head of the
-                    gene where nothing else competes for the space. */}
-                {geneNoteOverlay.bubbles.map((bubble) => (
-                    <button
-                        key={`note-${bubble.id}`}
-                        data-tour-id={`browser-gene-note-${bubble.id}`}
-                        type="button"
-                        onClick={(e) => {
-                            // Without this the canvas click handler runs too and
-                            // toggles the very gene this is trying to open.
-                            e.stopPropagation()
-                            setSelectedGene(bubble.gene)
-                            onOpenGeneNotesRef.current?.(String(bubble.gene.id))
-                        }}
-                        title={`${bubble.count} note${bubble.count === 1 ? '' : 's'} — open notes`}
-                        aria-label={`Open ${bubble.count} note${bubble.count === 1 ? '' : 's'} on ${bubble.gene.name || bubble.gene.id}`}
-                        className="absolute p-0 m-0 border-0 bg-transparent transition-opacity hover:opacity-85"
-                        style={{
-                            left: bubble.x,
-                            top: bubble.y,
-                            width: NOTE_BUBBLE_SIZE,
-                            height: NOTE_BUBBLE_SIZE,
-                            color: bubble.isDimmed ? (isLight ? '#94a3b8' : '#64748b') : panelPillColor,
-                            cursor: 'pointer',
-                            zIndex: 11,
-                            opacity: bubble.isDimmed ? 0.8 : 1,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                        }}
-                    >
-                        {/* Filled, and its rules knocked out in the track's own
-                            background, so the mark reads as writing on a bubble
-                            rather than a solid blob at this size. */}
-                        <NoteGlyph size={NOTE_BUBBLE_SIZE} filled knockout={colors.bg} />
-                    </button>
-                ))}
-
-                {/* Loading indicator */}
-                {loadingGenes && (
-                    <div
-                        className="absolute top-2 right-2 text-xs px-2 py-1 rounded"
-                        style={{
-                            backgroundColor: panelPillColor + '40',
-                            color: panelPillColor,
-                        }}
-                    >
-                        Loading...
-                    </div>
-                )}
-            </div>
-
-            {/* Selected Gene Info Bar (Bottom) */}
-            {effectiveFocusBarPosition === 'bottom' && (selectedGeneInfoBar || selectedLocationInfoBar)}
-
-            {/* Toolbar bottom */}
-            {effectiveToolbarPosition === 'bottom' && (
-                <div style={{ borderTop: `1px solid ${isLight ? '#dee2e6' : '#373a40'}` }}>
-                    {toolbar}
-                </div>
-            )}
-
-            {showInitialLoadingOverlay && (
-                <div
-                    className="absolute inset-0 z-40 flex items-center justify-center"
-                    style={{
-                        backgroundColor: isLight ? 'rgba(248, 250, 252, 0.82)' : 'rgba(15, 23, 42, 0.78)',
-                        backdropFilter: 'blur(2px)',
-                    }}
-                >
-                    <div
-                        className={`rounded-xl border px-5 py-4 shadow-lg ${isLight ? 'bg-white border-gray-200 text-gray-900' : 'bg-gray-900/95 border-gray-700 text-gray-100'}`}
-                        style={{ minWidth: 280 }}
-                    >
-                        <div className="flex items-center gap-3">
-                            <div
-                                className={`h-7 w-7 animate-spin rounded-full border-4 border-t-transparent ${isLight ? 'border-sky-500' : 'border-sky-400'}`}
-                                aria-hidden="true"
-                            />
-                            <div>
-                                <div className="text-sm font-semibold">Loading Genome Browser</div>
-                                <div className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-                                    Preparing regions, controls, and annotation tracks...
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-        </div>
+        renderBrowserPanel({
+            CONTROL_GAP_PX,
+            PickerRowButton,
+            TranscriptInfoPopup,
+            applyTrackPickerChanges,
+            availableGroups,
+            availableTracks,
+            canConfirmCustomTrack,
+            canvasRef,
+            chromLabel,
+            clearTranscriptPopupDismissTimer,
+            clickedBigBedFeature,
+            clickedGeneTranscript,
+            clickedSeqBase,
+            clickedSpliceJunction,
+            clickedVcfVariant,
+            closeTrackPicker,
+            colors,
+            containerRef,
+            customTrackHoverTooltip,
+            customTrackLabelInput,
+            customTrackRenderModeInput,
+            customTracks,
+            customTracksById,
+            effectiveFocusBarPosition,
+            effectiveToolbarPosition,
+            fetchTranscripts,
+            geneIndexOverlayGeometry,
+            geneIndexStatus,
+            geneNoteOverlay,
+            genome,
+            genomePillLabel,
+            getCustomTrackToggleY,
+            gutterMarkerHeight,
+            handleCanvasClick,
+            handleConfirmAddCustomTrack,
+            handleContainerMouseLeave,
+            handleKeyDown,
+            handleMouseDown,
+            handleMouseMove,
+            handleMouseUp,
+            hiddenStrands,
+            isBoxSelectMode,
+            isCustomTrackLabelModalOpen,
+            isDragging,
+            isLight,
+            isSelectingRect,
+            isTrackPickerOpen,
+            keyboardHintId,
+            keyboardHintText,
+            label,
+            layout,
+            loadingGenes,
+            onFocusTranscriptViewChangeRef,
+            onGeneTranscriptViewChangeRef,
+            onOpenGeneNotesRef,
+            panelPillColor,
+            pendingPickerRemovals,
+            pickerHasChanges,
+            registryTracksById,
+            requestTranscriptPillFocus,
+            retryGeneIndex,
+            rootRef,
+            scheduleTranscriptPopupDismiss,
+            screenshotTargetId,
+            selectedChrom,
+            selectedGeneInfoBar,
+            selectedLocationInfoBar,
+            selectedTrackPickerIds,
+            setCustomTrackLabelInput,
+            setCustomTrackRenderModeInput,
+            setCustomTracks,
+            setExpandedGenes,
+            setHiddenStrands,
+            setIsCustomTrackLabelModalOpen,
+            setPendingCustomTrackPath,
+            setSelectedGene,
+            showInitialLoadingOverlay,
+            showSequenceTrack,
+            sidebarTooltip,
+            togglePickerChange,
+            toolbar,
+            transcriptCache,
+            transcriptFooterOverlay,
+            transcriptPopupHoverRef,
+            tutorialAnchorsActive,
+            viewWidth,
+        })
     )
 }
 
