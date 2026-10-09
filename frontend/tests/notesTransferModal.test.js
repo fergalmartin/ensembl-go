@@ -8,10 +8,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { readSources } from './helpers/readSource.js'
 
 const modal = readFileSync(new URL('../src/components/NotesTransferModal.jsx', import.meta.url), 'utf8')
 const tree = readFileSync(new URL('../src/components/NotesTransferTree.jsx', import.meta.url), 'utf8')
-const view = readFileSync(new URL('../src/components/NotesView.jsx', import.meta.url), 'utf8')
+const view = readSources('src/components/NotesView.jsx', 'src/components/notes')
 
 test('the dialog gets its rules from the model rather than reimplementing them', () => {
     assert.match(modal, /from '\.\.\/utils\/notesTransferModel'/)

@@ -76,7 +76,6 @@ import {
   exonCoverageInfoRows,
   exonKeyFromBounds,
   formatCoord,
-  formatPercent,
   formatStrand,
   getCodonIntervals,
   getFeatureBoundaryCoords,
@@ -93,6 +92,15 @@ import {
   transcriptInfoPanelHeight,
   transcriptLength,
 } from './feature-explorer/featureExplorerModel.js'
+import {
+  ExonCoverageProfileChart,
+} from './feature-explorer/ExonCoverageProfileChart.jsx'
+import {
+  TranscriptRuler,
+} from './feature-explorer/TranscriptRuler.jsx'
+import {
+  ExonInfoPopup,
+} from './feature-explorer/ExonInfoPopup.jsx'
 // The panels below the transcript tracks do not depend on the tracks' zoom or
 // hover state, so they are memoised: a redraw of the tracks (every committed
 // zoom, every exon hover) does not re-render thousands of elements they own.
@@ -111,166 +119,6 @@ function useStableCallback(fn) {
     ref.current = fn
   })
   return useCallback((...args) => ref.current?.(...args), [])
-}
-
-/**
- * A small bar chart of exon coverage along the gene, 5' on the left as the
- * transcript rows draw it. Each bar is one slice of the span; its height is
- * the mean coverage of that slice's exonic bases, in the heatmap's colours.
- */
-function ExonCoverageProfileChart({ cell, stats, strand, chrom, isLight }) {
-  const bins = Array.isArray(cell?.bins) ? cell.bins : []
-  const chartHeight = 40
-  const muted = isLight ? 'text-gray-500' : 'text-gray-400'
-  const guide = isLight ? '#d1d5db' : '#4b5563'
-  const chromLabel = String(chrom || '').trim()
-  const fivePrime = strand === '-' ? stats?.spanEnd : stats?.spanStart
-  const threePrime = strand === '-' ? stats?.spanStart : stats?.spanEnd
-  return (
-    <div className="col-span-2 flex flex-col" style={{ height: `${cell.height}px` }}>
-      <div className="h-5 truncate" title={cell.hint}>{cell.label}</div>
-      <div className="flex items-stretch gap-1.5">
-        <div className={`w-8 shrink-0 flex flex-col justify-between text-right text-[9px] leading-none ${muted}`} style={{ height: `${chartHeight + 4}px` }}>
-          <span>100%</span>
-          <span>50%</span>
-          <span>0%</span>
-        </div>
-        <svg
-          className="flex-1 min-w-0"
-          style={{ height: `${chartHeight + 4}px` }}
-          viewBox={`0 -2 ${bins.length} ${chartHeight + 4}`}
-          preserveAspectRatio="none"
-        >
-          {[0, chartHeight / 2].map((y) => (
-            <line key={`guide-${y}`} x1={0} x2={bins.length} y1={y} y2={y} stroke={guide} strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
-          ))}
-          <line x1={0} x2={bins.length} y1={chartHeight} y2={chartHeight} stroke={guide} vectorEffect="non-scaling-stroke" />
-          {bins.map((bin, index) => {
-            const hasExon = bin.meanCoverageFraction !== null && bin.meanCoverageFraction !== undefined
-            const barHeight = hasExon ? Math.max(1.5, bin.meanCoverageFraction * chartHeight) : 0
-            const range = `${chromLabel ? `${chromLabel}:` : ''}${formatCoord(Math.min(bin.start, bin.end))}–${formatCoord(Math.max(bin.start, bin.end))}`
-            return (
-              <g key={`profile-${bin.start}`}>
-                {hasExon && (
-                  <rect
-                    x={index + 0.1}
-                    y={chartHeight - barHeight}
-                    width={0.8}
-                    height={barHeight}
-                    fill={heatColorFromFraction(bin.meanCoverageFraction)}
-                    pointerEvents="none"
-                  />
-                )}
-                <rect x={index} y={-2} width={1} height={chartHeight + 4} fill="transparent">
-                  <title>
-                    {hasExon
-                      ? `${range} · ${formatCoord(bin.exonicBases)} of ${formatCoord(bin.length)} bp exonic · ${formatPercent(bin.meanCoverageFraction)} avg coverage`
-                      : `${range} · no exonic bases`}
-                  </title>
-                </rect>
-              </g>
-            )
-          })}
-        </svg>
-      </div>
-      <div className={`flex justify-between pl-[38px] text-[9px] leading-4 ${muted}`}>
-        <span>5′ · {formatCoord(fivePrime)}</span>
-        <span>{formatCoord(threePrime)} · 3′</span>
-      </div>
-    </div>
-  )
-}
-
-function TranscriptRuler({
-  longestTranscript,
-  isLight,
-  viewBoxWidth,
-  palette,
-  leftMargin,
-  rightMargin,
-  reverseOrientation,
-}) {
-  if (!longestTranscript) {
-    return (
-      <div className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
-        No active transcript available for ruler coordinates.
-      </div>
-    )
-  }
-
-  const axisLeft = leftMargin
-  const axisRight = viewBoxWidth - rightMargin
-  const axisWidth = Math.max(1, axisRight - axisLeft)
-  const start = Number(longestTranscript.start)
-  const end = Number(longestTranscript.end)
-  const length = transcriptLength(longestTranscript)
-  const fractions = [0, 0.25, 0.5, 0.75, 1]
-  const axisY = 34
-
-  const xForFraction = (fraction) => axisLeft + (axisWidth * fraction)
-  const topCoordForFraction = (fraction) => (
-    reverseOrientation
-      ? Math.round(end - ((end - start) * fraction))
-      : Math.round(start + ((end - start) * fraction))
-  )
-  const offsetForFraction = (fraction) => Math.max(1, Math.round(1 + ((length - 1) * fraction)))
-
-  return (
-    <svg className="w-full h-[74px]" viewBox={`0 0 ${viewBoxWidth} 74`} preserveAspectRatio="xMinYMid meet">
-      <line
-        x1={axisLeft}
-        y1={axisY}
-        x2={axisRight}
-        y2={axisY}
-        stroke={palette.rulerLine}
-        strokeWidth="1"
-      />
-
-      {fractions.map((fraction) => {
-        const x = xForFraction(fraction)
-        return (
-          <g key={`marker-${fraction}`}>
-            <line
-              x1={x}
-              y1={axisY}
-              x2={x}
-              y2={axisY - 9}
-              stroke={palette.tickMajor}
-              strokeWidth="1"
-            />
-            <line
-              x1={x}
-              y1={axisY}
-              x2={x}
-              y2={axisY + 9}
-              stroke={palette.tickMajor}
-              strokeWidth="1"
-            />
-            <text
-              x={x}
-              y={14}
-              textAnchor="middle"
-              fontSize="12"
-              fontFamily={FONT_MONO}
-              fill={palette.rulerText}
-            >
-              {formatCoord(topCoordForFraction(fraction))}
-            </text>
-            <text
-              x={x}
-              y={66}
-              textAnchor="middle"
-              fontSize="12"
-              fontFamily={FONT_MONO}
-              fill={palette.rulerText}
-            >
-              {formatCoord(offsetForFraction(fraction))}
-            </text>
-          </g>
-        )
-      })}
-    </svg>
-  )
 }
 
 export default function FeatureExplorerView({
@@ -3608,62 +3456,3 @@ export default function FeatureExplorerView({
   )
 }
 
-function ExonInfoPopup({ exonInfo, counts, resolvedGene, popupRef = null }) {
-  const { exonState, typeLabel, arrowTargetX, arrowTargetY } = exonInfo
-  const { sameBoundary, sameState, total } = counts
-  const popupW = 260
-  const arrowSize = 8
-  const gap = 4
-  const safeArrowX = Number.isFinite(Number(arrowTargetX)) ? Number(arrowTargetX) : 24
-  const safeArrowY = Number.isFinite(Number(arrowTargetY)) ? Number(arrowTargetY) : 24
-  const spaceLeft = safeArrowX - arrowSize - gap
-  const goLeft = spaceLeft >= popupW
-  const left = goLeft
-    ? safeArrowX - popupW - arrowSize - gap
-    : safeArrowX + arrowSize + gap
-  const chrom = String(resolvedGene?.chrom || exonState.chrom || '')
-  const coordLabel = chrom
-    ? `${chrom}:${Math.min(exonState.start, exonState.end).toLocaleString()}–${Math.max(exonState.start, exonState.end).toLocaleString()}`
-    : `${Math.min(exonState.start, exonState.end).toLocaleString()}–${Math.max(exonState.start, exonState.end).toLocaleString()}`
-
-  return (
-    <div
-      ref={popupRef}
-      className="fixed z-40 rounded-lg shadow-xl text-[12px] leading-relaxed"
-      style={{
-        left,
-        top: safeArrowY,
-        transform: 'translateY(-50%)',
-        width: popupW,
-        backgroundColor: 'rgba(17, 24, 39, 0.97)',
-        color: '#f1f5f9',
-        padding: '10px 14px',
-        border: '1px solid rgba(255,255,255,0.1)',
-        pointerEvents: 'none',
-        overflowWrap: 'break-word',
-        wordBreak: 'break-word',
-        zIndex: 60,
-      }}
-    >
-      <div style={{
-        position: 'absolute',
-        top: '50%',
-        transform: 'translateY(-50%)',
-        [goLeft ? 'right' : 'left']: -arrowSize,
-        width: 0,
-        height: 0,
-        borderTop: `${arrowSize}px solid transparent`,
-        borderBottom: `${arrowSize}px solid transparent`,
-        [goLeft ? 'borderLeft' : 'borderRight']: `${arrowSize}px solid rgba(17,24,39,0.97)`,
-      }}>
-      </div>
-      <div>Exon <span style={{ fontWeight: 700 }}>{coordLabel}</span></div>
-      <div>Type <span style={{ fontWeight: 700 }}>{typeLabel}</span></div>
-      <div>Length <span style={{ fontWeight: 700 }}>{(exonState.length ?? Math.abs(exonState.end - exonState.start)).toLocaleString()} bp</span></div>
-      <div>
-        Transcripts <span style={{ fontWeight: 700 }}>{sameBoundary} of {total}</span>
-        {sameState !== sameBoundary ? <span> ({sameState} same state)</span> : null}
-      </div>
-    </div>
-  )
-}
