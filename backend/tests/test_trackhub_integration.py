@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import (  # noqa: E402
+from routes.tracks import (  # noqa: E402
     TrackHubDiscoverRequest,
     TrackHubGenomeRequest,
     TrackHubImportItem,
@@ -96,7 +96,7 @@ class TrackHubIntegrationTests(unittest.TestCase):
             }
         }
 
-        with patch("main.list_tracks_for_genomes", return_value=mock_payload):
+        with patch("routes.tracks.list_tracks_for_genomes", return_value=mock_payload):
             response = asyncio.run(discover_trackhub_tracks(TrackHubDiscoverRequest(genomes=[genome], refresh=False)))
 
         self.assertIn("genomes", response)
@@ -228,9 +228,9 @@ class TrackHubIntegrationTests(unittest.TestCase):
             )
 
             with patch("data_paths._resolve_species_assembly_dir", return_value=asm_dir), \
-                patch("main._find_existing_trackhub_track", return_value=None), \
-                patch("main._trackhub_download_sync", side_effect=_fake_download), \
-                patch("main.register_track", register_mock):
+                patch("routes.tracks._find_existing_trackhub_track", return_value=None), \
+                patch("routes.tracks._trackhub_download_sync", side_effect=_fake_download), \
+                patch("routes.tracks.register_track", register_mock):
                 asyncio.run(_run_trackhub_import_task(task_id, tmpdir, item))
 
         tasks = _read_trackhub_import_tasks()

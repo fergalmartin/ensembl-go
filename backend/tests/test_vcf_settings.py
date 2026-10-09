@@ -9,13 +9,15 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from main import (  # noqa: E402
-    VCF_SETTINGS_DEFAULTS,
-    TrackRegistryEntry,
-    TrackRegistryUpdateEntry,
     VcfBlockTileRequest,
     VcfBlockTilesRequest,
     _build_vcf_block_spans_fast,
     _browse_vcf_block_tiles_sync,
+)
+from routes.tracks import (  # noqa: E402
+    VCF_SETTINGS_DEFAULTS,
+    TrackRegistryEntry,
+    TrackRegistryUpdateEntry,
     _hydrate_track_defaults,
     _normalize_vcf_display_mode,
     list_tracks,
@@ -87,7 +89,7 @@ class VcfSettingsTests(unittest.TestCase):
             vcf_path.write_bytes(b"\x1f\x8b")
             Path(str(vcf_path) + ".tbi").write_bytes(b"index")
 
-            with patch("main.TRACK_REGISTRY_FILE", registry_path):
+            with patch("routes.tracks.TRACK_REGISTRY_FILE", registry_path):
                 created = asyncio.run(
                     register_track(
                         TrackRegistryEntry(

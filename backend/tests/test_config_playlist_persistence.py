@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.tracks  # noqa: E402
 import config_store  # noqa: E402
 import app_paths  # noqa: E402
 
@@ -47,20 +48,20 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             track_file.write_bytes(b"bw")
 
             with patch.object(config_store, "CONFIG_FILE", cache_file), \
-                    patch.object(main, "DEFAULT_TRACK_REGISTRY_FILE", cache_registry), \
-                    patch.object(main, "TRACK_REGISTRY_FILE", cache_registry):
+                    patch.object(routes.tracks, "DEFAULT_TRACK_REGISTRY_FILE", cache_registry), \
+                    patch.object(routes.tracks, "TRACK_REGISTRY_FILE", cache_registry):
                 config_store.save_config({
                     **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                 })
 
-                created = asyncio.run(main.register_track(main.TrackRegistryEntry(
+                created = asyncio.run(routes.tracks.register_track(routes.tracks.TrackRegistryEntry(
                     path=str(track_file),
                     label="Signal",
                     type="bigwig",
                 )))
 
-                sidecar = output_dir / "local_data" / main.OUTPUT_DIR_TRACK_REGISTRY_FILENAME
+                sidecar = output_dir / "local_data" / routes.tracks.OUTPUT_DIR_TRACK_REGISTRY_FILENAME
                 self.assertTrue(sidecar.exists())
                 saved_sidecar = json.loads(sidecar.read_text(encoding="utf-8"))
                 self.assertEqual(saved_sidecar["tracks"][0]["id"], created["id"])
@@ -83,16 +84,16 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
             cache_registry.write_text(json.dumps({"tracks": [legacy]}), encoding="utf-8")
 
             with patch.object(config_store, "CONFIG_FILE", cache_file), \
-                    patch.object(main, "DEFAULT_TRACK_REGISTRY_FILE", cache_registry), \
-                    patch.object(main, "TRACK_REGISTRY_FILE", cache_registry):
+                    patch.object(routes.tracks, "DEFAULT_TRACK_REGISTRY_FILE", cache_registry), \
+                    patch.object(routes.tracks, "TRACK_REGISTRY_FILE", cache_registry):
                 config_store.save_config({
                     **config_store.DEFAULT_CONFIG,
                     "output_dir": str(output_dir),
                 })
 
-                payload = main.list_tracks()
+                payload = routes.tracks.list_tracks()
 
-                sidecar = output_dir / "local_data" / main.OUTPUT_DIR_TRACK_REGISTRY_FILENAME
+                sidecar = output_dir / "local_data" / routes.tracks.OUTPUT_DIR_TRACK_REGISTRY_FILENAME
                 self.assertTrue(sidecar.exists())
                 saved_sidecar = json.loads(sidecar.read_text(encoding="utf-8"))
                 self.assertEqual(saved_sidecar["tracks"][0]["id"], legacy["id"])

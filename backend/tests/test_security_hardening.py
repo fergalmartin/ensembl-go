@@ -16,11 +16,11 @@ from main import (  # noqa: E402
     DeleteSingleFileRequest,
     MkdirRequest,
     SaveExportRequest,
-    _validate_trackhub_data_url,
     create_directory,
     delete_single_local_file,
     save_export_file,
 )
+from routes.tracks import _validate_trackhub_data_url  # noqa: E402
 from gff_index import find_transcript_fast  # noqa: E402
 from data_paths import _validate_download_url  # noqa: E402
 from security_utils import (  # noqa: E402

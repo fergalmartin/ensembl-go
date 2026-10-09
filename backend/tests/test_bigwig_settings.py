@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import (  # noqa: E402
+from routes.tracks import (  # noqa: E402
     BIGWIG_DATA_TYPE_DEFAULTS,
     TrackRegistryEntry,
     TrackRegistryUpdateEntry,
@@ -63,7 +63,7 @@ class BigWigSettingsTests(unittest.TestCase):
             bw_custom = tmp_path / "custom.bw"
             bw_custom.write_bytes(b"bw")
 
-            with patch("main.TRACK_REGISTRY_FILE", registry_path):
+            with patch("routes.tracks.TRACK_REGISTRY_FILE", registry_path):
                 created_default = asyncio.run(
                     register_track(
                         TrackRegistryEntry(
@@ -144,7 +144,7 @@ class BigWigSettingsTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch("main.TRACK_REGISTRY_FILE", registry_path):
+            with patch("routes.tracks.TRACK_REGISTRY_FILE", registry_path):
                 payload = list_tracks()
 
         tracks = payload.get("tracks") or []

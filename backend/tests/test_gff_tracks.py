@@ -13,11 +13,10 @@ from main import (  # noqa: E402
     BigBedBlockTilesRequest,
     BigBedFeatureTileRequest,
     BigBedFeatureTilesRequest,
-    TRACK_DISPLAY_MODES,
-    _detect_track_type,
     browse_bigbed_block_tiles,
     browse_bigbed_feature_tiles,
 )
+from routes.tracks import TRACK_DISPLAY_MODES, _detect_track_type  # noqa: E402
 
 GFF3 = "\n".join([
     "##gff-version 3",

@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import (  # noqa: E402
+from routes.tracks import (  # noqa: E402
     TrackGroupEntry,
     TrackGroupMember,
     TrackGroupUpdateEntry,
@@ -34,7 +34,7 @@ class TrackGroupTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         # Tracks and groups go to a scratch registry, never the user's.
-        self._patch = patch("main.TRACK_REGISTRY_FILE", self.tmp / "track_registry.json")
+        self._patch = patch("routes.tracks.TRACK_REGISTRY_FILE", self.tmp / "track_registry.json")
         self._patch.start()
 
     def tearDown(self):

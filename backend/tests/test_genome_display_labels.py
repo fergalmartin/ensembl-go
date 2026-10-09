@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.tracks  # noqa: E402
 import local_inventory  # noqa: E402
 import config_store  # noqa: E402
 import app_state  # noqa: E402
@@ -66,7 +67,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
         }
 
         with patch.object(app_state.download_manager, "species_data", species_data):
-            hydrated = main._hydrate_track_genome_label(track, config_store.DEFAULT_CONFIG)
+            hydrated = routes.tracks._hydrate_track_genome_label(track, config_store.DEFAULT_CONFIG)
 
         self.assertEqual(hydrated["genome_species_label"], "Red fox")
         self.assertEqual(hydrated["display_name"], "Red fox")

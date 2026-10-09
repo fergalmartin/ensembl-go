@@ -14,11 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from main import (  # noqa: E402
     SpliceBlockTileRequest,
     SpliceBlockTilesRequest,
-    _is_canonical_splice_motif,
-    _normalize_splice_settings,
     browse_splice_junctions,
     browse_splice_junctions_block_tiles,
 )
+from routes.tracks import _is_canonical_splice_motif, _normalize_splice_settings  # noqa: E402
 
 
 class SpliceSettingsTests(unittest.TestCase):

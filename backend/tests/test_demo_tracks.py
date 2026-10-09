@@ -22,6 +22,7 @@ import pytest
 
 import demo_genome
 import main
+import routes.tracks  # noqa: E402
 import config_store  # noqa: E402
 from demo_genome import (
     DEMO_TRACK_BUNDLE,
@@ -139,7 +140,7 @@ def test_a_tutorials_tracks_do_not_reach_the_users_registry(monkeypatch):
         monkeypatch.setattr(config_store, "load_config", lambda: {"output_dir": out})
 
         # Outside a tutorial the user's own track is what the app sees.
-        assert [t["label"] for t in main._load_track_registry()["tracks"]] == ["My own track"]
+        assert [t["label"] for t in routes.tracks._load_track_registry()["tracks"]] == ["My own track"]
 
         workspace = tutorial_workspace(out)
         (workspace / "local_data").mkdir(parents=True, exist_ok=True)
@@ -147,21 +148,21 @@ def test_a_tutorials_tracks_do_not_reach_the_users_registry(monkeypatch):
         monkeypatch.setattr(demo_genome, "_tutorial_workspace_root", str(workspace))
 
         # Inside one, the store is the workspace's and only the workspace's.
-        paths = main._track_registry_store_paths_for_config(main._tracks_config())
+        paths = routes.tracks._track_registry_store_paths_for_config(routes.tracks._tracks_config())
         assert len(paths) == 1
         assert workspace in paths[0].parents
-        assert main._load_track_registry()["tracks"] == []
+        assert routes.tracks._load_track_registry()["tracks"] == []
 
-        config = main._tracks_config()
-        registry = main._load_track_registry(config)
+        config = routes.tracks._tracks_config()
+        registry = routes.tracks._load_track_registry(config)
         registry.setdefault("tracks", []).append({"id": "tutorial-1", "label": "Brain expression"})
-        main._save_track_registry(registry, config)
+        routes.tracks._save_track_registry(registry, config)
 
         monkeypatch.setattr(demo_genome, "_tutorial_session", None)
         monkeypatch.setattr(demo_genome, "_tutorial_workspace_root", None)
 
         assert user_registry.read_bytes() == before
-        assert [t["label"] for t in main._load_track_registry()["tracks"]] == ["My own track"]
+        assert [t["label"] for t in routes.tracks._load_track_registry()["tracks"]] == ["My own track"]
 
 
 def test_a_tutorials_track_cannot_be_registered_into_the_users_registry(monkeypatch, tmp_path):
@@ -186,12 +187,12 @@ def test_a_tutorials_track_cannot_be_registered_into_the_users_registry(monkeypa
     track.write_bytes(b"not really a bigwig")
 
     # No tutorial running: the store is the user's, so this must be refused.
-    store = main._primary_track_registry_store_path(main._tracks_config())
+    store = routes.tracks._primary_track_registry_store_path(routes.tracks._tracks_config())
     assert not demo_genome.is_inside_tutorial_workspace(store)
     assert demo_genome.is_inside_tutorial_workspace(str(track))
 
     # With a tutorial running the store is the workspace's own, and the same file is fine.
     monkeypatch.setattr(demo_genome, "_tutorial_session", {"stub": True})
     monkeypatch.setattr(demo_genome, "_tutorial_workspace_root", str(workspace))
-    store = main._primary_track_registry_store_path(main._tracks_config())
+    store = routes.tracks._primary_track_registry_store_path(routes.tracks._tracks_config())
     assert demo_genome.is_inside_tutorial_workspace(store)

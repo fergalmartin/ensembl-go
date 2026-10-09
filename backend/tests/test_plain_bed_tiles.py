@@ -15,11 +15,11 @@ from main import (  # noqa: E402
     BigBedBlockTilesRequest,
     BigBedFeatureTileRequest,
     BigBedFeatureTilesRequest,
-    _normalize_bed_settings,
     browse_bed,
     browse_bigbed_block_tiles,
     browse_bigbed_feature_tiles,
 )
+from routes.tracks import _normalize_bed_settings  # noqa: E402
 
 BED_ROWS = [
     "track name=peaks",

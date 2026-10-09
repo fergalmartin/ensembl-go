@@ -9,11 +9,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from main import (  # noqa: E402
     BigWigZoneScaleRequest,
     _bigwig_zone_edges,
-    _normalize_bigwig_settings,
     browse_bigwig_zone_scale,
     browse_bigwig_zone_scale_shared,
     pyBigWig,
 )
+from routes.tracks import _normalize_bigwig_settings  # noqa: E402
 
 
 class ZoneEdgeTests(unittest.TestCase):
