@@ -20,6 +20,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import local_inventory  # noqa: E402
 import config_store  # noqa: E402
 import removal_rules  # noqa: E402
 
@@ -480,8 +481,8 @@ class EndpointTests(unittest.TestCase):
             plan = payload["plans"][0]
             deletable = {item["path"] for item in plan["deletable"]}
 
-            expected, _kept = main._downloaded_assembly_files(
-                asm_dir, "GCA_000005845.2", main._load_genome_manifest(asm_dir, "GCA_000005845.2")
+            expected, _kept = local_inventory._downloaded_assembly_files(
+                asm_dir, "GCA_000005845.2", local_inventory._load_genome_manifest(asm_dir, "GCA_000005845.2")
             )
             self.assertTrue(deletable.issuperset({str(path) for path in expected}))
             self.assertIn(

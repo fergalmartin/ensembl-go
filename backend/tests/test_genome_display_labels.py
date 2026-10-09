@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import local_inventory  # noqa: E402
 import config_store  # noqa: E402
 import app_state  # noqa: E402
 from download_manager import AssemblySummary  # noqa: E402
@@ -125,7 +126,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
             }
             with patch.object(app_state.download_manager, "_species_cache", [summary]), \
                     patch.object(app_state.download_manager, "species_data", catalog):
-                results = main.list_local_assemblies(str(root))
+                results = local_inventory.list_local_assemblies(str(root))
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["common_name"], "Moths")
@@ -186,7 +187,7 @@ class GenomeDisplayLabelTests(unittest.TestCase):
                 patch.object(app_state.download_manager, "_species_cache", [summary]),
                 patch.object(app_state.download_manager, "species_data", species_data),
             ):
-                results = main.list_local_assemblies(str(root))
+                results = local_inventory.list_local_assemblies(str(root))
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["assembly"], accession)

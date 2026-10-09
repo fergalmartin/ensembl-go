@@ -14,6 +14,7 @@ if str(BACKEND) not in sys.path:
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import local_inventory  # noqa: E402
 import tutorial_datasets  # noqa: E402
 import tutorial_packages  # noqa: E402
 
@@ -123,7 +124,7 @@ class TutorialDatasetTests(unittest.TestCase):
             ])
             self.assertEqual(len(demo_genome.tutorial_session_species()), 8)
             self.assertTrue(all(record["provider"] == "demo" for record in installed))
-            listed = main.list_local_assemblies(output_dir=str(workspace))
+            listed = local_inventory.list_local_assemblies(output_dir=str(workspace))
             self.assertEqual(len(listed), 8)
             self.assertTrue(all(record["provider"] == "demo" for record in listed))
             self.assertTrue(all(record["source_database"] == "demo" for record in listed))

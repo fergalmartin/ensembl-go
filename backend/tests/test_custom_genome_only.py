@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi import HTTPException  # noqa: E402
 
 import main  # noqa: E402
+import local_inventory  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "annotation"
 
@@ -36,7 +37,7 @@ class FastaOnlyAssemblyTests(unittest.TestCase):
 
     def test_fasta_only_assembly_is_listed(self):
         root = self._assembly_root(with_gff=False)
-        items = main.list_local_assemblies(str(root))
+        items = local_inventory.list_local_assemblies(str(root))
         item = next(
             (entry for entry in items if entry["assembly"] == "GCA_000005845.2"), None
         )
@@ -46,7 +47,7 @@ class FastaOnlyAssemblyTests(unittest.TestCase):
 
     def test_annotated_assembly_reports_has_annotation(self):
         root = self._assembly_root(with_gff=True)
-        items = main.list_local_assemblies(str(root))
+        items = local_inventory.list_local_assemblies(str(root))
         item = next(
             (entry for entry in items if entry["assembly"] == "GCA_000005845.2"), None
         )
@@ -61,7 +62,7 @@ class FastaOnlyAssemblyTests(unittest.TestCase):
         asm_dir.mkdir(parents=True)
         (asm_dir / "notes.txt").write_text("nothing useful", encoding="utf-8")
 
-        items = main.list_local_assemblies(str(root))
+        items = local_inventory.list_local_assemblies(str(root))
         self.assertEqual(
             [e for e in items if e["assembly"] == "GCA_000005845.2"], []
         )

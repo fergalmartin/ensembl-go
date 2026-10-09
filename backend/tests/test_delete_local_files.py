@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import local_inventory  # noqa: E402
 
 ASSEMBLY = "GCA_000005845.2"
 SPECIES = "Test_species"
@@ -85,7 +86,7 @@ class LegacyLayoutDeleteTests(unittest.TestCase):
             root = Path(tmpdir)
             self._legacy_genome(root)
 
-            items = main.list_local_assemblies(str(root))
+            items = local_inventory.list_local_assemblies(str(root))
             item = next(entry for entry in items if entry["assembly"] == ASSEMBLY)
 
             self.assertTrue(item["download_managed"])
@@ -96,7 +97,7 @@ class LegacyLayoutDeleteTests(unittest.TestCase):
             root = Path(tmpdir)
             asm_dir = self._legacy_genome(root)
 
-            result = _delete(root, dataset_release_key=main.LEGACY_DATASET_RELEASE_KEY)
+            result = _delete(root, dataset_release_key=local_inventory.LEGACY_DATASET_RELEASE_KEY)
 
             self.assertEqual(result["deleted_files"], 3)  # gff3, index, homology
             self.assertTrue((asm_dir / f"{ASSEMBLY}.softmasked.fa").exists())

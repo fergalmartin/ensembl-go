@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import local_inventory  # noqa: E402
 import gff_index  # noqa: E402
 import app_state  # noqa: E402
 
@@ -136,7 +137,7 @@ class LocalAssembliesTests(unittest.TestCase):
             fasta_path.write_bytes(b"\x1f\x8bFAKE")
             gff_path.write_bytes(b"\x1f\x8bFAKE")
 
-            items = main.list_local_assemblies(str(root))
+            items = local_inventory.list_local_assemblies(str(root))
             item = next((entry for entry in items if entry["assembly"] == "GCA_000005845.2"), None)
 
         self.assertIsNotNone(item)
@@ -169,7 +170,7 @@ class LocalAssembliesTests(unittest.TestCase):
             canonical_index = asm_dir / "GCF_002007445.2.gff3.index.db"
             _write_usable_index(canonical_index, gff_path)
 
-            items = main.list_local_assemblies(str(root))
+            items = local_inventory.list_local_assemblies(str(root))
             item = next((entry for entry in items if entry["assembly"] == "GCF_002007445.2"), None)
 
             self.assertIsNotNone(item)
@@ -218,7 +219,7 @@ class LocalAssembliesTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            items = main.list_local_assemblies(str(root))
+            items = local_inventory.list_local_assemblies(str(root))
             item = next((entry for entry in items if entry["assembly"] == "GCA_000005845.2"), None)
 
         self.assertIsNotNone(item)
@@ -275,7 +276,7 @@ class LocalAssembliesTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            items = main.list_local_assemblies(str(root))
+            items = local_inventory.list_local_assemblies(str(root))
             item = next((entry for entry in items if entry["assembly"] == "GCA_000005845.2"), None)
 
         self.assertIsNotNone(item)
@@ -409,7 +410,7 @@ class LocalAssembliesTests(unittest.TestCase):
             legacy_dir.mkdir(parents=True)
             (legacy_dir / "GCA_018472595.2.gff3.index.db").write_bytes(b"orphaned index")
 
-            scanned = main._scan_local_assembly(asm_dir, "GCA_018472595.2")
+            scanned = local_inventory._scan_local_assembly(asm_dir, "GCA_018472595.2")
 
         self.assertEqual(scanned["dataset_releases"], [])
         self.assertEqual(scanned["active_dataset_release_key"], "")

@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import demo_genome  # noqa: E402
 import main  # noqa: E402
+import local_inventory  # noqa: E402
 import config_store  # noqa: E402
 from genome_identity import iter_local_assembly_dirs  # noqa: E402
 
@@ -81,11 +82,11 @@ class DemoGenomeInstallTests(unittest.TestCase):
                 list(asm_dir.glob("*.gff3")),
                 "the annotation should live in a release directory, not the assembly root",
             )
-            scanned = main._scan_local_assembly(asm_dir, demo_genome.DEMO_ASSEMBLY)
+            scanned = local_inventory._scan_local_assembly(asm_dir, demo_genome.DEMO_ASSEMBLY)
             releases = {r["key"]: r for r in scanned.get("dataset_releases") or []}
             self.assertIn(demo_genome.DEMO_RELEASE_KEY, releases)
             self.assertEqual(releases[demo_genome.DEMO_RELEASE_KEY]["label"], demo_genome.DEMO_RELEASE_LABEL)
-            self.assertNotIn(main.LEGACY_DATASET_RELEASE_KEY, releases)
+            self.assertNotIn(local_inventory.LEGACY_DATASET_RELEASE_KEY, releases)
 
     def test_the_listing_does_not_call_the_demo_genome_retired(self):
         # It is not in any remote catalogue and never will be, so the usual
@@ -94,7 +95,7 @@ class DemoGenomeInstallTests(unittest.TestCase):
             asyncio.run(main.post_demo_genome_install(
                 main.DemoGenomeInstallRequest(output_dir=tmpdir)
             ))
-            listed = main.list_local_assemblies(output_dir=tmpdir)
+            listed = local_inventory.list_local_assemblies(output_dir=tmpdir)
             demo = next(x for x in listed if x["species_key"] == demo_genome.DEMO_SPECIES_KEY)
             self.assertTrue(demo["is_demo"])
             self.assertFalse(demo["retired_remote"])
@@ -128,15 +129,15 @@ class DemoGenomeInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             demo_genome.install_demo_genome(tmpdir)
             asm_dir = demo_genome.demo_assembly_dir(tmpdir)
-            manifest = main._load_genome_manifest(asm_dir, demo_genome.DEMO_ASSEMBLY)
+            manifest = local_inventory._load_genome_manifest(asm_dir, demo_genome.DEMO_ASSEMBLY)
 
             self.assertTrue(manifest, "the manifest should be readable by main's loader")
             self.assertTrue(
-                main._is_download_managed_assembly(manifest, asm_dir, demo_genome.DEMO_ASSEMBLY),
+                local_inventory._is_download_managed_assembly(manifest, asm_dir, demo_genome.DEMO_ASSEMBLY),
                 "the demo genome would not be deletable through the genome-removal UI",
             )
 
-            deletable, user_supplied = main._downloaded_assembly_files(
+            deletable, user_supplied = local_inventory._downloaded_assembly_files(
                 asm_dir, demo_genome.DEMO_ASSEMBLY, manifest
             )
             self.assertEqual(user_supplied, [], "nothing here was supplied by the user")
@@ -152,7 +153,7 @@ class DemoGenomeEndpointTests(unittest.TestCase):
             asyncio.run(main.post_demo_genome_install(
                 main.DemoGenomeInstallRequest(output_dir=tmpdir)
             ))
-            listed = main.list_local_assemblies(output_dir=tmpdir)
+            listed = local_inventory.list_local_assemblies(output_dir=tmpdir)
             keys = [(item.get("species_key"), item.get("assembly")) for item in listed]
             self.assertIn((demo_genome.DEMO_SPECIES_KEY, demo_genome.DEMO_ASSEMBLY), keys)
 
