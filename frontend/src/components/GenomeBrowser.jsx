@@ -93,7 +93,6 @@ import { drawPowerGlyph, powerGlyphSvgMarkup } from '../utils/powerGlyph'
 import { noteBubbleGlyphSvgMarkup } from '../utils/noteBubbleGlyph'
 import NoteGlyph from './NoteGlyph'
 
-// ============ Constants ============
 import { API_BASE } from '../backendRuntime'
 import GeneIndexProgressOverlay from './GeneIndexProgressOverlay'
 import {
@@ -284,8 +283,6 @@ const extractSvgBody = (svgRaw) => {
 const RESET_ICON_PATH_D = extractPathData(iconResetRaw)
 const ANCHOR_ICON_BODY = extractSvgBody(iconAnchorRaw)
 
-// ============ Helper Functions ============
-
 function TranscriptInfoPopup({
     popup,
     selectedChrom,
@@ -407,19 +404,6 @@ function TranscriptInfoPopup({
         </div>
     )
 }
-
-// ============ Page-level vertical scrolling ============
-// Browser panels never scroll internally, so bringing a track feature into view
-// means moving whichever ancestor owns the page scroll (falling back to the
-// window when the app is not inside its own scroll container).
-
-// ============ Mirrored drawing for a flipped (3'→5') panel ============
-// Custom tracks are laid out left to right in genomic order by a dozen renderers.
-// A flipped panel draws them through a mirror about the track area instead of
-// teaching each renderer to run backwards — exact, because the flipped
-// genomicToScreen is the unflipped one reflected about that same axis
-// (LHS_WIDTH + viewWidth). Text is un-mirrored where it is drawn, keeping its
-// anchor, so a label beside a feature stays beside it and still reads.
 
 // ============ GenomeBrowser Component ============
 

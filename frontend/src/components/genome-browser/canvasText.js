@@ -17,6 +17,11 @@ export function measureExpandedFooterLabelWidth(text) {
     return Math.ceil(expandedFooterTextMeasureContext.measureText(String(text || '')).width) + 4
 }
 
+// ============ Page-level vertical scrolling ============
+// Browser panels never scroll internally, so bringing a track feature into view
+// means moving whichever ancestor owns the page scroll (falling back to the
+// window when the app is not inside its own scroll container).
+
 export function getScrollerMetrics(scroller) {
     const isWindowScroller = !scroller
         || scroller === document.documentElement
@@ -70,6 +75,14 @@ export function scrollScrollerTo(scroller, metrics, top, behavior = 'smooth') {
     if (metrics.isWindowScroller) window.scrollTo({ top, behavior })
     else scroller.scrollTo({ top, behavior })
 }
+
+// ============ Mirrored drawing for a flipped (3'→5') panel ============
+// Custom tracks are laid out left to right in genomic order by a dozen renderers.
+// A flipped panel draws them through a mirror about the track area instead of
+// teaching each renderer to run backwards — exact, because the flipped
+// genomicToScreen is the unflipped one reflected about that same axis
+// (LHS_WIDTH + viewWidth). Text is un-mirrored where it is drawn, keeping its
+// anchor, so a label beside a feature stays beside it and still reads.
 
 export const nativeFillText = typeof CanvasRenderingContext2D === 'undefined'
     ? null
