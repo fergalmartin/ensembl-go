@@ -148,6 +148,7 @@ def build_db(path: Path) -> None:
 class Harness:
     def __init__(self, db_path, cache_root):
         import main
+        import sequence_windows  # noqa: E402
 
         self.db_path = str(db_path)
         self.fasta = FakeFasta()
@@ -157,11 +158,11 @@ class Harness:
             db_optional_provider=lambda genome: self.db_path,
             fasta_provider=lambda genome: self.fasta,
             chrom_resolver=lambda genome, requested, known: requested,
-            tx_feature_intervals=main._build_tx_feature_intervals,
-            mode_segments=main._build_mode_segments,
+            tx_feature_intervals=sequence_windows._build_tx_feature_intervals,
+            mode_segments=sequence_windows._build_mode_segments,
             translate_transcript=main._sequence_view_protein,
-            normalize_intervals=main._normalize_interval_list,
-            ordered_five_to_three=main._ordered_five_to_three,
+            normalize_intervals=sequence_windows._normalize_interval_list,
+            ordered_five_to_three=sequence_windows._ordered_five_to_three,
         )
         self.routes = {}
         for route in self.router.routes:

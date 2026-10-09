@@ -79,6 +79,8 @@ from security_utils import (
     sanitize_leaf_filename,
     validate_backend_bind_host,
 )
+import routes.splice
+import sequence_windows
 import routes.long_reads
 import routes.bed
 import routes.bigwig
@@ -153,16 +155,16 @@ app.include_router(create_sequence_view_router(
     db_optional_provider=lambda *args, **kwargs: genome_context._get_browse_db_optional(*args, **kwargs),
     fasta_provider=lambda *args, **kwargs: genome_context._get_browse_fasta(*args, **kwargs),
     chrom_resolver=lambda *args, **kwargs: genome_context._resolve_browse_chrom_name(*args, **kwargs),
-    tx_feature_intervals=lambda *args, **kwargs: _build_tx_feature_intervals(*args, **kwargs),
-    mode_segments=lambda *args, **kwargs: _build_mode_segments(*args, **kwargs),
+    tx_feature_intervals=lambda *args, **kwargs: sequence_windows._build_tx_feature_intervals(*args, **kwargs),
+    mode_segments=lambda *args, **kwargs: sequence_windows._build_mode_segments(*args, **kwargs),
     # The one translation in this application. It is the Feature Explorer's, and
     # it is the only one that knows about organelle genetic codes, non-ATG
     # initiation and how Ensembl's own pep file renders an incomplete CDS -- so
     # the sequence view asks it rather than carrying a second, simpler answer
     # that would disagree with the protein rows a reader can already see.
     translate_transcript=lambda *args, **kwargs: _sequence_view_protein(*args, **kwargs),
-    normalize_intervals=lambda *args, **kwargs: _normalize_interval_list(*args, **kwargs),
-    ordered_five_to_three=lambda *args, **kwargs: _ordered_five_to_three(*args, **kwargs)))
+    normalize_intervals=lambda *args, **kwargs: sequence_windows._normalize_interval_list(*args, **kwargs),
+    ordered_five_to_three=lambda *args, **kwargs: sequence_windows._ordered_five_to_three(*args, **kwargs)))
 
 # Endpoints that live in backend/routes/, one router per domain. Their position in
 # the route table does not matter: no two routes in the app can match one request
@@ -185,6 +187,7 @@ app.include_router(routes.vcf.router)
 app.include_router(routes.bigwig.router)
 app.include_router(routes.bed.router)
 app.include_router(routes.long_reads.router)
+app.include_router(routes.splice.router)
 API_TOKEN = os.environ.get("ENSEMBL_LOCAL_API_TOKEN", "").strip()
 API_TOKEN_HEADER = "x-ensembl-local-token"
 # Routes serving the sandboxed 3D structure viewer. Kept off /api because these
@@ -365,16 +368,6 @@ class FeatureExplorerSequencesRequest(BaseModel):
     include_features: bool = True
 
 
-class FeatureSlice(BaseModel):
-    type: str
-    start: int  # 1-based, inclusive, relative to returned window
-    end: int    # 1-based, inclusive, relative to returned window
-    coord_start: Optional[int] = None  # absolute coord in selected sequence space
-    coord_end: Optional[int] = None    # absolute coord in selected sequence space
-    genomic_start: Optional[int] = None
-    genomic_end: Optional[int] = None
-
-
 class FeatureExplorerSequenceRowResponse(BaseModel):
     transcript_id: str
     status: str  # ok | no_cds | not_found | error
@@ -386,7 +379,7 @@ class FeatureExplorerSequenceRowResponse(BaseModel):
     window_start: int
     window_end: int
     sequence: str
-    features: List[FeatureSlice] = []
+    features: List[sequence_windows.FeatureSlice] = []
 
 
 class FeatureExplorerSequencesResponse(BaseModel):
@@ -491,7 +484,7 @@ class ExonDetailSequence(BaseModel):
     exon_start_index: int
     exon_end_index: int
     feature_transcript_id: Optional[str] = None
-    features: List[FeatureSlice] = []
+    features: List[sequence_windows.FeatureSlice] = []
 
 
 class ExonDetailJunctions(BaseModel):
@@ -2270,503 +2263,6 @@ async def browse_sequence(genome: str = "reference", chrom: str = "", start: int
     return await run_in_threadpool(_query)
 
 
-def _normalize_interval_list(raw_features: Any, default_type: str, default_strand: str) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for item in (raw_features or []):
-        if not isinstance(item, dict):
-            continue
-        start = int(item.get("start", 0) or 0)
-        end = int(item.get("end", 0) or 0)
-        if start <= 0 or end <= 0:
-            continue
-        if end < start:
-            start, end = end, start
-        ftype = str(item.get("feature_type") or default_type or "").strip() or default_type
-        strand = str(item.get("strand") or default_strand or "+").strip() or "+"
-        normalized = {
-            "start": start,
-            "end": end,
-            "feature_type": ftype,
-            "strand": strand,
-        }
-        raw_phase = item.get("phase")
-        if raw_phase not in (None, "", "."):
-            try:
-                phase_value = int(raw_phase)
-            except Exception:
-                phase_value = None
-            if phase_value in (0, 1, 2):
-                normalized["phase"] = phase_value
-        out.append(normalized)
-    out.sort(key=lambda x: (x["start"], x["end"]))
-    return out
-
-
-def _ordered_five_to_three(intervals: List[Dict[str, Any]], strand: str) -> List[Dict[str, Any]]:
-    ordered = sorted(intervals, key=lambda x: (x["start"], x["end"]))
-    if strand == "-":
-        ordered.reverse()
-    return ordered
-
-
-def _build_mode_segments(
-    tx_start: int,
-    tx_end: int,
-    strand: str,
-    exons: List[Dict[str, Any]],
-    cds_list: List[Dict[str, Any]],
-    sequence_type: str,
-) -> Tuple[int, int, List[Dict[str, int]], str]:
-    """
-    Returns (coord_min, coord_max, segments, status)
-    status: ok | no_cds | error
-    segments are in 5'->3' order with fields:
-      coord_start, coord_end, genomic_start, genomic_end
-    """
-    if sequence_type == "genomic":
-        start = min(tx_start, tx_end)
-        end = max(tx_start, tx_end)
-        if end < start or start <= 0:
-            return 1, 1, [], "error"
-        return start, end, [{
-            "coord_start": start,
-            "coord_end": end,
-            "genomic_start": start,
-            "genomic_end": end,
-        }], "ok"
-
-    source = exons if sequence_type == "transcript" else cds_list
-    if sequence_type == "cds" and len(source) == 0:
-        return 1, 1, [], "no_cds"
-    if len(source) == 0:
-        return 1, 1, [], "error"
-
-    ordered = _ordered_five_to_three(source, strand)
-    cursor = 1
-    segments: List[Dict[str, int]] = []
-    for seg in ordered:
-        g_start = int(seg["start"])
-        g_end = int(seg["end"])
-        seg_len = (g_end - g_start) + 1
-        if seg_len <= 0:
-            continue
-        segment = {
-            "coord_start": cursor,
-            "coord_end": cursor + seg_len - 1,
-            "genomic_start": g_start,
-            "genomic_end": g_end,
-        }
-        if sequence_type == "cds":
-            raw_phase = seg.get("phase")
-            if raw_phase in (0, 1, 2):
-                segment["phase"] = int(raw_phase)
-        segments.append(segment)
-        cursor += seg_len
-
-    if len(segments) == 0:
-        return 1, 1, [], "error"
-    return 1, segments[-1]["coord_end"], segments, "ok"
-
-
-def _fetch_oriented_piece(fasta, chrom: str, genomic_start: int, genomic_end: int, strand: str) -> str:
-    lo = min(genomic_start, genomic_end)
-    hi = max(genomic_start, genomic_end)
-    if lo <= 0 or hi < lo:
-        return ""
-    try:
-        seq = str(fasta.fetch(chrom, lo - 1, hi)).upper()
-    except Exception:
-        return ""
-    if strand == "-":
-        return str(Seq(seq).reverse_complement()).upper()
-    return seq
-
-
-def _extract_window_sequence_from_segments(
-    fasta,
-    chrom: str,
-    strand: str,
-    segments: List[Dict[str, int]],
-    coord_min: int,
-    coord_max: int,
-    window_start: int,
-    window_end: int,
-    placeholder: str = "-",
-) -> str:
-    length = max(0, (window_end - window_start) + 1)
-    if length <= 0:
-        return ""
-    out = [placeholder] * length
-    if coord_max < coord_min or len(segments) == 0:
-        return "".join(out)
-
-    effective_start = max(window_start, coord_min)
-    effective_end = min(window_end, coord_max)
-    if effective_end < effective_start:
-        return "".join(out)
-
-    for seg in segments:
-        c_start = int(seg["coord_start"])
-        c_end = int(seg["coord_end"])
-        if c_end < effective_start or c_start > effective_end:
-            continue
-        ov_start = max(c_start, effective_start)
-        ov_end = min(c_end, effective_end)
-        if ov_end < ov_start:
-            continue
-
-        g_lo = min(int(seg["genomic_start"]), int(seg["genomic_end"]))
-        g_hi = max(int(seg["genomic_start"]), int(seg["genomic_end"]))
-        # Offset is measured in 5'->3' order within this segment.
-        offset_start = ov_start - c_start
-        offset_end = ov_end - c_start
-
-        if strand == "+":
-            piece_g_start = g_lo + offset_start
-            piece_g_end = g_lo + offset_end
-        else:
-            piece_g_start = g_hi - offset_end
-            piece_g_end = g_hi - offset_start
-
-        piece = _fetch_oriented_piece(fasta, chrom, piece_g_start, piece_g_end, strand)
-        if not piece:
-            continue
-        dst = ov_start - window_start
-        for i, base in enumerate(piece):
-            idx = dst + i
-            if 0 <= idx < length:
-                out[idx] = base
-
-    return "".join(out)
-
-
-def _extract_genomic_window_sequence(
-    fasta,
-    chrom: str,
-    strand: str,
-    tx_start: int,
-    tx_end: int,
-    window_start: int,
-    window_end: int,
-    placeholder: str = "-",
-) -> str:
-    length = max(0, (window_end - window_start) + 1)
-    if length <= 0:
-        return ""
-    out = [placeholder] * length
-    try:
-        chrom_len = int(fasta.get_reference_length(chrom))
-    except Exception:
-        chrom_len = 0
-    if chrom_len <= 0:
-        return "".join(out)
-
-    ov_start = max(1, window_start)
-    ov_end = min(window_end, chrom_len)
-    if ov_end < ov_start:
-        return "".join(out)
-
-    piece = _fetch_oriented_piece(fasta, chrom, ov_start, ov_end, strand)
-    if not piece:
-        return "".join(out)
-    if strand == "+":
-        dst_start = ov_start - window_start
-    else:
-        # In 5'->3' display for '-' strand, leftmost base corresponds to window_end.
-        dst_start = window_end - ov_end
-
-    for i, base in enumerate(piece):
-        idx = dst_start + i
-        if 0 <= idx < length:
-            out[idx] = base
-    return "".join(out)
-
-
-def _oriented_coords_for_interval(start: int, end: int, strand: str) -> List[int]:
-    lo = min(int(start), int(end))
-    hi = max(int(start), int(end))
-    if hi < lo:
-        return []
-    if strand == "-":
-        return list(range(hi, lo - 1, -1))
-    return list(range(lo, hi + 1))
-
-
-def _group_coords_to_intervals(coords: List[int]) -> List[Tuple[int, int]]:
-    if len(coords) == 0:
-        return []
-    grouped: List[Tuple[int, int]] = []
-    run = [int(coords[0])]
-    for coord in coords[1:]:
-        c = int(coord)
-        prev = int(run[-1])
-        if abs(c - prev) == 1:
-            run.append(c)
-            continue
-        grouped.append((min(run), max(run)))
-        run = [c]
-    grouped.append((min(run), max(run)))
-    return grouped
-
-
-def _oriented_sequence_from_coords(fasta, chrom: str, coords: List[int], strand: str) -> str:
-    if len(coords) == 0:
-        return ""
-    out: List[str] = []
-    for coord in coords:
-        c = int(coord)
-        if c <= 0:
-            return ""
-        try:
-            base = str(fasta.fetch(chrom, c - 1, c)).upper()
-        except Exception:
-            return ""
-        if len(base) != 1:
-            return ""
-        if strand == "-":
-            out.append(str(Seq(base).reverse_complement()).upper())
-        else:
-            out.append(base)
-    return "".join(out)
-
-
-def _build_tx_feature_intervals(
-    fasta,
-    chrom: str,
-    strand: str,
-    exons: List[Dict[str, Any]],
-    cds_list: List[Dict[str, Any]],
-    utrs: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    feats: List[Dict[str, Any]] = []
-
-    # Exons and introns
-    for exon in exons:
-        feats.append({"type": "exon", "start": int(exon["start"]), "end": int(exon["end"])})
-
-    exons_genomic = sorted(exons, key=lambda x: (x["start"], x["end"]))
-    for i in range(len(exons_genomic) - 1):
-        intron_start = int(exons_genomic[i]["end"]) + 1
-        intron_end = int(exons_genomic[i + 1]["start"]) - 1
-        if intron_end >= intron_start:
-            feats.append({"type": "intron", "start": intron_start, "end": intron_end})
-
-    # CDS and UTRs
-    for cds in cds_list:
-        feats.append({"type": "cds", "start": int(cds["start"]), "end": int(cds["end"])})
-
-    for utr in utrs:
-        ftype = str(utr.get("feature_type", "")).lower()
-        if "five" in ftype or "5_prime" in ftype:
-            out_type = "utr5"
-        elif "three" in ftype or "3_prime" in ftype:
-            out_type = "utr3"
-        else:
-            out_type = "utr3"
-        feats.append({"type": out_type, "start": int(utr["start"]), "end": int(utr["end"])})
-
-    # Start / stop codons from CDS boundaries, only when canonical codons are present.
-    bio_cds = _ordered_five_to_three(cds_list, strand)
-    cds_coords: List[int] = []
-    for cds_seg in bio_cds:
-        cds_coords.extend(_oriented_coords_for_interval(int(cds_seg["start"]), int(cds_seg["end"]), strand))
-
-    if len(cds_coords) >= 3:
-        start_coords = cds_coords[:3]
-        stop_coords = cds_coords[-3:]
-
-        start_seq = _oriented_sequence_from_coords(fasta, chrom, start_coords, strand)
-        stop_seq = _oriented_sequence_from_coords(fasta, chrom, stop_coords, strand)
-
-        if start_seq == "ATG":
-            for codon_start, codon_end in _group_coords_to_intervals(start_coords):
-                feats.append({"type": "start_codon", "start": codon_start, "end": codon_end})
-        if stop_seq in {"TAA", "TAG", "TGA"}:
-            for codon_start, codon_end in _group_coords_to_intervals(stop_coords):
-                feats.append({"type": "stop_codon", "start": codon_start, "end": codon_end})
-
-    # Canonical splice donor/acceptor checks around exon boundaries (GT/AG only).
-    bio_exons = _ordered_five_to_three(exons, strand)
-    for i in range(len(bio_exons) - 1):
-        curr = bio_exons[i]
-        nxt = bio_exons[i + 1]
-        c_start = int(curr["start"])
-        c_end = int(curr["end"])
-        n_start = int(nxt["start"])
-        n_end = int(nxt["end"])
-
-        if strand == "+":
-            d_start, d_end = c_end + 1, c_end + 2
-            a_start, a_end = n_start - 2, n_start - 1
-        else:
-            d_start, d_end = c_start - 2, c_start - 1
-            a_start, a_end = n_end + 1, n_end + 2
-
-        donor_motif = _fetch_oriented_piece(fasta, chrom, d_start, d_end, strand)
-        if donor_motif == "GT":
-            feats.append({"type": "donor", "start": min(d_start, d_end), "end": max(d_start, d_end)})
-
-        acceptor_motif = _fetch_oriented_piece(fasta, chrom, a_start, a_end, strand)
-        if acceptor_motif == "AG":
-            feats.append({"type": "acceptor", "start": min(a_start, a_end), "end": max(a_start, a_end)})
-
-    return feats
-
-
-def _project_feature_to_window_slices(
-    ftype: str,
-    g_start: int,
-    g_end: int,
-    sequence_type: str,
-    strand: str,
-    segments: List[Dict[str, int]],
-    window_start: int,
-    window_end: int,
-) -> List[Dict[str, int]]:
-    slices: List[Dict[str, int]] = []
-    if window_end < window_start:
-        return slices
-
-    if sequence_type == "genomic":
-        ov_start = max(g_start, window_start)
-        ov_end = min(g_end, window_end)
-        if ov_end < ov_start:
-            return slices
-        if strand == "-":
-            rel_start = (window_end - ov_end) + 1
-            rel_end = (window_end - ov_start) + 1
-        else:
-            rel_start = (ov_start - window_start) + 1
-            rel_end = (ov_end - window_start) + 1
-        slices.append({
-            "type": ftype,
-            "start": min(rel_start, rel_end),
-            "end": max(rel_start, rel_end),
-            "coord_start": ov_start,
-            "coord_end": ov_end,
-            "genomic_start": ov_start,
-            "genomic_end": ov_end,
-        })
-        return slices
-
-    for seg in segments:
-        seg_g_lo = min(int(seg["genomic_start"]), int(seg["genomic_end"]))
-        seg_g_hi = max(int(seg["genomic_start"]), int(seg["genomic_end"]))
-        ov_start = max(seg_g_lo, g_start)
-        ov_end = min(seg_g_hi, g_end)
-        if ov_end < ov_start:
-            continue
-
-        c_start = int(seg["coord_start"])
-        if strand == "+":
-            proj_start = c_start + (ov_start - seg_g_lo)
-            proj_end = c_start + (ov_end - seg_g_lo)
-        else:
-            proj_start = c_start + (seg_g_hi - ov_end)
-            proj_end = c_start + (seg_g_hi - ov_start)
-        coord_start = min(proj_start, proj_end)
-        coord_end = max(proj_start, proj_end)
-
-        clip_start = max(coord_start, window_start)
-        clip_end = min(coord_end, window_end)
-        if clip_end < clip_start:
-            continue
-        rel_start = (clip_start - window_start) + 1
-        rel_end = (clip_end - window_start) + 1
-        if strand == "+":
-            g_clip_start = seg_g_lo + (clip_start - c_start)
-            g_clip_end = seg_g_lo + (clip_end - c_start)
-        else:
-            g_clip_start = seg_g_hi - (clip_end - c_start)
-            g_clip_end = seg_g_hi - (clip_start - c_start)
-        slices.append({
-            "type": ftype,
-            "start": rel_start,
-            "end": rel_end,
-            "coord_start": clip_start,
-            "coord_end": clip_end,
-            "genomic_start": min(g_clip_start, g_clip_end),
-            "genomic_end": max(g_clip_start, g_clip_end),
-        })
-
-    return slices
-
-
-def _merge_feature_slices(slices: List[Dict[str, int]]) -> List[FeatureSlice]:
-    if len(slices) == 0:
-        return []
-    grouped: Dict[str, List[Dict[str, int]]] = {}
-    for slc in slices:
-        ftype = str(slc.get("type", "")).strip()
-        start = int(slc.get("start", 0) or 0)
-        end = int(slc.get("end", 0) or 0)
-        if not ftype or start <= 0 or end <= 0:
-            continue
-        if end < start:
-            start, end = end, start
-        coord_start = int(slc.get("coord_start", 0) or 0)
-        coord_end = int(slc.get("coord_end", 0) or 0)
-        if coord_start > 0 and coord_end > 0 and coord_end < coord_start:
-            coord_start, coord_end = coord_end, coord_start
-        genomic_start = int(slc.get("genomic_start", 0) or 0)
-        genomic_end = int(slc.get("genomic_end", 0) or 0)
-        if genomic_start > 0 and genomic_end > 0 and genomic_end < genomic_start:
-            genomic_start, genomic_end = genomic_end, genomic_start
-        grouped.setdefault(ftype, []).append({
-            "start": start,
-            "end": end,
-            "coord_start": coord_start,
-            "coord_end": coord_end,
-            "genomic_start": genomic_start,
-            "genomic_end": genomic_end,
-        })
-
-    merged_out: List[FeatureSlice] = []
-    for ftype, ranges in grouped.items():
-        ranges.sort(key=lambda x: (x["start"], x["end"]))
-        cur = dict(ranges[0])
-        for item in ranges[1:]:
-            can_merge_display = item["start"] <= (cur["end"] + 1)
-            can_merge_coord = (
-                cur["coord_start"] > 0 and cur["coord_end"] > 0
-                and item["coord_start"] > 0 and item["coord_end"] > 0
-                and item["coord_start"] <= (cur["coord_end"] + 1)
-            )
-            can_merge_genomic = (
-                cur["genomic_start"] > 0 and cur["genomic_end"] > 0
-                and item["genomic_start"] > 0 and item["genomic_end"] > 0
-                and item["genomic_start"] <= (cur["genomic_end"] + 1)
-            )
-            if can_merge_display and can_merge_coord and can_merge_genomic:
-                cur["end"] = max(cur["end"], item["end"])
-                cur["coord_start"] = min(cur["coord_start"], item["coord_start"])
-                cur["coord_end"] = max(cur["coord_end"], item["coord_end"])
-                cur["genomic_start"] = min(cur["genomic_start"], item["genomic_start"])
-                cur["genomic_end"] = max(cur["genomic_end"], item["genomic_end"])
-            else:
-                merged_out.append(FeatureSlice(
-                    type=ftype,
-                    start=cur["start"],
-                    end=cur["end"],
-                    coord_start=cur["coord_start"] or None,
-                    coord_end=cur["coord_end"] or None,
-                    genomic_start=cur["genomic_start"] or None,
-                    genomic_end=cur["genomic_end"] or None,
-                ))
-                cur = dict(item)
-        merged_out.append(FeatureSlice(
-            type=ftype,
-            start=cur["start"],
-            end=cur["end"],
-            coord_start=cur["coord_start"] or None,
-            coord_end=cur["coord_end"] or None,
-            genomic_start=cur["genomic_start"] or None,
-            genomic_end=cur["genomic_end"] or None,
-        ))
-    merged_out.sort(key=lambda x: (x.start, x.end, x.type))
-    return merged_out
-
-
 def _feature_explorer_interval_length(start: int, end: int) -> int:
     s = int(start)
     e = int(end)
@@ -2966,9 +2462,9 @@ def _feature_explorer_load_gene_and_transcripts(
             "is_canonical": bool(row["is_canonical"]),
             "biotype": str(tx_data.get("biotype", "") or ""),
             "version": str(tx_data.get("version", "") or ""),
-            "exons": _normalize_interval_list(tx_data.get("exons", []), "exon", strand),
-            "cds_list": _normalize_interval_list(tx_data.get("cds_list", []), "cds", strand),
-            "utrs": _normalize_interval_list(tx_data.get("utrs", []), "utr", strand),
+            "exons": sequence_windows._normalize_interval_list(tx_data.get("exons", []), "exon", strand),
+            "cds_list": sequence_windows._normalize_interval_list(tx_data.get("cds_list", []), "cds", strand),
+            "utrs": sequence_windows._normalize_interval_list(tx_data.get("utrs", []), "utr", strand),
         })
 
     gene = {
@@ -3071,13 +2567,13 @@ def _feature_explorer_cds_overlap_span(
 
 
 def _feature_explorer_start_stop_intervals(cds_list: List[Dict[str, Any]], strand: str) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]]]:
-    ordered_cds = _ordered_five_to_three(cds_list, strand)
+    ordered_cds = sequence_windows._ordered_five_to_three(cds_list, strand)
     coords: List[int] = []
     for seg in ordered_cds:
-        coords.extend(_oriented_coords_for_interval(int(seg["start"]), int(seg["end"]), strand))
+        coords.extend(sequence_windows._oriented_coords_for_interval(int(seg["start"]), int(seg["end"]), strand))
     if len(coords) < 3:
         return [], []
-    return _group_coords_to_intervals(coords[:3]), _group_coords_to_intervals(coords[-3:])
+    return sequence_windows._group_coords_to_intervals(coords[:3]), sequence_windows._group_coords_to_intervals(coords[-3:])
 
 
 def _feature_explorer_collect_exon_dataset(
@@ -3105,11 +2601,11 @@ def _feature_explorer_collect_exon_dataset(
     for tx in ordered_transcripts:
         tx_id = str(tx.get("id") or "")
         tx_strand = str(tx.get("strand") or gene.get("strand") or "+")
-        tx_exons = _ordered_five_to_three(list(tx.get("exons") or []), tx_strand)
+        tx_exons = sequence_windows._ordered_five_to_three(list(tx.get("exons") or []), tx_strand)
         tx_cds_list = list(tx.get("cds_list") or [])
         tx_cds_min = min([int(c.get("start", 0) or 0) for c in tx_cds_list] + [int(c.get("end", 0) or 0) for c in tx_cds_list] + [0])
         tx_cds_max = max([int(c.get("start", 0) or 0) for c in tx_cds_list] + [int(c.get("end", 0) or 0) for c in tx_cds_list] + [0])
-        _, _, cds_segments, cds_status = _build_mode_segments(
+        _, _, cds_segments, cds_status = sequence_windows._build_mode_segments(
             tx_start=tx_cds_min if tx_cds_min > 0 else int(tx.get("start", 0) or 0),
             tx_end=tx_cds_max if tx_cds_max > 0 else int(tx.get("end", 0) or 0),
             strand=tx_strand,
@@ -3197,21 +2693,21 @@ def _feature_explorer_collect_exon_dataset(
             acceptor_motif = ""
             if exon_index < (exon_total - 1):
                 if strand == "+":
-                    donor_motif = _fetch_oriented_piece(fasta, chrom, ex_end + 1, ex_end + 2, strand) if fasta else ""
+                    donor_motif = sequence_windows._fetch_oriented_piece(fasta, chrom, ex_end + 1, ex_end + 2, strand) if fasta else ""
                 else:
-                    donor_motif = _fetch_oriented_piece(fasta, chrom, ex_start - 2, ex_start - 1, strand) if fasta else ""
+                    donor_motif = sequence_windows._fetch_oriented_piece(fasta, chrom, ex_start - 2, ex_start - 1, strand) if fasta else ""
             if exon_index > 0:
                 if strand == "+":
-                    acceptor_motif = _fetch_oriented_piece(fasta, chrom, ex_start - 2, ex_start - 1, strand) if fasta else ""
+                    acceptor_motif = sequence_windows._fetch_oriented_piece(fasta, chrom, ex_start - 2, ex_start - 1, strand) if fasta else ""
                 else:
-                    acceptor_motif = _fetch_oriented_piece(fasta, chrom, ex_end + 1, ex_end + 2, strand) if fasta else ""
+                    acceptor_motif = sequence_windows._fetch_oriented_piece(fasta, chrom, ex_end + 1, ex_end + 2, strand) if fasta else ""
 
-            exon_sequence = _fetch_oriented_piece(fasta, chrom, ex_start, ex_end, strand) if fasta else ""
+            exon_sequence = sequence_windows._fetch_oriented_piece(fasta, chrom, ex_start, ex_end, strand) if fasta else ""
             cds_sequence = ""
             if fasta and cds_overlap_length > 0:
                 pieces: List[str] = []
                 for ov_start, ov_end in cds_info.get("overlap_intervals") or []:
-                    piece = _fetch_oriented_piece(fasta, chrom, int(ov_start), int(ov_end), strand)
+                    piece = sequence_windows._fetch_oriented_piece(fasta, chrom, int(ov_start), int(ov_end), strand)
                     if piece:
                         pieces.append(piece)
                 cds_sequence = "".join(pieces)
@@ -3427,7 +2923,7 @@ async def feature_explorer_exons_detail(payload: FeatureExplorerExonsDetailReque
             window_start = max(1, exon_start - flank_bp)
             window_end = max(window_start, exon_end + flank_bp)
 
-        sequence = _fetch_oriented_piece(fasta, chrom, window_start, window_end, strand) if chrom else ""
+        sequence = sequence_windows._fetch_oriented_piece(fasta, chrom, window_start, window_end, strand) if chrom else ""
         if strand == "-":
             exon_start_index = (window_end - exon_end) + 1
             exon_end_index = (window_end - exon_start) + 1
@@ -3460,13 +2956,13 @@ async def feature_explorer_exons_detail(payload: FeatureExplorerExonsDetailReque
         if not feature_transcript_id and selected_instance_ids:
             feature_transcript_id = selected_instance_ids[0]
 
-        feature_slices: List[FeatureSlice] = []
+        feature_slices: List[sequence_windows.FeatureSlice] = []
         if feature_transcript_id and feature_transcript_id in ordered_tx_by_id and chrom:
             tx = ordered_tx_by_id.get(feature_transcript_id) or {}
             tx_exons = list(tx.get("exons") or [])
             tx_cds_list = list(tx.get("cds_list") or [])
             tx_utrs = list(tx.get("utrs") or [])
-            tx_features = _build_tx_feature_intervals(
+            tx_features = sequence_windows._build_tx_feature_intervals(
                 fasta=fasta,
                 chrom=chrom,
                 strand=strand,
@@ -3503,7 +2999,7 @@ async def feature_explorer_exons_detail(payload: FeatureExplorerExonsDetailReque
                     continue
                 if g_end < g_start:
                     g_start, g_end = g_end, g_start
-                raw_feature_slices.extend(_project_feature_to_window_slices(
+                raw_feature_slices.extend(sequence_windows._project_feature_to_window_slices(
                     ftype=ftype,
                     g_start=g_start,
                     g_end=g_end,
@@ -3513,7 +3009,7 @@ async def feature_explorer_exons_detail(payload: FeatureExplorerExonsDetailReque
                     window_start=int(window_start),
                     window_end=int(window_end),
                 ))
-            feature_slices = _merge_feature_slices(raw_feature_slices)
+            feature_slices = sequence_windows._merge_feature_slices(raw_feature_slices)
 
         donor_motifs = [str(item.donor_motif or "").upper() for item in instances if str(item.donor_motif or "").strip()]
         acceptor_motifs = [str(item.acceptor_motif or "").upper() for item in instances if str(item.acceptor_motif or "").strip()]
@@ -3691,13 +3187,13 @@ async def feature_explorer_sequences(payload: FeatureExplorerSequencesRequest):
             t_end = int(tx["end"] or 0)
             tx_data = tx["data"] if isinstance(tx.get("data"), dict) else {}
 
-            exons = _normalize_interval_list(tx_data.get("exons", []), "exon", strand)
-            cds_list = _normalize_interval_list(tx_data.get("cds_list", []), "cds", strand)
-            utrs = _normalize_interval_list(tx_data.get("utrs", []), "utr", strand)
+            exons = sequence_windows._normalize_interval_list(tx_data.get("exons", []), "exon", strand)
+            cds_list = sequence_windows._normalize_interval_list(tx_data.get("cds_list", []), "cds", strand)
+            utrs = sequence_windows._normalize_interval_list(tx_data.get("utrs", []), "utr", strand)
 
             seg_key = (tx_id, sequence_type)
             if seg_key not in seg_cache:
-                seg_cache[seg_key] = _build_mode_segments(
+                seg_cache[seg_key] = sequence_windows._build_mode_segments(
                     tx_start=t_start,
                     tx_end=t_end,
                     strand=strand,
@@ -3740,7 +3236,7 @@ async def feature_explorer_sequences(payload: FeatureExplorerSequencesRequest):
 
             try:
                 if sequence_type == "genomic":
-                    seq = _extract_genomic_window_sequence(
+                    seq = sequence_windows._extract_genomic_window_sequence(
                         fasta=fasta,
                         chrom=chrom,
                         strand=strand,
@@ -3751,7 +3247,7 @@ async def feature_explorer_sequences(payload: FeatureExplorerSequencesRequest):
                         placeholder="-",
                     )
                 else:
-                    seq = _extract_window_sequence_from_segments(
+                    seq = sequence_windows._extract_window_sequence_from_segments(
                         fasta=fasta,
                         chrom=chrom,
                         strand=strand,
@@ -3778,10 +3274,10 @@ async def feature_explorer_sequences(payload: FeatureExplorerSequencesRequest):
                 ))
                 continue
 
-            feature_slices: List[FeatureSlice] = []
+            feature_slices: List[sequence_windows.FeatureSlice] = []
             if payload.include_features:
                 if tx_id not in tx_feature_cache:
-                    tx_feature_cache[tx_id] = _build_tx_feature_intervals(
+                    tx_feature_cache[tx_id] = sequence_windows._build_tx_feature_intervals(
                         fasta=fasta,
                         chrom=chrom,
                         strand=strand,
@@ -3815,7 +3311,7 @@ async def feature_explorer_sequences(payload: FeatureExplorerSequencesRequest):
                         continue
                     if g_end < g_start:
                         g_start, g_end = g_end, g_start
-                    raw_slices.extend(_project_feature_to_window_slices(
+                    raw_slices.extend(sequence_windows._project_feature_to_window_slices(
                         ftype=ftype,
                         g_start=g_start,
                         g_end=g_end,
@@ -3825,7 +3321,7 @@ async def feature_explorer_sequences(payload: FeatureExplorerSequencesRequest):
                         window_start=w_start,
                         window_end=w_end,
                     ))
-                feature_slices = _merge_feature_slices(raw_slices)
+                feature_slices = sequence_windows._merge_feature_slices(raw_slices)
 
             rows_out.append(FeatureExplorerSequenceRowResponse(
                 transcript_id=tx_id,
@@ -4040,7 +3536,7 @@ def _cds_dna_from_layout(fasta, chrom: str, strand: str, layout: TranslationLayo
     pieces: List[str] = []
     for segment in layout.segments:
         expected = segment.coord_end - segment.coord_start + 1
-        piece = _fetch_oriented_piece(
+        piece = sequence_windows._fetch_oriented_piece(
             fasta, chrom, segment.genomic_start, segment.genomic_end, strand
         )
         if len(piece) < expected:
@@ -5807,7 +5303,7 @@ def _extract_feature_records(
             g_end   = max(int(e["end"])   for e in exons)
         else:
             return []
-        seq = _fetch_oriented_piece(fasta, chrom, g_start, g_end, strand)
+        seq = sequence_windows._fetch_oriented_piece(fasta, chrom, g_start, g_end, strand)
         if not seq:
             return []
         hdr = _build_fasta_header(tx_id, gene_id, "genomic", chrom, g_start, g_end, strand, len(seq), header_fields, biotype, canonical_info)
@@ -5816,8 +5312,8 @@ def _extract_feature_records(
     elif feature_type == "transcript":
         if not exons:
             return []
-        ordered = _ordered_five_to_three(exons, strand)
-        seq = "".join(_fetch_oriented_piece(fasta, chrom, e["start"], e["end"], strand) for e in ordered)
+        ordered = sequence_windows._ordered_five_to_three(exons, strand)
+        seq = "".join(sequence_windows._fetch_oriented_piece(fasta, chrom, e["start"], e["end"], strand) for e in ordered)
         if not seq:
             return []
         g_start = min(int(e["start"]) for e in exons)
@@ -5828,8 +5324,8 @@ def _extract_feature_records(
     elif feature_type == "cds":
         if not cds_list:
             return []
-        ordered = _ordered_five_to_three(cds_list, strand)
-        seq = "".join(_fetch_oriented_piece(fasta, chrom, c["start"], c["end"], strand) for c in ordered)
+        ordered = sequence_windows._ordered_five_to_three(cds_list, strand)
+        seq = "".join(sequence_windows._fetch_oriented_piece(fasta, chrom, c["start"], c["end"], strand) for c in ordered)
         if not seq:
             return []
         g_start = min(int(c["start"]) for c in cds_list)
@@ -5840,9 +5336,9 @@ def _extract_feature_records(
     elif feature_type == "exons":
         if not exons:
             return []
-        ordered = _ordered_five_to_three(exons, strand)
+        ordered = sequence_windows._ordered_five_to_three(exons, strand)
         for i, exon in enumerate(ordered, 1):
-            seq = _fetch_oriented_piece(fasta, chrom, exon["start"], exon["end"], strand)
+            seq = sequence_windows._fetch_oriented_piece(fasta, chrom, exon["start"], exon["end"], strand)
             if not seq:
                 continue
             hdr = _build_fasta_header(tx_id, gene_id, "exon", chrom, int(exon["start"]), int(exon["end"]), strand, len(seq), header_fields, biotype, canonical_info, rank=i if include_num else None)
@@ -5865,11 +5361,11 @@ def _extract_feature_records(
         else:
             explicit = [u for u in utrs if _is_three_prime_utr(u)]
 
-        intervals = _ordered_five_to_three(explicit, strand) if explicit else \
-                    _ordered_five_to_three(_compute_utr_intervals(exons, cds_list, strand, feature_type), strand)
+        intervals = sequence_windows._ordered_five_to_three(explicit, strand) if explicit else \
+                    sequence_windows._ordered_five_to_three(_compute_utr_intervals(exons, cds_list, strand, feature_type), strand)
         if not intervals:
             return []
-        seq = "".join(_fetch_oriented_piece(fasta, chrom, u["start"], u["end"], strand) for u in intervals)
+        seq = "".join(sequence_windows._fetch_oriented_piece(fasta, chrom, u["start"], u["end"], strand) for u in intervals)
         if not seq:
             return []
         g_start = min(int(u["start"]) for u in intervals)
@@ -5882,9 +5378,9 @@ def _extract_feature_records(
         if len(exons) < 2:
             return []
         raw_introns = _compute_introns_from_exons(exons)
-        ordered = _ordered_five_to_three(raw_introns, strand)
+        ordered = sequence_windows._ordered_five_to_three(raw_introns, strand)
         for i, intron in enumerate(ordered, 1):
-            seq = _fetch_oriented_piece(fasta, chrom, intron["start"], intron["end"], strand)
+            seq = sequence_windows._fetch_oriented_piece(fasta, chrom, intron["start"], intron["end"], strand)
             if not seq:
                 continue
             hdr = _build_fasta_header(tx_id, gene_id, "intron", chrom, int(intron["start"]), int(intron["end"]), strand, len(seq), header_fields, biotype, canonical_info, rank=i if include_num else None)
@@ -6029,9 +5525,9 @@ async def transcript_sequences(payload: TranscriptSequencesRequest):
         except Exception:
             tx_data = {}
 
-        exons    = _normalize_interval_list(tx_data.get("exons",    []), "exon", strand)
-        cds_list = _normalize_interval_list(tx_data.get("cds_list", []), "cds",  strand)
-        utrs     = _normalize_interval_list(tx_data.get("utrs",     []), "utr",  strand)
+        exons    = sequence_windows._normalize_interval_list(tx_data.get("exons",    []), "exon", strand)
+        cds_list = sequence_windows._normalize_interval_list(tx_data.get("cds_list", []), "cds",  strand)
+        utrs     = sequence_windows._normalize_interval_list(tx_data.get("utrs",     []), "utr",  strand)
         biotype  = str(tx_data.get("biotype", "") or "")
 
         canonical_info = _canonical_info_for_header(tx_data)
@@ -6172,9 +5668,9 @@ async def export_sequences(payload: ExportSequencesRequest):
             except Exception:
                 tx_data = {}
 
-            exons    = _normalize_interval_list(tx_data.get("exons",    []), "exon", strand)
-            cds_list = _normalize_interval_list(tx_data.get("cds_list", []), "cds",  strand)
-            utrs     = _normalize_interval_list(tx_data.get("utrs",     []), "utr",  strand)
+            exons    = sequence_windows._normalize_interval_list(tx_data.get("exons",    []), "exon", strand)
+            cds_list = sequence_windows._normalize_interval_list(tx_data.get("cds_list", []), "cds",  strand)
+            utrs     = sequence_windows._normalize_interval_list(tx_data.get("utrs",     []), "utr",  strand)
             biotype  = str(tx_data.get("biotype", "") or "")
 
             # Canonical / MANE label for header
@@ -6320,539 +5816,6 @@ routes.vcf._VCF_TILE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 routes.vcf._VCF_BLOCK_TILE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-class SpliceBlockTileRequest(BaseModel):
-    start: int
-    end: int
-    level_id: str = "L0"
-    block_bp: int = 5000
-
-
-class SpliceBlockTilesRequest(BaseModel):
-    path: str
-    chrom: str
-    tiles: List[SpliceBlockTileRequest]
-    genome: str = "reference"
-    track_id: Optional[str] = None
-    min_reads: int = 1
-    min_support: Optional[int] = None
-    canonical_mode: Optional[str] = None
-    annotated_mode: Optional[str] = None
-    max_junctions: Optional[int] = None
-
-
-_SJ_CHROM_CACHE: Dict[str, Dict[str, Any]] = {}
-_SJ_CHROM_CACHE_LOCK = threading.Lock()
-_SPLICE_DB_CHROMS_CACHE: Dict[str, Dict[str, Any]] = {}
-_SPLICE_DB_CHROMS_CACHE_LOCK = threading.Lock()
-_SPLICE_ANNOTATED_INTRON_CACHE: Dict[str, Dict[str, Any]] = {}
-_SPLICE_ANNOTATED_INTRON_CACHE_LOCK = threading.Lock()
-
-
-def _get_sj_available_chroms(path: Path) -> List[str]:
-    key = str(path.resolve())
-    try:
-        st = path.stat()
-        sig = (int(st.st_mtime_ns), int(st.st_size))
-    except Exception:
-        sig = (0, 0)
-
-    with _SJ_CHROM_CACHE_LOCK:
-        cached = _SJ_CHROM_CACHE.get(key)
-        if cached and cached.get("sig") == sig:
-            return list(cached.get("chroms") or [])
-
-    chroms: Set[str] = set()
-    opener = gzip.open if str(path).endswith(".gz") else open
-    try:
-        with opener(str(path), "rt") as fh:
-            for line in fh:
-                raw = line.strip()
-                if not raw:
-                    continue
-                cols = raw.split("\t")
-                if not cols:
-                    continue
-                name = str(cols[0] or "").strip()
-                if name:
-                    chroms.add(name)
-    except Exception:
-        chroms = set()
-
-    ordered = sorted(chroms)
-    with _SJ_CHROM_CACHE_LOCK:
-        _SJ_CHROM_CACHE[key] = {"sig": sig, "chroms": ordered}
-    return ordered
-
-
-def _db_file_signature(path: str) -> Tuple[int, int]:
-    try:
-        st = os.stat(path)
-        return (int(st.st_mtime_ns), int(st.st_size))
-    except Exception:
-        return (0, 0)
-
-
-def _get_transcript_db_chroms(db_path: str) -> List[str]:
-    resolved = str(Path(db_path).expanduser().resolve())
-    sig = _db_file_signature(resolved)
-    with _SPLICE_DB_CHROMS_CACHE_LOCK:
-        cached = _SPLICE_DB_CHROMS_CACHE.get(resolved)
-        if cached and cached.get("sig") == sig:
-            return list(cached.get("chroms") or [])
-
-    chroms: List[str] = []
-    conn = sqlite3.connect(resolved)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    try:
-        c.execute("SELECT DISTINCT chrom FROM transcripts")
-        chroms = [str(r["chrom"] or "").strip() for r in c.fetchall() if str(r["chrom"] or "").strip()]
-    except Exception:
-        chroms = []
-    finally:
-        conn.close()
-
-    with _SPLICE_DB_CHROMS_CACHE_LOCK:
-        _SPLICE_DB_CHROMS_CACHE[resolved] = {"sig": sig, "chroms": chroms}
-    return chroms
-
-
-def _resolve_splice_annotation_chrom(genome: str, db_path: str, requested: str) -> Optional[str]:
-    token = str(requested or "").strip()
-    if not token:
-        return None
-    known = _get_transcript_db_chroms(db_path)
-    if not known:
-        return None
-    if token in known:
-        return token
-
-    lower = token.lower()
-    for name in known:
-        if name.lower() == lower:
-            return name
-
-    query_tokens = chrom_token_variants(token)
-    variant_matches = [name for name in known if chrom_token_variants(name) & query_tokens]
-    if len(variant_matches) == 1:
-        return variant_matches[0]
-
-    resolved = genome_context._resolve_browse_chrom_name(genome, token, known)
-    if resolved in known:
-        return resolved
-    resolved_l = str(resolved or "").lower()
-    if resolved_l:
-        for name in known:
-            if name.lower() == resolved_l:
-                return name
-
-    if variant_matches:
-        return sorted(variant_matches, key=lambda v: (len(v), v.lower()))[0]
-    return None
-
-
-def _load_splice_annotated_intron_pairs(db_path: str, chrom: str) -> Set[Tuple[int, int]]:
-    resolved_db = str(Path(db_path).expanduser().resolve())
-    token = str(chrom or "").strip()
-    if not token:
-        return set()
-
-    sig = _db_file_signature(resolved_db)
-    cache_key = f"{resolved_db}|{token}"
-    with _SPLICE_ANNOTATED_INTRON_CACHE_LOCK:
-        cached = _SPLICE_ANNOTATED_INTRON_CACHE.get(cache_key)
-        if cached and cached.get("sig") == sig:
-            return set(cached.get("pairs") or [])
-
-    pairs: Set[Tuple[int, int]] = set()
-    conn = sqlite3.connect(resolved_db)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    try:
-        c.execute("SELECT strand, data FROM transcripts WHERE chrom = ?", (token,))
-        rows = c.fetchall()
-    except Exception:
-        rows = []
-    finally:
-        conn.close()
-
-    for row in rows:
-        strand = str(row["strand"] or "+").strip() or "+"
-        raw_data = row["data"]
-        try:
-            tx_data = json.loads(raw_data) if raw_data else {}
-        except Exception:
-            tx_data = {}
-        tx_data = tx_data if isinstance(tx_data, dict) else {}
-        exons = _normalize_interval_list(tx_data.get("exons", []), "exon", strand)
-        if len(exons) < 2:
-            continue
-        ordered = sorted(exons, key=lambda e: (int(e.get("start", 0) or 0), int(e.get("end", 0) or 0)))
-        for idx in range(len(ordered) - 1):
-            left = ordered[idx]
-            right = ordered[idx + 1]
-            intron_start = int(left.get("end", 0) or 0) + 1
-            intron_end = int(right.get("start", 0) or 0) - 1
-            if intron_start > 0 and intron_end >= intron_start:
-                pairs.add((intron_start, intron_end))
-
-    with _SPLICE_ANNOTATED_INTRON_CACHE_LOCK:
-        _SPLICE_ANNOTATED_INTRON_CACHE[cache_key] = {
-            "sig": sig,
-            "pairs": list(pairs),
-        }
-    return pairs
-
-
-def _resolve_splice_applied_settings(
-    path: str,
-    track_id: Optional[str],
-    min_reads: int,
-    min_support: Optional[int],
-    canonical_mode: Optional[str],
-    annotated_mode: Optional[str],
-    max_junctions: Optional[int],
-) -> Dict[str, Any]:
-    track = routes.tracks._get_registered_track(track_id or "")
-    registry_settings = None
-    if track and track.get("type") == "splice_junctions":
-        same_path = str(track.get("path") or "").strip() == str(path or "").strip()
-        if same_path:
-            registry_settings = routes.tracks._normalize_splice_settings(track.get("splice_settings"))
-
-    applied = routes.tracks._normalize_splice_settings(registry_settings)
-    applied["min_support"] = max(
-        routes.tracks._to_int_or_default(min_reads, 1, minimum=1),
-        routes.tracks._to_int_or_default(min_support, applied["min_support"], minimum=1),
-    )
-    if canonical_mode is not None:
-        mode = str(canonical_mode).strip().lower()
-        if mode in routes.tracks._CANONICAL_SPLICE_MODES:
-            applied["canonical_mode"] = mode
-    if annotated_mode is not None:
-        mode = str(annotated_mode).strip().lower()
-        if mode in routes.tracks._ANNOTATED_SPLICE_MODES:
-            applied["annotated_mode"] = mode
-    if max_junctions is not None:
-        applied["max_junctions"] = routes.tracks._to_int_or_default(max_junctions, applied["max_junctions"], minimum=100, maximum=100_000)
-    return applied
-
-
-def _load_splice_local_annotation_pairs(genome: str, resolved_chrom: str, requested_chrom: str) -> Optional[Set[Tuple[int, int]]]:
-    local_annotated_pairs: Optional[Set[Tuple[int, int]]] = None
-    try:
-        db_path = genome_context._get_browse_db(genome)
-        db_chrom = _resolve_splice_annotation_chrom(genome, db_path, resolved_chrom)
-        if not db_chrom:
-            db_chrom = _resolve_splice_annotation_chrom(genome, db_path, requested_chrom)
-        if db_chrom:
-            local_annotated_pairs = _load_splice_annotated_intron_pairs(db_path, db_chrom)
-    except HTTPException:
-        local_annotated_pairs = None
-    except Exception:
-        local_annotated_pairs = None
-    return local_annotated_pairs
-
-
-def _collect_splice_junctions(
-    sj_path: Path,
-    resolved_chrom: str,
-    start: int,
-    end: int,
-    applied: Dict[str, Any],
-    local_annotated_pairs: Optional[Set[Tuple[int, int]]],
-) -> List[Dict[str, Any]]:
-    motif_map = {
-        "0": "non-canonical",
-        "1": "GT/AG",
-        "2": "CT/AC",
-        "3": "GC/AG",
-        "4": "CT/GC",
-        "5": "AT/AC",
-        "6": "GT/AT",
-    }
-    junctions: List[Dict[str, Any]] = []
-    opener = gzip.open if str(sj_path).endswith(".gz") else open
-    with opener(str(sj_path), "rt") as fh:
-        for line in fh:
-            cols = line.strip().split("\t")
-            if len(cols) < 7:
-                continue
-            jchrom = cols[0]
-            if jchrom != resolved_chrom:
-                continue
-            try:
-                jstart = int(cols[1])   # 1-based intron start
-                jend = int(cols[2])     # 1-based intron end
-            except ValueError:
-                continue
-            if jend < start or jstart > end:
-                continue
-            n_unique = int(cols[6]) if cols[6].isdigit() else 0
-            n_multi = int(cols[7]) if len(cols) > 7 and cols[7].isdigit() else 0
-            n_total = n_unique + n_multi
-            if n_total < applied["min_support"]:
-                continue
-            strand_code = cols[3]  # 0=undefined,1=+,2=-
-            strand = "." if strand_code == "0" else ("+" if strand_code == "1" else "-")
-            motif = motif_map.get(cols[4], "unknown")
-            star_annotated = cols[5] == "1"
-            annotated = ((jstart, jend) in local_annotated_pairs) if local_annotated_pairs is not None else star_annotated
-            canonical = routes.tracks._is_canonical_splice_motif(motif)
-            if applied["canonical_mode"] == "canonical" and not canonical:
-                continue
-            if applied["canonical_mode"] == "non_canonical" and canonical:
-                continue
-            if applied["annotated_mode"] == "annotated" and not annotated:
-                continue
-            if applied["annotated_mode"] == "novel" and annotated:
-                continue
-            junctions.append({
-                "chrom": jchrom,
-                "start": jstart,  # 1-based, intron start
-                "end": jend,      # 1-based, intron end
-                "strand": strand,
-                "motif": motif,
-                "canonical": canonical,
-                "annotated": annotated,
-                "star_annotated": star_annotated,
-                "n_unique": n_unique,
-                "n_multi": n_multi,
-                "n_total": n_total,
-            })
-
-    junctions.sort(
-        key=lambda j: (
-            -int(j.get("n_total", 0)),
-            int(j.get("start", 0)),
-            int(j.get("end", 0)),
-            str(j.get("strand", ".")),
-        )
-    )
-    if len(junctions) > applied["max_junctions"]:
-        junctions = junctions[:applied["max_junctions"]]
-    return junctions
-
-
-def _build_splice_block_spans_from_junctions(
-    junctions: List[Dict[str, Any]],
-    tile_start: int,
-    tile_end: int,
-    block_bp: int,
-) -> Tuple[List[Dict[str, Any]], int]:
-    span = max(1, tile_end - tile_start)
-    block_size = max(1, int(block_bp))
-    slot_count = max(1, (span + block_size - 1) // block_size)
-    active = [0] * slot_count
-    max_support = [0] * slot_count
-
-    for jn in junctions:
-        jstart = int(jn.get("start", 0) or 0)
-        jend = int(jn.get("end", 0) or 0)
-        if jend <= tile_start or jstart >= tile_end:
-            continue
-        ov_start = max(tile_start, jstart)
-        ov_end = min(tile_end, jend)
-        if ov_end <= ov_start:
-            continue
-        b0 = max(0, min(slot_count - 1, (ov_start - tile_start) // block_size))
-        b1 = max(0, min(slot_count - 1, (max(ov_start, ov_end - 1) - tile_start) // block_size))
-        support = max(0, int(jn.get("n_total", 0) or 0))
-        for idx in range(b0, b1 + 1):
-            active[idx] = 1
-            if support > max_support[idx]:
-                max_support[idx] = support
-
-    spans: List[Dict[str, Any]] = []
-    painted_bp = 0
-    idx = 0
-    while idx < slot_count:
-        if active[idx] == 0:
-            idx += 1
-            continue
-        run_start = idx
-        run_max = max_support[idx]
-        idx += 1
-        while idx < slot_count and active[idx] == 1:
-            run_max = max(run_max, max_support[idx])
-            idx += 1
-        run_end = idx - 1
-        start_bp = tile_start + run_start * block_size
-        end_bp = min(tile_end, tile_start + (run_end + 1) * block_size)
-        if end_bp > start_bp:
-            spans.append({
-                "start": int(start_bp),
-                "end": int(end_bp),
-                "max_support": int(run_max),
-            })
-            painted_bp += (end_bp - start_bp)
-
-    return spans, painted_bp
-
-
-# ── STAR Splice Junctions endpoint ───────────────────────────────────────────
-
-@app.get("/api/browse/splice_junctions")
-async def browse_splice_junctions(
-    path: str,
-    chrom: str,
-    start: int,
-    end: int,
-    genome: str = "reference",
-    track_id: Optional[str] = None,
-    min_reads: int = 1,
-    min_support: Optional[int] = None,
-    canonical_mode: Optional[str] = None,   # all | canonical | non_canonical
-    annotated_mode: Optional[str] = None,   # all | annotated | novel
-    bins: int = 500,
-    level: str = "fine",
-    max_junctions: Optional[int] = None,
-):
-    """
-    Parse a STAR SJ.out.tab file and return splice junctions overlapping [start, end).
-    SJ.out.tab columns: chrom, intron_start(1-based), intron_end(1-based), strand, intron_motif,
-                         annotated, n_unique_mapped, n_multi_mapped, max_overhang.
-    """
-    def _run():
-        p = Path(path)
-        if not p.exists():
-            raise HTTPException(status_code=404, detail=f"SJ file not found: {path}")
-
-        applied = _resolve_splice_applied_settings(
-            path=path,
-            track_id=track_id,
-            min_reads=min_reads,
-            min_support=min_support,
-            canonical_mode=canonical_mode,
-            annotated_mode=annotated_mode,
-            max_junctions=max_junctions,
-        )
-
-        available_chroms = _get_sj_available_chroms(p)
-        resolved_chrom = genome_context._resolve_track_chrom_with_aliases(chrom, available_chroms, genome=genome)
-        local_annotated_pairs = _load_splice_local_annotation_pairs(genome, resolved_chrom, chrom)
-
-        try:
-            junctions = _collect_splice_junctions(
-                sj_path=p,
-                resolved_chrom=resolved_chrom,
-                start=start,
-                end=end,
-                applied=applied,
-                local_annotated_pairs=local_annotated_pairs,
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"SJ parse error: {e}")
-
-        if level == "fine":
-            return {
-                "level": level,
-                "chrom": resolved_chrom,
-                "start": start,
-                "end": end,
-                "junctions": junctions,
-                "applied_filters": applied,
-            }
-
-        # Density: count junctions per bin, weighted by read count
-        span = max(1, end - start)
-        density = [0.0] * bins
-        for jn in junctions:
-            mid = (jn["start"] + jn["end"]) / 2
-            idx = int((mid - start) / span * bins)
-            idx = max(0, min(bins - 1, idx))
-            density[idx] += jn["n_total"]
-        max_count = max(density) if density else 0
-        return {
-            "level": level,
-            "chrom": resolved_chrom,
-            "start": start,
-            "end": end,
-            "bins": density,
-            "max_count": max_count,
-            "applied_filters": applied,
-        }
-
-    return await run_in_threadpool(_run)
-
-
-@app.post("/api/browse/splice_junctions/block_tiles")
-async def browse_splice_junctions_block_tiles(payload: SpliceBlockTilesRequest):
-    def _run():
-        if not payload.tiles:
-            raise HTTPException(status_code=400, detail="tiles must not be empty")
-
-        path = str(payload.path or "").strip()
-        chrom_req = str(payload.chrom or "").strip()
-        genome = str(payload.genome or "reference").strip() or "reference"
-        if not path:
-            raise HTTPException(status_code=400, detail="path is required")
-        if not chrom_req:
-            raise HTTPException(status_code=400, detail="chrom is required")
-
-        p = Path(path)
-        if not p.exists():
-            raise HTTPException(status_code=404, detail=f"SJ file not found: {path}")
-
-        applied = _resolve_splice_applied_settings(
-            path=path,
-            track_id=payload.track_id,
-            min_reads=int(payload.min_reads),
-            min_support=payload.min_support,
-            canonical_mode=payload.canonical_mode,
-            annotated_mode=payload.annotated_mode,
-            max_junctions=payload.max_junctions,
-        )
-
-        req_start = min(max(0, int(tile.start)) for tile in payload.tiles)
-        req_end = max(max(int(tile.start) + 1, int(tile.end)) for tile in payload.tiles)
-
-        available_chroms = _get_sj_available_chroms(p)
-        resolved_chrom = genome_context._resolve_track_chrom_with_aliases(chrom_req, available_chroms, genome=genome)
-        local_annotated_pairs = _load_splice_local_annotation_pairs(genome, resolved_chrom, chrom_req)
-        try:
-            junctions = _collect_splice_junctions(
-                sj_path=p,
-                resolved_chrom=resolved_chrom,
-                start=req_start,
-                end=req_end,
-                applied=applied,
-                local_annotated_pairs=local_annotated_pairs,
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"SJ parse error: {e}")
-
-        out_tiles: List[Dict[str, Any]] = []
-        for tile in payload.tiles:
-            tile_start = max(0, int(tile.start))
-            tile_end = max(tile_start + 1, int(tile.end))
-            block_bp = routes.tracks._to_int_or_default(tile.block_bp, 5000, minimum=50, maximum=10_000_000)
-            block_spans, painted_bp = _build_splice_block_spans_from_junctions(
-                junctions=junctions,
-                tile_start=tile_start,
-                tile_end=tile_end,
-                block_bp=block_bp,
-            )
-            tile_span = max(1, tile_end - tile_start)
-            out_tiles.append({
-                "start": tile_start,
-                "end": tile_end,
-                "level_id": str(tile.level_id or "L0"),
-                "block_bp": int(block_bp),
-                "block_spans": block_spans,
-                "has_data": bool(block_spans),
-                "coverage": float(max(0.0, min(1.0, painted_bp / tile_span))),
-            })
-
-        return {
-            "chrom": resolved_chrom,
-            "tiles": out_tiles,
-            "applied_filters": applied,
-        }
-
-    return await run_in_threadpool(_run)
 
 
 if __name__ == "__main__":
