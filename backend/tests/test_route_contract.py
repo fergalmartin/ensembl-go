@@ -1,10 +1,11 @@
 """The HTTP surface of the backend, pinned.
 
 Moving endpoints between modules must not change what the app serves. This compares
-the live app with a recorded snapshot of every route, in registration order (FastAPI
-matches the first route that fits, so order is behaviour), together with whether its
+the live app with a recorded snapshot of every route, together with whether its
 handler is `async def` (a plain `def` runs in the threadpool) and the full OpenAPI
-document (request and response models).
+document (request and response models). FastAPI matches the first route that fits,
+so wherever two routes could match one request their relative order is pinned too;
+elsewhere registration order is free, so endpoints can be grouped by domain.
 
 When an intended change alters the surface, regenerate the snapshot with
     UPDATE_ROUTE_CONTRACT=1 python3 -m pytest tests/test_route_contract.py
@@ -40,6 +41,34 @@ def _route_table():
             "response_model": getattr(response_model, "__name__", None) or (str(response_model) if response_model else None),
         })
     return rows
+
+
+def _paths_can_overlap(a, b):
+    """Whether some URL could match both path templates."""
+    seg_a, seg_b = a.strip("/").split("/"), b.strip("/").split("/")
+
+    def compatible(x, y):
+        return x == y or x.startswith("{") or y.startswith("{")
+
+    for segs, other in ((seg_a, seg_b), (seg_b, seg_a)):
+        tail = next((i for i, s in enumerate(segs) if s.endswith(":path}")), None)
+        if tail is not None:
+            # A {name:path} parameter swallows the rest of the URL.
+            return len(other) > tail and all(compatible(x, y) for x, y in zip(segs[:tail], other[:tail]))
+    if len(seg_a) != len(seg_b):
+        return False
+    return all(compatible(x, y) for x, y in zip(seg_a, seg_b))
+
+
+def _overlapping_pairs(routes):
+    """(earlier, later, shared methods) for routes that could match the same request."""
+    pairs = []
+    for i, first in enumerate(routes):
+        for second in routes[i + 1:]:
+            shared = sorted(set(first["methods"]) & set(second["methods"]))
+            if first["path"] != second["path"] and shared and _paths_can_overlap(first["path"], second["path"]):
+                pairs.append((first["path"], second["path"], shared))
+    return pairs
 
 
 def _current_contract():
@@ -88,10 +117,22 @@ class RouteContractTests(unittest.TestCase):
             SNAPSHOT.write_text(json.dumps(current, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         expected = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
 
-        current_routes = [(r["path"], r["methods"]) for r in current["routes"]]
-        expected_routes = [(r["path"], r["methods"]) for r in expected["routes"]]
-        self.assertEqual(current_routes, expected_routes, "routes added, removed or reordered")
-        self.assertEqual(current["routes"], expected["routes"], "a route's handler name, sync/async kind or response model changed")
+        def key(row):
+            return (row["path"], tuple(row["methods"]))
+
+        current_routes = sorted(key(r) for r in current["routes"])
+        expected_routes = sorted(key(r) for r in expected["routes"])
+        self.assertEqual(current_routes, expected_routes, "routes added or removed")
+        self.assertEqual(
+            sorted(current["routes"], key=key), sorted(expected["routes"], key=key),
+            "a route's handler name, sync/async kind or response model changed",
+        )
+        # Registration order is behaviour only where two routes could both match one
+        # request: then the earlier one wins. Pin the order of exactly those pairs.
+        self.assertEqual(
+            _overlapping_pairs(current["routes"]), _overlapping_pairs(expected["routes"]),
+            "routes that can match the same request were added or changed order",
+        )
         self.assertEqual(current["openapi"], expected["openapi"], "the OpenAPI document changed")
 
 
