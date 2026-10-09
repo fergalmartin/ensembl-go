@@ -12,7 +12,6 @@ import {
     placeGeneFooterWithinViewport,
     TRANSCRIPT_FOOTER_CONTROL_HEIGHT,
 } from './genomeBrowserLabelLayout'
-import { localVcfType, getVcfAltAlleleCount, getVcfDetailVariantLayout } from '../../utils/vcfDetailGeometry'
 // Pure data: which file each of the tutorial's demo tracks is, so a `browserTracks`
 // arrival can name them without carrying registry ids it cannot know.
 import { TRACK_FILENAMES } from '../../utils/tutorialModel'
@@ -21,7 +20,6 @@ import {
     buildVcfOverviewWarmupKey,
     buildVcfOverviewWarmupTiles,
     getVcfBlockLevel as selectVcfBlockLevel,
-    getVcfViewportIntent,
 } from '../../utils/vcfTileStrategy'
 import { buildDefaultScreenshotName } from '../../utils/screenshotExport'
 import { buildGeneIntervalIndex, sameGeneRange } from '../../utils/geneIntervalIndex'
@@ -39,20 +37,17 @@ import {
     markWheelHandled,
     readKeyEvent,
     readWheelEvent,
-    resolveDragAxis,
     resolveKeyAction,
     resolveWheelAction,
     isWheelGestureFromChrome,
     isWheelInsideIsolatedOverlay,
 } from '../../utils/browsingControls'
-import { checkRangeAgainstBounds, parseLocationQuery } from '../../utils/locationQuery'
 import { effectiveMemberTrack, gatherRows, groupRowIdFor, isGroupRowId } from '../../utils/trackGroups'
 import { describeSessionTracks, planSessionRestore } from '../../utils/sessionTracks'
 import { classifyBiotype } from '../../utils/geneBiotypes'
 import {
     BOX_SELECT_FILL_FRACTION,
     FOCUS_RANGE_FILL_FRACTION,
-    SEQUENCE_TRACK_HEIGHT,
     getAnchoredContentPageScrollDelta,
     getFocusLocationRange,
     isSameChromToken,
@@ -68,27 +63,13 @@ import NoteGlyph from '../NoteGlyph'
 
 import { API_BASE } from '../../backendRuntime'
 import GeneIndexProgressOverlay from '../GeneIndexProgressOverlay'
-import {
-    GENE_INDEX_TRACK_HEIGHT,
-    geneIndexOverlayBand,
-    shouldHoldGeneTrackHeight,
-} from '../../utils/geneIndexOverlay'
+import { geneIndexOverlayBand, shouldHoldGeneTrackHeight } from '../../utils/geneIndexOverlay'
 import { INDEX_BUILDING_STATUS } from '../../utils/browserReadiness'
 import { consumeRestoredSessionState, peekRestoredSessionState, registerSessionState } from '../../sessionResume.js'
 import {
     BED_DENSITY_LEVELS,
     BIGBED_BLOCK_LEVELS,
-    BIGBED_BLOCK_MERGE_GAP_PX,
-    BIGBED_DETAIL_DENSE_FEATURE_THRESHOLD,
-    BIGBED_DETAIL_EXON_HEIGHT,
-    BIGBED_DETAIL_LANE_TOP_PAD,
-    BIGBED_DETAIL_MAX_FEATURES_PER_TILE,
-    BIGBED_FEATURE_TILE_SPAN,
     COLORS,
-    CUSTOM_TRACK_HEIGHT_ADAPTIVE_VCF,
-    CUSTOM_TRACK_HEIGHT_ADAPTIVE_VCF_COMPACT,
-    CUSTOM_TRACK_HEIGHT_STANDARD,
-    CUSTOM_TRACK_HEIGHT_ZONED,
     CUSTOM_TRACK_TOOLTIP_DWELL_MS,
     CUSTOM_TRACK_TOOLTIP_MOVE_TOL_PX,
     DEFAULT_CUSTOM_TRACK_RENDER_MODE,
@@ -97,15 +78,10 @@ import {
     EXPANDED_FOOTER_LABEL_TOP_OFFSET,
     GENE_CHROM_CACHE_ENTER_SPAN,
     GENE_INDEX_POLL_INTERVAL_MS,
-    GENE_LAYOUT_BUCKET_MIN_STEP,
     GENE_LAYOUT_BUFFER_MAX,
     GENE_LAYOUT_BUFFER_MIN,
-    GENE_LAYOUT_COVERAGE_SHRINK_THRESHOLD,
-    GENE_SUBTRACK_DISABLE_BP,
     GENE_SUBTRACK_ENABLE_BP,
-    JOINED_GROUP_HEADER_HEIGHT,
     LHS_WIDTH,
-    MAX_BOTTOM_ALIGN_EXTRA_TOP_GAP,
     MAX_GENE_TILE_CACHE_TILES,
     MAX_TRANSCRIPT_CACHE_GENES,
     MAX_TRANSCRIPT_PREFETCH_GENES,
@@ -115,12 +91,7 @@ import {
     SIDEBAR_TOGGLE_HIT_RADIUS,
     SPLICE_BLOCK_LEVELS,
     SPLICE_BLOCK_MERGE_GAP_PX,
-    SPLICE_BLOCK_TRACK_HEIGHT,
     SPLICE_FINE_BP_PER_PX,
-    SPLICE_HEIGHT_BASE,
-    SPLICE_HEIGHT_MAX,
-    SPLICE_HEIGHT_MIN,
-    SPLICE_HEIGHT_STEP,
     SPLICE_TILE_SPAN_COARSE,
     SPLICE_TILE_SPAN_FINE,
     SPLICE_TRANSCRIPT_BP_PER_PX,
@@ -130,34 +101,23 @@ import {
     TUTORIAL_MOVE_MS,
     VCF_LOD_LEVELS,
     VCF_SETTINGS_DEFAULTS,
-    bigBedLanePitch,
     gutterMarkerStyle,
     isGeneModelTrack,
     isIntervalTrackType,
     pickerRowClass,
 } from './browserConstants.js'
 import {
-    BED_TO_BROWSER_OFFSET,
     REV_COMP,
     TILE_SIZE,
-    bigBedFeatureKey,
     clamp,
     collectGenesFromList,
     getChromGeneCacheKey,
     getFetchErrorMessage,
     getTileKey,
-    isTransientFetchError,
     isTransientFetchErrorMessage,
-    normalizeBigBedFeatureForRender,
-    shiftBedFeatureToBrowserFrame,
-    shiftBedInterval,
-    smoothVcfDensityBins,
-    smoothVcfDensityClasses,
     snapToTile,
 } from './trackData.js'
 import {
-    getBigBedLaneCapacity,
-    getBigBedTrackHeightForLanes,
     isVcfAdaptiveLikeMode,
     normalizeBedSettings,
     normalizeBigWigDisplayMode,
@@ -166,14 +126,7 @@ import {
     normalizeVcfDisplayMode,
     normalizeVcfSettings,
 } from './trackSettings.js'
-import {
-    annotateSpliceSimilarityLift,
-    computeSplicePeakY,
-    cubicPointAt,
-    formatSpliceMotifForDisplay,
-    getSpliceBezierControls,
-    spliceJunctionKey,
-} from './spliceGeometry.js'
+import { formatSpliceMotifForDisplay, spliceJunctionKey } from './spliceGeometry.js'
 import {
     formatBp,
     formatCoord,
@@ -196,6 +149,20 @@ import {
 } from './canvasText.js'
 import { renderPanelExportSnapshot } from './exportSnapshot.js'
 import { paintBrowserCanvas } from './paintCanvas.js'
+import { runCustomTrackFetchEngine } from './customTrackFetchEngine.js'
+import { computeBrowserLayout } from './browserLayout.js'
+import { findCustomTrackHover } from './hitTesting.js'
+import { findSelectedGeneTranscriptHit } from './hitTesting.js'
+import { projectBigBedFeatureTiles } from './trackProjection.js'
+import { projectVcfBlockTiles } from './trackProjection.js'
+import { projectSpliceTiles } from './trackProjection.js'
+import { projectVcfSummary } from './trackProjection.js'
+import { projectVcfBlockSpans } from './trackProjection.js'
+import { projectBedDensityTiles } from './trackProjection.js'
+import { projectBigBedBlockTiles } from './trackProjection.js'
+import { runBrowserSearch } from './browserSearch.js'
+import { handleBrowserCanvasClick } from './pointerInput.js'
+import { handleBrowserMouseMove } from './pointerInput.js'
 
 /* The track picker adds and removes; switching a track on and off is the gutter's job.
  * Each row has one button, Add or Remove, for what it will be once applied, and rows that
@@ -1642,134 +1609,7 @@ function GenomeBrowser({
     }, [spliceArcEntryBpPerPx])
 
     // Project cached block tiles into the current view, with coarse-level fallback.
-    const projectVcfBlockTilesToView = useCallback((trackId, chrom, level, visStart, visEnd, outBins = 800) => {
-        const tileSpan = level.tileSpanBp
-        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
-        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-        const spans = []
-        const densityValues = Array(Math.max(1, outBins)).fill(0)
-        const densityValueSums = Array(Math.max(1, outBins)).fill(0)
-        const densityValueWeights = Array(Math.max(1, outBins)).fill(0)
-        const densityGenicVotes = Array(Math.max(1, outBins)).fill(0.0)
-        const densityIntergenicVotes = Array(Math.max(1, outBins)).fill(0.0)
-        const densityPopulated = new Uint8Array(Math.max(1, outBins))
-        let expectedTiles = 0
-        let fetchedTiles = 0
-        let coveredBp = 0
-
-        const viewSpan = Math.max(1, visEnd - visStart)
-        const densityBinBp = viewSpan / Math.max(1, densityValues.length)
-
-        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-            const tileEnd = tileStart + tileSpan
-            expectedTiles += 1
-            const key = makeVcfBlockTileKey(trackId, chrom, level.id, tileStart, tileEnd)
-            const tile = vcfBlockTileCacheRef.current.get(key)
-            if (!tile) continue
-            fetchedTiles += 1
-
-            const tileBlockSpans = Array.isArray(tile?.block_spans) ? tile.block_spans : []
-            for (const spanItem of tileBlockSpans) {
-                const s = Number(spanItem?.start)
-                const e = Number(spanItem?.end)
-                if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
-                if (e <= visStart || s >= visEnd) continue
-                const cs = Math.max(visStart, s)
-                const ce = Math.min(visEnd, e)
-                if (ce <= cs) continue
-                coveredBp += (ce - cs)
-                spans.push({ start: cs, end: ce, class_name: spanItem?.class_name || 'intergenic' })
-            }
-
-            const tileDensity = Array.isArray(tile?.density_bins) ? tile.density_bins : []
-            const tileClasses = Array.isArray(tile?.density_classes) ? tile.density_classes : []
-            const densityCount = Math.min(tileDensity.length, tileClasses.length)
-            if (densityCount <= 0) continue
-            const strideBp = Math.max(1, Number(tile?.density_stride_bp || level?.blockBp || 100))
-            const tileBaseStart = Number.isFinite(Number(tile?.start)) ? Number(tile.start) : tileStart
-            const tileBaseEnd = Number.isFinite(Number(tile?.end)) ? Number(tile.end) : tileEnd
-
-            for (let i = 0; i < densityCount; i++) {
-                const rawVal = Number(tileDensity[i])
-                if (!Number.isFinite(rawVal)) continue
-                const cls = tileClasses[i] === 'genic' ? 'genic' : 'intergenic'
-                const segmentStart = tileBaseStart + i * strideBp
-                const segmentEnd = Math.min(tileBaseEnd, segmentStart + strideBp)
-                if (!Number.isFinite(segmentStart) || !Number.isFinite(segmentEnd) || segmentEnd <= segmentStart) continue
-                if (segmentEnd <= visStart || segmentStart >= visEnd) continue
-
-                const cs = Math.max(visStart, segmentStart)
-                const ce = Math.min(visEnd, segmentEnd)
-                if (ce <= cs) continue
-
-                let x1 = Math.floor(((cs - visStart) / viewSpan) * densityValues.length)
-                let x2 = Math.ceil(((ce - visStart) / viewSpan) * densityValues.length)
-                x1 = Math.max(0, Math.min(densityValues.length - 1, x1))
-                x2 = Math.max(x1 + 1, Math.min(densityValues.length, x2))
-
-                const normalized = Math.max(0, rawVal)
-                for (let x = x1; x < x2; x++) {
-                    const binStart = visStart + x * densityBinBp
-                    const binEnd = binStart + densityBinBp
-                    const ovBp = Math.max(0, Math.min(ce, binEnd) - Math.max(cs, binStart))
-                    if (ovBp <= 0) continue
-                    densityPopulated[x] = 1
-                    densityValueSums[x] += normalized * ovBp
-                    densityValueWeights[x] += ovBp
-                    if (cls === 'genic') densityGenicVotes[x] += ovBp
-                    else densityIntergenicVotes[x] += ovBp
-                }
-            }
-        }
-
-        for (let i = 0; i < densityValues.length; i++) {
-            const w = Number(densityValueWeights[i] || 0)
-            densityValues[i] = w > 0 ? (Number(densityValueSums[i] || 0) / w) : 0
-        }
-        const smoothingRadius = level?.id === 'L1' ? 2 : level?.id === 'L2' ? 1 : 0
-        const smoothedDensityValues = smoothingRadius > 0
-            ? smoothVcfDensityBins(densityValues, densityPopulated, smoothingRadius)
-            : densityValues
-
-        // Merge adjacent spans of the same class
-        spans.sort((a, b) => a.start - b.start)
-        const merged = []
-        for (const s of spans) {
-            const last = merged[merged.length - 1]
-            if (last && s.start <= last.end && s.class_name === last.class_name) {
-                last.end = Math.max(last.end, s.end)
-            } else {
-                merged.push({ ...s })
-            }
-        }
-
-        const tileCoverage = expectedTiles > 0 ? (fetchedTiles / expectedTiles) : 0
-        const rawDensityClasses = smoothedDensityValues.map((_, i) =>
-            densityGenicVotes[i] >= densityIntergenicVotes[i] ? 'genic' : 'intergenic'
-        )
-        const classSmoothingRadius = level?.id === 'L1' ? 2 : level?.id === 'L2' ? 1 : 0
-        const densityClasses = classSmoothingRadius > 0
-            ? smoothVcfDensityClasses(rawDensityClasses, densityPopulated, classSmoothingRadius)
-            : rawDensityClasses
-        const densityPopulatedCount = densityPopulated.reduce((acc, v) => acc + (v ? 1 : 0), 0)
-        const densityCoverage = densityPopulatedCount / Math.max(1, smoothedDensityValues.length)
-        const hasDensity = smoothedDensityValues.some((v) => Number(v) > 0)
-
-        return {
-            mode: 'block',
-            level: level.id,
-            start: visStart,
-            end: visEnd,
-            block_spans: merged,
-            density_bins: smoothedDensityValues,
-            density_classes: densityClasses,
-            density_populated: densityPopulated,
-            density_stride_bp: Number(level?.blockBp || 100),
-            has_data: merged.length > 0 || hasDensity,
-            coverage: Math.max(0, Math.min(1, Math.max(coveredBp / viewSpan, densityCoverage))),
-            tile_coverage: Math.max(0, Math.min(1, tileCoverage)),
-        }
-    }, [makeVcfBlockTileKey])
+    const projectVcfBlockTilesToView = useCallback((...args) => projectVcfBlockTiles({ makeVcfBlockTileKey, vcfBlockTileCacheRef }, ...args), [makeVcfBlockTileKey])
 
     const projectVcfBlockTilesCascadeToView = useCallback((trackId, chrom, targetLevel, visStart, visEnd, outBins = 800) => {
         const targetIdx = Math.max(0, VCF_BLOCK_LEVELS.findIndex((l) => l.id === targetLevel.id))
@@ -1865,174 +1705,9 @@ function GenomeBrowser({
         }
     }, [makeVcfAdpDetailKey])
 
-    const projectVcfSummaryLevel = useCallback((trackId, chrom, level, visStart, visEnd, outBins) => {
-        const outCounts = Array(outBins).fill(0)
-        const outOccupancy = Array(outBins).fill(0)
-        const outDominant = Array(outBins).fill('other')
-        const outTypeCounts = Array.from({ length: outBins }, () => ({ snv: 0, ins: 0, del: 0, other: 0 }))
-        const populated = new Uint8Array(outBins)
+    const projectVcfSummaryLevel = useCallback((...args) => projectVcfSummary({ makeVcfTileKey, vcfTileCacheRef }, ...args), [makeVcfTileKey])
 
-        const visSpan = Math.max(1, visEnd - visStart)
-        const tileSpan = level.bpPerBin * level.binsPerTile
-        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
-        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-        let anyTile = false
-        let truncated = false
-
-        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-            const tileEnd = tileStart + tileSpan
-            const key = makeVcfTileKey(
-                trackId,
-                chrom,
-                level.id,
-                level.mode,
-                tileStart,
-                tileEnd,
-                level.blockWindowBp || 0,
-                level.blockStrideBp || 0,
-                level.blockCoverageThreshold ?? 0.5,
-                level.blockMode || '',
-            )
-            const tile = vcfTileCacheRef.current.get(key)
-            if (!tile || tile.mode !== 'summary' || !Array.isArray(tile.bins) || tile.bins.length === 0) continue
-            anyTile = true
-            truncated = truncated || !!tile.truncated
-            const sourceBins = tile.bins.length
-            const sourceBpPerBin = Math.max(1, (tile.end - tile.start) / Math.max(1, sourceBins))
-
-            for (let i = 0; i < sourceBins; i++) {
-                const count = Number(tile.bins[i]) || 0
-                const occupied = Number(tile.occupancy?.[i] || 0) > 0 || count > 0
-                const srcStart = tile.start + i * sourceBpPerBin
-                const srcEnd = srcStart + sourceBpPerBin
-                if (srcEnd < visStart || srcStart > visEnd) continue
-
-                let x1 = Math.floor(((srcStart - visStart) / visSpan) * outBins)
-                let x2 = Math.ceil(((srcEnd - visStart) / visSpan) * outBins)
-                x1 = Math.max(0, Math.min(outBins - 1, x1))
-                x2 = Math.max(x1 + 1, Math.min(outBins, x2))
-
-                for (let x = x1; x < x2; x++) {
-                    populated[x] = 1
-                    if (count >= outCounts[x]) {
-                        outCounts[x] = count
-                        outDominant[x] = tile.dominant_effect_bins?.[i] || 'other'
-                    }
-                    if (occupied) outOccupancy[x] = 1
-
-                    const t = tile.type_counts_bins?.[i]
-                    if (t) {
-                        outTypeCounts[x].snv = Math.max(outTypeCounts[x].snv, Number(t.snv) || 0)
-                        outTypeCounts[x].ins = Math.max(outTypeCounts[x].ins, Number(t.ins) || 0)
-                        outTypeCounts[x].del = Math.max(outTypeCounts[x].del, Number(t.del) || 0)
-                        outTypeCounts[x].other = Math.max(outTypeCounts[x].other, Number(t.other) || 0)
-                    }
-                }
-            }
-        }
-
-        let popCount = 0
-        for (let i = 0; i < outBins; i++) {
-            if (populated[i]) popCount++
-        }
-        const maxCount = outCounts.length ? Math.max(...outCounts) : 0
-        return {
-            mode: 'summary',
-            level: level.id,
-            bins: outCounts,
-            occupancy: outOccupancy,
-            dominant_effect_bins: outDominant,
-            type_counts_bins: outTypeCounts,
-            max_count: maxCount,
-            has_data: anyTile && maxCount > 0,
-            coverage: popCount / Math.max(1, outBins),
-            truncated,
-        }
-    }, [makeVcfTileKey])
-
-    const projectVcfBlockSpansToView = useCallback((trackId, chrom, level, visStart, visEnd) => {
-        const tileSpan = level.bpPerBin * level.binsPerTile
-        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
-        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-        const spans = []
-        let coveredBp = 0
-        let truncated = false
-        let expectedTiles = 0
-        let fetchedTiles = 0
-
-        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-            const tileEnd = tileStart + tileSpan
-            expectedTiles += 1
-            const key = makeVcfTileKey(
-                trackId,
-                chrom,
-                level.id,
-                level.mode,
-                tileStart,
-                tileEnd,
-                level.blockWindowBp || 0,
-                level.blockStrideBp || 0,
-                level.blockCoverageThreshold ?? 0.5,
-                level.blockMode || '',
-            )
-            const tile = vcfTileCacheRef.current.get(key)
-            if (!tile || tile.mode !== 'summary') continue
-            fetchedTiles += 1
-            truncated = truncated || !!tile.truncated
-            if (!Array.isArray(tile.block_spans)) continue
-            for (const spanItem of tile.block_spans) {
-                const s = Number(spanItem?.start)
-                const e = Number(spanItem?.end)
-                if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
-                if (e <= visStart || s >= visEnd) continue
-                const cs = Math.max(visStart, s)
-                const ce = Math.min(visEnd, e)
-                if (ce <= cs) continue
-                coveredBp += (ce - cs)
-                spans.push({
-                    start: cs,
-                    end: ce,
-                    class_name: spanItem?.class_name === 'transcript' ? 'transcript' : 'intergenic',
-                    coverage_fraction: Number(spanItem?.coverage_fraction) || 0,
-                })
-            }
-        }
-
-        spans.sort((a, b) => (a.start - b.start) || (a.end - b.end))
-        const merged = []
-        for (const s of spans) {
-            const last = merged[merged.length - 1]
-            if (!last) {
-                merged.push({ ...s })
-                continue
-            }
-            if (s.start <= last.end && s.class_name === last.class_name) {
-                const prevLen = Math.max(1, last.end - last.start)
-                const curLen = Math.max(1, s.end - s.start)
-                last.end = Math.max(last.end, s.end)
-                last.coverage_fraction = ((last.coverage_fraction * prevLen) + (s.coverage_fraction * curLen)) / (prevLen + curLen)
-            } else {
-                merged.push({ ...s })
-            }
-        }
-        const viewSpan = Math.max(1, visEnd - visStart)
-        const tileCoverage = expectedTiles > 0 ? (fetchedTiles / expectedTiles) : 0
-        return {
-            mode: 'summary',
-            level: level.id,
-            start: visStart,
-            end: visEnd,
-            block_spans: merged,
-            has_data: merged.length > 0,
-            coverage: Math.max(0, Math.min(1, coveredBp / viewSpan)),
-            tile_coverage: Math.max(0, Math.min(1, tileCoverage)),
-            truncated,
-            detail: merged.length === 0 ? 'Loading block spans…' : '',
-            block_window_bp: level.blockWindowBp || 0,
-            block_stride_bp: level.blockStrideBp || 0,
-            block_coverage_threshold: level.blockCoverageThreshold ?? 0.5,
-        }
-    }, [makeVcfTileKey])
+    const projectVcfBlockSpansToView = useCallback((...args) => projectVcfBlockSpans({ makeVcfTileKey, vcfTileCacheRef }, ...args), [makeVcfTileKey])
 
     const projectVcfDetailLevel = useCallback((trackId, chrom, level, visStart, visEnd) => {
         const tileSpan = level.bpPerBin * level.binsPerTile
@@ -2283,116 +1958,7 @@ function GenomeBrowser({
         return projectBigWigTilesToView(trackId, currentChrom, curLevel, curStart, curEnd, curBins)
     }, [getBigWigLevel, projectBigWigTilesToView])
 
-    const projectSpliceTilesToView = useCallback((trackId, chrom, visStart, visEnd) => {
-        const prefix = `sj:${trackId}|${chrom}|`
-        const dedup = new Map() // `${start}|${end}|${strand}` -> junction
-        const coverageSpans = []
-        let bestError = ''
-
-        for (const [key, tile] of trackFeatureCacheRef.current.entries()) {
-            if (!key.startsWith(prefix)) continue
-            const tStart = Number(tile?.start)
-            const tEnd = Number(tile?.end)
-            if (!Number.isFinite(tStart) || !Number.isFinite(tEnd) || tEnd <= tStart) continue
-            if (tEnd <= visStart || tStart >= visEnd) continue
-            coverageSpans.push([Math.max(visStart, tStart), Math.min(visEnd, tEnd)])
-            if (tile?.error && !bestError) bestError = String(tile.error)
-
-            const rows = Array.isArray(tile?.junctions) ? tile.junctions : []
-            for (const raw of rows) {
-                const s = Number(raw?.start)
-                const e = Number(raw?.end)
-                if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
-                if (e < visStart || s > visEnd) continue
-                const strand = String(raw?.strand || '.')
-                const keyId = `${s}|${e}|${strand}`
-                const count = Number(raw?.n_total ?? raw?.reads ?? 0)
-                const normalized = Number.isFinite(count) ? count : 0
-                const prev = dedup.get(keyId)
-                if (!prev || normalized > Number(prev?.n_total ?? prev?.reads ?? 0)) {
-                    dedup.set(keyId, {
-                        ...raw,
-                        start: s,
-                        end: e,
-                        strand,
-                        n_total: normalized,
-                        reads: normalized,
-                        canonical: raw?.canonical === true,
-                        key: keyId,
-                    })
-                }
-            }
-        }
-
-        coverageSpans.sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]))
-        let coveredBp = 0
-        if (coverageSpans.length > 0) {
-            let [curS, curE] = coverageSpans[0]
-            for (let i = 1; i < coverageSpans.length; i++) {
-                const [s, e] = coverageSpans[i]
-                if (s <= curE) curE = Math.max(curE, e)
-                else {
-                    coveredBp += Math.max(0, curE - curS)
-                    curS = s
-                    curE = e
-                }
-            }
-            coveredBp += Math.max(0, curE - curS)
-        }
-        const viewSpan = Math.max(1, visEnd - visStart)
-        const coverage = Math.max(0, Math.min(1, coveredBp / viewSpan))
-        const sortedByCoord = Array.from(dedup.values()).sort((a, b) => {
-            const as = Number(a?.start) || 0
-            const bs = Number(b?.start) || 0
-            if (as !== bs) return as - bs
-            const ae = Number(a?.end) || 0
-            const be = Number(b?.end) || 0
-            if (ae !== be) return ae - be
-            const ac = Number(a?.n_total ?? a?.reads ?? 0)
-            const bc = Number(b?.n_total ?? b?.reads ?? 0)
-            if (ac !== bc) return bc - ac
-            return String(a?.strand || '.').localeCompare(String(b?.strand || '.'))
-        })
-        const laneEnds = []
-        const laneByKey = new Map()
-        for (const j of sortedByCoord) {
-            const s = Number(j?.start) || 0
-            const e = Number(j?.end) || 0
-            let lane = 0
-            while (lane < laneEnds.length && s <= laneEnds[lane]) lane += 1
-            if (lane >= laneEnds.length) laneEnds.push(e)
-            else laneEnds[lane] = e
-            laneByKey.set(j.key || spliceJunctionKey(j), lane)
-        }
-        const laneCount = Math.max(1, laneEnds.length)
-        const recommendedHeight = clamp(
-            SPLICE_HEIGHT_BASE + laneCount * SPLICE_HEIGHT_STEP,
-            SPLICE_HEIGHT_MIN,
-            SPLICE_HEIGHT_MAX
-        )
-        const maxVisibleLanes = Math.max(1, Math.floor((recommendedHeight - SPLICE_HEIGHT_BASE) / SPLICE_HEIGHT_STEP))
-        const junctions = sortedByCoord.map((j) => {
-            const key = j.key || spliceJunctionKey(j)
-            return { ...j, key, lane: laneByKey.get(key) || 0 }
-        })
-        const overflowCount = junctions.reduce((acc, j) => acc + (Number(j?.lane || 0) >= maxVisibleLanes ? 1 : 0), 0)
-
-        return {
-            mode: 'splice_arcs',
-            start: visStart,
-            end: visEnd,
-            junctions,
-            has_data: junctions.length > 0,
-            coverage,
-            error: bestError,
-            layout: {
-                lane_count: laneCount,
-                max_visible_lanes: maxVisibleLanes,
-                overflow_count: overflowCount,
-                recommended_height: recommendedHeight,
-            },
-        }
-    }, [])
+    const projectSpliceTilesToView = useCallback((...args) => projectSpliceTiles({ trackFeatureCacheRef }, ...args), [])
 
     const projectSpliceBlockTilesToView = useCallback((trackId, chrom, level, visStart, visEnd, innerWidthPx) => {
         const tileSpan = level.tileSpanBp
@@ -2455,335 +2021,14 @@ function GenomeBrowser({
         }
     }, [makeSpliceBlockTileKey])
 
-    const projectBigBedBlockTilesToView = useCallback((trackId, chrom, level, visStart, visEnd, innerWidthPx) => {
-        const tileSpan = level.tileSpanBp
-        const firstTile = Math.floor(Math.max(0, visStart - BED_TO_BROWSER_OFFSET) / tileSpan) * tileSpan
-        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-        const spans = []
-        let expectedTiles = 0
-        let fetchedTiles = 0
-        let bestError = ''
+    const projectBigBedBlockTilesToView = useCallback((...args) => projectBigBedBlockTiles({ makeBigBedBlockTileKey, trackFeatureCacheRef }, ...args), [makeBigBedBlockTileKey])
 
-        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-            const tileEnd = tileStart + tileSpan
-            expectedTiles += 1
-            const key = makeBigBedBlockTileKey(trackId, chrom, level.id, tileStart, tileEnd)
-            const tile = trackFeatureCacheRef.current.get(key)
-            if (!tile) continue
-            fetchedTiles += 1
-            if (tile?.error && !bestError) bestError = String(tile.error)
-            const rows = Array.isArray(tile?.block_spans) ? tile.block_spans : []
-            for (const row of rows) {
-                const s = Number(row?.start)
-                const e = Number(row?.end)
-                if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
-                if (e <= visStart || s >= visEnd) continue
-                spans.push({
-                    start: Math.max(visStart, s),
-                    end: Math.min(visEnd, e),
-                    feature_count: Math.max(0, Number(row?.feature_count || 0)),
-                    max_score: Math.max(0, Number(row?.max_score || 0)),
-                    color_hint: String(row?.color_hint || ''),
-                })
-            }
-        }
-
-        spans.sort((a, b) => (a.start - b.start) || (a.end - b.end))
-        const merged = []
-        const viewSpan = Math.max(1, visEnd - visStart)
-        const gapBp = BIGBED_BLOCK_MERGE_GAP_PX * (viewSpan / Math.max(1, innerWidthPx))
-        for (const span of spans) {
-            const last = merged[merged.length - 1]
-            if (last && span.start <= (last.end + gapBp)) {
-                last.end = Math.max(last.end, span.end)
-                last.feature_count = Math.max(last.feature_count, span.feature_count)
-                if (span.max_score >= last.max_score) {
-                    last.max_score = span.max_score
-                    if (span.color_hint) last.color_hint = span.color_hint
-                }
-            } else {
-                merged.push({ ...span })
-            }
-        }
-
-        let coveredBp = 0
-        for (const span of merged) coveredBp += Math.max(0, span.end - span.start)
-        const tileCoverage = expectedTiles > 0 ? (fetchedTiles / expectedTiles) : 0
-        return {
-            mode: 'bigbed_blocks',
-            level: level.id,
-            start: visStart,
-            end: visEnd,
-            block_spans: merged,
-            has_data: merged.length > 0,
-            coverage: Math.max(0, Math.min(1, coveredBp / viewSpan)),
-            tile_coverage: Math.max(0, Math.min(1, tileCoverage)),
-            error: bestError,
-        }
-    }, [makeBigBedBlockTileKey])
-
-    const projectBigBedFeatureTilesToView = useCallback((trackId, chrom, visStart, visEnd, innerWidthPx, options = {}) => {
-        const labelled = Boolean(options?.labelled)
-        const tileSpan = BIGBED_FEATURE_TILE_SPAN
-        const viewSpan = Math.max(1, visEnd - visStart)
-        const layoutBuffer = clamp(viewSpan * 0.5, 80_000, 500_000)
-        const bucketStep = Math.max(25_000, Math.floor(viewSpan * 0.25))
-        const center = (visStart + visEnd) / 2
-        const centerBucket = Math.floor(center / bucketStep)
-        const spanBucket = Math.max(1, Math.round(Math.log2(Math.max(1, viewSpan)) * 8))
-        const priorLayout = bigBedLayoutStateRef.current[trackId]
-        let layoutStart
-        let layoutEnd
-        if (
-            priorLayout
-            && priorLayout.chrom === chrom
-            && priorLayout.centerBucket === centerBucket
-            && priorLayout.spanBucket === spanBucket
-        ) {
-            layoutStart = Number(priorLayout.layoutStart)
-            layoutEnd = Number(priorLayout.layoutEnd)
-        } else {
-            const bucketCenter = centerBucket * bucketStep + (bucketStep / 2)
-            const half = (viewSpan / 2) + layoutBuffer
-            layoutStart = Math.max(0, Math.floor(bucketCenter - half))
-            layoutEnd = Math.max(layoutStart + 1, Math.ceil(bucketCenter + half))
-            bigBedLayoutStateRef.current[trackId] = {
-                chrom,
-                centerBucket,
-                spanBucket,
-                layoutStart,
-                layoutEnd,
-            }
-        }
-
-        const firstTile = Math.floor(layoutStart / tileSpan) * tileSpan
-        const lastTile = Math.floor((layoutEnd - 1) / tileSpan) * tileSpan
-        const dedup = new Map()
-        let expectedTiles = 0
-        let fetchedTiles = 0
-        let bestError = ''
-        const coverageSpans = []
-
-        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-            const tileEnd = tileStart + tileSpan
-            expectedTiles += 1
-            const key = makeBigBedFeatureTileKey(trackId, chrom, tileStart, tileEnd)
-            const tile = trackFeatureCacheRef.current.get(key)
-            if (!tile) continue
-            fetchedTiles += 1
-            if (tile?.error && !bestError) bestError = String(tile.error)
-            const tStart = Number(tile?.start)
-            const tEnd = Number(tile?.end)
-            if (Number.isFinite(tStart) && Number.isFinite(tEnd) && tEnd > tStart) {
-                coverageSpans.push([Math.max(visStart, tStart), Math.min(visEnd, tEnd)])
-            }
-            const rows = Array.isArray(tile?.features) ? tile.features : []
-            for (const row of rows) {
-                const normalizedRow = row?._render_kind ? row : normalizeBigBedFeatureForRender(row)
-                if (!normalizedRow) continue
-                const s = Number(normalizedRow?.start)
-                const e = Number(normalizedRow?.end)
-                if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
-                if (e <= layoutStart || s >= layoutEnd) continue
-                const keyId = bigBedFeatureKey(normalizedRow)
-                if (dedup.has(keyId)) continue
-                dedup.set(keyId, {
-                    ...normalizedRow,
-                    start: s,
-                    end: e,
-                    _key: keyId,
-                })
-            }
-        }
-
-        const features = Array.from(dedup.values()).sort((a, b) => {
-            if (a.start !== b.start) return a.start - b.start
-            if (a.end !== b.end) return a.end - b.end
-            const aName = String(a?.name || '')
-            const bName = String(b?.name || '')
-            if (aName !== bName) return aName.localeCompare(bName)
-            return String(a?._key || '').localeCompare(String(b?._key || ''))
-        })
-        const visibleSource = features.filter((feature) => feature.end > visStart && feature.start < visEnd)
-        const transcriptFeatureCount = features.reduce((acc, feature) => {
-            const isTranscript = feature?._render_kind === 'transcript'
-                && feature?._structure_valid === true
-                && Array.isArray(feature?._exon_blocks)
-                && feature._exon_blocks.length > 0
-            return acc + (isTranscript ? 1 : 0)
-        }, 0)
-        const shouldDenseFallback = (
-            visibleSource.length > BIGBED_DETAIL_DENSE_FEATURE_THRESHOLD
-            && transcriptFeatureCount === 0
-            && viewSpan > 100_000
-        )
-        if (shouldDenseFallback) {
-            const denseSpans = visibleSource.map((feature) => ({
-                start: Math.max(visStart, Number(feature?.start) || 0),
-                end: Math.min(visEnd, Number(feature?.end) || 0),
-                feature_count: 1,
-                max_score: Math.max(0, Number(feature?.score || 0)),
-                color_hint: String(feature?.itemRgb || feature?.color || ''),
-            })).filter((span) => span.end > span.start)
-            denseSpans.sort((a, b) => (a.start - b.start) || (a.end - b.end))
-            const merged = []
-            const gapBp = BIGBED_BLOCK_MERGE_GAP_PX * (viewSpan / Math.max(1, innerWidthPx || 1))
-            for (const span of denseSpans) {
-                const last = merged[merged.length - 1]
-                if (last && span.start <= (last.end + gapBp)) {
-                    last.end = Math.max(last.end, span.end)
-                    last.feature_count += 1
-                    if (span.max_score >= last.max_score) {
-                        last.max_score = span.max_score
-                        if (span.color_hint) last.color_hint = span.color_hint
-                    }
-                } else {
-                    merged.push({ ...span })
-                }
-            }
-            let coveredBp = 0
-            for (const span of merged) coveredBp += Math.max(0, span.end - span.start)
-            const tileCoverage = expectedTiles > 0 ? (fetchedTiles / expectedTiles) : 0
-            return {
-                mode: 'bigbed_blocks',
-                level: 'dense_fallback',
-                start: visStart,
-                end: visEnd,
-                block_spans: merged,
-                has_data: merged.length > 0,
-                coverage: Math.max(0, Math.min(1, coveredBp / viewSpan)),
-                tile_coverage: Math.max(0, Math.min(1, tileCoverage)),
-                error: bestError,
-                dense_fallback: true,
-            }
-        }
-
-        const laneEnds = []
-        const visibleFeatures = []
-        // A labelled lane also holds each name, which can run past a short feature.
-        const labelBpPerPx = viewSpan / Math.max(1, innerWidthPx || 1)
-        for (const feature of features) {
-            const reservedEnd = labelled
-                ? Math.max(feature.end, feature.start + (String(feature?.name || '').length * 5.4 + 8) * labelBpPerPx)
-                : feature.end
-            let lane = 0
-            while (lane < laneEnds.length && feature.start <= laneEnds[lane]) lane += 1
-            if (lane >= laneEnds.length) laneEnds.push(reservedEnd)
-            else laneEnds[lane] = reservedEnd
-            feature._lane = lane
-            if (feature.end > visStart && feature.start < visEnd) visibleFeatures.push(feature)
-        }
-
-        coverageSpans.sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]))
-        let coveredBp = 0
-        if (coverageSpans.length > 0) {
-            let [curS, curE] = coverageSpans[0]
-            for (let i = 1; i < coverageSpans.length; i++) {
-                const [s, e] = coverageSpans[i]
-                if (s <= curE) curE = Math.max(curE, e)
-                else {
-                    coveredBp += Math.max(0, curE - curS)
-                    curS = s
-                    curE = e
-                }
-            }
-            coveredBp += Math.max(0, curE - curS)
-        }
-        const tileCoverage = expectedTiles > 0 ? (fetchedTiles / expectedTiles) : 0
-        return {
-            mode: 'bigbed_detail',
-            start: visStart,
-            end: visEnd,
-            labelled,
-            features: visibleFeatures,
-            has_data: visibleFeatures.length > 0,
-            lane_count: Math.max(1, laneEnds.length),
-            coverage: Math.max(0, Math.min(1, coveredBp / viewSpan)),
-            tile_coverage: Math.max(0, Math.min(1, tileCoverage)),
-            error: bestError,
-        }
-    }, [makeBigBedFeatureTileKey])
+    const projectBigBedFeatureTilesToView = useCallback((...args) => projectBigBedFeatureTiles({ bigBedLayoutStateRef, makeBigBedFeatureTileKey, trackFeatureCacheRef }, ...args), [makeBigBedFeatureTileKey])
 
     // Feature counts per bin for the density view. A tile not yet fetched at this level is
     // filled from a coarser level already in the cache, its counts rescaled to this level's
     // bin size, so zooming in sharpens the histogram rather than blanking it.
-    const projectBedDensityTilesToView = useCallback((trackId, chrom, level, visStart, visEnd) => {
-        const levelIdx = Math.max(0, BED_DENSITY_LEVELS.findIndex((l) => l.id === level.id))
-        const tileSpan = level.tileSpanBp
-        const firstTile = Math.floor(Math.max(0, visStart - BED_TO_BROWSER_OFFSET) / tileSpan) * tileSpan
-        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-        const bins = []
-        let expectedTiles = 0
-        let fetchedTiles = 0
-        let bestError = ''
-
-        const pushTileBins = (tile, from, to, scale) => {
-            const counts = Array.isArray(tile?.counts) ? tile.counts : []
-            const blockBp = Math.max(1, Number(tile?.block_bp) || 1)
-            const tStart = Number(tile?.start) || 0
-            const i0 = Math.max(0, Math.floor((from - BED_TO_BROWSER_OFFSET - tStart) / blockBp))
-            const i1 = Math.min(counts.length - 1, Math.floor((to - 1 - BED_TO_BROWSER_OFFSET - tStart) / blockBp))
-            for (let i = i0; i <= i1; i += 1) {
-                const count = Number(counts[i]) || 0
-                if (count <= 0) continue
-                const s = tStart + i * blockBp + BED_TO_BROWSER_OFFSET
-                bins.push({ start: s, end: s + blockBp, count: count * scale })
-            }
-        }
-
-        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-            const tileEnd = tileStart + tileSpan
-            expectedTiles += 1
-            const from = Math.max(visStart, tileStart + BED_TO_BROWSER_OFFSET)
-            const to = Math.min(visEnd, tileEnd + BED_TO_BROWSER_OFFSET)
-            const tile = trackFeatureCacheRef.current.get(makeBedDensityTileKey(trackId, chrom, level.id, tileStart, tileEnd))
-            if (tile) {
-                fetchedTiles += 1
-                if (tile?.error && !bestError) bestError = String(tile.error)
-                pushTileBins(tile, from, to, 1)
-                continue
-            }
-            for (let i = levelIdx - 1; i >= 0; i -= 1) {
-                const coarse = BED_DENSITY_LEVELS[i]
-                const cStart = Math.floor(tileStart / coarse.tileSpanBp) * coarse.tileSpanBp
-                const coarseTile = trackFeatureCacheRef.current.get(
-                    makeBedDensityTileKey(trackId, chrom, coarse.id, cStart, cStart + coarse.tileSpanBp),
-                )
-                if (!coarseTile) continue
-                pushTileBins(coarseTile, from, to, level.blockBp / Math.max(1, coarse.blockBp))
-                break
-            }
-        }
-
-        // The scale is the 98th percentile of every non-zero bin fetched at this level on
-        // this chromosome, not the single busiest bin: one hotspot used to flatten the rest
-        // of the histogram to a few pixels. Taken over everything fetched rather than just
-        // this view, so panning does not rescale the bars under the reader.
-        let viewMax = 0
-        for (const bin of bins) if (bin.count > viewMax) viewMax = bin.count
-        const scaleEntry = bedDensityScaleRef.current[`${trackId}|${chrom}|${level.id}`]
-        let stableScale = 0
-        if (scaleEntry && scaleEntry.values.length > 0) {
-            if (scaleEntry.n !== scaleEntry.values.length) {
-                const sorted = Float64Array.from(scaleEntry.values).sort()
-                scaleEntry.scale = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.98))]
-                scaleEntry.n = scaleEntry.values.length
-            }
-            stableScale = scaleEntry.scale
-        }
-        return {
-            mode: 'bed_density',
-            level: level.id,
-            start: visStart,
-            end: visEnd,
-            // Not `bins`: the generic discrete-track branch draws any numeric `bins` array.
-            density_bins: bins,
-            max_count: stableScale > 0 ? stableScale : Math.max(1, viewMax),
-            has_data: bins.length > 0,
-            tile_coverage: expectedTiles > 0 ? fetchedTiles / expectedTiles : 0,
-            error: bestError,
-        }
-    }, [makeBedDensityTileKey])
+    const projectBedDensityTilesToView = useCallback((...args) => projectBedDensityTiles({ bedDensityScaleRef, makeBedDensityTileKey, trackFeatureCacheRef }, ...args), [makeBedDensityTileKey])
 
     // Re-project a BED/BigBed track against the viewport as it is now, for a tile response
     // that lands after the view has moved on. Returning early instead left the answer in
@@ -3598,1310 +2843,61 @@ function GenomeBrowser({
     //            Only the debounce timer is cancelled on viewport changes.
     const fetchEpochRef = useRef(0)
     const vcfViewportIntentRef = useRef({ center: 0, span: 0, changedAt: 0, intent: 'settled' })
-    useEffect(() => {
-        if (!isActive) return
-        if (!selectedChrom || customTracks.length === 0) return
-
-        const epoch = ++fetchEpochRef.current
-        const displayBins = Math.max(80, Math.min(1400, Math.floor(viewWidth - LHS_WIDTH - 44)))
-        const visStart = Math.max(0, Math.floor(genomicViewRange.start))
-        const visEnd = Math.max(visStart + 1, Math.ceil(genomicViewRange.end))
-        const visSpan = visEnd - visStart
-        const bpPerPx = visSpan / Math.max(1, viewWidth - LHS_WIDTH)
-        const targetLevel = getBigWigLevel(bpPerPx)
-        const center = (visStart + visEnd) / 2
-        const nowMs = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-        const nextVcfViewportIntent = getVcfViewportIntent({
-            previous: vcfViewportIntentRef.current,
-            center,
-            span: visSpan,
-            nowMs,
-        })
-        vcfViewportIntentRef.current = nextVcfViewportIntent
-        const vcfViewportIntent = nextVcfViewportIntent.intent
-        // Buffer: 2× viewport on each side = 5× total covered
-        const bufferSpan = visSpan * 2
-        const bufferStart = Math.max(0, visStart - bufferSpan)
-        const bufferEnd = visEnd + bufferSpan
-
-        // ── Step 1: Immediately project from cache and update displayed data ──────────────────
-        for (const track of customTracks) {
-            if (!track?.path || !track.visible) continue
-            const trackType = track.type || 'bigwig'
-
-            if (trackType === 'vcf') {
-                const vcfMode = normalizeVcfDisplayMode(track.renderMode)
-                let projected
-                if (isVcfAdaptiveLikeMode(vcfMode)) {
-                    const vcfLevel = getVcfBlockLevel(bpPerPx)
-                    if (vcfLevel.mode === 'detail') {
-                        projected = projectVcfAdaptiveDetailLevel(track.id, selectedChrom, vcfLevel, visStart, visEnd)
-                    } else {
-                        projected = projectVcfBlockTilesCascadeToView(track.id, selectedChrom, vcfLevel, visStart, visEnd, displayBins)
-                    }
-                    const l0 = VCF_BLOCK_LEVELS[0]
-                    const overviewWarmupKey = buildVcfOverviewWarmupKey({
-                        trackId: track.id,
-                        path: track.path,
-                        chrom: selectedChrom,
-                        chromLength,
-                        level: l0,
-                    })
-                    const overviewWarmupPending = !!overviewWarmupKey && !vcfOverviewWarmupDoneRef.current.has(overviewWarmupKey)
-                    setCustomTrackData((prev) => {
-                        const prevData = prev[track.id]
-                        // Don't clear a populated detail view with an empty one while tiles arrive
-                        if (projected.mode === 'adp_detail') {
-                            if (Array.isArray(prevData?.variants) && prevData.variants.length > 0 &&
-                                projected.variants.length === 0 && Number(projected.tile_coverage) < 0.4) {
-                                return prev
-                            }
-                        } else if (vcfMode === 'adaptive') {
-                            const prevSpans = Array.isArray(prevData?.block_spans) ? prevData.block_spans : []
-                            const nextSpans = Array.isArray(projected?.block_spans) ? projected.block_spans : []
-                            if (prevSpans.length > 0 && (nextSpans.length === 0 || Number(projected?.tile_coverage || 0) < 0.4)) {
-                                return prev
-                            }
-                        }
-                        return { ...prev, [track.id]: projected }
-                    })
-                    const isLoading = Number(projected?.tile_coverage || 0) < 0.85 || (vcfLevel.id === 'L0' && overviewWarmupPending)
-                    setCustomTrackLoading((prev) => ({ ...prev, [track.id]: isLoading }))
-                } else {
-                    const vcfLevel = getVcfLevelByBpPerPx(bpPerPx, track.id, VCF_LOD_LEVELS)
-                    projected = projectVcfTilesToView(track.id, selectedChrom, vcfLevel, visStart, visEnd, displayBins)
-                    setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
-                    const waitingForDetail = vcfLevel.mode === 'detail' && Number(projected?.detail_coverage || 0) < 0.95
-                    setCustomTrackLoading((prev) => ({ ...prev, [track.id]: projected.coverage < 0.85 || waitingForDetail }))
-                }
-            } else if (trackType === 'splice_junctions') {
-                const spliceMode = getSpliceLodMode(track.id, bpPerPx, track?.renderMode || DEFAULT_CUSTOM_TRACK_RENDER_MODE)
-                if (spliceMode === 'blocks') {
-                    const blockLevel = getSpliceBlockLevel(bpPerPx)
-                    const projected = projectSpliceBlockTilesToView(
-                        track.id,
-                        selectedChrom,
-                        blockLevel,
-                        visStart,
-                        visEnd,
-                        Math.max(1, viewWidth - LHS_WIDTH),
-                    )
-                    setCustomTrackData((prev) => {
-                        const prevData = prev[track.id]
-                        const prevSpans = Array.isArray(prevData?.block_spans) ? prevData.block_spans : []
-                        const nextSpans = Array.isArray(projected?.block_spans) ? projected.block_spans : []
-                        if (prevSpans.length > 0 && (nextSpans.length === 0 || Number(projected?.tile_coverage || 0) < 0.4)) {
-                            return prev
-                        }
-                        return { ...prev, [track.id]: projected }
-                    })
-                    setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
-                } else {
-                    const projected = projectSpliceTilesToView(track.id, selectedChrom, visStart, visEnd)
-                    setCustomTrackData((prev) => {
-                        const prevData = prev[track.id]
-                        const prevCount = Array.isArray(prevData?.junctions) ? prevData.junctions.length : 0
-                        const nextCount = Array.isArray(projected?.junctions) ? projected.junctions.length : 0
-                        const nextCoverage = Number(projected?.coverage || 0)
-                        if (prevCount > 0 && nextCount === 0 && nextCoverage < 0.45) {
-                            return prev
-                        }
-                        return { ...prev, [track.id]: projected }
-                    })
-                    // Keep loading visible until cached coverage is reasonably complete.
-                    setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.coverage || 0) < 0.75 }))
-                }
-            } else if (isIntervalTrackType(trackType) && track.renderMode === 'density') {
-                const densityLevel = getBedDensityLevel(bpPerPx)
-                const projected = projectBedDensityTilesToView(track.id, selectedChrom, densityLevel, visStart, visEnd)
-                setCustomTrackData((prev) => {
-                    const prevData = prev[track.id]
-                    const prevBins = prevData?.mode === 'bed_density' && Array.isArray(prevData?.density_bins) ? prevData.density_bins : []
-                    if (prevBins.length > 0 && projected.density_bins.length === 0 && projected.tile_coverage < 0.4) {
-                        return prev
-                    }
-                    return { ...prev, [track.id]: projected }
-                })
-                setCustomTrackLoading((prev) => ({ ...prev, [track.id]: projected.tile_coverage < 0.85 }))
-            } else if (isIntervalTrackType(trackType)) {
-                const bigBedMode = getBigBedLodMode(track.id, bpPerPx)
-                if (bigBedMode === 'blocks') {
-                    const blockLevel = getBigBedBlockLevel(bpPerPx)
-                    const projected = projectBigBedBlockTilesToView(
-                        track.id,
-                        selectedChrom,
-                        blockLevel,
-                        visStart,
-                        visEnd,
-                        Math.max(1, viewWidth - LHS_WIDTH),
-                    )
-                    setCustomTrackData((prev) => {
-                        const prevData = prev[track.id]
-                        const prevSpans = Array.isArray(prevData?.block_spans) ? prevData.block_spans : []
-                        const nextSpans = Array.isArray(projected?.block_spans) ? projected.block_spans : []
-                        if (prevSpans.length > 0 && (nextSpans.length === 0 || Number(projected?.tile_coverage || 0) < 0.4)) {
-                            return prev
-                        }
-                        return { ...prev, [track.id]: projected }
-                    })
-                    setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
-                } else {
-                    const projected = projectBigBedFeatureTilesToView(
-                        track.id,
-                        selectedChrom,
-                        visStart,
-                        visEnd,
-                        Math.max(1, viewWidth - LHS_WIDTH),
-                        { labelled: isGeneModelTrack(track) },
-                    )
-                    setCustomTrackData((prev) => {
-                        const prevData = prev[track.id]
-                        const prevCount = Array.isArray(prevData?.features) ? prevData.features.length : 0
-                        const nextCount = Array.isArray(projected?.features) ? projected.features.length : 0
-                        if (prevCount > 0 && nextCount === 0 && Number(projected?.tile_coverage || 0) < 0.4) {
-                            return prev
-                        }
-                        return { ...prev, [track.id]: projected }
-                    })
-                    setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
-                }
-            } else if (['bigwig', 'bam'].includes(trackType)) {
-                // Signal tracks: always project from cache (uses coarse-to-fine fallback)
-                const projected = projectBigWigTilesToView(track.id, selectedChrom, targetLevel, visStart, visEnd, displayBins)
-                setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
-                // Only mark as loading if we have very little data
-                setCustomTrackLoading((prev) => ({ ...prev, [track.id]: projected.coverage < 0.3 }))
-            } else {
-                // Discrete tracks: pull from feature cache if available
-                const featureKey = `${track.id}|${selectedChrom}|view|${visStart}`
-                const cached = trackFeatureCacheRef.current.get(featureKey)
-                if (cached) {
-                    setCustomTrackData((prev) => ({ ...prev, [track.id]: cached }))
-                }
-            }
-        }
-
-        // ── Step 2: Determine what tiles need fetching ────────────────────────────────────────
-        const fetchPlans = [] // { track, level, tileStart, tileEnd, priority }
-
-        for (const track of customTracks) {
-            if (!track?.path || !track.visible) continue
-            const trackType = track.type || 'bigwig'
-            const isSignalTrack = ['bigwig', 'bam', 'long_reads'].includes(trackType)
-
-            if (trackType === 'vcf') {
-                const vcfMode = normalizeVcfDisplayMode(track.renderMode)
-                if (isVcfAdaptiveLikeMode(vcfMode)) {
-                    // ── Adaptive mode: use new VCF_BLOCK_LEVELS + /api/browse/vcf/block_tiles ──
-                    const targetLevel = getVcfBlockLevel(bpPerPx)
-                    const targetIdx = VCF_BLOCK_LEVELS.findIndex((l) => l.id === targetLevel.id)
-                    const isDetailLevel = targetLevel.mode === 'detail'
-                    const isCoarseOverview = !isDetailLevel && bpPerPx >= 250
-                    const isZoomingVcf = vcfViewportIntent === 'zooming'
-                    const isPanningVcf = vcfViewportIntent === 'panning'
-                    const vcfBufferFactor = isDetailLevel
-                        ? (isZoomingVcf ? 0.35 : isPanningVcf ? 1.15 : 2.25)
-                        : (isCoarseOverview ? 0.35 : isZoomingVcf ? 0.4 : isPanningVcf ? 1.1 : 1.8)
-                    const vcfBufferSpan = visSpan * vcfBufferFactor
-                    const vcfBufferStart = Math.max(0, visStart - vcfBufferSpan)
-                    const vcfBufferEnd = visEnd + vcfBufferSpan
-                    const levelsToFetch = [targetLevel]
-                    if (!isDetailLevel && !isCoarseOverview && targetIdx > 0 && !isZoomingVcf) {
-                        levelsToFetch.push(VCF_BLOCK_LEVELS[targetIdx - 1])
-                    }
-                    const plannedVcfKeys = new Set()
-                    const addVcfPlan = (level, tileStart, isBackground, isOverviewWarmup = false) => {
-                        const tileSpan = level.tileSpanBp
-                        const isDetail = level.mode === 'detail'
-                        const normalizedStart = Math.max(0, Math.floor(tileStart))
-                        const tileEnd = normalizedStart + tileSpan
-                        const key = isDetail
-                            ? makeVcfAdpDetailKey(track.id, selectedChrom, normalizedStart, tileEnd)
-                            : makeVcfBlockTileKey(track.id, selectedChrom, level.id, normalizedStart, tileEnd)
-                        if (plannedVcfKeys.has(key)) return
-                        plannedVcfKeys.add(key)
-                        if (vcfBlockTileCacheRef.current.has(key)) return
-                        if (vcfBlockTileFetchSetRef.current.has(key)) return
-                        const distFromCenter = Math.abs((normalizedStart + tileSpan / 2) - center)
-                        const levelBonus = level.id === targetLevel.id ? 0 : (visSpan * 4)
-                        const backgroundBonus = isBackground ? (isOverviewWarmup ? (visSpan * 1.5) : (visSpan * 7)) : 0
-                        fetchPlans.push({
-                            track,
-                            isVcfBlock: !isDetail,
-                            isVcfAdpDetail: isDetail,
-                            isBackground: !!isBackground,
-                            isOverviewWarmup: !!isOverviewWarmup,
-                            vcfBlockLevel: level,
-                            tileStart: normalizedStart,
-                            tileEnd,
-                            key,
-                            priority: distFromCenter + levelBonus + backgroundBonus,
-                        })
-                    }
-
-                    for (const level of levelsToFetch) {
-                        const tileSpan = level.tileSpanBp
-                        const foregroundPad = level.mode === 'detail'
-                            ? (isZoomingVcf ? 0 : visSpan * 0.2)
-                            : (isZoomingVcf ? 0 : visSpan * 0.1)
-                        const fgStart = Math.max(0, visStart - foregroundPad)
-                        const fgEnd = visEnd + foregroundPad
-                        const fgFirstTile = Math.floor(fgStart / tileSpan) * tileSpan
-                        const fgLastTile = Math.floor((fgEnd - 1) / tileSpan) * tileSpan
-                        for (let tileStart = fgFirstTile; tileStart <= fgLastTile; tileStart += tileSpan) {
-                            addVcfPlan(level, tileStart, false)
-                        }
-
-                        const isFullChromOverview = false
-                        const bgStart = vcfBufferStart
-                        const bgEnd = vcfBufferEnd
-                        const bgFirstTile = Math.floor(Math.max(0, bgStart) / tileSpan) * tileSpan
-                        const bgLastTile = Math.floor((Math.max(bgFirstTile + 1, bgEnd) - 1) / tileSpan) * tileSpan
-                        for (let tileStart = bgFirstTile; tileStart <= bgLastTile; tileStart += tileSpan) {
-                            addVcfPlan(level, tileStart, true, isFullChromOverview)
-                        }
-                    }
-                } else {
-                    // ── Non-adaptive mode: original /api/browse/vcf/tiles flow ──────────────
-                    const vcfTargetLevel = getVcfLevelByBpPerPx(bpPerPx, track.id, VCF_LOD_LEVELS)
-                    const vcfTargetIdx = Math.max(0, VCF_LOD_LEVELS.findIndex((l) => l.id === vcfTargetLevel.id))
-                    const levelsToFetch = [vcfTargetLevel]
-                    if (vcfTargetIdx > 0) levelsToFetch.push(VCF_LOD_LEVELS[vcfTargetIdx - 1])
-                    if (vcfTargetIdx > 1) levelsToFetch.push(VCF_LOD_LEVELS[vcfTargetIdx - 2])
-
-                    for (const level of levelsToFetch) {
-                        const tileSpan = level.bpPerBin * level.binsPerTile
-                        const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
-                        const lastTile = Math.floor((bufferEnd - 1) / tileSpan) * tileSpan
-                        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-                            const tileEnd = tileStart + tileSpan
-                            const key = makeVcfTileKey(
-                                track.id, selectedChrom, level.id, level.mode,
-                                tileStart, tileEnd, 0, 0, 0.5, '',
-                            )
-                            if (vcfTileCacheRef.current.has(key)) continue
-                            if (vcfTileFetchSetRef.current.has(key)) continue
-                            const distFromCenter = Math.abs((tileStart + tileSpan / 2) - center)
-                            const levelBonus = level.id === vcfTargetLevel.id ? 0 : 12000
-                            fetchPlans.push({
-                                track,
-                                isVcf: true,
-                                vcfLevel: level,
-                                tileStart,
-                                tileEnd,
-                                key,
-                                priority: distFromCenter + levelBonus,
-                            })
-                        }
-                    }
-                }
-                continue
-            }
-
-            if (trackType === 'splice_junctions') {
-                const spliceMode = getSpliceLodMode(track.id, bpPerPx, track?.renderMode || DEFAULT_CUSTOM_TRACK_RENDER_MODE)
-                if (spliceMode === 'blocks') {
-                    const targetLevel = getSpliceBlockLevel(bpPerPx)
-                    const targetIdx = SPLICE_BLOCK_LEVELS.findIndex((l) => l.id === targetLevel.id)
-                    const levelsToFetch = [targetLevel]
-                    if (targetIdx > 0) levelsToFetch.push(SPLICE_BLOCK_LEVELS[targetIdx - 1])
-
-                    for (const level of levelsToFetch) {
-                        const tileSpan = level.tileSpanBp
-                        const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
-                        const lastTile = Math.floor((bufferEnd - 1) / tileSpan) * tileSpan
-                        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-                            const tileEnd = tileStart + tileSpan
-                            const key = makeSpliceBlockTileKey(track.id, selectedChrom, level.id, tileStart, tileEnd)
-                            if (trackFeatureCacheRef.current.has(key)) continue
-                            if (trackFeatureFetchSetRef.current.has(key)) continue
-                            const distFromCenter = Math.abs((tileStart + tileSpan / 2) - center)
-                            const levelBonus = level.id === targetLevel.id ? 0 : 9000
-                            fetchPlans.push({
-                                track,
-                                isSpliceBlock: true,
-                                spliceBlockLevel: level,
-                                tileStart,
-                                tileEnd,
-                                key,
-                                priority: distFromCenter + levelBonus,
-                            })
-                        }
-                    }
-                } else {
-                    const tileSpan = getSpliceTileSpan(bpPerPx)
-                    const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
-                    const lastTile = Math.floor((bufferEnd - 1) / tileSpan) * tileSpan
-                    for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-                        const tileEnd = tileStart + tileSpan
-                        const key = makeSpliceTileKey(track.id, selectedChrom, tileStart, tileEnd)
-                        if (trackFeatureCacheRef.current.has(key)) continue
-                        if (trackFeatureFetchSetRef.current.has(key)) continue
-                        const distFromCenter = Math.abs((tileStart + tileSpan / 2) - center)
-                        fetchPlans.push({
-                            track,
-                            isSplice: true,
-                            tileStart,
-                            tileEnd,
-                            key,
-                            priority: distFromCenter,
-                        })
-                    }
-                }
-                continue
-            }
-
-            if (isIntervalTrackType(trackType)) {
-                // Tiles past the chromosome end hold nothing and would only use up the cap.
-                const bedBufferEnd = chromLength > 0 ? Math.min(bufferEnd, chromLength) : bufferEnd
-                if (track.renderMode === 'density') {
-                    const targetLevel = getBedDensityLevel(bpPerPx)
-                    const targetIdx = BED_DENSITY_LEVELS.findIndex((l) => l.id === targetLevel.id)
-                    const levelsToFetch = [targetLevel]
-                    if (targetIdx > 0) levelsToFetch.push(BED_DENSITY_LEVELS[targetIdx - 1])
-                    for (const level of levelsToFetch) {
-                        const tileSpan = level.tileSpanBp
-                        const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
-                        const lastTile = Math.floor((bedBufferEnd - 1) / tileSpan) * tileSpan
-                        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-                            const tileEnd = tileStart + tileSpan
-                            const key = makeBedDensityTileKey(track.id, selectedChrom, level.id, tileStart, tileEnd)
-                            if (trackFeatureCacheRef.current.has(key)) continue
-                            if (trackFeatureFetchSetRef.current.has(key)) continue
-                            const distFromCenter = Math.abs((tileStart + tileSpan / 2) - center)
-                            const levelBonus = level.id === targetLevel.id ? 0 : 9000
-                            fetchPlans.push({
-                                track,
-                                isBedDensity: true,
-                                bedDensityLevel: level,
-                                tileStart,
-                                tileEnd,
-                                key,
-                                priority: distFromCenter + levelBonus,
-                            })
-                        }
-                    }
-                    continue
-                }
-                const bigBedMode = getBigBedLodMode(track.id, bpPerPx)
-                if (bigBedMode === 'blocks') {
-                    const targetLevel = getBigBedBlockLevel(bpPerPx)
-                    const targetIdx = BIGBED_BLOCK_LEVELS.findIndex((l) => l.id === targetLevel.id)
-                    const levelsToFetch = [targetLevel]
-                    if (targetIdx > 0) levelsToFetch.push(BIGBED_BLOCK_LEVELS[targetIdx - 1])
-                    for (const level of levelsToFetch) {
-                        const tileSpan = level.tileSpanBp
-                        const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
-                        const lastTile = Math.floor((bedBufferEnd - 1) / tileSpan) * tileSpan
-                        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-                            const tileEnd = tileStart + tileSpan
-                            const key = makeBigBedBlockTileKey(track.id, selectedChrom, level.id, tileStart, tileEnd)
-                            if (trackFeatureCacheRef.current.has(key)) continue
-                            if (trackFeatureFetchSetRef.current.has(key)) continue
-                            const distFromCenter = Math.abs((tileStart + tileSpan / 2) - center)
-                            const levelBonus = level.id === targetLevel.id ? 0 : 9000
-                            fetchPlans.push({
-                                track,
-                                isBigBedBlock: true,
-                                bigBedBlockLevel: level,
-                                tileStart,
-                                tileEnd,
-                                key,
-                                priority: distFromCenter + levelBonus,
-                            })
-                        }
-                    }
-                } else {
-                    const tileSpan = BIGBED_FEATURE_TILE_SPAN
-                    const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
-                    const lastTile = Math.floor((bedBufferEnd - 1) / tileSpan) * tileSpan
-                    for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-                        const tileEnd = tileStart + tileSpan
-                        const key = makeBigBedFeatureTileKey(track.id, selectedChrom, tileStart, tileEnd)
-                        if (trackFeatureCacheRef.current.has(key)) continue
-                        if (trackFeatureFetchSetRef.current.has(key)) continue
-                        const distFromCenter = Math.abs((tileStart + tileSpan / 2) - center)
-                        fetchPlans.push({
-                            track,
-                            isBigBedFeature: true,
-                            tileStart,
-                            tileEnd,
-                            key,
-                            priority: distFromCenter,
-                        })
-                    }
-                }
-                continue
-            }
-
-            // Pre-fetch L0 (overview) for stable chrom-wide scale if not already cached
-            if (isSignalTrack) {
-                const scaleKey = `${track.id}|${selectedChrom}`
-                if (!trackChromScaleRef.current[scaleKey]) {
-                    const l0 = TRACK_LOD_LEVELS[0] // L0 = 10000 bp/bin
-                    const l0TileSpan = l0.bpPerBin * l0.binsPerTile
-                    // Fetch 3 overview tiles centred on viewport
-                    const l0Tiles = [-1, 0, 1].map(offset =>
-                        Math.floor(center / l0TileSpan + offset) * l0TileSpan
-                    )
-                    for (const tileStart of l0Tiles) {
-                        const key = makeBigWigTileKey(track.id, selectedChrom, l0.id, tileStart)
-                        if (!trackTileCacheRef.current.has(key) && !trackTileFetchSetRef.current.has(key)) {
-                            fetchPlans.push({ track, level: l0, tileStart, tileEnd: tileStart + l0TileSpan, priority: 100 })
-                        }
-                    }
-                }
-            }
-
-            if (isSignalTrack) {
-                // For signal tracks: fetch target level + one level up (fallback)
-                const levelsToFetch = [targetLevel]
-                const targetIdx = TRACK_LOD_LEVELS.indexOf(targetLevel)
-                if (targetIdx > 0) levelsToFetch.push(TRACK_LOD_LEVELS[targetIdx - 1])
-
-                for (const level of levelsToFetch) {
-                    const tileSpan = level.bpPerBin * level.binsPerTile
-                    const firstTile = Math.floor(bufferStart / tileSpan) * tileSpan
-                    const lastTile = Math.floor((bufferEnd - 1) / tileSpan) * tileSpan
-
-                    for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-                        const key = makeBigWigTileKey(track.id, selectedChrom, level.id, tileStart)
-                        if (trackTileCacheRef.current.has(key)) continue
-                        if (trackTileFetchSetRef.current.has(key)) continue
-                        // Priority: target level > coarser levels; closer to centre = higher priority
-                        const distFromCenter = Math.abs((tileStart + tileSpan / 2) - center)
-                        const levelBonus = level.id === targetLevel.id ? 0 : 10000
-                        fetchPlans.push({ track, level, tileStart, tileEnd: tileStart + tileSpan, priority: distFromCenter + levelBonus })
-                    }
-                }
-            } else {
-                // Discrete tracks (VCF, BED, splice_junctions, long_reads by transcript):
-                // Use a simpler region-based fetch covering the buffer zone
-                const featureKey = `${track.id}|${selectedChrom}|view|${visStart}`
-                if (!trackFeatureCacheRef.current.has(featureKey) && !trackFeatureFetchSetRef.current.has(featureKey)) {
-                    fetchPlans.push({ track, level: targetLevel, tileStart: bufferStart, tileEnd: bufferEnd, priority: 0, isDiscrete: true })
-                }
-            }
-        }
-
-        if (fetchPlans.length === 0) return
-
-        // Sort by priority (lower = higher priority)
-        fetchPlans.sort((a, b) => a.priority - b.priority)
-        // Cap to prevent request storms
-        const signalPlans = fetchPlans.filter((p) => !p.isDiscrete && !p.isVcf && !p.isVcfBlock && !p.isVcfAdpDetail && !p.isSplice && !p.isSpliceBlock && !p.isBigBedBlock && !p.isBigBedFeature && !p.isBedDensity).slice(0, 12)
-        const discretePlans = fetchPlans.filter(p => p.isDiscrete)
-        const splicePlans = fetchPlans.filter((p) => p.isSplice).slice(0, 14)
-        const spliceBlockPlans = fetchPlans.filter((p) => p.isSpliceBlock).slice(0, 14)
-        const allBigBedBlockPlans = fetchPlans.filter((p) => p.isBigBedBlock)
-        const allBigBedFeaturePlans = fetchPlans.filter((p) => p.isBigBedFeature)
-        const allBedDensityPlans = fetchPlans.filter((p) => p.isBedDensity)
-        const bigBedBlockPlans = allBigBedBlockPlans.slice(0, 12)
-        const bigBedFeaturePlans = allBigBedFeaturePlans.slice(0, 14)
-        const bedDensityPlans = allBedDensityPlans.slice(0, 12)
-        // The caps keep one round small, and the plans left over are the edges of the
-        // buffer. Without asking again once a round lands they were only fetched on the
-        // next pan, so a zoomed-out view stayed patchy until the reader moved it.
-        const hasMoreBedPlans = (
-            allBigBedBlockPlans.length > bigBedBlockPlans.length
-            || allBigBedFeaturePlans.length > bigBedFeaturePlans.length
-            || allBedDensityPlans.length > bedDensityPlans.length
-        )
-        const vcfPlans = fetchPlans.filter((p) => p.isVcf).slice(0, 10)
-        const vcfBlockLevelForCap = getVcfBlockLevel(bpPerPx)
-        const vcfBlockTileSpanForCap = Number(vcfBlockLevelForCap?.mode === 'detail'
-            ? VCF_BLOCK_LEVELS[Math.max(0, VCF_BLOCK_LEVELS.findIndex((l) => l.id === vcfBlockLevelForCap.id) - 1)]?.tileSpanBp
-            : vcfBlockLevelForCap?.tileSpanBp) || 5_000_000
-        const vcfViewportTiles = Math.max(
-            1,
-            Math.floor((visEnd - 1) / vcfBlockTileSpanForCap) - Math.floor(visStart / vcfBlockTileSpanForCap) + 1,
-        )
-        const allVcfBlockPlans = fetchPlans.filter((p) => p.isVcfBlock)
-        const vcfBlockForegroundPlans = allVcfBlockPlans.filter((p) => !p.isBackground)
-        const vcfBlockBackgroundPlans = allVcfBlockPlans.filter((p) => p.isBackground)
-        const vcfOverviewWarmupPlans = vcfBlockBackgroundPlans.filter((p) => p.isOverviewWarmup)
-        const vcfOtherBlockBackgroundPlans = vcfBlockBackgroundPlans.filter((p) => !p.isOverviewWarmup)
-        const vcfOverviewWarmupCap = vcfBlockLevelForCap?.id === 'L0' && vcfViewportIntent !== 'zooming'
-            ? 18
-            : (vcfViewportIntent === 'zooming' ? 1 : 3)
-        const vcfBlockBackgroundCap = vcfViewportIntent === 'zooming' ? 1 : vcfViewportIntent === 'panning' ? 3 : 5
-        const vcfBlockForegroundCap = Math.max(vcfViewportTiles, Math.min(18, vcfViewportTiles + 2))
-        const vcfBlockPlans = [
-            ...vcfBlockForegroundPlans.slice(0, vcfBlockForegroundCap),
-            ...vcfOverviewWarmupPlans.slice(0, vcfOverviewWarmupCap),
-            ...vcfOtherBlockBackgroundPlans.slice(0, vcfBlockBackgroundCap),
-        ]
-
-        const allVcfAdpDetailPlans = fetchPlans.filter((p) => p.isVcfAdpDetail)
-        const vcfAdpDetailForegroundPlans = allVcfAdpDetailPlans.filter((p) => !p.isBackground)
-        const vcfAdpDetailBackgroundPlans = allVcfAdpDetailPlans.filter((p) => p.isBackground)
-        const vcfAdpDetailPlans = [
-            ...vcfAdpDetailForegroundPlans.slice(0, 12),
-            ...vcfAdpDetailBackgroundPlans.slice(0, vcfViewportIntent === 'zooming' ? 0 : 6),
-        ]
-        const hasMoreVcfBlockPlans = allVcfBlockPlans.length > vcfBlockPlans.length
-        const hasMoreVcfAdpDetailPlans = allVcfAdpDetailPlans.length > vcfAdpDetailPlans.length
-        const toFetch = [...signalPlans, ...discretePlans, ...splicePlans]
-
-        // ── Step 3: Issue fetches after 50ms debounce ─────────────────────────────────────────
-        // IMPORTANT: Only the timer is cancelled on cleanup — in-flight responses ALWAYS cache
-        // their data because tiles are keyed by genomic coordinates, not screen position.
-        const timer = setTimeout(() => {
-            if (fetchEpochRef.current !== epoch) return  // viewport moved; skip dispatch but don't cancel existing fetches
-            evictOldTilesIfNeeded()
-
-            // ── Adaptive VCF block tiles → /api/browse/vcf/block_tiles ───────────────────────
-            const vcfBlockGroups = new Map()
-            for (const plan of vcfBlockPlans) {
-                const { track, vcfBlockLevel, tileStart, tileEnd, key } = plan
-                if (vcfBlockTileCacheRef.current.has(key) || vcfBlockTileFetchSetRef.current.has(key)) continue
-                vcfBlockTileFetchSetRef.current.add(key)
-                if (!vcfBlockGroups.has(track.id)) {
-                    vcfBlockGroups.set(track.id, { track, keys: [], tiles: [] })
-                }
-                const group = vcfBlockGroups.get(track.id)
-                group.keys.push(key)
-                group.tiles.push({
-                    start: Math.max(0, Math.floor(tileStart)),
-                    end: Math.ceil(tileEnd),
-                    level_id: vcfBlockLevel.id,
-                    block_bp: vcfBlockLevel.blockBp,
-                    window_bp: vcfBlockLevel.windowBp,
-                })
-            }
-
-            for (const { track, keys, tiles } of vcfBlockGroups.values()) {
-                fetch(`${API_BASE}/api/browse/vcf/block_tiles`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: track.path,
-                        chrom: selectedChrom,
-                        genome,
-                        coverage_threshold: 0.25,
-                        tiles,
-                    }),
-                })
-                    .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                    .then((payload) => {
-                        const returnedChrom = payload?.chrom || selectedChrom
-                        const returned = Array.isArray(payload?.tiles) ? payload.tiles : []
-                        for (const tile of returned) {
-                            const tStart = Math.max(0, Math.floor(Number(tile.start) || 0))
-                            const tEnd = Math.max(tStart + 1, Math.ceil(Number(tile.end) || 1))
-                            const levelId = String(tile.level_id || 'L3')
-                            const selectedKey = makeVcfBlockTileKey(track.id, selectedChrom, levelId, tStart, tEnd)
-                            vcfBlockTileCacheRef.current.set(selectedKey, tile)
-                            if (returnedChrom !== selectedChrom) {
-                                const resolvedKey = makeVcfBlockTileKey(track.id, returnedChrom, levelId, tStart, tEnd)
-                                vcfBlockTileCacheRef.current.set(resolvedKey, tile)
-                            }
-                        }
-                        if (fetchEpochRef.current !== epoch) return
-                        const freshLevel = getVcfBlockLevel(bpPerPx)
-                        const projected = projectVcfBlockTilesCascadeToView(track.id, selectedChrom, freshLevel, visStart, visEnd, displayBins)
-                        setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
-                        const stillLoading = Number(projected?.tile_coverage || 0) < 0.85
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: stillLoading }))
-                        if (stillLoading || hasMoreVcfBlockPlans) setCustomTrackFetchRevision((v) => v + 1)
-                    })
-                    .catch((e) => {
-                        const errorMessage = getFetchErrorMessage(e)
-                        if (isTransientFetchErrorMessage(errorMessage)) {
-                            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: true }))
-                            return
-                        }
-                        setCustomTrackData((prev) => ({
-                            ...prev,
-                            [track.id]: { ...(prev[track.id] || {}), has_data: false, error: errorMessage },
-                        }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
-                    })
-                    .finally(() => {
-                        for (const k of keys) vcfBlockTileFetchSetRef.current.delete(k)
-                    })
-            }
-
-            // ── Splice block tiles → /api/browse/splice_junctions/block_tiles ────────────────
-            const spliceBlockGroups = new Map()
-            for (const plan of spliceBlockPlans) {
-                const { track, spliceBlockLevel, tileStart, tileEnd, key } = plan
-                if (trackFeatureCacheRef.current.has(key) || trackFeatureFetchSetRef.current.has(key)) continue
-                trackFeatureFetchSetRef.current.add(key)
-                if (!spliceBlockGroups.has(track.id)) {
-                    spliceBlockGroups.set(track.id, { track, keys: [], tiles: [] })
-                }
-                const group = spliceBlockGroups.get(track.id)
-                group.keys.push(key)
-                group.tiles.push({
-                    start: Math.max(0, Math.floor(tileStart)),
-                    end: Math.ceil(tileEnd),
-                    level_id: spliceBlockLevel.id,
-                    block_bp: spliceBlockLevel.blockBp,
-                })
-            }
-
-            for (const { track, keys, tiles } of spliceBlockGroups.values()) {
-                const spliceSettings = normalizeSpliceTrackSettings(track?.spliceSettings || track?.splice_settings)
-                const payload = {
-                    path: track.path,
-                    chrom: selectedChrom,
-                    genome,
-                    min_reads: 1,
-                    min_support: spliceSettings.min_support,
-                    canonical_mode: spliceSettings.canonical_mode,
-                    annotated_mode: spliceSettings.annotated_mode,
-                    max_junctions: spliceSettings.max_junctions,
-                    tiles,
-                }
-                if (track?.registryTrackId) payload.track_id = String(track.registryTrackId)
-
-                fetch(`${API_BASE}/api/browse/splice_junctions/block_tiles`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                })
-                    .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                    .then((response) => {
-                        const returnedChrom = response?.chrom || selectedChrom
-                        const returned = Array.isArray(response?.tiles) ? response.tiles : []
-                        for (const tile of returned) {
-                            const tStart = Math.max(0, Math.floor(Number(tile.start) || 0))
-                            const tEnd = Math.max(tStart + 1, Math.ceil(Number(tile.end) || 1))
-                            const levelId = String(tile.level_id || 'L0')
-                            const cachedTile = {
-                                ...(tile || {}),
-                                mode: 'splice_blocks',
-                                start: tStart,
-                                end: tEnd,
-                                block_spans: Array.isArray(tile?.block_spans) ? tile.block_spans : [],
-                                has_data: tile?.has_data !== false,
-                                error: '',
-                            }
-                            // Cache under requested chrom key (used by projection) and resolved key (for alias continuity).
-                            const selectedKey = makeSpliceBlockTileKey(track.id, selectedChrom, levelId, tStart, tEnd)
-                            trackFeatureCacheRef.current.set(selectedKey, cachedTile)
-                            if (returnedChrom !== selectedChrom) {
-                                const resolvedKey = makeSpliceBlockTileKey(track.id, returnedChrom, levelId, tStart, tEnd)
-                                trackFeatureCacheRef.current.set(resolvedKey, cachedTile)
-                            }
-                        }
-                        if (fetchEpochRef.current !== epoch) return
-                        const freshLevel = getSpliceBlockLevel(bpPerPx)
-                        const projected = projectSpliceBlockTilesToView(
-                            track.id,
-                            selectedChrom,
-                            freshLevel,
-                            visStart,
-                            visEnd,
-                            Math.max(1, viewWidth - LHS_WIDTH),
-                        )
-                        setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
-                    })
-                    .catch((e) => {
-                        const errorMessage = getFetchErrorMessage(e)
-                        if (isTransientFetchErrorMessage(errorMessage)) {
-                            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: true }))
-                            return
-                        }
-                        setCustomTrackData((prev) => ({
-                            ...prev,
-                            [track.id]: { ...(prev[track.id] || {}), mode: 'splice_blocks', has_data: false, error: errorMessage },
-                        }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
-                    })
-                    .finally(() => {
-                        for (const k of keys) trackFeatureFetchSetRef.current.delete(k)
-                    })
-            }
-
-            // ── BigBed summary block tiles → /api/browse/bigbed/block_tiles ──────────────────
-            const bigBedBlockGroups = new Map()
-            for (const plan of bigBedBlockPlans) {
-                const { track, bigBedBlockLevel, tileStart, tileEnd, key } = plan
-                if (trackFeatureCacheRef.current.has(key) || trackFeatureFetchSetRef.current.has(key)) continue
-                trackFeatureFetchSetRef.current.add(key)
-                if (!bigBedBlockGroups.has(track.id)) {
-                    bigBedBlockGroups.set(track.id, { track, keys: [], tiles: [] })
-                }
-                const group = bigBedBlockGroups.get(track.id)
-                group.keys.push(key)
-                group.tiles.push({
-                    start: Math.max(0, Math.floor(tileStart)),
-                    end: Math.ceil(tileEnd),
-                    level_id: bigBedBlockLevel.id,
-                    block_bp: bigBedBlockLevel.blockBp,
-                })
-            }
-
-            for (const { track, keys, tiles } of bigBedBlockGroups.values()) {
-                fetch(`${API_BASE}/api/browse/bigbed/block_tiles`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: track.path,
-                        chrom: selectedChrom,
-                        genome,
-                        tiles,
-                        feature_model: isGeneModelTrack(track) ? 'transcripts' : '',
-                    }),
-                })
-                    .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                    .then((response) => {
-                        const returnedChrom = response?.chrom || selectedChrom
-                        const returned = Array.isArray(response?.tiles) ? response.tiles : []
-                        for (const [tileIndex, tile] of returned.entries()) {
-                            const tStart = Math.max(0, Math.floor(Number(tile.start) || 0))
-                            const tEnd = Math.max(tStart + 1, Math.ceil(Number(tile.end) || 1))
-                            const levelId = String(tile.level_id || 'L0')
-                            const cachedTile = {
-                                ...(tile || {}),
-                                mode: 'bigbed_blocks',
-                                start: tStart,
-                                end: tEnd,
-                                block_spans: Array.isArray(tile?.block_spans) ? tile.block_spans.map(shiftBedInterval) : [],
-                                has_data: tile?.has_data !== false,
-                                error: '',
-                            }
-                            // Tiles come back in the order they were asked for. The requested key
-                            // is the one the projection looks up; a tile the backend clipped at
-                            // the chromosome end would otherwise never be found, and be fetched
-                            // again on every pass.
-                            const selectedKey = keys[tileIndex] || makeBigBedBlockTileKey(track.id, selectedChrom, levelId, tStart, tEnd)
-                            trackFeatureCacheRef.current.set(selectedKey, cachedTile)
-                            if (returnedChrom !== selectedChrom) {
-                                const resolvedKey = makeBigBedBlockTileKey(track.id, returnedChrom, levelId, tStart, tEnd)
-                                trackFeatureCacheRef.current.set(resolvedKey, cachedTile)
-                            }
-                        }
-                        // A newer pass may have skipped these tiles as in flight; ask again
-                        // so whatever it still lacks is planned.
-                        if (hasMoreBedPlans || fetchEpochRef.current !== epoch) setCustomTrackFetchRevision((v) => v + 1)
-                        const projected = projectBedTrackToCurrentViewport(track, selectedChrom)
-                        if (!projected) return
-                        setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
-                    })
-                    .catch((e) => {
-                        const errorMessage = getFetchErrorMessage(e)
-                        if (isTransientFetchErrorMessage(errorMessage)) {
-                            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: true }))
-                            return
-                        }
-                        setCustomTrackData((prev) => ({
-                            ...prev,
-                            [track.id]: { ...(prev[track.id] || {}), mode: 'bigbed_blocks', has_data: false, error: errorMessage },
-                        }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
-                    })
-                    .finally(() => {
-                        for (const k of keys) trackFeatureFetchSetRef.current.delete(k)
-                    })
-            }
-
-            // ── BigBed detail feature tiles → /api/browse/bigbed/feature_tiles ───────────────
-            const bigBedFeatureGroups = new Map()
-            for (const plan of bigBedFeaturePlans) {
-                const { track, tileStart, tileEnd, key } = plan
-                if (trackFeatureCacheRef.current.has(key) || trackFeatureFetchSetRef.current.has(key)) continue
-                trackFeatureFetchSetRef.current.add(key)
-                if (!bigBedFeatureGroups.has(track.id)) {
-                    bigBedFeatureGroups.set(track.id, { track, keys: [], tiles: [] })
-                }
-                const group = bigBedFeatureGroups.get(track.id)
-                group.keys.push(key)
-                group.tiles.push({
-                    start: Math.max(0, Math.floor(tileStart)),
-                    end: Math.ceil(tileEnd),
-                    level_id: 'detail',
-                    max_features: BIGBED_DETAIL_MAX_FEATURES_PER_TILE,
-                })
-            }
-
-            for (const { track, keys, tiles } of bigBedFeatureGroups.values()) {
-                fetch(`${API_BASE}/api/browse/bigbed/feature_tiles`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: track.path,
-                        chrom: selectedChrom,
-                        genome,
-                        max_features_per_tile: BIGBED_DETAIL_MAX_FEATURES_PER_TILE,
-                        tiles,
-                        feature_model: isGeneModelTrack(track) ? 'transcripts' : '',
-                    }),
-                })
-                    .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                    .then((response) => {
-                        const returnedChrom = response?.chrom || selectedChrom
-                        const returned = Array.isArray(response?.tiles) ? response.tiles : []
-                        for (const [tileIndex, tile] of returned.entries()) {
-                            const tStart = Math.max(0, Math.floor(Number(tile.start) || 0))
-                            const tEnd = Math.max(tStart + 1, Math.ceil(Number(tile.end) || 1))
-                            const cachedTile = {
-                                ...(tile || {}),
-                                mode: 'bigbed_detail',
-                                start: tStart,
-                                end: tEnd,
-                                features: Array.isArray(tile?.features)
-                                    ? tile.features.map((row) => normalizeBigBedFeatureForRender(shiftBedFeatureToBrowserFrame(row))).filter(Boolean)
-                                    : [],
-                                has_data: tile?.has_data !== false,
-                                error: '',
-                            }
-                            const selectedKey = keys[tileIndex] || makeBigBedFeatureTileKey(track.id, selectedChrom, tStart, tEnd)
-                            trackFeatureCacheRef.current.set(selectedKey, cachedTile)
-                            if (returnedChrom !== selectedChrom) {
-                                const resolvedKey = makeBigBedFeatureTileKey(track.id, returnedChrom, tStart, tEnd)
-                                trackFeatureCacheRef.current.set(resolvedKey, cachedTile)
-                            }
-                        }
-                        if (hasMoreBedPlans || fetchEpochRef.current !== epoch) setCustomTrackFetchRevision((v) => v + 1)
-                        const projected = projectBedTrackToCurrentViewport(track, selectedChrom)
-                        if (!projected) return
-                        setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
-                    })
-                    .catch((e) => {
-                        const errorMessage = getFetchErrorMessage(e)
-                        if (isTransientFetchErrorMessage(errorMessage)) {
-                            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: true }))
-                            return
-                        }
-                        setCustomTrackData((prev) => ({
-                            ...prev,
-                            [track.id]: { ...(prev[track.id] || {}), mode: 'bigbed_detail', has_data: false, error: errorMessage },
-                        }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
-                    })
-                    .finally(() => {
-                        for (const k of keys) trackFeatureFetchSetRef.current.delete(k)
-                    })
-            }
-
-            // ── BED/BigBed density tiles → /api/browse/bigbed/block_tiles with counts ───────────
-            const bedDensityGroups = new Map()
-            for (const plan of bedDensityPlans) {
-                const { track, bedDensityLevel, tileStart, tileEnd, key } = plan
-                if (trackFeatureCacheRef.current.has(key) || trackFeatureFetchSetRef.current.has(key)) continue
-                trackFeatureFetchSetRef.current.add(key)
-                if (!bedDensityGroups.has(track.id)) {
-                    bedDensityGroups.set(track.id, { track, keys: [], tiles: [] })
-                }
-                const group = bedDensityGroups.get(track.id)
-                group.keys.push(key)
-                group.tiles.push({
-                    start: Math.max(0, Math.floor(tileStart)),
-                    end: Math.ceil(tileEnd),
-                    level_id: bedDensityLevel.id,
-                    block_bp: bedDensityLevel.blockBp,
-                })
-            }
-
-            for (const { track, keys, tiles } of bedDensityGroups.values()) {
-                fetch(`${API_BASE}/api/browse/bigbed/block_tiles`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: track.path,
-                        chrom: selectedChrom,
-                        genome,
-                        tiles,
-                        include_counts: true,
-                    }),
-                })
-                    .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                    .then((response) => {
-                        const returned = Array.isArray(response?.tiles) ? response.tiles : []
-                        for (const [tileIndex, tile] of returned.entries()) {
-                            const key = keys[tileIndex]
-                            if (!key) continue
-                            const levelId = String(tiles[tileIndex]?.level_id || tile?.level_id || '')
-                            const counts = Array.isArray(tile?.counts) ? tile.counts : []
-                            trackFeatureCacheRef.current.set(key, {
-                                mode: 'bed_density',
-                                start: Math.max(0, Math.floor(Number(tile?.start) || 0)),
-                                end: Math.ceil(Number(tile?.end) || 0),
-                                block_bp: Number(tile?.block_bp) || tiles[tileIndex]?.block_bp || 1,
-                                counts,
-                                has_data: tile?.has_data !== false,
-                                error: '',
-                            })
-                            const scaleKey = `${track.id}|${selectedChrom}|${levelId}`
-                            const scaleEntry = bedDensityScaleRef.current[scaleKey]
-                                || (bedDensityScaleRef.current[scaleKey] = { values: [], n: 0, scale: 0, tiles: new Set() })
-                            // A tile fetched again after eviction must not count twice.
-                            if (!scaleEntry.tiles.has(key)) {
-                                scaleEntry.tiles.add(key)
-                                for (const c of counts) if (c > 0) scaleEntry.values.push(c)
-                            }
-                        }
-                        if (hasMoreBedPlans || fetchEpochRef.current !== epoch) setCustomTrackFetchRevision((v) => v + 1)
-                        const projected = projectBedTrackToCurrentViewport(track, selectedChrom)
-                        if (!projected) return
-                        setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: Number(projected?.tile_coverage || 0) < 0.85 }))
-                    })
-                    .catch((e) => {
-                        const errorMessage = getFetchErrorMessage(e)
-                        if (isTransientFetchErrorMessage(errorMessage)) {
-                            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: true }))
-                            return
-                        }
-                        setCustomTrackData((prev) => ({
-                            ...prev,
-                            [track.id]: { ...(prev[track.id] || {}), mode: 'bed_density', has_data: false, error: errorMessage },
-                        }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
-                    })
-                    .finally(() => {
-                        for (const k of keys) trackFeatureFetchSetRef.current.delete(k)
-                    })
-            }
-
-            // ── Adaptive VCF L4 detail tiles → /api/browse/vcf/tiles (individual variants) ──────
-            const vcfAdpDetailGroups = new Map()
-            for (const plan of vcfAdpDetailPlans) {
-                const { track, tileStart, tileEnd, key } = plan
-                if (vcfBlockTileCacheRef.current.has(key) || vcfBlockTileFetchSetRef.current.has(key)) continue
-                vcfBlockTileFetchSetRef.current.add(key)
-                if (!vcfAdpDetailGroups.has(track.id)) {
-                    vcfAdpDetailGroups.set(track.id, { track, keys: [], tiles: [] })
-                }
-                const group = vcfAdpDetailGroups.get(track.id)
-                group.keys.push(key)
-                group.tiles.push({
-                    start: Math.max(0, Math.floor(tileStart)),
-                    end: Math.ceil(tileEnd),
-                    lod: 'L4',
-                    mode: 'detail',
-                    bins: 1024,
-                    max_variants: 5000,
-                    block_mode: 'legacy',
-                })
-            }
-
-            for (const { track, keys, tiles } of vcfAdpDetailGroups.values()) {
-                fetch(`${API_BASE}/api/browse/vcf/tiles`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: track.path,
-                        chrom: selectedChrom,
-                        genome,
-                        include_effects: true,
-                        tiles,
-                    }),
-                })
-                    .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                    .then((payload) => {
-                        const returnedChrom = payload?.chrom || selectedChrom
-                        const returned = Array.isArray(payload?.tiles) ? payload.tiles : []
-                        for (const tile of returned) {
-                            const tStart = Math.max(0, Math.floor(Number(tile.start) || 0))
-                            const tEnd = Math.max(tStart + 1, Math.ceil(Number(tile.end) || 1))
-                            const selectedKey = makeVcfAdpDetailKey(track.id, selectedChrom, tStart, tEnd)
-                            vcfBlockTileCacheRef.current.set(selectedKey, tile)
-                            if (returnedChrom !== selectedChrom) {
-                                const resolvedKey = makeVcfAdpDetailKey(track.id, returnedChrom, tStart, tEnd)
-                                vcfBlockTileCacheRef.current.set(resolvedKey, tile)
-                            }
-                        }
-                        if (fetchEpochRef.current !== epoch) return
-                        const freshLevel = getVcfBlockLevel(bpPerPx)
-                        if (freshLevel.mode !== 'detail') return
-                        const projected = projectVcfAdaptiveDetailLevel(track.id, selectedChrom, freshLevel, visStart, visEnd)
-                        setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
-                        const stillLoading = Number(projected?.tile_coverage || 0) < 0.85
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: stillLoading }))
-                        if (stillLoading || hasMoreVcfAdpDetailPlans) setCustomTrackFetchRevision((v) => v + 1)
-                    })
-                    .catch((e) => {
-                        const errorMessage = getFetchErrorMessage(e)
-                        if (isTransientFetchErrorMessage(errorMessage)) {
-                            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: true }))
-                            return
-                        }
-                        setCustomTrackData((prev) => ({
-                            ...prev,
-                            [track.id]: { ...(prev[track.id] || {}), has_data: false, error: errorMessage },
-                        }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
-                    })
-                    .finally(() => {
-                        for (const k of keys) vcfBlockTileFetchSetRef.current.delete(k)
-                    })
-            }
-
-            // ── Non-adaptive VCF summary/detail tiles → /api/browse/vcf/tiles ────────────────
-            const vcfGroups = new Map()
-            for (const plan of vcfPlans) {
-                const { track, vcfLevel, tileStart, tileEnd, key } = plan
-                if (vcfTileCacheRef.current.has(key) || vcfTileFetchSetRef.current.has(key)) continue
-                vcfTileFetchSetRef.current.add(key)
-                if (!vcfGroups.has(track.id)) {
-                    vcfGroups.set(track.id, { track, keys: [], tiles: [] })
-                }
-                const group = vcfGroups.get(track.id)
-                group.keys.push(key)
-                group.tiles.push({
-                    start: Math.max(0, Math.floor(tileStart)),
-                    end: Math.ceil(tileEnd),
-                    lod: vcfLevel.id,
-                    mode: vcfLevel.mode,
-                    bins: vcfLevel.binsPerTile,
-                    max_variants: vcfLevel.mode === 'detail' ? 5000 : 250000,
-                    block_mode: 'legacy',
-                })
-            }
-
-            for (const { track, keys, tiles } of vcfGroups.values()) {
-                fetch(`${API_BASE}/api/browse/vcf/tiles`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        path: track.path,
-                        chrom: selectedChrom,
-                        genome,
-                        include_effects: true,
-                        tiles,
-                    }),
-                })
-                    .then((r) => r.ok ? r.json() : r.json().then((e) => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                    .then((payload) => {
-                        const returnedChrom = payload?.chrom || selectedChrom
-                        const returned = Array.isArray(payload?.tiles) ? payload.tiles : []
-                        for (const tile of returned) {
-                            const tStart = Math.max(0, Math.floor(Number(tile.start) || 0))
-                            const tEnd = Math.max(tStart + 1, Math.ceil(Number(tile.end) || 1))
-                            const lodId = String(tile.lod || 'L2')
-                            const mode = String(tile.mode || 'summary')
-                            const selectedKey = makeVcfTileKey(
-                                track.id, selectedChrom,
-                                lodId, mode,
-                                tStart, tEnd, 0, 0, 0.5, '',
-                            )
-                            vcfTileCacheRef.current.set(selectedKey, tile)
-                            if (returnedChrom !== selectedChrom) {
-                                const resolvedKey = makeVcfTileKey(
-                                    track.id, returnedChrom,
-                                    lodId, mode,
-                                    tStart, tEnd, 0, 0, 0.5, '',
-                                )
-                                vcfTileCacheRef.current.set(resolvedKey, tile)
-                            }
-                        }
-                        if (fetchEpochRef.current !== epoch) return
-                        const freshLevel = getVcfLevelByBpPerPx(bpPerPx, track.id, VCF_LOD_LEVELS)
-                        const projected = projectVcfTilesToView(track.id, selectedChrom, freshLevel, visStart, visEnd, displayBins)
-                        setCustomTrackData((prev) => ({ ...prev, [track.id]: projected }))
-                        const waitingForDetail = freshLevel.mode === 'detail' && Number(projected?.detail_coverage || 0) < 0.95
-                        const stillLoading = projected.coverage < 0.85 || waitingForDetail
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: stillLoading }))
-                        if (stillLoading) setCustomTrackFetchRevision((v) => v + 1)
-                    })
-                    .catch((e) => {
-                        const errorMessage = getFetchErrorMessage(e)
-                        if (isTransientFetchErrorMessage(errorMessage)) {
-                            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: true }))
-                            return
-                        }
-                        setCustomTrackData((prev) => ({
-                            ...prev,
-                            [track.id]: { ...(prev[track.id] || {}), has_data: false, error: errorMessage },
-                        }))
-                        setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
-                    })
-                    .finally(() => {
-                        for (const k of keys) vcfTileFetchSetRef.current.delete(k)
-                    })
-            }
-
-            for (const plan of toFetch) {
-                const { track, level, tileStart, tileEnd, isDiscrete, isSplice, key } = plan
-
-                if (isSplice) {
-                    if (!key || trackFeatureFetchSetRef.current.has(key)) continue
-                    trackFeatureFetchSetRef.current.add(key)
-                    const spliceSettings = normalizeSpliceTrackSettings(track?.spliceSettings || track?.splice_settings)
-
-                    const params = new URLSearchParams({
-                        genome,
-                        path: track.path,
-                        chrom: selectedChrom,
-                        start: String(Math.max(0, Math.floor(tileStart))),
-                        end: String(Math.ceil(tileEnd)),
-                        level: 'fine',
-                        min_reads: '1',
-                        min_support: String(spliceSettings.min_support),
-                        canonical_mode: String(spliceSettings.canonical_mode),
-                        annotated_mode: String(spliceSettings.annotated_mode),
-                        max_junctions: String(spliceSettings.max_junctions),
-                        bins: String(displayBins),
-                    })
-                    if (track?.registryTrackId) params.set('track_id', String(track.registryTrackId))
-
-                    fetch(`${API_BASE}/api/browse/splice_junctions?${params.toString()}`)
-                        .then(r => r.ok ? r.json() : r.json().then(e => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                        .then(data => {
-                            const payload = {
-                                ...(data || {}),
-                                mode: 'splice_arcs',
-                                start: Math.max(0, Math.floor(tileStart)),
-                                end: Math.ceil(tileEnd),
-                                junctions: Array.isArray(data?.junctions) ? data.junctions : [],
-                                has_data: true,
-                                error: '',
-                            }
-                            trackFeatureCacheRef.current.set(key, payload)
-                            if (fetchEpochRef.current !== epoch) return
-                            const projected = projectSpliceTilesToView(track.id, selectedChrom, visStart, visEnd)
-                            setCustomTrackData(prev => ({ ...prev, [track.id]: projected }))
-                            setCustomTrackLoading(prev => ({ ...prev, [track.id]: Number(projected?.coverage || 0) < 0.75 }))
-                        })
-                        .catch(e => {
-                            if (fetchEpochRef.current !== epoch) return
-                            const errorMessage = getFetchErrorMessage(e)
-                            if (isTransientFetchErrorMessage(errorMessage)) {
-                                setCustomTrackLoading(prev => ({ ...prev, [track.id]: true }))
-                                return
-                            }
-                            trackFeatureCacheRef.current.set(key, {
-                                mode: 'splice_arcs',
-                                start: Math.max(0, Math.floor(tileStart)),
-                                end: Math.ceil(tileEnd),
-                                junctions: [],
-                                has_data: false,
-                                error: errorMessage,
-                            })
-                            const projected = projectSpliceTilesToView(track.id, selectedChrom, visStart, visEnd)
-                            setCustomTrackData(prev => ({ ...prev, [track.id]: { ...projected, error: errorMessage || projected.error } }))
-                            setCustomTrackLoading(prev => ({ ...prev, [track.id]: false }))
-                        })
-                        .finally(() => { trackFeatureFetchSetRef.current.delete(key) })
-                    continue
-                }
-
-                if (isDiscrete) {
-                    // ── Discrete feature fetch ────────────────────────────────────────────────
-                    const trackType = track.type
-                    const featureKey = `${track.id}|${selectedChrom}|view|${visStart}`
-                    if (trackFeatureFetchSetRef.current.has(featureKey)) continue
-                    trackFeatureFetchSetRef.current.add(featureKey)
-
-                    const fetchLod = bpPerPx > 100 ? 'region' : bpPerPx > 10 ? 'gene' : 'fine'
-                    let endpoint = ''
-                    const params = new URLSearchParams({
-                        genome,
-                        path: track.path,
-                        chrom: selectedChrom,
-                        start: String(Math.max(0, tileStart)),
-                        end: String(tileEnd),
-                        level: fetchLod,
-                        bins: String(displayBins),
-                    })
-
-                    if (trackType === 'vcf') endpoint = 'vcf'
-                    else if (trackType === 'bed' || trackType === 'bigbed') endpoint = 'bed'
-                    else if (trackType === 'splice_junctions') endpoint = 'splice_junctions'
-                    else if (trackType === 'long_reads') { endpoint = 'long_reads'; params.set('collapse', 'true'); params.set('max_reads', '500') }
-                    else continue
-
-                    fetch(`${API_BASE}/api/browse/${endpoint}?${params.toString()}`)
-                        .then(r => r.ok ? r.json() : r.json().then(e => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                        .then(data => {
-                            // Always cache the result — tiles are valid regardless of viewport changes
-                            trackFeatureCacheRef.current.set(featureKey, { ...data, has_data: true, error: '' })
-                            if (fetchEpochRef.current !== epoch) return
-                            setCustomTrackData(prev => ({ ...prev, [track.id]: { ...data, has_data: true, error: '' } }))
-                            setCustomTrackLoading(prev => ({ ...prev, [track.id]: false }))
-                        })
-                        .catch(e => {
-                            if (fetchEpochRef.current !== epoch) return
-                            if (isTransientFetchError(e)) {
-                                setCustomTrackLoading(prev => ({ ...prev, [track.id]: true }))
-                                return
-                            }
-                            const errorMessage = getFetchErrorMessage(e)
-                            trackFeatureCacheRef.current.set(featureKey, { has_data: false, error: errorMessage })
-                            setCustomTrackData(prev => ({ ...prev, [track.id]: { has_data: false, error: errorMessage } }))
-                            setCustomTrackLoading(prev => ({ ...prev, [track.id]: false }))
-                        })
-                        .finally(() => { trackFeatureFetchSetRef.current.delete(featureKey) })
-
-                } else {
-                    // ── Signal tile fetch (BigWig / BAM coverage) ─────────────────────────────
-                    const tileKey = makeBigWigTileKey(track.id, selectedChrom, level.id, tileStart)
-                    if (trackTileFetchSetRef.current.has(tileKey)) continue
-                    trackTileFetchSetRef.current.add(tileKey)
-
-                    const isL0Prefetch = level.id === 'L0'
-                    const params = new URLSearchParams({
-                        genome,
-                        path: track.path,
-                        chrom: selectedChrom,
-                        start: String(Math.max(0, tileStart)),
-                        end: String(tileEnd),
-                        bins: String(level.binsPerTile),
-                    })
-
-                    fetch(`${API_BASE}/api/browse/bigwig?${params.toString()}`)
-                        .then(r => r.ok ? r.json() : r.json().then(e => { throw new Error(e?.detail || `HTTP ${r.status}`) }))
-                        .then(payload => {
-                            // Always cache — tiles are keyed by genomic coords, always valid
-                            trackTileCacheRef.current.set(tileKey, {
-                                start: payload?.start ?? tileStart,
-                                end: payload?.end ?? tileEnd,
-                                bpPerBin: level.bpPerBin,
-                                bins: Array.isArray(payload?.bins) ? payload.bins : [],
-                                has_data: !!payload?.has_data,
-                                error: '',
-                            })
-                            if (fetchEpochRef.current !== epoch) return
-                            // Use L0 result to set stable chrom-wide scale
-                            if (isL0Prefetch && payload?.has_data) {
-                                const scaleKey = `${track.id}|${selectedChrom}`
-                                const validBins = (payload.bins || []).filter(v => typeof v === 'number' && Number.isFinite(v))
-                                if (validBins.length > 0) {
-                                    const existing = trackChromScaleRef.current[scaleKey]
-                                    const newMax = Math.max(...validBins)
-                                    trackChromScaleRef.current[scaleKey] = {
-                                        min: 0,
-                                        max: existing ? Math.max(existing.max, newMax) : newMax,
-                                    }
-                                }
-                            }
-                            // Re-project using the latest viewport refs so a late tile
-                            // response from an older zoom/pan state cannot overwrite the
-                            // current view with stale block geometry.
-                            const projected = projectBigWigTrackToCurrentViewport(track.id)
-                            setCustomTrackData(prev => ({ ...prev, [track.id]: projected }))
-                            setCustomTrackLoading(prev => ({ ...prev, [track.id]: projected.coverage < 0.3 }))
-                        })
-                        .catch(e => {
-                            if (fetchEpochRef.current !== epoch) return
-                            if (isTransientFetchError(e)) {
-                                // Leave current cache/view intact and retry on the next viewport update.
-                                trackTileCacheRef.current.delete(tileKey)
-                                setCustomTrackLoading(prev => ({ ...prev, [track.id]: true }))
-                                return
-                            }
-                            const errorMessage = getFetchErrorMessage(e)
-                            trackTileCacheRef.current.set(tileKey, { start: tileStart, end: tileEnd, bpPerBin: level.bpPerBin, bins: [], has_data: false, error: errorMessage })
-                            setCustomTrackData(prev => ({ ...prev, [track.id]: { ...prev[track.id], error: errorMessage } }))
-                            setCustomTrackLoading(prev => ({ ...prev, [track.id]: false }))
-                        })
-                        .finally(() => { trackTileFetchSetRef.current.delete(tileKey) })
-                }
-            }
-        }, 50) // 50ms debounce — only delays network requests, not rendering
-
-        return () => {
-            // Only cancel the debounce timer — do NOT cancel in-flight responses!
-            clearTimeout(timer)
-        }
-    }, [
+    useEffect((...args) => runCustomTrackFetchEngine({
+        bedDensityScaleRef,
+        chromLength,
+        customTracks,
+        evictOldTilesIfNeeded,
+        fetchEpochRef,
+        genome,
+        genomicViewRange,
+        getBedDensityLevel,
+        getBigBedBlockLevel,
+        getBigBedLodMode,
+        getBigWigLevel,
+        getSpliceBlockLevel,
+        getSpliceLodMode,
+        getSpliceTileSpan,
+        getVcfBlockLevel,
+        getVcfLevelByBpPerPx,
+        isActive,
+        makeBedDensityTileKey,
+        makeBigBedBlockTileKey,
+        makeBigBedFeatureTileKey,
+        makeBigWigTileKey,
+        makeSpliceBlockTileKey,
+        makeSpliceTileKey,
+        makeVcfAdpDetailKey,
+        makeVcfBlockTileKey,
+        makeVcfTileKey,
+        projectBedDensityTilesToView,
+        projectBedTrackToCurrentViewport,
+        projectBigBedBlockTilesToView,
+        projectBigBedFeatureTilesToView,
+        projectBigWigTilesToView,
+        projectBigWigTrackToCurrentViewport,
+        projectSpliceBlockTilesToView,
+        projectSpliceTilesToView,
+        projectVcfAdaptiveDetailLevel,
+        projectVcfBlockTilesCascadeToView,
+        projectVcfTilesToView,
+        selectedChrom,
+        setCustomTrackData,
+        setCustomTrackFetchRevision,
+        setCustomTrackLoading,
+        trackChromScaleRef,
+        trackFeatureCacheRef,
+        trackFeatureFetchSetRef,
+        trackTileCacheRef,
+        trackTileFetchSetRef,
+        vcfBlockTileCacheRef,
+        vcfBlockTileFetchSetRef,
+        vcfOverviewWarmupDoneRef,
+        vcfTileCacheRef,
+        vcfTileFetchSetRef,
+        vcfViewportIntentRef,
+        viewWidth,
+    }, ...args), [
         customTracks,
         customTrackFetchRevision,
         chromLength,
@@ -5924,383 +3920,49 @@ function GenomeBrowser({
     }, [viewWidth, isFlipped])
 
     // ============ Layout computation ============
-    const layout = useMemo(() => {
-        const trackWidthPx = Math.max(1, viewWidth - LHS_WIDTH)
-        const pxToBp = viewSpan / trackWidthPx
-        const minGapBp = 0 // Fixed to 0 to prevent vertical jumping of tracks during zoom
-        const viewGStart = genomicViewRange.start
-        const viewGEnd = genomicViewRange.end
-        const layoutBuffer = clamp((viewGEnd - viewGStart) * 0.5, GENE_LAYOUT_BUFFER_MIN, GENE_LAYOUT_BUFFER_MAX)
-        const layoutStart = Math.max(0, viewGStart - layoutBuffer)
-        const layoutEnd = viewGEnd + layoutBuffer
-        const bucketStep = Math.max(GENE_LAYOUT_BUCKET_MIN_STEP, viewSpan * 0.25)
-        const layoutCenter = (layoutStart + layoutEnd) / 2
-        const layoutBucket = Math.floor(layoutCenter / bucketStep)
-        const zoomBucket = Math.round(Math.log2(Math.max(1e-9, pxToBp)) * 16) / 16
-
-        let enableSubtracks = geneSubtrackStateRef.current
-        if (flattenTracks) {
-            enableSubtracks = true
-        } else if (enableSubtracks) {
-            if (viewSpan >= GENE_SUBTRACK_DISABLE_BP) enableSubtracks = false
-        } else if (viewSpan <= GENE_SUBTRACK_ENABLE_BP) {
-            enableSubtracks = true
-        }
-        geneSubtrackStateRef.current = enableSubtracks
-
-        // Skipped outright when nothing is hidden: this runs over every gene in
-        // the layout window on every frame of a zoom.
-        const anythingHidden = hiddenBiotypeClasses.length > 0 || hiddenGeneIdSet.size > 0
-        const biotypeFilter = anythingHidden
-            ? (g) => !isGeneHiddenFromTracks(g)
-            : () => true
-
-        const geneOverlapsCurrentWindow = (gene) => {
-            const start = Number(gene?.start)
-            const end = Number(gene?.end)
-            if (!Number.isFinite(start) || !Number.isFinite(end)) return false
-            return Math.max(start, end) >= viewGStart && Math.min(start, end) <= viewGEnd
-        }
-        const displayGeneSource = flattenTracks
-            ? genes.filter(geneOverlapsCurrentWindow)
-            : genes
-
-        const forwardGenes = effectiveHiddenStrands.forward
-            ? []
-            : displayGeneSource.filter(g => g.strand === '+').filter(biotypeFilter)
-        const reverseGenes = effectiveHiddenStrands.reverse
-            ? []
-            : displayGeneSource.filter(g => g.strand === '-').filter(biotypeFilter)
-
-        const layoutGenesResult = flattenTracks
-            ? { genes: displayGeneSource, coverage: 1 }
-            : (selectedChrom
-                ? collectCachedGenesInRange(selectedChrom, layoutStart, layoutEnd, 1)
-                : { genes, coverage: 1 })
-        const layoutCoverage = Number(layoutGenesResult?.coverage || 0)
-        const layoutGenesAll = Array.isArray(layoutGenesResult?.genes) ? layoutGenesResult.genes : genes
-        const forwardLayoutGenes = effectiveHiddenStrands.forward
-            ? []
-            : layoutGenesAll.filter(g => g.strand === '+').filter(biotypeFilter)
-        const reverseLayoutGenes = effectiveHiddenStrands.reverse
-            ? []
-            : layoutGenesAll.filter(g => g.strand === '-').filter(biotypeFilter)
-
-        // Rows are whatever gets drawn, including the hover ghost — that is what
-        // makes previewing a hidden transcript push the rows below it down.
-        // A gene with everything hidden still claims one row for its block glyph.
-        const getGeneRowSpan = (gene) => Math.max(1, getDisplayTranscriptRows(gene).length || 1)
-
-        const stabilizeRowCount = (strandKey, requiredRows) => {
-            const safeRequired = Math.max(1, requiredRows)
-            const prevSticky = Math.max(1, Number(geneRowStickyRef.current[strandKey] || 1))
-            let nextSticky = safeRequired
-            if (safeRequired > prevSticky) {
-                nextSticky = safeRequired
-                geneRowShrinkBucketRef.current[strandKey] = layoutBucket
-            } else if (safeRequired < prevSticky) {
-                if (layoutCoverage >= GENE_LAYOUT_COVERAGE_SHRINK_THRESHOLD) {
-                    const lastShrinkBucket = geneRowShrinkBucketRef.current[strandKey]
-                    if (lastShrinkBucket !== layoutBucket) {
-                        nextSticky = Math.max(safeRequired, prevSticky - 1)
-                        geneRowShrinkBucketRef.current[strandKey] = layoutBucket
-                    } else {
-                        nextSticky = prevSticky
-                    }
-                } else {
-                    nextSticky = prevSticky
-                }
-            } else {
-                nextSticky = prevSticky
-            }
-            geneRowStickyRef.current[strandKey] = nextSticky
-            return nextSticky
-        }
-
-        const calculateRows = (strandKey, visibleStrandGenes, layoutStrandGenes) => {
-            if (!enableSubtracks) {
-                let maxRows = 1
-                visibleStrandGenes.forEach(gene => {
-                    gene._row = 0
-                    maxRows = Math.max(maxRows, getGeneRowSpan(gene))
-                })
-                geneRowStickyRef.current[strandKey] = Math.max(1, maxRows)
-                geneRowShrinkBucketRef.current[strandKey] = layoutBucket
-                return maxRows
-            }
-
-            const sorted = [...layoutStrandGenes].sort((a, b) => {
-                if (a.start !== b.start) return a.start - b.start
-                if (a.end !== b.end) return a.end - b.end
-                return String(a.id).localeCompare(String(b.id))
-            })
-            const filterHash = hiddenBiotypeClasses.slice().sort().join(',')
-            // Row span is the packer's only transcript-derived input, so keying on
-            // it is exact: expanding, hiding a transcript, or hovering a ghost all
-            // move it and invalidate the cache, and nothing else needs to.
-            const signature = sorted.map((gene) => {
-                const txCount = transcriptCache[gene.id]?.length || 0
-                return `${gene.id}:${gene.start}:${gene.end}:tx${txCount}:rows${getGeneRowSpan(gene)}`
-            }).join('|')
-            const packingKey = [
-                selectedChrom || '',
-                strandKey,
-                String(layoutBucket),
-                String(zoomBucket),
-                enableSubtracks ? '1' : '0',
-                isTranscriptCompressionActive ? 'compressed' : 'normal',
-                flattenTracks ? 'flattened' : 'standard',
-                filterHash,
-                signature,
-            ].join('|')
-
-            const packedCache = geneLayoutPackCacheRef.current[strandKey]
-            let rowMap
-            let requiredRows
-            if (packedCache && packedCache.key === packingKey) {
-                rowMap = packedCache.rowMap
-                requiredRows = packedCache.requiredRows
-            } else {
-                const rows = []
-                rowMap = new Map()
-                sorted.forEach(gene => {
-                    const rowCount = getGeneRowSpan(gene)
-                    let targetRow = 0
-                    while (true) {
-                        let allFree = true
-                        for (let r = targetRow; r < targetRow + rowCount; r++) {
-                            if (rows[r] !== undefined && gene.start < rows[r] + minGapBp) {
-                                allFree = false
-                                break
-                            }
-                        }
-                        if (allFree) break
-                        targetRow++
-                    }
-
-                    rowMap.set(gene.id, targetRow)
-                    for (let r = targetRow; r < targetRow + rowCount; r++) {
-                        rows[r] = Math.max(rows[r] || 0, gene.end)
-                    }
-                })
-                requiredRows = Math.max(1, rows.length || 1)
-                geneLayoutPackCacheRef.current[strandKey] = {
-                    key: packingKey,
-                    rowMap,
-                    requiredRows,
-                }
-            }
-
-            visibleStrandGenes.forEach((gene) => {
-                gene._row = rowMap.get(gene.id) ?? 0
-            })
-            if (flattenTracks) {
-                return requiredRows
-            }
-            return stabilizeRowCount(strandKey, requiredRows)
-        }
-
-        const maxRowForward = effectiveHiddenStrands.forward ? 0 : calculateRows('forward', forwardGenes, forwardLayoutGenes)
-        const maxRowReverse = effectiveHiddenStrands.reverse ? 0 : calculateRows('reverse', reverseGenes, reverseLayoutGenes)
-
-        const fwdPadding = effectiveHiddenStrands.forward ? 0 : transcriptLayoutMetrics.trackPadding
-        const revPadding = effectiveHiddenStrands.reverse ? 0 : transcriptLayoutMetrics.trackPadding
-        const forwardGeneHeight = maxRowForward * transcriptLayoutMetrics.rowPitch - transcriptLayoutMetrics.rowGap
-        const reverseGeneHeight = maxRowReverse * transcriptLayoutMetrics.rowPitch - transcriptLayoutMetrics.rowGap
-        // Flatten removes *unused* height, and the gene's label and its expand/collapse
-        // control are not unused height — they are the only thing naming the gene once the
-        // canvas label moves under it. Reserving their room here is what keeps them on
-        // screen when the track shrinks to its content. Compressed layouts still drop it:
-        // they have one or two pixels of padding to work with and no footer to place.
-        const geneFooterOverflow = isCompressedLayoutActive
-            ? 0
-            : geneFooterTrackOverflow(transcriptLayoutMetrics, flattenTracks)
-
-        // With no genes to lay out the tracks collapse to their minimum, which is
-        // a sliver — too little to put a message in, and every track below would
-        // jump down the moment the first genes arrived. While the index is being
-        // built they hold a fixed height instead, so the panel the user pans and
-        // zooms around is the same shape it will be when the genes land.
-        const geneTrackFloor = holdGeneTrackHeight
-            ? GENE_INDEX_TRACK_HEIGHT
-            : transcriptLayoutMetrics.minTrackHeight
-
-        const forwardBgHeight = effectiveHiddenStrands.forward
-            ? (hideInactiveTracks ? 0 : 36)
-            : Math.max(
-                geneTrackFloor,
-                fwdPadding
-                    + (flattenTracks ? forwardGeneHeight : maxRowForward * transcriptLayoutMetrics.rowPitch)
-                    + geneFooterOverflow
-            )
-        const reverseBgHeight = effectiveHiddenStrands.reverse
-            ? (hideInactiveTracks ? 0 : 36)
-            : Math.max(
-                geneTrackFloor,
-                revPadding
-                    + (flattenTracks ? reverseGeneHeight : maxRowReverse * transcriptLayoutMetrics.rowPitch)
-                    + geneFooterOverflow
-            )
-        const seqBgHeight = SEQUENCE_TRACK_HEIGHT
-
-        const getTrackHeight = (trackId) => {
-            if (trackId === 'forward') return forwardBgHeight
-            if (trackId === 'reverse') return reverseBgHeight
-            if (trackId === 'sequence') {
-                if (!showSequenceTrack) return 0
-                if (hideInactiveTracks && effectiveHiddenStrands.sequence) return 0
-                return seqBgHeight
-            }
-            if (isCustomTrackId(trackId) && customTracksById.has(trackId)) {
-                const t = customTracksById.get(trackId)
-                if (t?.visible === false) return hideInactiveTracks ? 0 : 36
-                const rawMode = t?.renderMode || DEFAULT_CUSTOM_TRACK_RENDER_MODE
-                const mode = t?.type === 'bigwig'
-                    ? normalizeBigWigDisplayMode(rawMode, normalizeBigWigSettings(t?.bigwigSettings || t?.bigwig_settings).data_type)
-                    : t?.type === 'vcf'
-                        ? normalizeVcfDisplayMode(rawMode)
-                        : rawMode
-                if (t?.type === 'splice_junctions') {
-                    const data = customTrackData?.[trackId]
-                    if (data?.mode === 'splice_blocks') {
-                        return SPLICE_BLOCK_TRACK_HEIGHT
-                    }
-                    const suggested = Number(data?.layout?.recommended_height)
-                    if (!Number.isFinite(suggested)) return SPLICE_HEIGHT_BASE
-                    // Keep prior stable size while tile coverage is still sparse.
-                    if (customTrackLoading?.[trackId] && Number(data?.coverage || 0) < 0.55) {
-                        return SPLICE_HEIGHT_BASE
-                    }
-                    return Math.round(clamp(suggested, SPLICE_HEIGHT_MIN, SPLICE_HEIGHT_MAX))
-                }
-                if (isIntervalTrackType(t?.type) && t?.renderMode === 'density') {
-                    return CUSTOM_TRACK_HEIGHT_ZONED
-                }
-                if (isIntervalTrackType(t?.type)) {
-                    const data = customTrackData?.[trackId]
-                    if (data?.mode === 'bigbed_detail') {
-                        const laneCount = Math.max(1, Number(data?.lane_count || 1))
-                        // Keep compact baseline while detail tiles are still sparse.
-                        if (customTrackLoading?.[trackId] && Number(data?.tile_coverage || 0) < 0.6) {
-                            return CUSTOM_TRACK_HEIGHT_STANDARD
-                        }
-                        return getBigBedTrackHeightForLanes(laneCount, bigBedLanePitch(data?.labelled))
-                    }
-                }
-                if (mode === 'zoned_heatmap') return CUSTOM_TRACK_HEIGHT_ZONED
-                if ((mode === 'ensembl' || isVcfAdaptiveLikeMode(mode)) && t?.type === 'vcf') {
-                    if (isVcfAdaptiveLikeMode(mode)) {
-                        const vcfData = customTrackData?.[trackId]
-                        const vcfLevel = getVcfBlockLevel(bpPerPx)
-                        const isDetailMode = vcfData?.mode === 'adp_detail' || vcfLevel?.mode === 'detail'
-                        if (!isDetailMode) return CUSTOM_TRACK_HEIGHT_ADAPTIVE_VCF_COMPACT
-                    }
-                    return bpPerPx <= 0.5 ? 200 : CUSTOM_TRACK_HEIGHT_ADAPTIVE_VCF
-                }
-                return CUSTOM_TRACK_HEIGHT_STANDARD
-            }
-            if (isGroupRowId(trackId) && joinedRows.has(trackId)) {
-                const row = joinedRows.get(trackId)
-                if (row.hidden) return hideInactiveTracks ? 0 : 36
-                return JOINED_GROUP_HEADER_HEIGHT + row.memberIds.reduce((sum, id) => sum + getTrackHeight(id), 0)
-            }
-            return 0
-        }
-
-        const activeTrackOrder = trackOrder.filter((trackId) => getTrackHeight(trackId) > 0)
-        const totalTrackHeight = activeTrackOrder.reduce((sum, trackId) => sum + getTrackHeight(trackId), 0)
-
-        // In bottom-aligned mode, selected-gene focus bar appears outside the canvas container
-        // and shrinks container height; compensate so selecting/deselecting a gene does not
-        // vertically shift all tracks.
-        const selectedGeneHiddenForLayout = selectedGene && (
-            (selectedGene.strand === '+' && hiddenStrands.forward) ||
-            (selectedGene.strand === '-' && hiddenStrands.reverse) ||
-            selectedGeneHiddenByBiotype
-        )
-        const visibleFocusBarHeight = (selectedGene && !selectedGeneHiddenForLayout) || isLocationFocusVisible
-            ? (focusBarHeight || 30)
-            : 0
-        const alignTracksToBottom = effectiveTrackAlign === 'bottom' && !compactPanelHeight
-        const focusBarCompensation = alignTracksToBottom ? visibleFocusBarHeight : 0
-        const availableSpace = Math.max(160, viewHeight + focusBarCompensation)
-        let RULER_Y = 0
-
-        let startY = 0
-        if (effectiveRulerPosition === 'top') {
-            startY = effectiveRulerHeight
-            if (alignTracksToBottom) {
-                const bottomAlignedY = Math.max(effectiveRulerHeight, availableSpace - totalTrackHeight)
-                startY = Math.min(bottomAlignedY, effectiveRulerHeight + MAX_BOTTOM_ALIGN_EXTRA_TOP_GAP)
-            }
-        } else if (alignTracksToBottom) {
-            const bottomAlignedY = Math.max(0, availableSpace - effectiveRulerHeight - totalTrackHeight)
-            startY = Math.min(bottomAlignedY, MAX_BOTTOM_ALIGN_EXTRA_TOP_GAP)
-        }
-
-        let FORWARD_Y = 0
-        let REVERSE_Y = 0
-        let SEQUENCE_Y = -999
-        let currentY = startY
-        const customTrackLayouts = {}
-        const groupRowLayouts = {}
-        const orderedTracks = []
-
-        for (const trackId of activeTrackOrder) {
-            const h = getTrackHeight(trackId)
-            if (h <= 0) continue
-
-            if (trackId === 'forward') FORWARD_Y = currentY
-            else if (trackId === 'reverse') REVERSE_Y = currentY
-            else if (trackId === 'sequence') SEQUENCE_Y = currentY
-            else if (isCustomTrackId(trackId)) customTrackLayouts[trackId] = { y: currentY, height: h }
-            else if (isGroupRowId(trackId)) {
-                // One row for the group; each of its tracks is laid out in a band of it,
-                // under a header naming the group, so everything that draws or hit-tests a
-                // custom track finds them where they are.
-                const row = joinedRows.get(trackId)
-                groupRowLayouts[trackId] = { y: currentY, height: h, memberIds: row.memberIds, label: row.label, hidden: row.hidden }
-                if (!row.hidden) {
-                    let memberY = currentY + JOINED_GROUP_HEADER_HEIGHT
-                    row.memberIds.forEach((memberId, index) => {
-                        const memberHeight = getTrackHeight(memberId)
-                        customTrackLayouts[memberId] = { y: memberY, height: memberHeight, joinedRowId: trackId, joinedIndex: index }
-                        memberY += memberHeight
-                    })
-                }
-            }
-
-            orderedTracks.push({ id: trackId, y: currentY, height: h })
-            currentY += h
-        }
-
-        const lastTrackY = orderedTracks.length
-            ? Math.max(...orderedTracks.map((track) => track.y + track.height))
-            : startY
-
-        if (effectiveRulerPosition === 'bottom') {
-            RULER_Y = compactPanelHeight
-                ? lastTrackY
-                : Math.max(lastTrackY, viewHeight - effectiveRulerHeight)
-        }
-
-        return {
-            forwardGenes,
-            reverseGenes,
-            forwardBgHeight,
-            reverseBgHeight,
-            seqBgHeight,
-            FORWARD_Y,
-            REVERSE_Y,
-            SEQUENCE_Y,
-            RULER_Y,
-            fwdPadding,
-            revPadding,
-            customTrackLayouts,
-            groupRowLayouts,
-            orderedTracks,
-        }
-    }, [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, joinedRows, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, isLocationFocusVisible, hiddenStrands, selectedGeneHiddenByBiotype, isGeneHiddenFromTracks, hiddenGeneIdSet, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight, stickyLayoutResetEpoch, holdGeneTrackHeight])
+    const layout = useMemo((...args) => computeBrowserLayout({
+        bpPerPx,
+        collectCachedGenesInRange,
+        compactPanelHeight,
+        customTrackData,
+        customTrackLoading,
+        customTracksById,
+        effectiveHiddenStrands,
+        effectiveRulerHeight,
+        effectiveRulerPosition,
+        effectiveTrackAlign,
+        flattenTracks,
+        focusBarHeight,
+        geneLayoutPackCacheRef,
+        geneRowShrinkBucketRef,
+        geneRowStickyRef,
+        geneSubtrackStateRef,
+        genes,
+        genomicViewRange,
+        getDisplayTranscriptRows,
+        getVcfBlockLevel,
+        hiddenBiotypeClasses,
+        hiddenGeneIdSet,
+        hiddenStrands,
+        hideInactiveTracks,
+        holdGeneTrackHeight,
+        isCompressedLayoutActive,
+        isCustomTrackId,
+        isGeneHiddenFromTracks,
+        isLocationFocusVisible,
+        isTranscriptCompressionActive,
+        joinedRows,
+        selectedChrom,
+        selectedGene,
+        selectedGeneHiddenByBiotype,
+        showSequenceTrack,
+        trackOrder,
+        transcriptCache,
+        transcriptLayoutMetrics,
+        viewHeight,
+        viewSpan,
+        viewWidth,
+    }, ...args), [genes, viewSpan, viewWidth, viewHeight, transcriptCache, effectiveHiddenStrands, trackOrder, effectiveRulerPosition, effectiveTrackAlign, showSequenceTrack, customTracksById, joinedRows, customTrackData, customTrackLoading, isCustomTrackId, selectedGene, isLocationFocusVisible, hiddenStrands, selectedGeneHiddenByBiotype, isGeneHiddenFromTracks, hiddenGeneIdSet, focusBarHeight, hideInactiveTracks, hiddenBiotypeClasses, selectedChrom, genomicViewRange, collectCachedGenesInRange, getVcfBlockLevel, bpPerPx, isTranscriptCompressionActive, isCompressedLayoutActive, transcriptLayoutMetrics, getDisplayTranscriptRows, flattenTracks, compactPanelHeight, effectiveRulerHeight, stickyLayoutResetEpoch, holdGeneTrackHeight])
 
     // Where the note about the gene index goes: the forward and reverse tracks
     // taken together, minus whichever of them the user has hidden. Null when
@@ -6315,115 +3977,16 @@ function GenomeBrowser({
         })
     }, [holdGeneTrackHeight, layout.FORWARD_Y, layout.forwardBgHeight, layout.REVERSE_Y, layout.reverseBgHeight])
 
-    const getSelectedGeneTranscriptHit = useCallback((mouseX, mouseY) => {
-        if (!selectedGeneLayoutEntry || shouldForceGeneBlockView) return null
-
-        const gene = selectedGeneLayoutEntry
-        const txs = transcriptCache[gene.id]
-        const displayRows = getDisplayTranscriptRows(gene)
-        if (!txs || txs.length === 0 || displayRows.length === 0) return null
-
-        const isForward = gene.strand === '+'
-        const trackY = isForward ? layout.FORWARD_Y : layout.REVERSE_Y
-        const trackPadding = isForward ? layout.fwdPadding : layout.revPadding
-        const baseGeneY = trackY + trackPadding + ((gene._row || 0) * transcriptLayoutMetrics.rowPitch)
-        const lineHitPadding = isTranscriptCompressionActive ? 4 : 5
-        const exonHitPadding = isTranscriptCompressionActive ? 2.5 : 3
-
-        // The row band is painted across the whole gene, so it has to be live
-        // across the whole gene too. Keying the row hit off each transcript's own
-        // span instead left the short ones with a hit area narrower than the
-        // highlight the user could plainly see.
-        const rawGeneX1 = genomicToScreen(gene.start)
-        const rawGeneX2 = genomicToScreen(gene.end)
-        const geneLeft = Math.min(rawGeneX1, rawGeneX2)
-        const geneRight = Math.max(rawGeneX1, rawGeneX2)
-
-        let best = null
-        let bestRank = Infinity
-        let bestDist = Infinity
-
-        for (let txIdx = 0; txIdx < displayRows.length; txIdx += 1) {
-            // Ghosts still occupy their row so the ones below stay correctly
-            // offset, but they are a preview and must not be clickable.
-            if (displayRows[txIdx].ghost) continue
-            const tx = displayRows[txIdx].transcript
-            const txY = baseGeneY + txIdx * transcriptLayoutMetrics.rowPitch
-            const midY = txY + transcriptLayoutMetrics.midOffset
-            const rawTxX1 = genomicToScreen(tx.start)
-            const rawTxX2 = genomicToScreen(tx.end)
-            const txLeft = Math.min(rawTxX1, rawTxX2)
-            const txRight = Math.max(rawTxX1, rawTxX2)
-
-            let candidate = null
-            const exons = Array.isArray(tx?.exons) ? tx.exons : []
-            const exonBandTop = midY - (transcriptLayoutMetrics.exonHeight / 2) - exonHitPadding
-            const exonBandBottom = midY + (transcriptLayoutMetrics.exonHeight / 2) + exonHitPadding
-            if (mouseY >= exonBandTop && mouseY <= exonBandBottom) {
-                for (const exon of exons) {
-                    const rawEx1 = genomicToScreen(exon.start)
-                    const rawEx2 = genomicToScreen(exon.end)
-                    const exonLeft = Math.min(rawEx1, rawEx2)
-                    const exonRight = Math.max(rawEx1, rawEx2)
-                    if (mouseX < exonLeft - 2 || mouseX > exonRight + 2) continue
-                    const centerX = (exonLeft + exonRight) / 2
-                    candidate = {
-                        rank: 0,
-                        dist: Math.abs(mouseX - centerX),
-                        anchorCanvasX: centerX,
-                        anchorCanvasY: midY,
-                        transcript: tx,
-                    }
-                    break
-                }
-            }
-
-            if (!candidate && mouseY >= midY - lineHitPadding && mouseY <= midY + lineHitPadding && mouseX >= txLeft - 2 && mouseX <= txRight + 2) {
-                candidate = {
-                    rank: 1,
-                    dist: Math.abs(mouseX - ((txLeft + txRight) / 2)),
-                    anchorCanvasX: clamp(mouseX, txLeft, txRight),
-                    anchorCanvasY: midY,
-                    transcript: tx,
-                }
-            }
-
-            // Anywhere in the row counts, not just the drawn structure. The band
-            // is the one the highlight paints, so what lights up under the cursor
-            // is exactly what responds to it. Ranked last, so an exon or the
-            // intron line still wins where the bands overlap and the popup keeps
-            // anchoring to the feature rather than to empty row.
-            if (!candidate && mouseX >= geneLeft - 2 && mouseX <= geneRight + 2) {
-                const rowTop = txY
-                const rowBottom = txY + transcriptLayoutMetrics.rowPitch - transcriptLayoutMetrics.rowGap
-                if (mouseY >= rowTop && mouseY <= rowBottom) {
-                    candidate = {
-                        rank: 2,
-                        dist: Math.abs(mouseX - ((geneLeft + geneRight) / 2)),
-                        // Anchor the popup on the transcript even when the pointer
-                        // is out past its end, so the arrow never points at nothing.
-                        anchorCanvasX: clamp(mouseX, txLeft, txRight),
-                        anchorCanvasY: midY,
-                        transcript: tx,
-                    }
-                }
-            }
-
-            if (!candidate) continue
-            if (candidate.rank < bestRank || (candidate.rank === bestRank && candidate.dist < bestDist)) {
-                bestRank = candidate.rank
-                bestDist = candidate.dist
-                best = {
-                    gene,
-                    transcript: candidate.transcript,
-                    anchorCanvasX: candidate.anchorCanvasX,
-                    anchorCanvasY: candidate.anchorCanvasY,
-                }
-            }
-        }
-
-        return best
-    }, [
+    const getSelectedGeneTranscriptHit = useCallback((...args) => findSelectedGeneTranscriptHit({
+        genomicToScreen,
+        getDisplayTranscriptRows,
+        isTranscriptCompressionActive,
+        layout,
+        selectedGeneLayoutEntry,
+        shouldForceGeneBlockView,
+        transcriptCache,
+        transcriptLayoutMetrics,
+    }, ...args), [
         selectedGeneLayoutEntry,
         shouldForceGeneBlockView,
         genomicToScreen,
@@ -6810,322 +4373,19 @@ function GenomeBrowser({
         }
     }, [isPrimaryPanel, getVcfBlockLevel, bpPerPx])
 
-    const getCustomTrackHoverInTrackFrame = useCallback((mouseX, mouseY, clientX, clientY) => {
-        const left = LHS_WIDTH + 2
-        const right = viewWidth - 2
-        for (const [trackId, trackLayout] of Object.entries(layout.customTrackLayouts)) {
-            const track = customTracksById.get(trackId)
-            if (!track || !track.visible) continue
-            const data = customTrackData[trackId]
-            const trackType = track.type || 'bigwig'
-            const rawRenderMode = track.renderMode || DEFAULT_CUSTOM_TRACK_RENDER_MODE
-            const renderMode = trackType === 'bigwig'
-                ? normalizeBigWigDisplayMode(rawRenderMode, normalizeBigWigSettings(track?.bigwigSettings || track?.bigwig_settings).data_type)
-                : trackType === 'vcf'
-                    ? normalizeVcfDisplayMode(rawRenderMode)
-                    : rawRenderMode
-            const { top, bottom, plotHeight } = getCustomTrackGeometry(trackLayout, renderMode, trackType, data)
-            // For adp_detail tracks expand Y so indel markers that extend beyond the track bar are reachable
-            const yExpand = (data?.mode === 'adp_detail' && bpPerPx <= 1) ? 80 : 0
-            if (mouseX < left || mouseX > right || mouseY < top - yExpand || mouseY > bottom + yExpand) continue
-
-            // ── Adaptive-like VCF (density/block) — hover highlight only, no tooltip ─────────────
-            if (track.type === 'vcf' && isVcfAdaptiveLikeMode(renderMode)) {
-                const plotHeight = bottom - top
-                const curSpan = Math.max(1, viewEnd - viewStart)
-                const genomicPos = viewStart + ((mouseX - left) / Math.max(1, right - left)) * curSpan
-                const blockGToX = (g) => left + ((g - viewStart) / Math.max(1, curSpan)) * (right - left)
-                if (data?.mode === 'adp_detail') {
-                    const barH = Math.max(5, Math.floor(plotHeight * 0.13))
-                    const barY = top + Math.floor((plotHeight - barH) / 2)
-                    const variants = Array.isArray(data?.variants) ? data.variants : []
-
-                    // ── Check 1: bar hit (tight Y band) ──────────────────────────────
-                    if (mouseY >= barY - 8 && mouseY <= barY + barH + 8) {
-                        // Prefer narrowest match so SNVs win over large spanning deletions
-                        let bestMatch = null
-                        let bestSpan = Infinity
-	                        for (const v of variants) {
-	                            const lvtype = localVcfType(v)
-	                            const layoutInfo = getVcfDetailVariantLayout(v, lvtype)
-	                            const refStart = lvtype === 'del'
-	                                ? layoutInfo.anchorStart
-	                                : layoutInfo.refStart
-	                            const refEnd = lvtype === 'del'
-	                                ? Math.max(layoutInfo.anchorEnd, layoutInfo.refEnd)
-	                                : layoutInfo.refEnd
-	                            if (genomicPos < refStart - 0.5 || genomicPos > refEnd + 0.5) continue
-	                            // Pixel proximity — cursor must be near the rendered block
-	                            const vx1 = blockGToX(refStart)
-                            const vx2 = blockGToX(refEnd)
-                            const pxMargin = Math.max(4, Math.min(10, 6 / Math.max(0.01, bpPerPx)))
-                            if (mouseX < vx1 - pxMargin || mouseX > vx2 + pxMargin) continue
-                            const span = refEnd - refStart
-                            if (span < bestSpan) { bestSpan = span; bestMatch = v }
-                        }
-                        if (bestMatch) {
-                            return { hoverBlock: { trackId, start: Number(bestMatch.pos), end: Number(bestMatch.end ?? bestMatch.pos), variant: bestMatch } }
-                        }
-                    }
-
-                    // ── Check 2: indel dot / label hit ───────────────────────────────
-                    if (bpPerPx <= 1) {
-                        const lineBaseLen = bpPerPx <= 0.5 ? 29 : 22
-                        const indelHits = []
-                        const seenHit = new Set()
-	                        for (const v of variants) {
-	                            const vtype = localVcfType(v)
-	                            if (vtype === 'snv') continue
-	                            const layoutInfo = getVcfDetailVariantLayout(v, vtype)
-	                            const vpos = layoutInfo.vpos
-	                            if (!Number.isFinite(vpos)) continue
-	                            const key = `${vtype}:${vpos}`
-	                            if (seenHit.has(key)) continue
-	                            seenHit.add(key)
-	                            const vend = Number(v?.end ?? v?.pos)
-	                            const xGenomic = layoutInfo.markerXGenomic
-	                            const x = blockGToX(Math.max(viewStart, xGenomic))
-	                            const nBars = getVcfAltAlleleCount(v)
-                            const primaryDir = vtype === 'ins' ? 'up' : 'down'
-                            const altDir = primaryDir === 'up' ? 'down' : 'up'
-                            let dir = primaryDir
-                            let level = 0
-                            if (bpPerPx <= 0.5) {
-                                const MAX_LEVEL = 3
-                                let lP = 0, lA = 0
-                                for (const existing of indelHits) {
-                                    const leftNBars = existing.x <= x ? existing.nBars : nBars
-                                    const inProximity = Math.abs(existing.x - x) < Math.max(50, 7 + leftNBars * 14 + 5)
-                                    if (inProximity) {
-                                        if (existing.dir === primaryDir) lP = Math.max(lP, existing.level + 1)
-                                        if (existing.dir === altDir)    lA = Math.max(lA, existing.level + 1)
-                                    }
-                                }
-                                lP = Math.min(lP, MAX_LEVEL)
-                                lA = Math.min(lA, MAX_LEVEL)
-                                if (lA < lP) { dir = altDir; level = lA }
-                                else          { dir = primaryDir; level = lP }
-                            }
-                            indelHits.push({ v, vpos, vend, x, dir, level, nBars })
-                        }
-                        for (const { v, vpos, vend, x, dir, level } of indelHits) {
-                            const lineLen = lineBaseLen + level * 18
-                            const dotY = dir === 'up' ? barY - lineLen : barY + barH + lineLen
-                            const hitR = 10
-                            if (mouseX >= x - hitR && mouseX <= x + hitR && mouseY >= dotY - hitR && mouseY <= dotY + hitR) {
-                                return { hoverBlock: { trackId, start: vpos, end: vend, variant: v } }
-                            }
-                        }
-                    }
-
-                    return null
-                }
-                // Block mode (L0–L3) — gate on actual bar Y bounds
-                const barH = Math.max(2, Math.floor(plotHeight * 0.12))
-                const barY = top + Math.max(2, Math.floor((plotHeight - barH) * 0.2))
-                if (mouseY < barY - 6 || mouseY > barY + barH + 6) return null
-                const spans = Array.isArray(data?.block_spans) ? data.block_spans : []
-                for (const span of spans) {
-                    if (genomicPos >= span.start && genomicPos < span.end) {
-                        return { hoverBlock: { trackId, start: span.start, end: span.end } }
-                    }
-                }
-                return null
-            }
-
-            if (track.type === 'splice_junctions' && Array.isArray(data?.junctions)) {
-                const curSpan = Math.max(1, viewEnd - viewStart)
-                const genomicPos = viewStart + ((mouseX - left) / Math.max(1, right - left)) * curSpan
-                const lodMode = getSpliceLodMode(trackId, bpPerPx, renderMode)
-                if (lodMode === 'blocks') {
-                    return null
-                }
-
-                const baselineY = bottom - 4
-                const minTopY = top + 1
-                const lanePitch = lodMode === 'detail' ? 10 : 8
-                const capByHeight = Math.max(1, Math.floor((baselineY - minTopY) / lanePitch))
-                const maxVisibleLanes = Math.max(1, Math.min(capByHeight, Number(data?.layout?.max_visible_lanes || capByHeight)))
-                const spliceCandidates = []
-                for (const j of data.junctions) {
-                    const s = Number(j?.start)
-                    const e = Number(j?.end)
-                    if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
-                    if (genomicPos < s || genomicPos > e) continue
-                    const lane = Math.max(0, Number(j?.lane || 0))
-                    if (lane >= maxVisibleLanes) continue
-                    const x1 = left + ((s - viewStart) / Math.max(1, curSpan)) * (right - left)
-                    const x2 = left + ((e - viewStart) / Math.max(1, curSpan)) * (right - left)
-                    const widthPx = Math.abs(x2 - x1)
-                    if (widthPx < 1) continue
-                    const key = spliceJunctionKey(j)
-                    const mapKey = `${trackId}|${key}`
-                    spliceCandidates.push({
-                        ...j,
-                        key,
-                        x1,
-                        x2,
-                        widthPx,
-                        manual_lift: Number(spliceArcLiftOffsets[mapKey] || 0),
-                    })
-                }
-                const laidOut = annotateSpliceSimilarityLift(spliceCandidates, lodMode)
-                let best = null
-                let bestDist = Infinity
-                for (const j of laidOut) {
-                    const lane = Math.max(0, Number(j?.lane || 0))
-                    const extraLift = Number(j?.manual_lift || 0) + Number(j?.similarity_lift || 0)
-                    const peakY = computeSplicePeakY({
-                        baselineY,
-                        minTopY,
-                        lane,
-                        lanePitch,
-                        widthPx: j.widthPx,
-                        lodMode,
-                        extraLift,
-                    })
-                    const controls = getSpliceBezierControls(j.x1, j.x2, peakY)
-                    const t = clamp((mouseX - j.x1) / Math.max(1e-6, j.x2 - j.x1), 0, 1)
-                    const yOnCurve = cubicPointAt(baselineY, controls.c1y, controls.c2y, baselineY, t)
-                    const dist = Math.abs(mouseY - yOnCurve)
-                    const threshold = 6 + Math.min(8, Math.log2(1 + (Number(j?.n_total ?? j?.reads ?? 0) || 0)))
-                    if (dist <= threshold && dist < bestDist) {
-                        bestDist = dist
-                        best = {
-                            ...j,
-                            _hover_x: j.x1 + (j.x2 - j.x1) * 0.5,
-                            _hover_y: yOnCurve,
-                        }
-                    }
-                }
-                if (best) {
-                    return {
-                        hoverSplice: {
-                            trackId,
-                            junction: best,
-                            anchorCanvasX: best._hover_x,
-                            anchorCanvasY: best._hover_y,
-                        },
-                    }
-                }
-                return null
-            }
-
-            if (isIntervalTrackType(track.type) && data?.mode === 'bigbed_detail' && Array.isArray(data?.features)) {
-                const curSpan = Math.max(1, viewEnd - viewStart)
-                const lanePitch = bigBedLanePitch(data?.labelled)
-                const exonH = BIGBED_DETAIL_EXON_HEIGHT
-                const laneBaseY = top + BIGBED_DETAIL_LANE_TOP_PAD
-                const maxVisibleLanes = getBigBedLaneCapacity(plotHeight, lanePitch)
-                let best = null
-                let bestDist = Infinity
-                let bestRank = Infinity
-                for (const feature of data.features) {
-                    const s = Number(feature?.start)
-                    const e = Number(feature?.end)
-                    if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
-                    if (e <= viewStart || s >= viewEnd) continue
-                    const lane = Math.max(0, Number(feature?._lane ?? feature?.lane ?? 0))
-                    if (lane >= maxVisibleLanes) continue
-                    const yMid = laneBaseY + lane * lanePitch + (exonH / 2) + 0.5
-                    const drawX1 = left + ((s - viewStart) / curSpan) * (right - left)
-                    const drawX2 = left + ((e - viewStart) / curSpan) * (right - left)
-                    const txLeft = Math.min(drawX1, drawX2)
-                    const txRight = Math.max(drawX1, drawX2)
-                    const key = bigBedFeatureKey(feature)
-
-                    const isTranscript = feature?._render_kind === 'transcript'
-                        && feature?._structure_valid === true
-                        && Array.isArray(feature?._exon_blocks)
-                        && feature._exon_blocks.length > 0
-
-                    let candidate = null
-                    if (isTranscript) {
-                        if (mouseY >= (yMid - exonH / 2 - 3) && mouseY <= (yMid + exonH / 2 + 3)) {
-                            for (const exon of feature._exon_blocks) {
-                                const es = Number(exon?.start)
-                                const ee = Number(exon?.end)
-                                if (!Number.isFinite(es) || !Number.isFinite(ee) || ee <= es) continue
-                                if (ee <= viewStart || es >= viewEnd) continue
-                                const ex1 = left + ((es - viewStart) / curSpan) * (right - left)
-                                const ex2 = left + ((ee - viewStart) / curSpan) * (right - left)
-                                const exonLeft = Math.min(ex1, ex2)
-                                const exonRight = Math.max(ex1, ex2)
-                                if (mouseX < exonLeft - 2 || mouseX > exonRight + 2) continue
-                                const centerX = (exonLeft + exonRight) / 2
-                                const dist = Math.abs(mouseX - centerX)
-                                candidate = {
-                                    rank: 0,
-                                    dist,
-                                    anchorCanvasX: centerX,
-                                    anchorCanvasY: yMid,
-                                }
-                                break
-                            }
-                        }
-                        if (!candidate && mouseY >= yMid - 4 && mouseY <= yMid + 4 && mouseX >= txLeft - 2 && mouseX <= txRight + 2) {
-                            candidate = {
-                                rank: 1,
-                                dist: Math.abs(mouseX - ((txLeft + txRight) / 2)),
-                                anchorCanvasX: (txLeft + txRight) / 2,
-                                anchorCanvasY: yMid,
-                            }
-                        }
-                    }
-
-                    if (!candidate) {
-                        if (mouseY < yMid - 6 || mouseY > yMid + 6) continue
-                        if (mouseX < txLeft - 2 || mouseX > txRight + 2) continue
-                        candidate = {
-                            rank: 2,
-                            dist: Math.abs(mouseX - ((txLeft + txRight) / 2)),
-                            anchorCanvasX: (txLeft + txRight) / 2,
-                            anchorCanvasY: yMid,
-                        }
-                    }
-
-                    if (!candidate) continue
-                    if (candidate.rank < bestRank || (candidate.rank === bestRank && candidate.dist < bestDist)) {
-                        bestRank = candidate.rank
-                        bestDist = candidate.dist
-                        best = {
-                            feature,
-                            key,
-                            anchorCanvasX: candidate.anchorCanvasX,
-                            anchorCanvasY: candidate.anchorCanvasY,
-                        }
-                    }
-                }
-                if (best) {
-                    return {
-                        hoverBigBed: {
-                            trackId,
-                            key: best.key,
-                            feature: best.feature,
-                            anchorCanvasX: best.anchorCanvasX,
-                            anchorCanvasY: best.anchorCanvasY,
-                        },
-                    }
-                }
-                return null
-            }
-
-            // ── Signal / density bins ────────────────────────────────────────
-            const bins = data?.bins
-            if (!Array.isArray(bins) || bins.length === 0) return null
-
-            const binWidth = (right - left) / bins.length
-            const idx = clamp(Math.floor((mouseX - left) / Math.max(1e-9, binWidth)), 0, bins.length - 1)
-            const value = bins[idx]
-            return {
-                x: clientX,
-                y: clientY,
-                hoverKey: `${trackId}|${idx}`,
-                text: `${track.label || 'Custom track'}: ${formatSignalValueExact(value)}`,
-            }
-        }
-        return null
-    }, [layout, customTracksById, customTrackData, viewWidth, viewStart, viewEnd, bpPerPx, formatSignalValueExact, getCustomTrackGeometry, getSpliceLodMode, spliceArcLiftOffsets])
+    const getCustomTrackHoverInTrackFrame = useCallback((...args) => findCustomTrackHover({
+        bpPerPx,
+        customTrackData,
+        customTracksById,
+        formatSignalValueExact,
+        getCustomTrackGeometry,
+        getSpliceLodMode,
+        layout,
+        spliceArcLiftOffsets,
+        viewEnd,
+        viewStart,
+        viewWidth,
+    }, ...args), [layout, customTracksById, customTrackData, viewWidth, viewStart, viewEnd, bpPerPx, formatSignalValueExact, getCustomTrackGeometry, getSpliceLodMode, spliceArcLiftOffsets])
 
     // Custom tracks are drawn in genomic order and mirrored when the panel is flipped
     // (see beginCanvasMirror), so hit-testing runs in that same unmirrored frame: the
@@ -7619,179 +4879,57 @@ function GenomeBrowser({
     }, [showSequenceTrack, effectiveHiddenStrands, layout, viewWidth, viewEnd, viewStart, viewSpan,
         isAligned, alignData, sequence, seqRange, isFlipped, overlayToGenomic, getBasePixelBounds])
 
-    const handleMouseMove = useCallback((e) => {
-        const canvas = canvasRef.current
-
-        if (canvas && isSelectingRect) {
-            dismissCustomTrackTooltip()
-            updateSelectionRectFromEvent(e)
-            return
-        }
-
-        if (canvas && !isDraggingRef.current) {
-            const rect = canvas.getBoundingClientRect()
-            const mouseX = e.clientX - rect.left
-            const mouseY = e.clientY - rect.top
-
-            // Sidebar hovering tooltip
-            if (mouseX <= 40) {
-                const trackId = getTrackAtY(mouseY)
-                const tooltip = trackId ? getTrackTooltip(trackId) : ''
-                setSidebarTooltip(tooltip || null)
-            } else {
-                setSidebarTooltip(null)
-            }
-
-            // Hovering a transcript on the canvas highlights the same row in the
-            // focus drawer, so the two lists point at each other both ways.
-            if (focusViewGeneId) {
-                const transcriptHit = getSelectedGeneTranscriptHit(mouseX, mouseY)
-                const nextHoverId = String(transcriptHit?.transcript?.id || '')
-                if (nextHoverId !== String(focusTranscriptView?.hoverId || '')) {
-                    onFocusTranscriptViewChangeRef.current?.({ hoverId: nextHoverId || null })
-                }
-            }
-
-            const customHover = getCustomTrackHover(mouseX, mouseY, e.clientX, e.clientY)
-            // Strip internal hover fields before passing to tooltip state
-            const { hoverBlock: nextBlock, hoverSplice: nextSplice, hoverBigBed: nextBigBed, ...tooltipOnly } = customHover || {}
-            // Only show tooltip after cursor dwell on a plotted signal region.
-            const tooltipPayload = customHover && tooltipOnly.text ? tooltipOnly : null
-            if (draggingTrack) {
-                dismissCustomTrackTooltip()
-            } else {
-                queueCustomTrackTooltip(tooltipPayload, mouseX, mouseY, e.clientX, e.clientY)
-            }
-            // Only call setState when the hovered block actually changes (avoids churn)
-            const prev = hoveredVcfBlockRef.current
-            const blockChanged = nextBlock?.trackId !== prev?.trackId || nextBlock?.start !== prev?.start
-            if (blockChanged) {
-                hoveredVcfBlockRef.current = nextBlock ?? null
-                setHoveredVcfBlock(nextBlock ?? null)
-            }
-            const nextSpliceKey = nextSplice?.junction
-                ? `${nextSplice.trackId}|${spliceJunctionKey(nextSplice.junction)}`
-                : ''
-            if (hoveredSpliceRef.current !== nextSpliceKey) {
-                hoveredSpliceRef.current = nextSpliceKey
-                setHoveredSpliceJunction(nextSplice?.junction ? {
-                    trackId: nextSplice.trackId,
-                    key: spliceJunctionKey(nextSplice.junction),
-                    junction: nextSplice.junction,
-                } : null)
-            }
-            const nextBigBedKey = nextBigBed?.key
-                ? `${nextBigBed.trackId}|${nextBigBed.key}`
-                : ''
-            if (hoveredBigBedRef.current !== nextBigBedKey) {
-                hoveredBigBedRef.current = nextBigBedKey
-                setHoveredBigBedFeature(nextBigBed?.feature ? {
-                    trackId: nextBigBed.trackId,
-                    key: nextBigBed.key,
-                    feature: nextBigBed.feature,
-                    anchorCanvasX: nextBigBed.anchorCanvasX,
-                    anchorCanvasY: nextBigBed.anchorCanvasY,
-                } : null)
-            }
-
-            // Sequence track base hover
-            const seqBase = getSeqBaseAtMouse(mouseX, mouseY)
-            if (seqBase?.bp !== hoveredSeqBaseRef.current?.bp) {
-                hoveredSeqBaseRef.current = seqBase
-                setHoveredSeqBase(seqBase)
-            }
-            // Dismiss base popup when cursor leaves the clicked base
-            if (clickedSeqBase && seqBase?.bp !== clickedSeqBase.bp) {
-                setClickedSeqBase(null)
-            }
-
-            if (clickedGeneTranscript) {
-                const transcriptHit = getSelectedGeneTranscriptHit(mouseX, mouseY)
-                const isSameTranscript = Boolean(
-                    transcriptHit?.transcript?.id
-                    && transcriptHit.transcript.id === clickedGeneTranscript.transcriptId
-                )
-                if (isSameTranscript) {
-                    clearTranscriptPopupDismissTimer()
-                } else if (!transcriptPopupHoverRef.current) {
-                    scheduleTranscriptPopupDismiss()
-                }
-            }
-        }
-
-        if (!isDraggingRef.current) return
-
-        if (spliceArcDragRef.current) {
-            const drag = spliceArcDragRef.current
-            const mapKey = `${drag.trackId}|${drag.key}`
-            const dy = drag.startClientY - e.clientY
-            if (Math.abs(dy) > 2) {
-                dragAxisRef.current = 'splice'
-                suppressNextClickRef.current = true
-            }
-            const nextLift = clamp(Number(drag.initialLift || 0) + dy, -48, 210)
-            setSpliceArcLiftOffsets((prev) => {
-                const cur = Number(prev[mapKey] || 0)
-                if (Math.abs(cur - nextLift) < 0.15) return prev
-                return { ...prev, [mapKey]: nextLift }
-            })
-            velocityRef.current = 0
-            return
-        }
-
-        dismissCustomTrackTooltip()
-        if (hoveredSpliceRef.current) {
-            hoveredSpliceRef.current = null
-            setHoveredSpliceJunction(null)
-        }
-        if (hoveredBigBedRef.current) {
-            hoveredBigBedRef.current = null
-            setHoveredBigBedFeature(null)
-        }
-        const dx = dragStartXRef.current - e.clientX
-        const dy = dragStartYRef.current - e.clientY
-
-        // Lock to an axis once movement exceeds threshold
-        if (!dragAxisRef.current) {
-            const axis = resolveDragAxis({
-                dx,
-                dy,
-                canScrollPage: canVerticallyScrollContainer(),
-                currentAxis: null,
-            })
-            if (axis) {
-                dragAxisRef.current = axis
-                suppressNextClickRef.current = true
-            }
-        }
-
-        if (dragAxisRef.current === 'x' || !dragAxisRef.current) {
-            const bpDelta = viewStartRef.current - dragViewStartRef.current
-            const currentSpan = viewEndRef.current - viewStartRef.current
-            const currentPerPx = currentSpan / Math.max(1, viewWidth - LHS_WIDTH)
-            const pxPanApplied = isFlipped ? -bpDelta / currentPerPx : bpDelta / currentPerPx
-            captureAdaptiveScrollAnchor()
-            panByPx(dx - pxPanApplied)
-        }
-
-        if (dragAxisRef.current === 'y' && scrollTargetRef.current) {
-            // 1:1 grab-and-drag, matching the horizontal pan: the content follows
-            // the cursor, so dragging down reveals what is above.
-            scrollTargetRef.current.scrollTop = dragScrollTopRef.current + dy
-        }
-
-        // Track velocity (only for horizontal momentum). Smoothed over a couple of
-        // samples and kept at true drag speed — amplifying it made the release
-        // overshoot where the cursor actually stopped.
-        const now = performance.now()
-        const dt = now - lastTimeRef.current
-        if (dt > 0 && dt < 100) {
-            const samplePxPerFrame = ((lastPosRef.current - e.clientX) / dt) * 16
-            velocityRef.current = (velocityRef.current * 0.4) + (samplePxPerFrame * 0.6)
-        }
-        lastPosRef.current = e.clientX
-        lastTimeRef.current = now
-    }, [viewWidth, panByPx, layout, isFlipped, isSelectingRect, updateSelectionRectFromEvent, getTrackAtY, getTrackTooltip, getCustomTrackHover, getSeqBaseAtMouse, clickedSeqBase, dismissCustomTrackTooltip, queueCustomTrackTooltip, draggingTrack, clickedGeneTranscript, getSelectedGeneTranscriptHit, focusViewGeneId, focusTranscriptView?.hoverId, clearTranscriptPopupDismissTimer, scheduleTranscriptPopupDismiss, canVerticallyScrollContainer, captureAdaptiveScrollAnchor])
+    const handleMouseMove = useCallback((...args) => handleBrowserMouseMove({
+        canVerticallyScrollContainer,
+        canvasRef,
+        captureAdaptiveScrollAnchor,
+        clearTranscriptPopupDismissTimer,
+        clickedGeneTranscript,
+        clickedSeqBase,
+        dismissCustomTrackTooltip,
+        dragAxisRef,
+        dragScrollTopRef,
+        dragStartXRef,
+        dragStartYRef,
+        dragViewStartRef,
+        draggingTrack,
+        focusTranscriptView,
+        focusViewGeneId,
+        getCustomTrackHover,
+        getSelectedGeneTranscriptHit,
+        getSeqBaseAtMouse,
+        getTrackAtY,
+        getTrackTooltip,
+        hoveredBigBedRef,
+        hoveredSeqBaseRef,
+        hoveredSpliceRef,
+        hoveredVcfBlockRef,
+        isDraggingRef,
+        isFlipped,
+        isSelectingRect,
+        lastPosRef,
+        lastTimeRef,
+        onFocusTranscriptViewChangeRef,
+        panByPx,
+        queueCustomTrackTooltip,
+        scheduleTranscriptPopupDismiss,
+        scrollTargetRef,
+        setClickedSeqBase,
+        setHoveredBigBedFeature,
+        setHoveredSeqBase,
+        setHoveredSpliceJunction,
+        setHoveredVcfBlock,
+        setSidebarTooltip,
+        setSpliceArcLiftOffsets,
+        spliceArcDragRef,
+        suppressNextClickRef,
+        transcriptPopupHoverRef,
+        updateSelectionRectFromEvent,
+        velocityRef,
+        viewEndRef,
+        viewStartRef,
+        viewWidth,
+    }, ...args), [viewWidth, panByPx, layout, isFlipped, isSelectingRect, updateSelectionRectFromEvent, getTrackAtY, getTrackTooltip, getCustomTrackHover, getSeqBaseAtMouse, clickedSeqBase, dismissCustomTrackTooltip, queueCustomTrackTooltip, draggingTrack, clickedGeneTranscript, getSelectedGeneTranscriptHit, focusViewGeneId, focusTranscriptView?.hoverId, clearTranscriptPopupDismissTimer, scheduleTranscriptPopupDismiss, canVerticallyScrollContainer, captureAdaptiveScrollAnchor])
 
     const handleMouseUp = useCallback(() => {
         if (isSelectingRect) {
@@ -8051,223 +5189,53 @@ function GenomeBrowser({
 
     // ============ Click Handler (gene selection & pill expansion) ============
 
-    const handleCanvasClick = useCallback((e) => {
-        if (suppressNextClickRef.current) {
-            suppressNextClickRef.current = false
-            return
-        }
-        if (isBoxSelectMode || isSelectingRect) return
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const rect = canvas.getBoundingClientRect()
-        const clickX = e.clientX - rect.left
-        const clickY = e.clientY - rect.top
-
-        // Intercept sidebar (handled in mousedown)
-        if (clickX <= LHS_WIDTH) return
-
-        const openSelectedTranscriptPopup = (hit) => {
-            if (!hit?.transcript) return
-            // With a transcript already pinned in the drawer, clicking another
-            // row in the track moves the pin to it. Only then: with nothing
-            // pinned, a click means what it always meant and just opens the
-            // popup.
-            const currentPin = String(focusTranscriptView?.pinnedId || '').trim()
-            const clickedId = String(hit.transcript.id || '')
-            if (currentPin && clickedId && currentPin !== clickedId) {
-                onFocusTranscriptViewChangeRef.current?.({
-                    pinnedId: clickedId,
-                    hoverId: null,
-                    ghostId: null,
-                })
-            }
-            clearTranscriptPopupDismissTimer()
-            transcriptPopupHoverRef.current = false
-            setClickedGeneTranscript((prev) => {
-                const nextGeneId = hit.gene?.id || ''
-                const nextTranscriptId = String(hit.transcript.id || '')
-                const isSameTranscript = String(prev?.geneId || '') === nextGeneId
-                    && String(prev?.transcriptId || '') === nextTranscriptId
-                if (isSameTranscript) return null
-                return {
-                    geneId: nextGeneId,
-                    transcriptId: nextTranscriptId,
-                    transcript: hit.transcript,
-                    arrowTargetX: rect.left + hit.anchorCanvasX,
-                    arrowTargetY: rect.top + hit.anchorCanvasY,
-                }
-            })
-        }
-        const selectedTranscriptHit = getSelectedGeneTranscriptHit(clickX, clickY)
-
-        // Check if click is on a gene
-        for (const gene of genes) {
-            if (isGeneHiddenFromTracks(gene)) continue
-            if (gene.strand === '+' && effectiveHiddenStrands.forward) continue
-            if (gene.strand === '-' && effectiveHiddenStrands.reverse) continue
-
-            const rawGx1 = genomicToScreen(gene.start)
-            const rawGx2 = genomicToScreen(gene.end)
-            const gx1 = Math.min(rawGx1, rawGx2)
-            const gx2 = Math.max(rawGx1, rawGx2)
-
-            if (clickX >= gx1 - 2 && clickX <= gx2 + 4) {
-                const isForward = gene.strand === '+'
-                const trackY = isForward ? layout.FORWARD_Y : layout.REVERSE_Y
-
-                const geneWidth = gx2 - gx1
-                const rowCount = getGeneRowCountForWidth(gene, geneWidth)
-
-                const trackPadding = gene.strand === '+' ? layout.fwdPadding : layout.revPadding
-                const baseGeneY = trackY + trackPadding + ((gene._row || 0) * transcriptLayoutMetrics.rowPitch)
-                const totalGeneHeight = getGeneTotalHeight(rowCount)
-
-                if (clickY >= baseGeneY && clickY <= baseGeneY + totalGeneHeight) {
-                    const isSameGene = !!(selectedGene && selectedGene.id === gene.id)
-                    if (isSameGene) {
-                        if (selectedTranscriptHit?.gene?.id === gene.id) {
-                            openSelectedTranscriptPopup(selectedTranscriptHit)
-                            setClickedVcfVariant(null)
-                            setClickedBigBedFeature(null)
-                            setClickedSpliceJunction(null)
-                            setClickedSeqBase(null)
-                            return
-                        }
-                        dismissClickedGeneTranscript()
-                        setSelectedGene(null)
-                        return
-                    }
-
-                    dismissClickedGeneTranscript()
-                    pendingVerticalCenterGeneIdRef.current = gene.id
-                    setSelectedGene(gene)
-                    trackAchievement('browser.geneFocus')
-
-                    const selectedCoords = getSelectedGeneCoordsForView(gene, isAligned, alignData, genomicToOverlay)
-                    if (selectedCoords) {
-                        const framed = frameFocusRange(selectedCoords.start, selectedCoords.end, { gainingFocus: true })
-                        animateToView(framed.start, framed.end, 700)
-                    }
-                    return
-                }
-            }
-        }
-
-        // Check if click is on a sequence track base
-        const seqBaseHit = getSeqBaseAtMouse(clickX, clickY)
-        if (seqBaseHit) {
-            const canvas = canvasRef.current
-            const rect = canvas ? canvas.getBoundingClientRect() : { left: 0, top: 0 }
-            const popupX = rect.left + (seqBaseHit.bxL + seqBaseHit.bxR) / 2
-            const popupY = rect.top + seqBaseHit.seqBoxT + seqBaseHit.seqBoxH + 6
-            setClickedSeqBase(prev =>
-                prev?.bp === seqBaseHit.bp ? null : { ...seqBaseHit, popupX, popupY }
-            )
-            setClickedVcfVariant(null)
-            setClickedSpliceJunction(null)
-            dismissClickedGeneTranscript()
-            return
-        }
-
-        const customHover = getCustomTrackHover(clickX, clickY, e.clientX, e.clientY)
-
-        // Check if click is on an adaptive VCF variant (adp_detail mode)
-        if (customHover?.hoverBlock?.variant) {
-            // Toggle: clicking same variant again closes popup
-            const v = customHover.hoverBlock.variant
-            // Compute screen anchor for the popup arrow (left edge + vertical centre of feature)
-            const canvas = canvasRef.current
-            const rect = canvas ? canvas.getBoundingClientRect() : { left: 0, top: 0 }
-            const trackId = customHover.hoverBlock.trackId
-            const trackLayout = layout.customTrackLayouts[trackId]
-            const track = customTracksById.get(trackId)
-            const trackType = track?.type || 'bigwig'
-            const rawRenderMode = track?.renderMode || DEFAULT_CUSTOM_TRACK_RENDER_MODE
-            const renderMode = trackType === 'bigwig'
-                ? normalizeBigWigDisplayMode(rawRenderMode, normalizeBigWigSettings(track?.bigwigSettings || track?.bigwig_settings).data_type)
-                : trackType === 'vcf'
-                    ? normalizeVcfDisplayMode(rawRenderMode)
-                    : rawRenderMode
-            const { top: tTop, bottom: tBot } = getCustomTrackGeometry(trackLayout, renderMode, trackType, customTrackData?.[trackId] || null)
-            const tPlotH = tBot - tTop
-            const tBarH = Math.max(5, Math.floor(tPlotH * 0.13))
-            const tBarY = tTop + Math.floor((tPlotH - tBarH) / 2)
-            const cLeft = LHS_WIDTH + 2
-            const cRight = viewWidth - 2
-            const curSpan = Math.max(1, viewEnd - viewStart)
-            const blockGToX = (g) => cLeft + ((g - viewStart) / curSpan) * (cRight - cLeft)
-            const vtype = localVcfType(v)
-            const layoutInfo = getVcfDetailVariantLayout(v, vtype)
-            let arrowTargetX, arrowTargetY
-            if (vtype !== 'snv') {
-                // Circle marker: X from dot centre, Y approximated from click
-                const dotCanvasX = blockGToX(layoutInfo.markerXGenomic)
-                arrowTargetX = rect.left + dotCanvasX - 5   // left edge of dot (r ≈ 5)
-                arrowTargetY = e.clientY
-            } else {
-                // SNV block: left pixel edge and vertical centre
-                arrowTargetX = rect.left + blockGToX(layoutInfo.vpos)
-                arrowTargetY = rect.top + tBarY + tBarH / 2
-            }
-            setClickedVcfVariant((prev) =>
-                prev?.variant?.pos === v.pos && prev?.variant?.type === v.type ? null
-                    : { variant: v, chrom: selectedChrom, arrowTargetX, arrowTargetY }
-            )
-            setClickedBigBedFeature(null)
-            setClickedSpliceJunction(null)
-            setClickedSeqBase(null)
-            dismissClickedGeneTranscript()
-            return
-        }
-
-        if (customHover?.hoverBigBed?.feature) {
-            const hit = customHover.hoverBigBed
-            const canvas = canvasRef.current
-            const rect = canvas ? canvas.getBoundingClientRect() : { left: 0, top: 0 }
-            setClickedBigBedFeature((prev) => {
-                if (prev?.trackId === hit.trackId && bigBedFeatureKey(prev.feature) === bigBedFeatureKey(hit.feature)) {
-                    return null
-                }
-                return {
-                    trackId: hit.trackId,
-                    feature: hit.feature,
-                    popupX: rect.left + hit.anchorCanvasX,
-                    popupY: rect.top + hit.anchorCanvasY,
-                }
-            })
-            setClickedVcfVariant(null)
-            setClickedSpliceJunction(null)
-            setClickedSeqBase(null)
-            dismissClickedGeneTranscript()
-            return
-        }
-
-        if (customHover?.hoverSplice?.junction) {
-            const hit = customHover.hoverSplice
-            setClickedSpliceJunction({ trackId: hit.trackId, junction: hit.junction, popupX: e.clientX, popupY: e.clientY })
-            setClickedVcfVariant(null)
-            setClickedBigBedFeature(null)
-            setClickedSeqBase(null)
-            dismissClickedGeneTranscript()
-            return
-        }
-
-        // Click elsewhere — close any open popup
-        if (clickedVcfVariant || clickedBigBedFeature || clickedSeqBase || clickedSpliceJunction || clickedGeneTranscript) {
-            setClickedVcfVariant(null)
-            setClickedBigBedFeature(null)
-            setClickedSeqBase(null)
-            setClickedSpliceJunction(null)
-            dismissClickedGeneTranscript()
-            return
-        }
-
-        // Any background click in the drawable browser region clears the focused gene.
-        if (selectedGene) {
-            dismissClickedGeneTranscript()
-            setSelectedGene(null)
-        }
-    }, [
+    const handleCanvasClick = useCallback((...args) => handleBrowserCanvasClick({
+        alignData,
+        animateToView,
+        canvasRef,
+        clearTranscriptPopupDismissTimer,
+        clickedBigBedFeature,
+        clickedGeneTranscript,
+        clickedSeqBase,
+        clickedSpliceJunction,
+        clickedVcfVariant,
+        customTrackData,
+        customTracksById,
+        dismissClickedGeneTranscript,
+        effectiveHiddenStrands,
+        focusTranscriptView,
+        frameFocusRange,
+        genes,
+        genomicToOverlay,
+        genomicToScreen,
+        getCustomTrackGeometry,
+        getCustomTrackHover,
+        getGeneRowCountForWidth,
+        getGeneTotalHeight,
+        getSelectedGeneTranscriptHit,
+        getSeqBaseAtMouse,
+        isAligned,
+        isBoxSelectMode,
+        isGeneHiddenFromTracks,
+        isSelectingRect,
+        layout,
+        onFocusTranscriptViewChangeRef,
+        pendingVerticalCenterGeneIdRef,
+        selectedChrom,
+        selectedGene,
+        setClickedBigBedFeature,
+        setClickedGeneTranscript,
+        setClickedSeqBase,
+        setClickedSpliceJunction,
+        setClickedVcfVariant,
+        setSelectedGene,
+        suppressNextClickRef,
+        transcriptLayoutMetrics,
+        transcriptPopupHoverRef,
+        viewEnd,
+        viewStart,
+        viewWidth,
+    }, ...args), [
         genes,
         layout,
         genomicToScreen,
@@ -8735,346 +5703,33 @@ function GenomeBrowser({
 
     // ============ Search & Navigation ============
 
-    const handleSearch = useCallback(async () => {
-        const rawQuery = searchInput.trim()
-        if (!rawQuery) return
-        showSearchFeedback(null)
-        const genomeName = String(genomePillLabel || '').trim() || 'this genome'
-
-        const resolveRegionChrom = (rawChrom) => {
-            const token = String(rawChrom || '').trim()
-            if (!token) return { region: null, ambiguous: false }
-            const canonical = token.toLowerCase()
-            const stripChr = canonical.startsWith('chr') ? canonical.slice(3) : canonical
-            const addChr = canonical.startsWith('chr') ? canonical : `chr${canonical}`
-            const tokenVariants = (value) => {
-                const text = String(value || '').trim().toLowerCase()
-                if (!text) return new Set()
-                const out = new Set([text])
-                if (text.startsWith('chr') && text.length > 3) out.add(text.slice(3))
-                else out.add(`chr${text}`)
-                if (['m', 'mt', 'chrm', 'chrmt'].includes(text)) {
-                    out.add('m')
-                    out.add('mt')
-                    out.add('chrm')
-                    out.add('chrmt')
-                }
-                return out
-            }
-            const queryTokens = tokenVariants(token)
-            const intersectsTokenSet = (left, right) => {
-                for (const value of left) {
-                    if (right.has(value)) return true
-                }
-                return false
-            }
-
-            // Exact first
-            let region = regions.find((r) => r.chrom === token)
-            if (region) return { region, ambiguous: false }
-
-            // Case-insensitive, plus chr/no-chr aliases
-            region = regions.find((r) => {
-                const rc = String(r.chrom || '').toLowerCase()
-                if (rc === canonical) return true
-                if (rc === stripChr) return true
-                if (rc === addChr) return true
-                const rcStrip = rc.startsWith('chr') ? rc.slice(3) : rc
-                return rcStrip === stripChr
-            })
-            if (region) return { region, ambiguous: false }
-
-            // Assembly-report synonyms returned by the backend.
-            const synonymCandidates = regions.filter((r) => {
-                const regionTokens = tokenVariants(r.chrom)
-                if (intersectsTokenSet(queryTokens, regionTokens)) return true
-                const synonyms = Array.isArray(r.synonyms) ? r.synonyms : []
-                return synonyms.some((synonym) => intersectsTokenSet(queryTokens, tokenVariants(synonym)))
-            })
-            if (synonymCandidates.length === 1) {
-                return { region: synonymCandidates[0], ambiguous: false }
-            }
-            if (synonymCandidates.length > 1) {
-                return { region: null, ambiguous: true }
-            }
-
-            // Mitochondrial aliases
-            if (['m', 'mt', 'chrm', 'chrmt'].includes(canonical)) {
-                region = regions.find((r) => {
-                    const rc = String(r.chrom || '').toLowerCase()
-                    const rcStrip = rc.startsWith('chr') ? rc.slice(3) : rc
-                    return rc === 'mt' || rc === 'm' || rc === 'chrm' || rc === 'chrmt' || rcStrip === 'mt' || rcStrip === 'm'
-                }) || null
-                return { region, ambiguous: false }
-            }
-
-            return { region: null, ambiguous: false }
-        }
-
-        // The backend's name for a sequence, or null when it has none: echoing the typed
-        // name back on failure is what let an unknown sequence be "loaded".
-        const resolveChromViaBackend = async (chrom, hintStart) => {
-            const requested = String(chrom || '').trim()
-            if (!requested) return null
-            const numericHint = Number(hintStart)
-            const probeStart = Number.isFinite(numericHint)
-                ? Math.max(0, Math.floor(numericHint) - 1)
-                : 0
-            const probeEnd = probeStart + 1
-            try {
-                const res = await fetch(
-                    `${API_BASE}/api/browse/sequence?genome=${genome}&chrom=${encodeURIComponent(requested)}&start=${probeStart}&end=${probeEnd}`
-                )
-                if (!res.ok) return null
-                const data = await res.json()
-                const resolved = String(data?.chrom || '').trim()
-                return resolved || null
-            } catch {
-                return null
-            }
-        }
-
-        // The sequence a typed name refers to: the panel's own list first, then the
-        // backend's aliases. { region, chrom, ambiguous }; chrom is null when neither knows it.
-        const resolveQueryChrom = async (chrom, hintStart) => {
-            const { region, ambiguous } = resolveRegionChrom(chrom)
-            if (region) return { region, chrom: String(region.chrom), ambiguous: false }
-            if (ambiguous) return { region: null, chrom: null, ambiguous: true }
-            const backendChrom = await resolveChromViaBackend(chrom, hintStart)
-            if (!backendChrom) return { region: null, chrom: null, ambiguous: false }
-            const known = regions.find((r) => String(r.chrom || '').trim() === backendChrom) || null
-            return { region: known, chrom: backendChrom, ambiguous: false }
-        }
-        const regionBounds = (region) => {
-            const min = Math.max(1, Math.floor(Number(region?.browsable_start) || 1))
-            const max = Math.max(min + 1, Math.floor(Number(region?.browsable_end) || Number(region?.end) || min + 1))
-            return { min, max }
-        }
-
-        const buildIdentifierWindow = (region, maxSpan = 1_000_000) => {
-            if (!region?.chrom) return null
-            const length = Math.floor(Number(region.end) || 0)
-            if (length <= 0) return null
-            if (length <= maxSpan) {
-                return { chrom: region.chrom, start: 1, end: Math.max(2, length) }
-            }
-            const span = Math.min(maxSpan, length)
-            const center = Math.max(1 + span / 2, Math.min(length - span / 2, length / 3))
-            const start = Math.max(1, Math.round(center - span / 2))
-            const end = Math.min(length, start + span)
-            return { chrom: region.chrom, start, end: Math.max(start + 1, end) }
-        }
-
-        const jumpToRange = async (chrom, rawStart, rawEnd, geneForSelection = null) => {
-            const { region: initialRegion, ambiguous } = resolveRegionChrom(chrom)
-            let region = initialRegion
-            let resolvedChrom = String(initialRegion?.chrom || chrom || '').trim()
-            let start = Number(rawStart)
-            let end = Number(rawEnd)
-            if (!Number.isFinite(start) || !Number.isFinite(end)) return false
-            if (end <= start) end = start + 1
-
-            // Jumping to a gene also focuses it, which slides the drawer over
-            // this panel's right edge — aim for the middle of what stays visible.
-            if (geneForSelection) {
-                const framedJump = frameRangeWithRightInset({
-                    start,
-                    end,
-                    trackWidthPx: Math.max(1, viewWidthRef.current - LHS_WIDTH),
-                    rightInsetPx: focusDrawerInsetOnFocus,
-                    flipped: isFlipped,
-                })
-                if (framedJump) {
-                    start = framedJump.start
-                    end = framedJump.end
-                }
-            }
-
-            if (!region && resolvedChrom) {
-                const backendResolvedChrom = await resolveChromViaBackend(resolvedChrom, start)
-                if (!backendResolvedChrom) return false
-                resolvedChrom = backendResolvedChrom
-                region = regions.find((r) => String(r.chrom || '').trim() === resolvedChrom) || null
-            }
-            if (!resolvedChrom) return false
-
-            if (region) {
-                // Region starts should always be 1-based chromosome coordinates.
-                // Do not clamp to first-gene position from metadata payloads.
-                //
-                // Unless the genome declares a narrower window worth looking at, which the
-                // tutorial's chromosome-1 slice does. Panning and zooming already respect
-                // it through clampView; without it here too, a typed region or a pick from
-                // the region list could still strand the user in the padding, which is the
-                // one thing the declaration exists to prevent.
-                const minBound = Math.max(1, Math.floor(Number(region.browsable_start) || 1))
-                const maxBound = Math.max(
-                    minBound + 1,
-                    Math.floor(Number(region.browsable_end) || region.end || minBound + 1)
-                )
-                const span = Math.max(1, end - start)
-                if (start < minBound) {
-                    start = minBound
-                    end = Math.min(maxBound, start + span)
-                }
-                if (end > maxBound) {
-                    end = maxBound
-                    start = Math.max(minBound, end - span)
-                }
-                setChromLength(maxBound)
-            } else if (ambiguous) {
-                // Ambiguous alias and no backend resolution: avoid arbitrary region switching.
-                return false
-            }
-
-            if (resolvedChrom !== selectedChrom) {
-                setSelectedChrom(resolvedChrom)
-                setGenes([])
-                tileCacheRef.current.clear()
-                fetchingTilesRef.current.clear()
-            }
-
-            setViewStart(start)
-            setViewEnd(end)
-            if (onPositionChange) {
-                onPositionChange(resolvedChrom, start, end)
-            }
-            pendingVerticalCenterGeneIdRef.current = geneForSelection?.id || null
-            setSelectedGene(geneForSelection)
-            setSearchInput('')
-            if (onManualNavigate) onManualNavigate()
-            // The chromosome as this panel knows it, so a caller that focuses what
-            // it jumped to records the resolved name rather than what was typed.
-            return resolvedChrom
-        }
-
-        const coordQuery = rawQuery.replace(/[–—]/g, '-')
-        const parsed = parseLocationQuery(rawQuery)
-        if (parsed.kind === 'malformed') {
-            showSearchFeedback('error', parsed.message)
-            return
-        }
-
-        // Coordinates: chr:start-end, or chr:position.
-        if (parsed.kind === 'range' || parsed.kind === 'position') {
-            const chrom = parsed.chrom
-            const target = await resolveQueryChrom(chrom, parsed.kind === 'range' ? parsed.start : parsed.position)
-            if (target.ambiguous) {
-                showSearchFeedback('error', `"${chrom}" matches more than one sequence in ${genomeName}. Use the sequence's full name.`)
-                return
-            }
-            if (!target.chrom) {
-                showSearchFeedback('error', `There is no sequence called "${chrom}" in ${genomeName}.`)
-                return
-            }
-            let start = parsed.kind === 'range' ? parsed.start : parsed.position
-            let end = parsed.kind === 'range' ? parsed.end : parsed.position
-            const notes = []
-            if (parsed.swapped) notes.push('The start and end were the wrong way round.')
-            // A range that runs off either end shows what there is; one wholly off it
-            // shows the nearest end. Either way the reader is told, rather than left to
-            // notice that the view is not what they typed.
-            if (target.region) {
-                const checked = checkRangeAgainstBounds({ start, end }, { ...regionBounds(target.region), chrom: target.chrom })
-                start = checked.start
-                end = checked.end
-                if (checked.warning) notes.push(checked.warning)
-            }
-            // A single position is centred in a short window rather than focused: a focus
-            // is at least two bases wide, which would misstate what was asked for.
-            const isPosition = parsed.kind === 'position'
-            // A range is framed like a focused gene rather than filling the view edge to
-            // edge: padded so the boundary lines are visible, and shifted clear of the
-            // drawer that focusing the location is about to slide over this panel.
-            const requestedSpan = Math.max(1, end - start)
-            const flank = Math.max(1, (requestedSpan / FOCUS_RANGE_FILL_FRACTION - requestedSpan) / 2)
-            const framedRegion = isPosition
-                ? { start: start - 50, end: start + 50 }
-                : frameFocusRange(start - flank, end + flank, { gainingFocus: true })
-            const resolvedChrom = await jumpToRange(target.chrom, framedRegion.start, framedRegion.end, null)
-            if (!resolvedChrom) {
-                showSearchFeedback('error', `Could not show ${chrom}:${start.toLocaleString('en-US')}-${end.toLocaleString('en-US')} in ${genomeName}.`)
-                return
-            }
-            if (!isPosition) focusLocation({ chrom: resolvedChrom, start, end })
-            if (notes.length) showSearchFeedback('warning', notes.join(' '))
-            // A tutorial step about the search box cannot wait for the box to hold what
-            // was typed — jumpToRange empties it — so it waits for this instead. Emitted
-            // whether the user typed it or the tutorial did, which is what lets someone
-            // who types it themselves move straight on. Only for a location that exists.
-            emitTutorialSignal('browser.regionSearched', { chrom, start, end })
-            return
-        }
-
-        // Region identifier format: chr / CM accession / assembly-report synonym
-        const identifierQuery = coordQuery.trim()
-        if (identifierQuery && !/[:\s-]/.test(identifierQuery)) {
-            const { region, ambiguous } = resolveRegionChrom(identifierQuery)
-            if (region) {
-                const window = buildIdentifierWindow(region)
-                if (window) {
-                    await jumpToRange(window.chrom, window.start, window.end, null)
-                    return
-                }
-            }
-            if (ambiguous) {
-                showSearchFeedback('error', `"${identifierQuery}" matches more than one sequence in ${genomeName}. Use the sequence's full name.`)
-                return
-            }
-        }
-
-        let searchUnavailable = false
-        try {
-            const res = await fetch(
-                `${API_BASE}/api/resolve_id?genome=${genome}&query=${encodeURIComponent(rawQuery)}`
-            )
-            if (res.ok) {
-                const data = await res.json()
-                const gene = data?.gene || null
-                if (gene?.chrom) {
-                    let focusStart = gene.start
-                    let focusEnd = gene.end
-                    if (data?.resolved_type === 'transcript' && data?.selected_transcript_id && Array.isArray(data?.transcripts)) {
-                        const tx = data.transcripts.find((t) => t.id === data.selected_transcript_id)
-                        if (tx && Number.isFinite(tx.start) && Number.isFinite(tx.end)) {
-                            focusStart = tx.start
-                            focusEnd = tx.end
-                        }
-                    }
-
-                    const span = Math.max(1, focusEnd - focusStart)
-                    const padding = Math.max(100, span * 0.5)
-                    if (!await jumpToRange(gene.chrom, focusStart - padding, focusEnd + padding, gene)) {
-                        showSearchFeedback('error', `Found "${rawQuery}" on ${gene.chrom}, but that sequence is not available in ${genomeName}.`)
-                        return
-                    }
-                    trackAchievement('browser.idSearch')
-                    trackAchievement('browser.geneFocus')
-                    return
-                }
-            }
-        } catch (e) {
-            console.error('Search resolve failed:', e)
-            searchUnavailable = true
-        }
-
-        // Fallback to currently cached genes if API resolve is unavailable.
-        const query = rawQuery.toLowerCase()
-        const match = genes.find((g) =>
-            (g.name && g.name.toLowerCase().includes(query)) || g.id.toLowerCase().includes(query)
-        )
-        if (match) {
-            const padding = Math.max(100, (match.end - match.start) * 0.5)
-            await jumpToRange(match.chrom, match.start - padding, match.end + padding, match)
-            trackAchievement('browser.idSearch')
-            trackAchievement('browser.geneFocus')
-            return
-        }
-
-        showSearchFeedback('error', searchUnavailable
-            ? `Could not search ${genomeName} for "${rawQuery}": the search service did not respond.`
-            : `No gene, transcript or sequence called "${rawQuery}" was found in ${genomeName}.`)
-    }, [searchInput, regions, selectedChrom, genome, genes, onManualNavigate, onPositionChange, focusDrawerInsetOnFocus, isFlipped, emitTutorialSignal, focusLocation, frameFocusRange, genomePillLabel, showSearchFeedback])
+    const handleSearch = useCallback((...args) => runBrowserSearch({
+        emitTutorialSignal,
+        fetchingTilesRef,
+        focusDrawerInsetOnFocus,
+        focusLocation,
+        frameFocusRange,
+        genes,
+        genome,
+        genomePillLabel,
+        isFlipped,
+        onManualNavigate,
+        onPositionChange,
+        pendingVerticalCenterGeneIdRef,
+        regions,
+        searchInput,
+        selectedChrom,
+        setChromLength,
+        setGenes,
+        setSearchInput,
+        setSelectedChrom,
+        setSelectedGene,
+        setViewEnd,
+        setViewStart,
+        showSearchFeedback,
+        tileCacheRef,
+        viewWidthRef,
+    }, ...args), [searchInput, regions, selectedChrom, genome, genes, onManualNavigate, onPositionChange, focusDrawerInsetOnFocus, isFlipped, emitTutorialSignal, focusLocation, frameFocusRange, genomePillLabel, showSearchFeedback])
 
     const handleRegionChange = useCallback((chrom) => {
         setSelectedChrom(chrom)
