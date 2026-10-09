@@ -37,9 +37,6 @@ class ErrorBoundary extends React.Component {
 
 import './App.css'
 import { datasetReleaseDownloadMetadata } from './utils/downloadMetadata'
-import TranscriptInput from './components/TranscriptInput'
-import ControlPanel from './components/ControlPanel'
-import RecentHistory from './components/RecentHistory'
 import FeatureLegend from './components/FeatureLegend'
 import ConfigurationView from './components/ConfigurationView'
 import NeighbourhoodView from './components/NeighbourhoodView'
@@ -125,22 +122,75 @@ import {
   rasterizeSvgMarkup,
   subtreeContainsCanvas,
 } from './utils/screenshotExport'
-import { getGenomeKey, genomeKeysMatch, normalizeGenomeRecord, getAssemblyAccession, getAssemblyGenomeKey, normalizeGenomeProvider, MANUAL_PROVIDER } from './utils/genomeIdentity'
+import {
+  genomeKeysMatch,
+  normalizeGenomeRecord,
+  getAssemblyAccession,
+  getAssemblyGenomeKey,
+  normalizeGenomeProvider,
+  MANUAL_PROVIDER,
+} from './utils/genomeIdentity'
 import { playlistTourSlug } from './utils/playlistGenomes'
 import {
   primaryGenomeForIndex,
   shouldAutoEnsurePrimaryIndex,
 } from './utils/genomeIndexingPolicy'
+import {
+  appendUniqueSpecies,
+  basenameFromPath,
+  buildGenomeLabel,
+  buildGenomePillLabel,
+  dedupeSpeciesList,
+  dirnameFromPath,
+  getViewActiveCapacity,
+  prependUniqueSpecies,
+  reorderWithInsertPosition,
+  sameStringArrayItems,
+  speciesItemKey,
+  speciesListsEqualByKey,
+} from './app/genomeLists.js'
+import {
+  geneFocusSignature,
+  hasFiniteGeneCoords,
+  mergeGeneFocus,
+  normalizeGeneToken,
+  updateGeneFocusMapEntry,
+} from './app/geneFocus.js'
+import {
+  buildAlignmentGenomicToColumnMap,
+  buildProjectedTranscriptFeatures,
+  getCoveredAlignmentColumnRange,
+  getTranscriptBoundaryStatus,
+  getTranscriptSpan,
+} from './app/alignmentProjection.js'
+import {
+  NEIGHBOURHOOD_FLANK_WINDOW_SIZE,
+  SV_NO_ANCHOR_KEY,
+  buildNeighbourhoodPairKey,
+  mergeNeighbourhoodTrack,
+} from './app/viewSpecies.js'
+import {
+  CONFIG_SAVE_NAV_WAIT_MS,
+  DRAWER_BORDER_PX,
+  DRAWER_PADDING_X,
+  PREVIOUS_SESSION_PLAYLIST_ID,
+  SELECTOR_REFRESH_EVENT,
+  TOP_BAR_SCROLL_ARROW_PX,
+  holdScrollTop,
+  readPendingSelectorGenomeIds,
+  writePendingSelectorGenomeIds,
+} from './app/appLayout.js'
+import {
+  buildPreviousSessionGenomes,
+  findNextPreviousSessionPlaylist,
+  findPreviousSessionPlaylist,
+  isNextPreviousSessionPlaylist,
+  isPreviousSessionPlaylist,
+  removeEmptyPreviousSessionPlaylist,
+  upsertPreviousSessionPlaylist,
+  withNextPreviousSessionGenomes,
+} from './app/previousSessionPlaylist.js'
 
-const SELECTOR_PENDING_GENOMES_STORAGE_KEY = 'ensembl_selector_pending_genomes'
-const SELECTOR_REFRESH_EVENT = 'ensembl:selector-refresh'
-// How long leaving the configuration view waits for its save before going anyway.
-// A local save answers in tens of milliseconds; this only has to be longer than that.
-const CONFIG_SAVE_NAV_WAIT_MS = 1500
-// The width of the scroll affordance that overlays each end of the app button strip when
-// it has somewhere to scroll to. It sits on top of the strip rather than beside it so
-// that arriving and leaving does not shift the buttons under the user's cursor.
-const TOP_BAR_SCROLL_ARROW_PX = 30
 // The genome pills strip's padding, and the height that falls out of it. Kept in one
 // place because two things depend on it: the strip's own style below, and the app
 // organiser's drawer, whose header band is drawn to this height so that it lands exactly
@@ -151,690 +201,6 @@ const PILLS_STRIP_PADDING_X = 8
 const PILLS_STRIP_BORDER = 1
 const PILLS_STRIP_HEIGHT =
   PILLS_ROW_HEIGHT + PILLS_STRIP_PADDING_TOP + PILLS_STRIP_PADDING_BOTTOM + PILLS_STRIP_BORDER
-// The drawer's own border already occupies the first pixel of where the strip begins, so
-// its header band is that much shorter for the two to end on the same line.
-const DRAWER_BORDER_PX = 1
-// The drawer's own horizontal padding. Applied as a value rather than a class because
-// the drawer's offset is computed from it: the panel is pulled left by exactly this plus
-// its border so that the preview grid lines up with the real buttons.
-const DRAWER_PADDING_X = 16
-const PREVIOUS_SESSION_PLAYLIST_ID = '__previous_session__'
-const NEXT_PREVIOUS_SESSION_PLAYLIST_ID = '__next_previous_session__'
-
-function readPendingSelectorGenomeIds() {
-  if (typeof window === 'undefined' || !window.sessionStorage) return new Set()
-  try {
-    const raw = window.sessionStorage.getItem(SELECTOR_PENDING_GENOMES_STORAGE_KEY)
-    const parsed = JSON.parse(raw || '[]')
-    return new Set(Array.isArray(parsed) ? parsed.map((entry) => String(entry || '').trim()).filter(Boolean) : [])
-  } catch {
-    return new Set()
-  }
-}
-
-function writePendingSelectorGenomeIds(ids) {
-  if (typeof window === 'undefined' || !window.sessionStorage) return
-  try {
-    window.sessionStorage.setItem(SELECTOR_PENDING_GENOMES_STORAGE_KEY, JSON.stringify(Array.from(ids)))
-  } catch {
-    // Ignore session storage failures; the selector can still refresh normally.
-  }
-}
-
-function formatSpeciesForLabel(species) {
-  if (!species) return ''
-  if (species.display_name) return species.display_name
-  if (species.common_name) return species.common_name
-  const sci = species.scientific_name || ''
-  if (!sci) return ''
-  const parts = sci.trim().split(/\s+/)
-  if (parts.length < 2) return sci
-  return `${parts[0][0]}. ${parts.slice(1).join(' ')}`
-}
-
-function buildGenomeLabel(tag, species, fallback) {
-  const name = formatSpeciesForLabel(species) || fallback
-  const assembly = species?.assembly_name || species?.assembly || ''
-  return assembly ? `${tag} ${name} - ${assembly}` : `${tag} ${name}`
-}
-
-function buildGenomePillLabel(species) {
-  if (!species) return ''
-  const name = formatSpeciesForLabel(species) || species.scientific_name || ''
-  const assembly = species?.assembly_name || species?.assembly || ''
-  return assembly ? `${name} - ${assembly}` : name
-}
-
-function speciesItemKey(species) {
-  return getGenomeKey(species)
-}
-
-function snapshotGenomeForPreviousSession(species) {
-  const normalized = normalizeGenomeRecord(species)
-  const key = speciesItemKey(normalized)
-  if (!key) return null
-  const files = normalized?.files && typeof normalized.files === 'object'
-    ? {
-        fasta: String(normalized.files.fasta || '').trim(),
-        gff3: String(normalized.files.gff3 || '').trim(),
-        index: String(normalized.files.index || '').trim(),
-        homology: String(normalized.files.homology || '').trim(),
-        metadata: String(normalized.files.metadata || '').trim(),
-      }
-    : undefined
-  return {
-    key,
-    assembly_key: String(normalized?.assembly_key || '').trim(),
-    selection_key: String(normalized?.selection_key || key).trim(),
-    species_key: String(normalized?.species_key || '').trim(),
-    assembly: String(normalized?.assembly || normalized?.gca || '').trim(),
-    scientific_name: String(normalized?.scientific_name || '').trim(),
-    common_name: String(normalized?.common_name || '').trim(),
-    display_name: String(normalized?.display_name || '').trim(),
-    display_name_reason: String(normalized?.display_name_reason || '').trim(),
-    assembly_name: String(normalized?.assembly_name || normalized?.assembly || normalized?.gca || '').trim(),
-    provider: String(normalized?.provider || '').trim(),
-    source_database: String(normalized?.source_database || '').trim(),
-    gca: String(normalized?.gca || '').trim(),
-    dataset_release_key: String(normalized?.dataset_release_key || '').trim(),
-    dataset_release_source: String(normalized?.dataset_release_source || '').trim(),
-    dataset_release_date: String(normalized?.dataset_release_date || '').trim(),
-    dataset_release_label: String(normalized?.dataset_release_label || '').trim(),
-    dataset_release_short_label: String(normalized?.dataset_release_short_label || '').trim(),
-    is_manual: Boolean(normalized?.is_manual),
-    ...(files ? { files } : {}),
-    active_by_default: true,
-  }
-}
-
-function buildPreviousSessionGenomes(speciesList) {
-  const genomes = []
-  for (const species of dedupeSpeciesList(speciesList)) {
-    const snapshot = snapshotGenomeForPreviousSession(species)
-    if (!snapshot || genomes.some((genome) => genomeKeysMatch(genome, snapshot))) continue
-    genomes.push(snapshot)
-  }
-  return genomes
-}
-
-function isPreviousSessionPlaylist(playlist) {
-  return playlist?.id === PREVIOUS_SESSION_PLAYLIST_ID ||
-    String(playlist?.name || '').trim().toLowerCase() === 'previous session'
-}
-
-function isNextPreviousSessionPlaylist(playlist) {
-  return playlist?.id === NEXT_PREVIOUS_SESSION_PLAYLIST_ID
-}
-
-function findPreviousSessionPlaylist(playlists) {
-  return (Array.isArray(playlists) ? playlists : []).find(isPreviousSessionPlaylist) || null
-}
-
-function findNextPreviousSessionPlaylist(playlists) {
-  return (Array.isArray(playlists) ? playlists : []).find(isNextPreviousSessionPlaylist) || null
-}
-
-function upsertPreviousSessionPlaylist(configObj, speciesList, { select = false } = {}) {
-  if (!configObj) return configObj
-  const playlists = Array.isArray(configObj.genome_playlists) ? configObj.genome_playlists : []
-  const existing = findPreviousSessionPlaylist(playlists)
-  const { system, ...existingFields } = existing || {}
-  const previousPlaylist = {
-    ...existingFields,
-    id: PREVIOUS_SESSION_PLAYLIST_ID,
-    name: 'Previous session',
-    description: String(existing?.description || 'Active genomes from the last app session.').trim(),
-    genomes: buildPreviousSessionGenomes(speciesList),
-  }
-  const otherPlaylists = playlists.filter((playlist) => !isPreviousSessionPlaylist(playlist))
-  return {
-    ...configObj,
-    genome_playlists: [previousPlaylist, ...otherPlaylists],
-    ...(select ? { selected_genome_playlist_id: PREVIOUS_SESSION_PLAYLIST_ID } : {}),
-  }
-}
-
-function updatePreviousSessionPlaylist(configObj, speciesList, options = {}) {
-  if (!configObj) return configObj
-  const previousGenomes = buildPreviousSessionGenomes(speciesList)
-  if (previousGenomes.length === 0 && !findPreviousSessionPlaylist(configObj.genome_playlists)) {
-    return configObj
-  }
-  return upsertPreviousSessionPlaylist(configObj, previousGenomes, options)
-}
-
-function withNextPreviousSessionGenomes(configObj, speciesList) {
-  if (!configObj) return configObj
-  const playlists = Array.isArray(configObj.genome_playlists) ? configObj.genome_playlists : []
-  const nextPlaylist = {
-    id: NEXT_PREVIOUS_SESSION_PLAYLIST_ID,
-    name: 'Next previous session',
-    description: 'Hidden tracker for the next Previous session playlist.',
-    genomes: buildPreviousSessionGenomes(speciesList),
-    hidden: true,
-  }
-  return {
-    ...configObj,
-    genome_playlists: [nextPlaylist, ...playlists.filter((playlist) => !isNextPreviousSessionPlaylist(playlist))],
-    next_previous_session_genomes: buildPreviousSessionGenomes(speciesList),
-  }
-}
-
-function removeEmptyPreviousSessionPlaylist(configObj) {
-  if (!configObj) return configObj
-  const playlists = Array.isArray(configObj.genome_playlists) ? configObj.genome_playlists : []
-  return {
-    ...configObj,
-    genome_playlists: playlists.filter((playlist) => !isPreviousSessionPlaylist(playlist)),
-    selected_genome_playlist_id: configObj.selected_genome_playlist_id === PREVIOUS_SESSION_PLAYLIST_ID
-      ? '__all__'
-      : configObj.selected_genome_playlist_id,
-  }
-}
-
-function basenameFromPath(value = '') {
-  const normalized = String(value || '').replace(/\\/g, '/')
-  return normalized.split('/').filter(Boolean).pop() || ''
-}
-
-function dirnameFromPath(value = '') {
-  const normalized = String(value || '').replace(/\\/g, '/')
-  const index = normalized.lastIndexOf('/')
-  if (index <= 0) return index === 0 ? '/' : ''
-  return normalized.slice(0, index)
-}
-
-function speciesListsEqualByKey(a, b) {
-  if (a === b) return true
-  if (!Array.isArray(a) || !Array.isArray(b)) return false
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i += 1) {
-    if (speciesItemKey(a[i]) !== speciesItemKey(b[i])) return false
-  }
-  return true
-}
-
-function sameStringArrayItems(a, b) {
-  if (a === b) return true
-  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
-  return a.every((item, index) => item === b[index])
-}
-
-function dedupeSpeciesList(speciesList) {
-  const out = []
-  const seen = new Set()
-  for (const species of Array.isArray(speciesList) ? speciesList : []) {
-    if (!species) continue
-    const key = speciesItemKey(species)
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(species)
-  }
-  return out
-}
-
-function prependUniqueSpecies(speciesList, species) {
-  if (!species) return dedupeSpeciesList(speciesList)
-  const key = speciesItemKey(species)
-  const filtered = dedupeSpeciesList(speciesList).filter((item) => speciesItemKey(item) !== key)
-  return [species, ...filtered]
-}
-
-function appendUniqueSpecies(speciesList, species) {
-  if (!species) return dedupeSpeciesList(speciesList)
-  const key = speciesItemKey(species)
-  const filtered = dedupeSpeciesList(speciesList).filter((item) => speciesItemKey(item) !== key)
-  return [...filtered, species]
-}
-
-function hasFiniteGeneCoords(gene) {
-  return Boolean(gene) &&
-    Number.isFinite(Number(gene.start)) &&
-    Number.isFinite(Number(gene.end)) &&
-    String(gene.chrom || '').trim().length > 0
-}
-
-function geneFocusSignature(gene) {
-  if (!gene) return ''
-  return [
-    String(gene.id || '').trim(),
-    String(gene.name || '').trim(),
-    String(gene.chrom || '').trim(),
-    Number.isFinite(Number(gene.start)) ? Number(gene.start) : '',
-    Number.isFinite(Number(gene.end)) ? Number(gene.end) : '',
-    String(gene.strand || '').trim(),
-    String(gene.biotype || '').trim(),
-  ].join('|')
-}
-
-function mergeGeneFocus(prevGene, nextGene) {
-  if (!nextGene) return null
-  if (!prevGene) return nextGene
-  const prevId = String(prevGene.id || '').trim()
-  const nextId = String(nextGene.id || '').trim()
-  const sameId = prevId && nextId && prevId === nextId
-  if (!sameId) return nextGene
-
-  const prevHasCoords = hasFiniteGeneCoords(prevGene)
-  const nextHasCoords = hasFiniteGeneCoords(nextGene)
-  if (prevHasCoords && !nextHasCoords) return prevGene
-  const merged = { ...prevGene, ...nextGene }
-  return geneFocusSignature(prevGene) === geneFocusSignature(merged) ? prevGene : merged
-}
-
-function normalizeGeneToken(value) {
-  return String(value || '').trim().toLowerCase()
-}
-
-function updateGeneFocusMapEntry(prevMap, genomeKey, nextGene, fallbackGene = null) {
-  const key = String(genomeKey || '').trim()
-  if (!key) return prevMap
-
-  const currentMap = prevMap || {}
-  if (!nextGene) {
-    if (!Object.prototype.hasOwnProperty.call(currentMap, key)) return prevMap
-    const nextMap = { ...currentMap }
-    delete nextMap[key]
-    return nextMap
-  }
-
-  const merged = mergeGeneFocus(currentMap[key] || fallbackGene || null, nextGene)
-  if (geneFocusSignature(currentMap[key] || null) === geneFocusSignature(merged)) {
-    return prevMap
-  }
-  return {
-    ...currentMap,
-    [key]: merged,
-  }
-}
-
-function getAlignmentWindowForTranscript(transcript, flank5 = 0, flank3 = 0) {
-  if (!transcript) return null
-  const txStart = Number(transcript.start)
-  const txEnd = Number(transcript.end)
-  if (!Number.isFinite(txStart) || !Number.isFinite(txEnd)) return null
-  const strand = String(transcript.strand || '+')
-  const safeFlank5 = Math.max(0, Number(flank5) || 0)
-  const safeFlank3 = Math.max(0, Number(flank3) || 0)
-  const left = Math.min(txStart, txEnd)
-  const right = Math.max(txStart, txEnd)
-  if (strand === '-') {
-    return {
-      start: left - safeFlank3,
-      end: right + safeFlank5,
-      strand,
-    }
-  }
-  return {
-    start: left - safeFlank5,
-    end: right + safeFlank3,
-    strand,
-  }
-}
-
-function getTranscriptSpan(transcript) {
-  if (!transcript) return null
-  const txStart = Number(transcript.start)
-  const txEnd = Number(transcript.end)
-  if (!Number.isFinite(txStart) || !Number.isFinite(txEnd)) return null
-  return {
-    start: Math.min(txStart, txEnd),
-    end: Math.max(txStart, txEnd),
-    strand: String(transcript.strand || '+'),
-  }
-}
-
-function getTranscriptBoundaryStatus(transcriptSpan, alignmentStart, alignmentEnd) {
-  if (!transcriptSpan) return 'unknown'
-  const left = Math.min(Number(alignmentStart), Number(alignmentEnd))
-  const right = Math.max(Number(alignmentStart), Number(alignmentEnd))
-  if (!Number.isFinite(left) || !Number.isFinite(right)) return 'unknown'
-  if (transcriptSpan.start >= left && transcriptSpan.end <= right) return 'within'
-  if (transcriptSpan.end >= left && transcriptSpan.start <= right) return 'partial'
-  return 'outside'
-}
-
-function normalizeResolvedTranscriptSegments(segments, type) {
-  if (!Array.isArray(segments)) return []
-  return segments
-    .map((segment) => {
-      const start = Math.min(Number(segment?.start), Number(segment?.end))
-      const end = Math.max(Number(segment?.start), Number(segment?.end))
-      if (!Number.isFinite(start) || !Number.isFinite(end)) return null
-      return { type, start, end }
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.start - b.start || a.end - b.end)
-}
-
-function classifyResolvedUtrType(utr, cdsSegments, strand) {
-  const rawType = String(
-    utr?.feature_type
-    || utr?.featureType
-    || utr?.type
-    || ''
-  ).trim().toLowerCase()
-  if (rawType.includes('five')) return 'utr5'
-  if (rawType.includes('three')) return 'utr3'
-  if (rawType.includes('5')) return 'utr5'
-  if (rawType.includes('3')) return 'utr3'
-
-  const normalizedCds = normalizeResolvedTranscriptSegments(cdsSegments, 'cds')
-  if (!normalizedCds.length) return 'utr'
-  const cdsMin = Math.min(...normalizedCds.map((segment) => segment.start))
-  const cdsMax = Math.max(...normalizedCds.map((segment) => segment.end))
-  const utrStart = Math.min(Number(utr?.start), Number(utr?.end))
-  const utrEnd = Math.max(Number(utr?.start), Number(utr?.end))
-  if (!Number.isFinite(utrStart) || !Number.isFinite(utrEnd)) return 'utr'
-
-  if (String(strand || '+') === '-') {
-    if (utrStart > cdsMax) return 'utr5'
-    if (utrEnd < cdsMin) return 'utr3'
-  } else {
-    if (utrEnd < cdsMin) return 'utr5'
-    if (utrStart > cdsMax) return 'utr3'
-  }
-  return 'utr'
-}
-
-function projectedFeaturePriority(type) {
-  const t = String(type || '').trim().toLowerCase()
-  if (t === 'start_codon' || t === 'stop_codon' || t === 'donor' || t === 'acceptor' || t === 'splice_site') return 3
-  if (t === 'cds' || t === 'utr' || t === 'utr5' || t === 'utr3') return 2
-  return 1 // exon / intron / fallback
-}
-
-function buildProjectedTranscriptFeatures(transcript, genomicToAlign) {
-  if (!transcript || !(genomicToAlign instanceof Map) || genomicToAlign.size === 0) return []
-
-  const mapRange = (features) => {
-    const projected = []
-    for (const feature of features) {
-      let projectedStart = null
-      let projectedEnd = null
-      for (let pos = feature.start; pos <= feature.end; pos += 1) {
-        const mapped = genomicToAlign.get(pos)
-        if (mapped == null) continue
-        if (projectedStart == null) projectedStart = mapped
-        projectedEnd = mapped
-      }
-      if (projectedStart == null || projectedEnd == null) continue
-      projected.push({
-        ...feature,
-        start: Math.min(projectedStart, projectedEnd),
-        end: Math.max(projectedStart, projectedEnd),
-      })
-    }
-    return projected
-  }
-
-  const strand = String(transcript.strand || '+')
-  const genomicExons = normalizeResolvedTranscriptSegments(transcript.exons, 'exon')
-  const genomicCds = normalizeResolvedTranscriptSegments(transcript.cds_list, 'cds')
-  const genomicUtrs = (Array.isArray(transcript.utrs) ? transcript.utrs : [])
-    .map((utr) => {
-      const start = Math.min(Number(utr?.start), Number(utr?.end))
-      const end = Math.max(Number(utr?.start), Number(utr?.end))
-      if (!Number.isFinite(start) || !Number.isFinite(end)) return null
-      return {
-        type: classifyResolvedUtrType(utr, transcript.cds_list, strand),
-        start,
-        end,
-      }
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.start - b.start || a.end - b.end)
-
-  const genomicIntrons = []
-  for (let i = 0; i < genomicExons.length - 1; i += 1) {
-    const start = Number(genomicExons[i].end) + 1
-    const end = Number(genomicExons[i + 1].start) - 1
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) continue
-    genomicIntrons.push({ type: 'intron', start, end })
-  }
-
-  const biologicalExons = [...genomicExons].sort((a, b) => (
-    strand === '-'
-      ? (b.start - a.start || b.end - a.end)
-      : (a.start - b.start || a.end - b.end)
-  ))
-  const genomicSpliceSites = []
-  for (let i = 0; i < biologicalExons.length; i += 1) {
-    const exon = biologicalExons[i]
-    if (i < biologicalExons.length - 1) {
-      if (strand === '-') genomicSpliceSites.push({ type: 'donor', start: exon.start - 2, end: exon.start - 1 })
-      else genomicSpliceSites.push({ type: 'donor', start: exon.end + 1, end: exon.end + 2 })
-    }
-    if (i > 0) {
-      if (strand === '-') genomicSpliceSites.push({ type: 'acceptor', start: exon.end + 1, end: exon.end + 2 })
-      else genomicSpliceSites.push({ type: 'acceptor', start: exon.start - 2, end: exon.start - 1 })
-    }
-  }
-
-  const genomicCodons = []
-  if (genomicCds.length > 0) {
-    const sortedCds = [...genomicCds].sort((a, b) => a.start - b.start || a.end - b.end)
-    if (strand === '-') {
-      const firstBiologicalCds = sortedCds[sortedCds.length - 1]
-      const lastBiologicalCds = sortedCds[0]
-      genomicCodons.push({ type: 'start_codon', start: firstBiologicalCds.end - 2, end: firstBiologicalCds.end })
-      genomicCodons.push({ type: 'stop_codon', start: lastBiologicalCds.start, end: lastBiologicalCds.start + 2 })
-    } else {
-      const firstBiologicalCds = sortedCds[0]
-      const lastBiologicalCds = sortedCds[sortedCds.length - 1]
-      genomicCodons.push({ type: 'start_codon', start: firstBiologicalCds.start, end: firstBiologicalCds.start + 2 })
-      genomicCodons.push({ type: 'stop_codon', start: lastBiologicalCds.end - 2, end: lastBiologicalCds.end })
-    }
-  }
-
-  const exons = mapRange(genomicExons)
-  const introns = mapRange(genomicIntrons)
-  const cds = mapRange(genomicCds)
-  const utrs = mapRange(genomicUtrs)
-  const spliceSites = mapRange(genomicSpliceSites.filter((feature) => Number.isFinite(feature.start) && Number.isFinite(feature.end) && feature.end >= feature.start))
-  const codons = mapRange(genomicCodons.filter((feature) => Number.isFinite(feature.start) && Number.isFinite(feature.end) && feature.end >= feature.start))
-
-  return [...exons, ...introns, ...cds, ...utrs, ...spliceSites, ...codons]
-    .sort((a, b) => {
-      const pa = projectedFeaturePriority(a?.type)
-      const pb = projectedFeaturePriority(b?.type)
-      // Keep low-priority features first; viewer picks highest priority from the end.
-      if (pa !== pb) return pa - pb
-      return a.start - b.start || a.end - b.end
-    })
-}
-
-function buildAlignmentGenomicToColumnMap(alignedSequence, genomicStart, genomicEnd, strand) {
-  const sequence = String(alignedSequence || '')
-  const left = Math.min(Number(genomicStart), Number(genomicEnd))
-  const right = Math.max(Number(genomicStart), Number(genomicEnd))
-  if (!sequence || !Number.isFinite(left) || !Number.isFinite(right)) return new Map()
-
-  const genomicToAlign = new Map()
-  let genomicPos = String(strand || '+') === '-' ? right : left
-  const step = String(strand || '+') === '-' ? -1 : 1
-  for (let col = 0; col < sequence.length; col += 1) {
-    const base = sequence[col]
-    if (!base || base === '-') continue
-    genomicToAlign.set(genomicPos, col)
-    genomicPos += step
-  }
-  return genomicToAlign
-}
-
-function getCoveredAlignmentColumnRange(genomicToAlign, requestedWindow) {
-  if (!(genomicToAlign instanceof Map) || genomicToAlign.size === 0 || !requestedWindow) return null
-  let minCol = null
-  let maxCol = null
-  const left = Math.min(Number(requestedWindow.start), Number(requestedWindow.end))
-  const right = Math.max(Number(requestedWindow.start), Number(requestedWindow.end))
-  if (!Number.isFinite(left) || !Number.isFinite(right)) return null
-
-  for (const [genomicPos, col] of genomicToAlign.entries()) {
-    if (!Number.isFinite(Number(genomicPos)) || !Number.isFinite(Number(col))) continue
-    if (genomicPos < left || genomicPos > right) continue
-    if (minCol == null || col < minCol) minCol = col
-    if (maxCol == null || col > maxCol) maxCol = col
-  }
-
-  if (minCol == null || maxCol == null) return null
-  return { start: minCol, end: maxCol }
-}
-
-
-const NEIGHBOURHOOD_FLANK_WINDOW_SIZE = 100
-
-const SV_REF_GRCH38_ALIASES = [
-  'grch38',
-  'grch38p14',
-  'gca00000140529',
-  'gcf00000140540',
-]
-
-const SV_TARGET_HG00438_ALIASES = [
-  'hg00438',
-  'hg00438pathprcf2',
-  'gca0184725952',
-]
-
-const SV_TARGET_HG00733_ALIASES = [
-  'hg007332',
-  'hg00733mat',
-  'hg00733mathprcf2',
-  'gca0185069752',
-  'gca0185069753',
-  '0fb76cdf6c6b4c20beef7f7d4151651b',
-]
-const SV_NO_ANCHOR_KEY = '__sv_no_anchor__'
-
-function normalizeSvSpeciesToken(value) {
-  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '')
-}
-
-function collectSvSpeciesTokens(species) {
-  if (!species) return []
-  const rawValues = [
-    species?.assembly_name,
-    species?.assembly,
-    species?.gca,
-    species?.accession,
-    species?.name,
-    species?.key,
-    species?.scientific_name,
-    species?.common_name,
-  ]
-  const tokens = []
-  for (const value of rawValues) {
-    const normalized = normalizeSvSpeciesToken(value)
-    if (!normalized || tokens.includes(normalized)) continue
-    tokens.push(normalized)
-  }
-  return tokens
-}
-
-function speciesMatchesSvAliases(species, aliases) {
-  const tokens = collectSvSpeciesTokens(species)
-  return aliases.some((alias) => tokens.some((token) => token.includes(alias)))
-}
-
-function resolveStructuralVariationTrioSpecies(activeSpecies) {
-  const active = dedupeSpeciesList(activeSpecies)
-  if (active.length !== 3) return null
-
-  const reference = active.find((species) => speciesMatchesSvAliases(species, SV_REF_GRCH38_ALIASES)) || null
-  const secondary = active.find((species) => speciesMatchesSvAliases(species, SV_TARGET_HG00438_ALIASES)) || null
-  const third = active.find((species) => speciesMatchesSvAliases(species, SV_TARGET_HG00733_ALIASES)) || null
-
-  if (!reference || !secondary || !third) return null
-
-  const usedKeys = new Set([speciesItemKey(reference), speciesItemKey(secondary), speciesItemKey(third)])
-  if (usedKeys.size !== 3) return null
-
-  return { reference, secondary, third }
-}
-
-function getViewActiveCapacity(viewId) {
-  if (viewId === 'homology') return Number.POSITIVE_INFINITY
-  if (viewId === 'genome_browser') return Number.POSITIVE_INFINITY
-  if (viewId === 'alignment') return Number.POSITIVE_INFINITY
-  if (viewId === 'stats') return Number.POSITIVE_INFINITY
-  if (viewId === 'feature_explorer') return Number.POSITIVE_INFINITY
-  if (viewId === 'neighbourhood') return Number.POSITIVE_INFINITY
-  if (viewId === 'structural_variation') return 3
-  // The sequence view reads one genome at a time and has a control of its own
-  // for choosing which. That control offers the *active* genomes, so a capacity
-  // of one emptied the very list it exists to fill: a reader could not bring a
-  // second genome up to switch to it, and pressing a half-lit pill put that
-  // genome away instead of promoting it. Drawing one at a time is the view's
-  // business; how many are available to draw is not.
-  if (viewId === 'sequence') return Number.POSITIVE_INFINITY
-  return 0
-}
-
-function buildNeighbourhoodPairKey(refGenomeKey, targetGenomeKey) {
-  const ref = String(refGenomeKey || '').trim()
-  const tgt = String(targetGenomeKey || '').trim()
-  return ref && tgt ? `${ref}__${tgt}` : ''
-}
-
-function mergeNeighbourhoodTrack(prevTrack, incomingGenes, centerGeneId, requestGeneId, windowSize = NEIGHBOURHOOD_FLANK_WINDOW_SIZE) {
-  const genes = Array.isArray(incomingGenes) ? incomingGenes.filter((gene) => gene?.id) : []
-  const centerId = String(centerGeneId || '').trim()
-  const requestId = String(requestGeneId || centerId).trim()
-  const incomingCenter = genes.find((gene) => String(gene?.id || '').trim() === centerId) || null
-  const incomingChrom = String(incomingCenter?.chrom || genes[0]?.chrom || '').trim()
-  const prevGenes = Array.isArray(prevTrack?.genes) ? prevTrack.genes.filter((gene) => gene?.id) : []
-  const prevCenter = prevGenes.find((gene) => String(gene?.id || '').trim() === String(prevTrack?.centerGeneId || '').trim()) || null
-  const prevChrom = String(prevCenter?.chrom || prevGenes[0]?.chrom || '').trim()
-  const canAccumulate = Boolean(incomingChrom && prevChrom && incomingChrom === prevChrom)
-  const sourceGenes = canAccumulate ? [...prevGenes, ...genes] : genes
-  const byId = new Map()
-
-  for (const gene of sourceGenes) {
-    const id = String(gene?.id || '').trim()
-    if (!id) continue
-    byId.set(id, {
-      ...gene,
-      is_focal: id === centerId,
-    })
-  }
-
-  if (centerId && byId.has(centerId)) {
-    const centerGene = byId.get(centerId)
-    byId.set(centerId, { ...centerGene, is_focal: true })
-  }
-
-  const mergedGenes = [...byId.values()].sort((a, b) => {
-    const chromCompare = String(a?.chrom || '').localeCompare(String(b?.chrom || ''))
-    if (chromCompare !== 0) return chromCompare
-    const aStart = Number(a?.start || 0)
-    const bStart = Number(b?.start || 0)
-    if (aStart !== bStart) return aStart - bStart
-    return String(a?.id || '').localeCompare(String(b?.id || ''))
-  })
-
-  return {
-    genes: mergedGenes,
-    centerGeneId: centerId,
-    requestGeneId: requestId,
-    windowSize,
-  }
-}
-
-function reorderWithInsertPosition(order, sourceId, targetId, insertPosition = 'before') {
-  const sourceIndex = order.indexOf(sourceId)
-  const targetIndex = order.indexOf(targetId)
-  if (sourceIndex < 0 || targetIndex < 0) return order
-  if (sourceId === targetId) return order
-
-  const next = [...order]
-  const [moved] = next.splice(sourceIndex, 1)
-  const adjustedTargetIndex = next.indexOf(targetId)
-  if (adjustedTargetIndex < 0) return order
-  const insertIndex = insertPosition === 'after' ? adjustedTargetIndex + 1 : adjustedTargetIndex
-  next.splice(insertIndex, 0, moved)
-  return next
-}
 
 function FpsCounter() {
   const [fps, setFps] = useState(0)
@@ -865,51 +231,6 @@ function FpsCounter() {
       {fps} fps
     </div>
   )
-}
-
-/**
- * Scroll `node` to `target` and keep it there while the page is still growing into
- * place: content that arrives in stages (the browser's panels size themselves as their
- * data lands) would otherwise clamp the offset, or the browser's scroll anchoring would
- * shift it. Lets go once the height has been still for `settleMs`, after `maxMs`, or the
- * moment the reader scrolls. Returns a function that stops it early.
- */
-function holdScrollTop(node, target, { settleMs = 750, maxMs = 8000, onDone = null } = {}) {
-  let frame = 0
-  const startedAt = performance.now()
-  let lastHeight = -1
-  let stableSince = startedAt
-  const stop = () => {
-    cancelAnimationFrame(frame)
-    node.removeEventListener('wheel', finish)
-    node.removeEventListener('pointerdown', finish)
-    window.removeEventListener('keydown', finish)
-  }
-  const finish = () => {
-    stop()
-    onDone?.()
-  }
-  const hold = () => {
-    const now = performance.now()
-    const height = node.scrollHeight
-    if (height !== lastHeight) {
-      lastHeight = height
-      stableSince = now
-    }
-    const reachable = height - node.clientHeight
-    const wanted = Math.min(target, Math.max(0, reachable))
-    if (Math.abs(node.scrollTop - wanted) > 1) node.scrollTop = wanted
-    if ((reachable >= target && now - stableSince > settleMs) || now - startedAt > maxMs) {
-      finish()
-      return
-    }
-    frame = requestAnimationFrame(hold)
-  }
-  node.addEventListener('wheel', finish, { passive: true })
-  node.addEventListener('pointerdown', finish)
-  window.addEventListener('keydown', finish)
-  hold()
-  return stop
 }
 
 function App() {
