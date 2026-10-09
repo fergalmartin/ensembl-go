@@ -22,6 +22,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.structure  # noqa: E402
 import app_state  # noqa: E402
 import protein_structure as ps  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
@@ -91,7 +92,7 @@ class StructureTokenTests(unittest.TestCase):
 class ViewerAssetTests(unittest.TestCase):
     def test_the_viewer_page_declares_its_own_policy_and_carries_the_token(self):
         with patch.object(app_state, "API_TOKEN", "s3cret"):
-            response = asyncio.run(main.structure_viewer_page())
+            response = asyncio.run(routes.structure.structure_viewer_page())
 
         csp = response.headers["content-security-policy"]
         self.assertIn("'unsafe-eval'", csp)
@@ -113,16 +114,16 @@ class ViewerAssetTests(unittest.TestCase):
     def test_asset_names_may_not_traverse_or_carry_an_unknown_type(self):
         for name in ("../main.py", "vendor/pdbe-molstar.css", "viewer.py", "secrets.json"):
             with self.assertRaises(HTTPException, msg=name):
-                asyncio.run(main.structure_viewer_asset(name))
+                asyncio.run(routes.structure.structure_viewer_asset(name))
 
     def test_the_hand_written_viewer_files_are_served(self):
         for name in ("viewer.js", "viewer.css"):
-            response = asyncio.run(main.structure_viewer_asset(name))
+            response = asyncio.run(routes.structure.structure_viewer_asset(name))
             self.assertEqual(Path(response.path).name, name)
 
     def test_a_bad_accession_is_refused_before_any_lookup(self):
         with self.assertRaises(HTTPException) as caught:
-            asyncio.run(main.structure_model_file("not-an-accession"))
+            asyncio.run(routes.structure.structure_model_file("not-an-accession"))
         self.assertEqual(caught.exception.status_code, 400)
 
 
@@ -134,9 +135,9 @@ class ModelCacheTests(unittest.TestCase):
             destination = cache / ps.model_cache_filename("O43175", 6)
             destination.write_text("data_AF\n")
 
-            with patch.object(main, "_structure_cache_dir", return_value=cache):
-                with patch.object(main, "get_with_validated_redirects") as fetch:
-                    self.assertEqual(main._ensure_model_file(model), destination)
+            with patch.object(routes.structure, "_structure_cache_dir", return_value=cache):
+                with patch.object(routes.structure, "get_with_validated_redirects") as fetch:
+                    self.assertEqual(routes.structure._ensure_model_file(model), destination)
                     fetch.assert_not_called()
 
     def test_a_download_that_fails_leaves_no_partial_file(self):
@@ -155,10 +156,10 @@ class ModelCacheTests(unittest.TestCase):
                     yield b"data_AF"
                     raise OSError("connection reset")
 
-            with patch.object(main, "_structure_cache_dir", return_value=cache):
-                with patch.object(main, "get_with_validated_redirects", return_value=Failing()):
+            with patch.object(routes.structure, "_structure_cache_dir", return_value=cache):
+                with patch.object(routes.structure, "get_with_validated_redirects", return_value=Failing()):
                     with self.assertRaises(OSError):
-                        main._ensure_model_file(model)
+                        routes.structure._ensure_model_file(model)
 
             self.assertEqual(sorted(p.name for p in cache.iterdir()), [])
 
@@ -176,11 +177,11 @@ class ModelCacheTests(unittest.TestCase):
                     while True:
                         yield b"x" * (1024 * 1024)
 
-            with patch.object(main, "_structure_cache_dir", return_value=cache):
-                with patch.object(main, "MAX_STRUCTURE_MODEL_BYTES", 4 * 1024 * 1024):
-                    with patch.object(main, "get_with_validated_redirects", return_value=Huge()):
+            with patch.object(routes.structure, "_structure_cache_dir", return_value=cache):
+                with patch.object(routes.structure, "MAX_STRUCTURE_MODEL_BYTES", 4 * 1024 * 1024):
+                    with patch.object(routes.structure, "get_with_validated_redirects", return_value=Huge()):
                         with self.assertRaises(HTTPException):
-                            main._ensure_model_file(model)
+                            routes.structure._ensure_model_file(model)
 
             self.assertEqual(sorted(p.name for p in cache.iterdir()), [])
 
@@ -215,7 +216,7 @@ class VariantProjectionTests(unittest.TestCase):
     MAP = {1: 1, 2: 2, 3: 3}
 
     def project(self, rec, strand="+", segments=None, dna=None, mapping=None):
-        return main._structure_variant_from_record(
+        return routes.structure._structure_variant_from_record(
             rec, "trk", "chr1", strand, 1,
             segments if segments is not None else self.SEGMENTS,
             0,
@@ -306,9 +307,9 @@ class TranscriptProbeTests(unittest.TestCase):
     def test_a_transcript_with_a_model_is_offered(self):
         context = {"status": "ok", "protein": "MRT", "protein_id": "ENSP1"}
         model = ps.AlphaFoldModel(accession="O43175", sequence="MRT", version=6)
-        with patch.object(main, "_resolve_structure_accession", return_value=("O43175", "uniprot_api")):
-            with patch.object(main, "_alphafold_model", return_value=model):
-                option = main._probe_structure_option("reference", "ENST1", context, self.far_future)
+        with patch.object(routes.structure, "_resolve_structure_accession", return_value=("O43175", "uniprot_api")):
+            with patch.object(routes.structure, "_alphafold_model", return_value=model):
+                option = routes.structure._probe_structure_option("reference", "ENST1", context, self.far_future)
         self.assertEqual(option.status, "ok")
         self.assertEqual(option.accession, "O43175")
         self.assertEqual(option.protein_length, 3)
@@ -317,34 +318,34 @@ class TranscriptProbeTests(unittest.TestCase):
     def test_a_translation_unlike_the_model_is_still_offered(self):
         context = {"status": "ok", "protein": "MRTAA", "protein_id": "ENSP1"}
         model = ps.AlphaFoldModel(accession="O43175", sequence="MRT", version=6)
-        with patch.object(main, "_resolve_structure_accession", return_value=("O43175", "xref")):
-            with patch.object(main, "_alphafold_model", return_value=model):
-                option = main._probe_structure_option("reference", "ENST1", context, self.far_future)
+        with patch.object(routes.structure, "_resolve_structure_accession", return_value=("O43175", "xref")):
+            with patch.object(routes.structure, "_alphafold_model", return_value=model):
+                option = routes.structure._probe_structure_option("reference", "ENST1", context, self.far_future)
         self.assertEqual(option.status, "ok")
         self.assertFalse(option.identical)
 
     def test_a_transcript_with_no_accession_is_not_offered(self):
         context = {"status": "ok", "protein": "MRT", "protein_id": "ENSP1"}
-        with patch.object(main, "_resolve_structure_accession", return_value=("", "")):
-            option = main._probe_structure_option("reference", "ENST1", context, self.far_future)
+        with patch.object(routes.structure, "_resolve_structure_accession", return_value=("", "")):
+            option = routes.structure._probe_structure_option("reference", "ENST1", context, self.far_future)
         self.assertEqual(option.status, "no_accession")
 
     def test_an_accession_with_no_model_is_not_offered(self):
         context = {"status": "ok", "protein": "MRT", "protein_id": "ENSP1"}
-        with patch.object(main, "_resolve_structure_accession", return_value=("O43175", "xref")):
-            with patch.object(main, "_alphafold_model", return_value=None):
-                option = main._probe_structure_option("reference", "ENST1", context, self.far_future)
+        with patch.object(routes.structure, "_resolve_structure_accession", return_value=("O43175", "xref")):
+            with patch.object(routes.structure, "_alphafold_model", return_value=None):
+                option = routes.structure._probe_structure_option("reference", "ENST1", context, self.far_future)
         self.assertEqual(option.status, "no_model")
 
     def test_a_non_coding_transcript_reports_its_own_status(self):
         context = {"status": "no_cds", "message": "No CDS — non-coding transcript"}
-        option = main._probe_structure_option("reference", "ENST1", context, self.far_future)
+        option = routes.structure._probe_structure_option("reference", "ENST1", context, self.far_future)
         self.assertEqual(option.status, "no_cds")
 
     def test_past_the_deadline_nothing_further_is_looked_up(self):
         context = {"status": "ok", "protein": "MRT", "protein_id": "ENSP1"}
-        with patch.object(main, "_resolve_structure_accession") as resolve:
-            option = main._probe_structure_option("reference", "ENST1", context, time.monotonic() - 1)
+        with patch.object(routes.structure, "_resolve_structure_accession") as resolve:
+            option = routes.structure._probe_structure_option("reference", "ENST1", context, time.monotonic() - 1)
         self.assertEqual(option.status, "unknown")
         resolve.assert_not_called()
 
@@ -352,25 +353,25 @@ class TranscriptProbeTests(unittest.TestCase):
         # The distinction matters: "we could not check" must leave the transcript
         # selectable, where "there is no model" must not.
         context = {"status": "ok", "protein": "MRT", "protein_id": "ENSP1"}
-        with patch.object(main, "_resolve_structure_accession", side_effect=OSError("offline")):
-            option = main._probe_structure_option("reference", "ENST1", context, self.far_future)
+        with patch.object(routes.structure, "_resolve_structure_accession", side_effect=OSError("offline")):
+            option = routes.structure._probe_structure_option("reference", "ENST1", context, self.far_future)
         self.assertEqual(option.status, "unknown")
 
     def test_too_many_transcripts_falls_back_to_the_canonical(self):
-        ids = [f"ENST{index}" for index in range(main.STRUCTURE_PROBE_MAX_TRANSCRIPTS + 1)]
-        payload = main.StructureTranscriptsRequest(genome="reference", transcript_ids=ids)
-        with patch.object(main, "_structure_transcript_contexts") as contexts:
-            result = asyncio.run(main.structure_transcripts(payload))
+        ids = [f"ENST{index}" for index in range(routes.structure.STRUCTURE_PROBE_MAX_TRANSCRIPTS + 1)]
+        payload = routes.structure.StructureTranscriptsRequest(genome="reference", transcript_ids=ids)
+        with patch.object(routes.structure, "_structure_transcript_contexts") as contexts:
+            result = asyncio.run(routes.structure.structure_transcripts(payload))
         self.assertEqual(result.mode, "canonical_only")
         self.assertEqual(result.entries, [])
         contexts.assert_not_called()
 
     def test_every_lookup_failing_falls_back_to_the_canonical(self):
         contexts = {"ENST1": {"status": "ok", "protein": "MRT", "protein_id": "ENSP1"}}
-        payload = main.StructureTranscriptsRequest(genome="reference", transcript_ids=["ENST1"])
-        with patch.object(main, "_structure_transcript_contexts", return_value=contexts):
-            with patch.object(main, "_resolve_structure_accession", side_effect=OSError("offline")):
-                result = asyncio.run(main.structure_transcripts(payload))
+        payload = routes.structure.StructureTranscriptsRequest(genome="reference", transcript_ids=["ENST1"])
+        with patch.object(routes.structure, "_structure_transcript_contexts", return_value=contexts):
+            with patch.object(routes.structure, "_resolve_structure_accession", side_effect=OSError("offline")):
+                result = asyncio.run(routes.structure.structure_transcripts(payload))
         self.assertEqual(result.mode, "canonical_only")
         self.assertEqual([entry.status for entry in result.entries], ["unknown"])
 
@@ -384,37 +385,37 @@ class AlphaFoldMissCachingTests(unittest.TestCase):
     """
 
     def setUp(self):
-        main._alphafold_model_cache.clear()
+        routes.structure._alphafold_model_cache.clear()
         self._cache = tempfile.TemporaryDirectory()
         self.addCleanup(self._cache.cleanup)
-        patcher = patch.object(main, "_structure_cache_dir", return_value=Path(self._cache.name))
+        patcher = patch.object(routes.structure, "_structure_cache_dir", return_value=Path(self._cache.name))
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_an_absent_prediction_is_not_refetched(self):
-        with patch.object(main, "_annotation_get_json", return_value=None) as fetch:
-            self.assertIsNone(main._alphafold_model("A0ACI8TXS9"))
-            main._alphafold_model_cache.clear()
-            self.assertIsNone(main._alphafold_model("A0ACI8TXS9"))
+        with patch.object(routes.structure, "_annotation_get_json", return_value=None) as fetch:
+            self.assertIsNone(routes.structure._alphafold_model("A0ACI8TXS9"))
+            routes.structure._alphafold_model_cache.clear()
+            self.assertIsNone(routes.structure._alphafold_model("A0ACI8TXS9"))
         fetch.assert_called_once()
 
     def test_the_marker_is_never_mistaken_for_a_model(self):
-        with patch.object(main, "_annotation_get_json", return_value=None):
-            main._alphafold_model("A0ACI8TXS9")
+        with patch.object(routes.structure, "_annotation_get_json", return_value=None):
+            routes.structure._alphafold_model("A0ACI8TXS9")
         written = json.loads(
             (Path(self._cache.name) / "AF-A0ACI8TXS9-prediction.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(written, {main.STRUCTURE_ABSENT_KEY: True})
+        self.assertEqual(written, {routes.structure.STRUCTURE_ABSENT_KEY: True})
         self.assertIsNone(ps.parse_alphafold_prediction(written, "A0ACI8TXS9"))
 
     def test_a_stale_miss_is_looked_up_again(self):
-        with patch.object(main, "_annotation_get_json", return_value=None) as fetch:
-            main._alphafold_model("A0ACI8TXS9")
+        with patch.object(routes.structure, "_annotation_get_json", return_value=None) as fetch:
+            routes.structure._alphafold_model("A0ACI8TXS9")
             path = Path(self._cache.name) / "AF-A0ACI8TXS9-prediction.json"
-            stale = time.time() - main.STRUCTURE_ACCESSION_MISS_TTL_SECONDS - 60
+            stale = time.time() - routes.structure.STRUCTURE_ACCESSION_MISS_TTL_SECONDS - 60
             os.utime(path, (stale, stale))
-            main._alphafold_model_cache.clear()
-            main._alphafold_model("A0ACI8TXS9")
+            routes.structure._alphafold_model_cache.clear()
+            routes.structure._alphafold_model("A0ACI8TXS9")
         self.assertEqual(fetch.call_count, 2)
 
     def test_a_real_prediction_keeps_the_longer_life(self):
@@ -423,36 +424,36 @@ class AlphaFoldMissCachingTests(unittest.TestCase):
             "sequenceStart": 1, "sequenceEnd": 3, "latestVersion": 6,
             "cifUrl": "https://alphafold.ebi.ac.uk/files/AF-O43175-F1-model_v6.cif",
         }
-        with patch.object(main, "_annotation_get_json", return_value=payload) as fetch:
-            main._alphafold_model("O43175")
+        with patch.object(routes.structure, "_annotation_get_json", return_value=payload) as fetch:
+            routes.structure._alphafold_model("O43175")
             path = Path(self._cache.name) / "AF-O43175-prediction.json"
-            aged = time.time() - main.STRUCTURE_ACCESSION_MISS_TTL_SECONDS - 60
+            aged = time.time() - routes.structure.STRUCTURE_ACCESSION_MISS_TTL_SECONDS - 60
             os.utime(path, (aged, aged))
-            main._alphafold_model_cache.clear()
-            model = main._alphafold_model("O43175")
+            routes.structure._alphafold_model_cache.clear()
+            model = routes.structure._alphafold_model("O43175")
         fetch.assert_called_once()
         self.assertEqual(model.accession, "O43175")
 
 
 class AccessionResolutionTests(unittest.TestCase):
     def setUp(self):
-        main._uniprot_accession_cache.clear()
-        main._uniprot_mapping_cache.clear()
+        routes.structure._uniprot_accession_cache.clear()
+        routes.structure._uniprot_mapping_cache.clear()
         # The remote tier is also cached on disk, so each test gets its own cache
         # directory: otherwise one test's remembered miss becomes the next test's
         # answer, and the suite would write into the user's real cache.
         self._cache = tempfile.TemporaryDirectory()
         self.addCleanup(self._cache.cleanup)
-        patcher = patch.object(main, "_structure_cache_dir", return_value=Path(self._cache.name))
+        patcher = patch.object(routes.structure, "_structure_cache_dir", return_value=Path(self._cache.name))
         patcher.start()
         self.addCleanup(patcher.stop)
-        main._uniprot_accession_disk = None
+        routes.structure._uniprot_accession_disk = None
         self.addCleanup(setattr, main, "_uniprot_accession_disk", None)
 
     def test_a_typed_accession_wins_over_every_other_source(self):
-        with patch.object(main, "_configured_mapping_path") as configured:
-            with patch.object(main, "_uniprot_accession_from_api") as remote:
-                accession, source = main._resolve_structure_accession("reference", "ENSP1", "o43175")
+        with patch.object(routes.structure, "_configured_mapping_path") as configured:
+            with patch.object(routes.structure, "_uniprot_accession_from_api") as remote:
+                accession, source = routes.structure._resolve_structure_accession("reference", "ENSP1", "o43175")
         self.assertEqual((accession, source), ("O43175", ps.SOURCE_MANUAL))
         configured.assert_not_called()
         remote.assert_not_called()
@@ -462,9 +463,9 @@ class AccessionResolutionTests(unittest.TestCase):
             mapping = Path(directory) / "map.tsv"
             mapping.write_text("ENSP00000358417\tO43175\n")
 
-            with patch.object(main, "_configured_mapping_path", return_value=mapping):
-                with patch.object(main, "_uniprot_accession_from_api") as remote:
-                    accession, source = main._resolve_structure_accession(
+            with patch.object(routes.structure, "_configured_mapping_path", return_value=mapping):
+                with patch.object(routes.structure, "_uniprot_accession_from_api") as remote:
+                    accession, source = routes.structure._resolve_structure_accession(
                         "reference", "ENSP00000358417", ""
                     )
 
@@ -472,64 +473,64 @@ class AccessionResolutionTests(unittest.TestCase):
         remote.assert_not_called()
 
     def test_the_remote_lookup_is_the_last_resort_and_is_memoised(self):
-        with patch.object(main, "_configured_mapping_path", return_value=None):
-            with patch.object(main, "_genome_xref_mapping", return_value=None):
-                with patch.object(main, "_uniprot_accession_from_api", return_value="O43175") as remote:
-                    first = main._resolve_structure_accession("reference", "ENSP1", "", 533)
-                    second = main._resolve_structure_accession("reference", "ENSP1", "", 533)
+        with patch.object(routes.structure, "_configured_mapping_path", return_value=None):
+            with patch.object(routes.structure, "_genome_xref_mapping", return_value=None):
+                with patch.object(routes.structure, "_uniprot_accession_from_api", return_value="O43175") as remote:
+                    first = routes.structure._resolve_structure_accession("reference", "ENSP1", "", 533)
+                    second = routes.structure._resolve_structure_accession("reference", "ENSP1", "", 533)
 
         self.assertEqual(first, ("O43175", ps.SOURCE_UNIPROT_API))
         self.assertEqual(second, ("O43175", ps.SOURCE_UNIPROT_API))
         remote.assert_called_once_with("ENSP1", 533)
 
     def test_the_remote_answer_survives_a_restart(self):
-        with patch.object(main, "_configured_mapping_path", return_value=None):
-            with patch.object(main, "_genome_xref_mapping", return_value=None):
-                with patch.object(main, "_uniprot_accession_from_api", return_value="O43175") as remote:
-                    main._resolve_structure_accession("reference", "ENSP1", "", 533)
+        with patch.object(routes.structure, "_configured_mapping_path", return_value=None):
+            with patch.object(routes.structure, "_genome_xref_mapping", return_value=None):
+                with patch.object(routes.structure, "_uniprot_accession_from_api", return_value="O43175") as remote:
+                    routes.structure._resolve_structure_accession("reference", "ENSP1", "", 533)
                     # Losing the in-memory caches is what a restart looks like from
                     # here; the panel should still not need the network.
-                    main._uniprot_accession_cache.clear()
-                    main._uniprot_accession_disk = None
-                    again = main._resolve_structure_accession("reference", "ENSP1", "", 533)
+                    routes.structure._uniprot_accession_cache.clear()
+                    routes.structure._uniprot_accession_disk = None
+                    again = routes.structure._resolve_structure_accession("reference", "ENSP1", "", 533)
 
         self.assertEqual(again, ("O43175", ps.SOURCE_UNIPROT_API))
         remote.assert_called_once()
 
     def test_a_remembered_miss_expires_sooner_than_a_hit(self):
         self.assertGreater(
-            main.STRUCTURE_ACCESSION_TTL_SECONDS,
-            main.STRUCTURE_ACCESSION_MISS_TTL_SECONDS,
+            routes.structure.STRUCTURE_ACCESSION_TTL_SECONDS,
+            routes.structure.STRUCTURE_ACCESSION_MISS_TTL_SECONDS,
         )
-        main._accession_disk_store("ENSP1", "")
-        cache = main._accession_disk_cache()
-        cache["ENSP1"]["ts"] = time.time() - main.STRUCTURE_ACCESSION_MISS_TTL_SECONDS - 60
-        self.assertIsNone(main._accession_disk_lookup("ENSP1"))
+        routes.structure._accession_disk_store("ENSP1", "")
+        cache = routes.structure._accession_disk_cache()
+        cache["ENSP1"]["ts"] = time.time() - routes.structure.STRUCTURE_ACCESSION_MISS_TTL_SECONDS - 60
+        self.assertIsNone(routes.structure._accession_disk_lookup("ENSP1"))
 
-        main._accession_disk_store("ENSP2", "O43175")
-        cache["ENSP2"]["ts"] = time.time() - main.STRUCTURE_ACCESSION_MISS_TTL_SECONDS - 60
-        self.assertEqual(main._accession_disk_lookup("ENSP2"), "O43175")
+        routes.structure._accession_disk_store("ENSP2", "O43175")
+        cache["ENSP2"]["ts"] = time.time() - routes.structure.STRUCTURE_ACCESSION_MISS_TTL_SECONDS - 60
+        self.assertEqual(routes.structure._accession_disk_lookup("ENSP2"), "O43175")
 
     def test_a_protein_with_no_mapping_reports_no_source(self):
-        with patch.object(main, "_configured_mapping_path", return_value=None):
-            with patch.object(main, "_genome_xref_mapping", return_value=None):
-                with patch.object(main, "_uniprot_accession_from_api", return_value=""):
+        with patch.object(routes.structure, "_configured_mapping_path", return_value=None):
+            with patch.object(routes.structure, "_genome_xref_mapping", return_value=None):
+                with patch.object(routes.structure, "_uniprot_accession_from_api", return_value=""):
                     self.assertEqual(
-                        main._resolve_structure_accession("reference", "ENSP1", ""), ("", "")
+                        routes.structure._resolve_structure_accession("reference", "ENSP1", ""), ("", "")
                     )
 
     def test_a_failed_lookup_is_remembered_so_it_is_not_retried_per_request(self):
-        with patch.object(main, "_configured_mapping_path", return_value=None):
-            with patch.object(main, "_genome_xref_mapping", return_value=None):
-                with patch.object(main, "_uniprot_accession_from_api", return_value="") as remote:
-                    main._resolve_structure_accession("reference", "ENSP1", "")
-                    main._resolve_structure_accession("reference", "ENSP1", "")
+        with patch.object(routes.structure, "_configured_mapping_path", return_value=None):
+            with patch.object(routes.structure, "_genome_xref_mapping", return_value=None):
+                with patch.object(routes.structure, "_uniprot_accession_from_api", return_value="") as remote:
+                    routes.structure._resolve_structure_accession("reference", "ENSP1", "")
+                    routes.structure._resolve_structure_accession("reference", "ENSP1", "")
         remote.assert_called_once()
 
 
 class AlphaFoldMetadataCacheTests(unittest.TestCase):
     def setUp(self):
-        main._alphafold_model_cache.clear()
+        routes.structure._alphafold_model_cache.clear()
 
     def test_metadata_is_read_from_disk_rather_than_refetched(self):
         payload = [{"modelEntityId": "AF-O43175-F1", "sequence": "MAFAN", "latestVersion": 6}]
@@ -537,9 +538,9 @@ class AlphaFoldMetadataCacheTests(unittest.TestCase):
             cache = Path(directory)
             (cache / "AF-O43175-prediction.json").write_text(json.dumps(payload))
 
-            with patch.object(main, "_structure_cache_dir", return_value=cache):
-                with patch.object(main, "_annotation_get_json") as fetch:
-                    model = main._alphafold_model("O43175")
+            with patch.object(routes.structure, "_structure_cache_dir", return_value=cache):
+                with patch.object(routes.structure, "_annotation_get_json") as fetch:
+                    model = routes.structure._alphafold_model("O43175")
 
         self.assertEqual(model.sequence, "MAFAN")
         self.assertEqual(model.version, 6)
@@ -547,10 +548,10 @@ class AlphaFoldMetadataCacheTests(unittest.TestCase):
 
     def test_an_accession_with_no_model_is_cached_as_none(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch.object(main, "_structure_cache_dir", return_value=Path(directory)):
-                with patch.object(main, "_annotation_get_json", return_value=None) as fetch:
-                    self.assertIsNone(main._alphafold_model("O43175"))
-                    self.assertIsNone(main._alphafold_model("O43175"))
+            with patch.object(routes.structure, "_structure_cache_dir", return_value=Path(directory)):
+                with patch.object(routes.structure, "_annotation_get_json", return_value=None) as fetch:
+                    self.assertIsNone(routes.structure._alphafold_model("O43175"))
+                    self.assertIsNone(routes.structure._alphafold_model("O43175"))
         fetch.assert_called_once()
 
 
