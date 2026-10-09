@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import (  # noqa: E402
+from routes.sequence_export import (  # noqa: E402
     _available_feature_types,
     _build_fasta_header,
     _canonical_info_for_header,
