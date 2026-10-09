@@ -24,6 +24,7 @@ import {
     normalizeBigWigSettings,
     normalizeVcfDisplayMode,
 } from './trackSettings.js'
+import { getFeatureRowAnchor } from './genomeBrowserViewportLayout.js'
 
 export function findCustomTrackHover(ctx, mouseX, mouseY, clientX, clientY) {
     const {
@@ -473,4 +474,75 @@ export function findSelectedGeneTranscriptHit(ctx, mouseX, mouseY) {
         }
 
         return best
+    }
+
+export function findGeneFeatureVerticalAnchor(ctx, mouseX, mouseY, trackId) {
+    const {
+        genomicToScreen,
+        getDisplayTranscriptsForGene,
+        getGeneTotalHeight,
+        layout,
+        transcriptLayoutMetrics,
+    } = ctx
+        const trackGenes = trackId === 'forward'
+            ? layout.forwardGenes
+            : trackId === 'reverse'
+                ? layout.reverseGenes
+                : []
+        if (trackGenes.length === 0) return null
+
+        const trackY = trackId === 'forward' ? layout.FORWARD_Y : layout.REVERSE_Y
+        const trackPadding = trackId === 'forward' ? layout.fwdPadding : layout.revPadding
+        let best = null
+
+        for (const gene of trackGenes) {
+            const rawGx1 = genomicToScreen(gene.start)
+            const rawGx2 = genomicToScreen(gene.end)
+            const gx1 = Math.min(rawGx1, rawGx2)
+            const gx2 = Math.max(rawGx1, rawGx2)
+            if (mouseX < gx1 - 4 || mouseX > gx2 + 4) continue
+
+            const geneWidth = Math.max(1, gx2 - gx1)
+            const displayTxs = getDisplayTranscriptsForGene(gene, geneWidth)
+            const rowCount = Math.max(1, displayTxs.length || 1)
+            const baseGeneY = trackY
+                + trackPadding
+                + ((gene._row || 0) * transcriptLayoutMetrics.rowPitch)
+            const totalGeneHeight = getGeneTotalHeight(rowCount)
+            if (mouseY < baseGeneY || mouseY > baseGeneY + totalGeneHeight) continue
+
+            const rowAnchor = getFeatureRowAnchor({
+                baseGeneY,
+                pointerY: mouseY,
+                rowPitch: transcriptLayoutMetrics.rowPitch,
+                midOffset: transcriptLayoutMetrics.midOffset,
+                rowCount,
+                transcriptIds: displayTxs.map((tx) => tx?.id),
+            })
+            if (!rowAnchor) continue
+
+            const rowMidY = baseGeneY
+                + (rowAnchor.rowIndex * transcriptLayoutMetrics.rowPitch)
+                + transcriptLayoutMetrics.midOffset
+            const distance = Math.abs(mouseY - rowMidY)
+            if (!best || distance < best.distance) {
+                best = {
+                    trackId,
+                    geneId: String(gene.id),
+                    transcriptId: rowAnchor.transcriptId,
+                    fallbackRowIndex: rowAnchor.rowIndex,
+                    rowOffset: rowAnchor.rowOffset,
+                    distance,
+                }
+            }
+        }
+
+        if (!best) return null
+        return {
+            trackId: best.trackId,
+            geneId: best.geneId,
+            transcriptId: best.transcriptId,
+            fallbackRowIndex: best.fallbackRowIndex,
+            rowOffset: best.rowOffset,
+        }
     }

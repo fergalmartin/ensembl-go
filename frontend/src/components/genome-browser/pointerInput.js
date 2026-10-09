@@ -9,6 +9,10 @@ import { normalizeBigWigDisplayMode, normalizeBigWigSettings, normalizeVcfDispla
 import { resolveDragAxis } from '../../utils/browsingControls.js'
 import { spliceJunctionKey } from './spliceGeometry.js'
 import { clamp } from './trackData.js'
+import { isGroupRowId } from '../../utils/trackGroups.js'
+import { SIDEBAR_TOGGLE_HIT_RADIUS } from './browserConstants.js'
+import { BOX_SELECT_FILL_FRACTION } from './genomeBrowserViewportLayout.js'
+import { REV_COMP } from './trackData.js'
 
 export function handleBrowserCanvasClick(ctx, e) {
     const {
@@ -498,4 +502,319 @@ export function handleBrowserMouseMove(ctx, e) {
         }
         lastPosRef.current = e.clientX
         lastTimeRef.current = now
+    }
+
+export function handleBrowserMouseDown(ctx, e) {
+    const {
+        animationRef,
+        canvasRef,
+        containerRef,
+        dismissCustomTrackTooltip,
+        dragAxisRef,
+        dragScrollTopRef,
+        dragStartXRef,
+        dragStartYRef,
+        dragViewStartRef,
+        findNearestScrollable,
+        getCustomTrackHover,
+        getCustomTrackToggleY,
+        getTrackAtY,
+        hoveredSpliceRef,
+        interactionModeRef,
+        isBoxSelectMode,
+        isCustomTrackId,
+        isDraggingRef,
+        joinedRows,
+        lastPosRef,
+        lastTimeRef,
+        layout,
+        scrollTargetRef,
+        setCustomTracks,
+        setDraggingTrack,
+        setHiddenStrands,
+        setHoveredSpliceJunction,
+        setIsDragging,
+        setIsSelectingRect,
+        setSelectionRect,
+        setSidebarTooltip,
+        showSequenceTrack,
+        spliceArcDragRef,
+        spliceArcLiftOffsets,
+        suppressNextClickRef,
+        velocityRef,
+        viewStartRef,
+    } = ctx
+        e.preventDefault() // Prevent browser text-selection on drag
+        // preventDefault also suppresses the default focus, so take it
+        // explicitly or keyboard navigation never reaches the clicked panel.
+        // preventScroll matters: without it the page jumps and fights the
+        // adaptive scroll anchor.
+        containerRef.current?.focus({ preventScroll: true })
+        setSidebarTooltip(null)
+        dismissCustomTrackTooltip()
+        hoveredSpliceRef.current = null
+        setHoveredSpliceJunction(null)
+        if (animationRef.current) {
+            cancelAnimationFrame(animationRef.current)
+            animationRef.current = null
+        }
+
+        const canvas = canvasRef.current
+        if (canvas) {
+            const rect = canvas.getBoundingClientRect()
+            const clickX = e.clientX - rect.left
+            const clickY = e.clientY - rect.top
+
+            // One-shot rectangular selection mode for box-zoom.
+            if (isBoxSelectMode) {
+                if (clickX <= LHS_WIDTH) return
+                suppressNextClickRef.current = true
+                setIsSelectingRect(true)
+                setSelectionRect({ x1: clickX, y1: clickY, x2: clickX, y2: clickY })
+                return
+            }
+
+            // Intercept sidebar toggling or dragging
+            if (clickX <= LHS_WIDTH) {
+                // A step that limits the browser to zooming means it: the gutter switches
+                // a track off and its handle reorders the stack, and neither is zooming.
+                // The user who was told they could only zoom should not be able to blank
+                // the track by clicking a little to the left of it.
+                if (interactionModeRef.current !== 'all') return
+                const trackId = getTrackAtY(clickY)
+
+                // Circular hit test around the toggle glyph. The radius is
+                // deliberately larger than the glyph so shrinking it did not make
+                // the control harder to hit.
+                const toggleCenterX = LHS_WIDTH - 13
+                const hitRadiusSq = SIDEBAR_TOGGLE_HIT_RADIUS * SIDEBAR_TOGGLE_HIT_RADIUS
+                const dxSq = (clickX - toggleCenterX) ** 2
+                const hitsToggle = (centerY) => dxSq + (clickY - centerY) ** 2 <= hitRadiusSq
+
+                let toggleTrackId = null
+                if (layout.forwardBgHeight > 0 && hitsToggle(layout.FORWARD_Y + layout.forwardBgHeight / 2)) {
+                    toggleTrackId = 'forward'
+                } else if (layout.reverseBgHeight > 0 && hitsToggle(layout.REVERSE_Y + layout.reverseBgHeight / 2)) {
+                    toggleTrackId = 'reverse'
+                } else if (showSequenceTrack && layout.SEQUENCE_Y >= 0 && hitsToggle(layout.SEQUENCE_Y + layout.seqBgHeight / 2)) {
+                    toggleTrackId = 'sequence'
+                } else if (layout.customTrackLayouts) {
+                    for (const [tid, tLayout] of Object.entries(layout.customTrackLayouts)) {
+                        if (tLayout.joinedRowId) continue
+                        if (hitsToggle(getCustomTrackToggleY(tLayout))) { toggleTrackId = tid; break }
+                    }
+                    for (const [rid, rLayout] of Object.entries(layout.groupRowLayouts || {})) {
+                        if (toggleTrackId) break
+                        if (hitsToggle(getCustomTrackToggleY(rLayout))) toggleTrackId = rid
+                    }
+                }
+
+                if (toggleTrackId === 'forward') {
+                    setHiddenStrands(prev => ({ ...prev, forward: !prev.forward }))
+                    return
+                } else if (toggleTrackId === 'reverse') {
+                    setHiddenStrands(prev => ({ ...prev, reverse: !prev.reverse }))
+                    return
+                } else if (toggleTrackId === 'sequence') {
+                    setHiddenStrands(prev => ({ ...prev, sequence: !prev.sequence }))
+                    return
+                } else if (toggleTrackId && isCustomTrackId(toggleTrackId)) {
+                    setCustomTracks((prev) =>
+                        prev.map((track) =>
+                            track.id === toggleTrackId
+                                ? { ...track, visible: !track.visible }
+                                : track
+                        )
+                    )
+                    return
+                } else if (toggleTrackId && isGroupRowId(toggleTrackId)) {
+                    // A joined group turns on and off as one.
+                    const turnOn = Boolean(joinedRows.get(toggleTrackId)?.hidden)
+                    setCustomTracks((prev) => prev.map((track) => (
+                        track.joinedRowId === toggleTrackId ? { ...track, visible: turnOn } : track
+                    )))
+                    return
+                }
+
+                // If not a toggle, initiate drag-and-drop
+                if (trackId) {
+                    setDraggingTrack(trackId)
+                }
+
+                return // Handled LHS interaction
+            }
+
+            // Start splice-arc vertical drag mode (separate from viewport pan).
+            const customHover = getCustomTrackHover(clickX, clickY, e.clientX, e.clientY)
+            if (customHover?.hoverSplice?.junction) {
+                const hit = customHover.hoverSplice
+                const junctionKey = spliceJunctionKey(hit.junction)
+                const mapKey = `${hit.trackId}|${junctionKey}`
+                spliceArcDragRef.current = {
+                    trackId: hit.trackId,
+                    key: junctionKey,
+                    startClientY: e.clientY,
+                    initialLift: Number(spliceArcLiftOffsets[mapKey] || 0),
+                }
+            } else {
+                spliceArcDragRef.current = null
+            }
+        }
+
+        setIsDragging(true)
+        isDraggingRef.current = true
+        dragStartXRef.current = e.clientX
+        // Anchor on the live viewport, not the last committed render: a pan that
+        // starts mid-flight would otherwise measure its progress from a stale start.
+        dragViewStartRef.current = viewStartRef.current
+        dragStartYRef.current = e.clientY
+        dragAxisRef.current = null
+        const scrollTarget = findNearestScrollable(containerRef.current)
+        scrollTargetRef.current = scrollTarget
+        dragScrollTopRef.current = scrollTarget ? scrollTarget.scrollTop : 0
+        lastPosRef.current = e.clientX
+        lastTimeRef.current = performance.now()
+        velocityRef.current = 0
+    }
+
+export function handleBrowserMouseUp(ctx) {
+    const {
+        animateToView,
+        dragAxisRef,
+        focusLocation,
+        frameFocusRange,
+        isAligned,
+        isDraggingRef,
+        isSelectingRect,
+        layout,
+        overlayToGenomic,
+        screenToViewCoord,
+        selectedChrom,
+        selectionRect,
+        setIsBoxSelectMode,
+        setIsDragging,
+        setIsSelectingRect,
+        setSelectionRect,
+        spliceArcDragRef,
+        startMomentum,
+        velocityRef,
+    } = ctx
+        if (isSelectingRect) {
+            const rect = selectionRect
+            setIsSelectingRect(false)
+            setSelectionRect(null)
+            setIsBoxSelectMode(false) // one-shot mode
+
+            if (!rect) return
+
+            const minX = Math.max(LHS_WIDTH, Math.min(rect.x1, rect.x2))
+            const maxX = Math.max(LHS_WIDTH, Math.max(rect.x1, rect.x2))
+            const minY = Math.min(rect.y1, rect.y2)
+            const maxY = Math.max(rect.y1, rect.y2)
+
+            const hitsAnyTrack = layout.orderedTracks.some((track) => (
+                maxY >= track.y && minY <= (track.y + track.height)
+            ))
+
+            if (hitsAnyTrack && (maxX - minX) > 2) {
+                const v1 = screenToViewCoord(minX)
+                const v2 = screenToViewCoord(maxX)
+                let nextStart = Math.min(v1, v2)
+                let nextEnd = Math.max(v1, v2)
+                if (nextEnd <= nextStart) nextEnd = nextStart + 1
+
+                // What the user dragged out is now the location of focus. Zoomed to
+                // slightly wider than the box so its boundary lines land inside the
+                // view instead of on its edges, and framed clear of the drawer that
+                // taking focus slides over this panel's right edge.
+                const selectedSpan = nextEnd - nextStart
+                const flank = (selectedSpan / BOX_SELECT_FILL_FRACTION - selectedSpan) / 2
+                focusLocation({
+                    chrom: selectedChrom,
+                    start: Math.round(isAligned ? overlayToGenomic(nextStart) : nextStart),
+                    end: Math.round(isAligned ? overlayToGenomic(nextEnd) : nextEnd),
+                })
+                const framedBox = frameFocusRange(nextStart - flank, nextEnd + flank, { gainingFocus: true })
+                animateToView(framedBox.start, framedBox.end, 300)
+            }
+            return
+        }
+
+        if (!isDraggingRef.current) return
+        isDraggingRef.current = false
+        if (spliceArcDragRef.current) {
+            spliceArcDragRef.current = null
+            setIsDragging(false)
+            dragAxisRef.current = null
+            velocityRef.current = 0
+            return
+        }
+        const wasVertical = dragAxisRef.current === 'y'
+        setIsDragging(false)
+        dragAxisRef.current = null
+        if (!wasVertical) startMomentum()
+    }
+
+export function findSequenceBaseAtMouse(ctx, mouseX, mouseY) {
+    const {
+        alignData,
+        effectiveHiddenStrands,
+        getBasePixelBounds,
+        isAligned,
+        isFlipped,
+        layout,
+        overlayToGenomic,
+        seqRange,
+        sequence,
+        showSequenceTrack,
+        viewEnd,
+        viewSpan,
+        viewStart,
+        viewWidth,
+    } = ctx
+        if (!showSequenceTrack || effectiveHiddenStrands.sequence) return null
+        const { SEQUENCE_Y } = layout
+        const seqBoxT = Math.round(SEQUENCE_Y + 6)
+        const seqBoxH = 24
+        if (mouseY < seqBoxT || mouseY > seqBoxT + seqBoxH) return null
+        const trackW = viewWidth - LHS_WIDTH
+        const pxPerBp = trackW / Math.max(1, viewEnd - viewStart)
+        if (pxPerBp < 2) return null
+
+        if (isAligned && alignData && viewSpan <= 1000) {
+            const overlayPos = isFlipped
+                ? viewEnd - (mouseX - LHS_WIDTH) / pxPerBp
+                : viewStart + (mouseX - LHS_WIDTH) / pxPerBp
+            const i = Math.floor(overlayPos)
+            const alnLen = alignData.sequence.length
+            let base = null
+            if (i >= 0 && i < alnLen) {
+                base = alignData.sequence[i]
+            } else if (sequence && seqRange) {
+                const genomicBp = Math.round(overlayToGenomic(i))
+                const seqIdx = genomicBp - seqRange.start
+                if (seqIdx >= 0 && seqIdx < sequence.length) {
+                    base = sequence[seqIdx]
+                    if (alignData.strand === '-') base = REV_COMP[base] || base
+                }
+            }
+            if (!base || base === '-') return null
+            const displayBase = isFlipped ? (REV_COMP[base] || base) : base
+            const { bxL, bxR } = getBasePixelBounds(i, pxPerBp)
+            const bp = Math.round(overlayToGenomic(i))
+            return { bp, base: displayBase.toUpperCase(), bxL, bxR, seqBoxT, seqBoxH }
+        } else if (sequence && seqRange && viewSpan <= 1000) {
+            const overlayPos = isFlipped
+                ? viewEnd - (mouseX - LHS_WIDTH) / pxPerBp
+                : viewStart + (mouseX - LHS_WIDTH) / pxPerBp
+            const bp = Math.floor(overlayPos)
+            const seqIdx = bp - seqRange.start
+            if (seqIdx < 0 || seqIdx >= sequence.length) return null
+            const base = sequence[seqIdx]
+            if (!base) return null
+            const displayBase = isFlipped ? (REV_COMP[base] || base) : base
+            const { bxL, bxR } = getBasePixelBounds(bp, pxPerBp)
+            return { bp, base: displayBase.toUpperCase(), bxL, bxR, seqBoxT, seqBoxH }
+        }
+        return null
     }

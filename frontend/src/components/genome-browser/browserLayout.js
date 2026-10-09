@@ -456,3 +456,75 @@ export function computeBrowserLayout(ctx) {
             orderedTracks,
         }
     }
+
+export function computeCustomTrackGeometry(ctx, trackLayout, renderMode, trackType = '', data = null) {
+    const {
+        bpPerPx,
+        getVcfBlockLevel,
+        isPrimaryPanel,
+    } = ctx
+        if (trackType === 'vcf' && isVcfAdaptiveLikeMode(renderMode)) {
+            const vcfLevel = getVcfBlockLevel(bpPerPx)
+            const isDetailMode = data?.mode === 'adp_detail' || vcfLevel?.mode === 'detail'
+            const top = trackLayout.y + (isDetailMode ? 18 : 8)
+            const bottom = trackLayout.y + trackLayout.height - 8
+            const plotHeight = Math.max(8, bottom - top)
+            const barH = Math.max(3, Math.floor(plotHeight * (isDetailMode ? 0.13 : 0.18)))
+            const barY = top + Math.floor((plotHeight - barH) / 2)
+            return {
+                top,
+                bottom,
+                plotHeight,
+                labelY: isDetailMode
+                    ? (trackLayout.y + 10)
+                    : Math.max(trackLayout.y + 10, barY - 8),
+                variantBarY: barY,
+                variantBarH: barH,
+                bumpAreaTop: top,
+                bumpAreaBottom: bottom,
+            }
+        }
+
+        if (renderMode !== 'zoned_heatmap') {
+            const top = trackLayout.y + 18
+            const bottom = trackLayout.y + trackLayout.height - 8
+            return {
+                top,
+                bottom,
+                plotHeight: Math.max(8, bottom - top),
+                labelY: trackLayout.y + 9,
+                // For ensembl VCF: allocate vertical subzones
+                variantBarY: trackLayout.y + 18,
+                variantBarH: 8,
+                bumpAreaTop: trackLayout.y + 30,
+                bumpAreaBottom: trackLayout.y + trackLayout.height - 8,
+            }
+        }
+
+        const labelBand = 14
+        const topPad = 4
+        const bottomPad = 6
+        const gap = 2
+        // In a joined group every track is named above its band, so a heatmap's name
+        // under it would read as the name of the track below.
+        const labelBelow = isPrimaryPanel && !trackLayout.joinedRowId
+        if (labelBelow) {
+            const top = trackLayout.y + topPad
+            const bottom = trackLayout.y + trackLayout.height - (labelBand + bottomPad + gap)
+            return {
+                top,
+                bottom,
+                plotHeight: Math.max(8, bottom - top),
+                labelY: trackLayout.y + trackLayout.height - bottomPad - (labelBand / 2),
+            }
+        }
+
+        const top = trackLayout.y + labelBand + topPad
+        const bottom = trackLayout.y + trackLayout.height - bottomPad
+        return {
+            top,
+            bottom,
+            plotHeight: Math.max(8, bottom - top),
+            labelY: trackLayout.y + topPad + (labelBand / 2),
+        }
+    }

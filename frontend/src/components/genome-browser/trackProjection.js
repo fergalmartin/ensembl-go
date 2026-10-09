@@ -8,6 +8,10 @@ import { SPLICE_HEIGHT_BASE, SPLICE_HEIGHT_MAX, SPLICE_HEIGHT_MIN, SPLICE_HEIGHT
 import { spliceJunctionKey } from './spliceGeometry.js'
 import { BED_DENSITY_LEVELS } from './browserConstants.js'
 import { BED_TO_BROWSER_OFFSET } from './trackData.js'
+import { VCF_LOD_LEVELS } from './browserConstants.js'
+import { SPLICE_BLOCK_MERGE_GAP_PX } from './browserConstants.js'
+import { TRACK_LOD_LEVELS } from './browserConstants.js'
+import { VCF_BLOCK_LEVELS } from '../../utils/vcfTileStrategy.js'
 
 export function projectBigBedFeatureTiles(ctx, trackId, chrom, visStart, visEnd, innerWidthPx, options = {}) {
     const {
@@ -771,5 +775,377 @@ export function projectBigBedBlockTiles(ctx, trackId, chrom, level, visStart, vi
             coverage: Math.max(0, Math.min(1, coveredBp / viewSpan)),
             tile_coverage: Math.max(0, Math.min(1, tileCoverage)),
             error: bestError,
+        }
+    }
+
+export function projectVcfTiles(ctx, trackId, chrom, targetLevel, visStart, visEnd, outBins) {
+    const {
+        projectVcfDetailLevel,
+        projectVcfSummaryLevel,
+    } = ctx
+        const targetIdx = Math.max(0, VCF_LOD_LEVELS.findIndex((l) => l.id === targetLevel.id))
+        if (targetLevel.mode === 'detail') {
+            const detail = projectVcfDetailLevel(trackId, chrom, targetLevel, visStart, visEnd)
+            let summary = null
+            for (let i = targetIdx - 1; i >= 0; i--) {
+                const candidate = projectVcfSummaryLevel(trackId, chrom, VCF_LOD_LEVELS[i], visStart, visEnd, outBins)
+                if (candidate.coverage > 0) {
+                    summary = candidate
+                    if (candidate.coverage >= 0.85) break
+                }
+            }
+            const showSummaryBackdrop = detail.coverage < 0.95
+            return {
+                ...detail,
+                start: visStart,
+                end: visEnd,
+                bins: showSummaryBackdrop ? (summary?.bins || []) : [],
+                occupancy: showSummaryBackdrop ? (summary?.occupancy || []) : [],
+                dominant_effect_bins: showSummaryBackdrop ? (summary?.dominant_effect_bins || []) : [],
+                type_counts_bins: showSummaryBackdrop ? (summary?.type_counts_bins || []) : [],
+                max_count: showSummaryBackdrop ? (summary?.max_count || 0) : 0,
+                coverage: detail.coverage > 0 ? detail.coverage : (summary ? summary.coverage : 0),
+                detail_coverage: detail.coverage,
+                has_data: detail.has_data || !!summary?.has_data,
+                detail: detail.coverage < 0.95
+                    ? ((summary && summary.coverage < 0.75) ? 'Loading VCF summary tiles…' : 'Loading VCF detail tiles…')
+                    : '',
+                truncated: detail.truncated || !!summary?.truncated,
+            }
+        }
+
+        let best = projectVcfSummaryLevel(trackId, chrom, targetLevel, visStart, visEnd, outBins)
+        if (best.coverage >= 0.9) {
+            return { ...best, start: visStart, end: visEnd, detail: '' }
+        }
+        for (let i = targetIdx - 1; i >= 0; i--) {
+            const coarse = projectVcfSummaryLevel(trackId, chrom, VCF_LOD_LEVELS[i], visStart, visEnd, outBins)
+            if (!coarse.has_data) continue
+            const mergedBins = best.bins.map((v, idx) => (best.occupancy[idx] ? v : coarse.bins[idx]))
+            const mergedOcc = best.occupancy.map((v, idx) => (v ? 1 : (coarse.occupancy[idx] ? 1 : 0)))
+            const mergedDom = best.dominant_effect_bins.map((v, idx) => (best.occupancy[idx] ? v : coarse.dominant_effect_bins[idx]))
+            const mergedType = best.type_counts_bins.map((v, idx) => (best.occupancy[idx] ? v : coarse.type_counts_bins[idx]))
+            const mergedMax = mergedBins.length ? Math.max(...mergedBins) : 0
+            const mergedCoverage = mergedOcc.reduce((acc, v) => acc + (v ? 1 : 0), 0) / Math.max(1, outBins)
+            best = {
+                ...best,
+                bins: mergedBins,
+                occupancy: mergedOcc,
+                dominant_effect_bins: mergedDom,
+                type_counts_bins: mergedType,
+                max_count: mergedMax,
+                has_data: mergedMax > 0,
+                coverage: mergedCoverage,
+                truncated: best.truncated || coarse.truncated,
+            }
+            if (best.coverage >= 0.9) break
+        }
+        return {
+            ...best,
+            start: visStart,
+            end: visEnd,
+            detail: best.coverage < 0.75 ? 'Loading higher resolution VCF tiles…' : '',
+        }
+    }
+
+export function projectSpliceBlockTiles(ctx, trackId, chrom, level, visStart, visEnd, innerWidthPx) {
+    const {
+        makeSpliceBlockTileKey,
+        trackFeatureCacheRef,
+    } = ctx
+        const tileSpan = level.tileSpanBp
+        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
+        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
+        const spans = []
+        let expectedTiles = 0
+        let fetchedTiles = 0
+        let bestError = ''
+
+        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
+            const tileEnd = tileStart + tileSpan
+            expectedTiles += 1
+            const key = makeSpliceBlockTileKey(trackId, chrom, level.id, tileStart, tileEnd)
+            const tile = trackFeatureCacheRef.current.get(key)
+            if (!tile) continue
+            fetchedTiles += 1
+            if (tile?.error && !bestError) bestError = String(tile.error)
+            const rows = Array.isArray(tile?.block_spans) ? tile.block_spans : []
+            for (const row of rows) {
+                const s = Number(row?.start)
+                const e = Number(row?.end)
+                if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
+                if (e <= visStart || s >= visEnd) continue
+                spans.push({
+                    start: Math.max(visStart, s),
+                    end: Math.min(visEnd, e),
+                    max_support: Math.max(0, Number(row?.max_support || 0)),
+                })
+            }
+        }
+
+        spans.sort((a, b) => (a.start - b.start) || (a.end - b.end))
+        const merged = []
+        const viewSpan = Math.max(1, visEnd - visStart)
+        const gapBp = SPLICE_BLOCK_MERGE_GAP_PX * (viewSpan / Math.max(1, innerWidthPx))
+        for (const span of spans) {
+            const last = merged[merged.length - 1]
+            if (last && span.start <= (last.end + gapBp)) {
+                last.end = Math.max(last.end, span.end)
+                last.max_support = Math.max(last.max_support, span.max_support)
+            } else {
+                merged.push({ ...span })
+            }
+        }
+
+        let coveredBp = 0
+        for (const span of merged) coveredBp += Math.max(0, span.end - span.start)
+        const tileCoverage = expectedTiles > 0 ? (fetchedTiles / expectedTiles) : 0
+        return {
+            mode: 'splice_blocks',
+            level: level.id,
+            start: visStart,
+            end: visEnd,
+            block_spans: merged,
+            has_data: merged.length > 0,
+            coverage: Math.max(0, Math.min(1, coveredBp / viewSpan)),
+            tile_coverage: Math.max(0, Math.min(1, tileCoverage)),
+            error: bestError,
+        }
+    }
+
+export function projectBigWigTiles(ctx, trackId, chrom, targetLevel, visStart, visEnd, outBins) {
+    const {
+        projectLevelToView,
+        trackChromScaleRef,
+    } = ctx
+        const empty = { bins: Array(outBins).fill(null), has_data: false, min: null, max: null, coverage: 0, detail: '', error: '' }
+
+        // Try from target level upward (finer → coarser) for best coverage
+        const targetIdx = TRACK_LOD_LEVELS.indexOf(targetLevel)
+
+        // First pass: try target level
+        const fine = projectLevelToView(trackId, chrom, targetLevel, visStart, visEnd, outBins)
+        if (fine.coverage >= 0.9) {
+            // Nearly full coverage from target level — use it, apply stable chrom scale
+            const scaleKey = `${trackId}|${chrom}`
+            const chromScale = trackChromScaleRef.current[scaleKey]
+            const safeMin = chromScale?.min ?? fine.min ?? 0
+            const safeMax = chromScale?.max ?? fine.max ?? (safeMin + 1e-6)
+            return { ...fine, min: safeMin, max: safeMax, detail: '', coverage: fine.coverage }
+        }
+
+        // Fallback: overlay only the immediately coarser level under fine data.
+        // Allowing detailed views to fall back all the way to L0/L1 can create
+        // long flat phantom blocks from stale overview tiles as screen-bin
+        // alignment shifts during pan/zoom.
+        let bestResult = fine
+        const fallbackLevels = targetIdx > 0
+            ? [TRACK_LOD_LEVELS[targetIdx - 1]]
+            : []
+        for (const coarseLevel of fallbackLevels) {
+            const coarse = projectLevelToView(trackId, chrom, coarseLevel, visStart, visEnd, outBins)
+            if (!coarse.has_data) continue
+            // Merge: use fine where it actually has tile coverage (populated), else coarse
+            const merged = fine.bins.map((v, idx) =>
+                fine.populated[idx] ? v : coarse.bins[idx]
+            )
+            const mergedPopulated = new Uint8Array(outBins)
+            let mergedPopCount = 0
+            for (let idx = 0; idx < outBins; idx++) {
+                mergedPopulated[idx] = fine.populated[idx] || coarse.populated[idx] ? 1 : 0
+                if (mergedPopulated[idx]) mergedPopCount++
+            }
+            const mergedObserved = merged.filter(v => typeof v === 'number')
+            bestResult = {
+                bins: merged,
+                populated: mergedPopulated,
+                has_data: mergedObserved.length > 0,
+                min: mergedObserved.length ? Math.min(...mergedObserved) : null,
+                max: mergedObserved.length ? Math.max(...mergedObserved) : null,
+                coverage: mergedPopCount / Math.max(1, outBins),
+                detail: fine.coverage < 0.5 ? '↓ Loading higher resolution…' : '',
+                error: fine.error || coarse.error,
+            }
+        }
+
+        // Apply stable chromosome-wide scale
+        const scaleKey = `${trackId}|${chrom}`
+        const chromScale = trackChromScaleRef.current[scaleKey]
+        if (chromScale) {
+            bestResult = { ...bestResult, min: chromScale.min, max: chromScale.max }
+        }
+        return bestResult
+    }
+
+export function projectLevelTiles(ctx, trackId, chrom, level, visStart, visEnd, outBins) {
+    const {
+        makeBigWigTileKey,
+        trackTileCacheRef,
+    } = ctx
+        const empty = { bins: Array(outBins).fill(null), populated: new Uint8Array(outBins), has_data: false, min: null, max: null, coverage: 0, error: '' }
+        if (visEnd <= visStart || outBins <= 0) return empty
+
+        const visSpan = visEnd - visStart
+        const out = Array(outBins).fill(null)
+        // Track which screen bins were actually mapped from a cached tile (even if value is 0)
+        const populated = new Uint8Array(outBins)
+        const tileSpan = level.bpPerBin * level.binsPerTile
+        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
+        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
+        let anySourceData = false
+        let bestError = ''
+
+        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
+            const key = makeBigWigTileKey(trackId, chrom, level.id, tileStart)
+            const tile = trackTileCacheRef.current.get(key)
+            if (!tile) continue
+            if (tile.error) bestError = tile.error
+
+            const bins = tile.bins || []
+            for (let i = 0; i < bins.length; i++) {
+                const gStart = tile.start + i * level.bpPerBin
+                const gEnd = gStart + level.bpPerBin
+                if (gEnd < visStart || gStart > visEnd) continue
+
+                let x1 = Math.floor(((gStart - visStart) / visSpan) * outBins)
+                let x2 = Math.ceil(((gEnd - visStart) / visSpan) * outBins)
+                x1 = Math.max(0, Math.min(outBins - 1, x1))
+                x2 = Math.max(x1 + 1, Math.min(outBins, x2))
+                for (let x = x1; x < x2; x++) {
+                    populated[x] = 1
+                }
+
+                const v = bins[i]
+                if (typeof v !== 'number' || !Number.isFinite(v)) continue
+                anySourceData = true
+                for (let x = x1; x < x2; x++) {
+                    out[x] = out[x] === null ? v : Math.max(out[x], v)
+                }
+            }
+        }
+
+        // Coverage = fraction of screen bins that mapped to actual tile data
+        let populatedCount = 0
+        for (let i = 0; i < outBins; i++) if (populated[i]) populatedCount++
+        const observed = out.filter(v => typeof v === 'number')
+        return {
+            bins: out,
+            populated,
+            has_data: anySourceData,
+            min: observed.length ? Math.min(...observed) : null,
+            max: observed.length ? Math.max(...observed) : null,
+            coverage: populatedCount / Math.max(1, outBins),
+            error: bestError,
+        }
+    }
+
+export function projectVcfBlockTilesCascade(ctx, trackId, chrom, targetLevel, visStart, visEnd, outBins = 800) {
+    const {
+        projectVcfBlockTilesToView,
+    } = ctx
+        const targetIdx = Math.max(0, VCF_BLOCK_LEVELS.findIndex((l) => l.id === targetLevel.id))
+        const fine = projectVcfBlockTilesToView(trackId, chrom, targetLevel, visStart, visEnd, outBins)
+        if (Number(fine?.tile_coverage || 0) >= 0.92 || targetIdx <= 0) {
+            return fine
+        }
+
+        let mergedBins = Array.isArray(fine?.density_bins) ? [...fine.density_bins] : Array(Math.max(1, outBins)).fill(0)
+        let mergedClasses = Array.isArray(fine?.density_classes)
+            ? [...fine.density_classes]
+            : Array(mergedBins.length).fill('intergenic')
+        let mergedPop = fine?.density_populated instanceof Uint8Array
+            ? new Uint8Array(fine.density_populated)
+            : new Uint8Array(mergedBins.length)
+        let mergedCoverage = Number(fine?.coverage || 0)
+        let coarseUsed = false
+
+        for (let i = targetIdx - 1; i >= 0; i--) {
+            const coarse = projectVcfBlockTilesToView(trackId, chrom, VCF_BLOCK_LEVELS[i], visStart, visEnd, outBins)
+            if (!coarse?.has_data) continue
+            const coarseBins = Array.isArray(coarse?.density_bins) ? coarse.density_bins : []
+            const coarseClasses = Array.isArray(coarse?.density_classes) ? coarse.density_classes : []
+            const coarsePop = coarse?.density_populated instanceof Uint8Array
+                ? coarse.density_populated
+                : new Uint8Array(mergedBins.length)
+            const limit = Math.min(mergedBins.length, coarseBins.length, coarseClasses.length, coarsePop.length)
+            if (limit <= 0) continue
+            coarseUsed = true
+            for (let x = 0; x < limit; x++) {
+                if (mergedPop[x]) continue
+                if (!coarsePop[x]) continue
+                mergedPop[x] = 1
+                mergedBins[x] = Number.isFinite(Number(coarseBins[x])) ? Number(coarseBins[x]) : 0
+                mergedClasses[x] = coarseClasses[x] === 'genic' ? 'genic' : 'intergenic'
+            }
+            let popCount = 0
+            for (let x = 0; x < mergedPop.length; x++) {
+                if (mergedPop[x]) popCount += 1
+            }
+            mergedCoverage = Math.max(mergedCoverage, popCount / Math.max(1, mergedPop.length))
+            if (mergedCoverage >= 0.95) break
+        }
+
+        if (!coarseUsed) return fine
+
+        const hasDensity = mergedBins.some((v) => Number(v) > 0)
+        return {
+            ...fine,
+            density_bins: mergedBins,
+            density_classes: mergedClasses,
+            density_populated: mergedPop,
+            has_data: fine.has_data || hasDensity,
+            coverage: Math.max(Number(fine?.coverage || 0), mergedCoverage),
+            detail: Number(fine?.tile_coverage || 0) < 0.95 ? 'Loading higher-resolution density…' : '',
+        }
+    }
+
+export function projectVcfDetail(ctx, trackId, chrom, level, visStart, visEnd) {
+    const {
+        makeVcfTileKey,
+        vcfTileCacheRef,
+    } = ctx
+        const tileSpan = level.bpPerBin * level.binsPerTile
+        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
+        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
+        const variants = []
+        const seen = new Set()
+        let anyTile = false
+        let truncated = false
+
+        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
+            const tileEnd = tileStart + tileSpan
+            const key = makeVcfTileKey(
+                trackId,
+                chrom,
+                level.id,
+                level.mode,
+                tileStart,
+                tileEnd,
+                level.blockWindowBp || 0,
+                level.blockStrideBp || 0,
+                level.blockCoverageThreshold ?? 0.5,
+                level.blockMode || '',
+            )
+            const tile = vcfTileCacheRef.current.get(key)
+            if (!tile || tile.mode !== 'detail' || !Array.isArray(tile.variants)) continue
+            anyTile = true
+            truncated = truncated || !!tile.truncated
+            for (const v of tile.variants) {
+                const pos = Number(v.pos)
+                if (!Number.isFinite(pos) || pos < visStart || pos > visEnd) continue
+                const uniq = `${pos}|${v.ref || ''}|${v.alt || ''}|${v.id || ''}|${v.type || ''}`
+                if (seen.has(uniq)) continue
+                seen.add(uniq)
+                variants.push(v)
+            }
+        }
+        variants.sort((a, b) => (Number(a.pos) || 0) - (Number(b.pos) || 0))
+        return {
+            mode: 'detail',
+            level: level.id,
+            variants,
+            has_data: anyTile && variants.length > 0,
+            coverage: anyTile ? 1 : 0,
+            truncated,
         }
     }

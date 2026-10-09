@@ -11,43 +11,18 @@ import {
 } from 'react'
 import iconResetRaw from '../../assets/icons/icon_reset.svg?raw'
 import iconAnchorRaw from '../../assets/icons/icon_anchor.svg?raw'
-import {
-    geneFooterTrackOverflow,
-    intersectsRuler,
-    getGeneFooterGeometry,
-    getTranscriptFooterControlState,
-    placeGeneFooterWithinViewport,
-    TRANSCRIPT_FOOTER_CONTROL_HEIGHT,
-} from './genomeBrowserLabelLayout'
+import { geneFooterTrackOverflow, getGeneFooterGeometry, placeGeneFooterWithinViewport } from './genomeBrowserLabelLayout'
 // Pure data: which file each of the tutorial's demo tracks is, so a `browserTracks`
 // arrival can name them without carrying registry ids it cannot know.
 import { TRACK_FILENAMES } from '../../utils/tutorialModel'
-import {
-    VCF_BLOCK_LEVELS,
-    buildVcfOverviewWarmupKey,
-    buildVcfOverviewWarmupTiles,
-    getVcfBlockLevel as selectVcfBlockLevel,
-} from '../../utils/vcfTileStrategy'
+import { getVcfBlockLevel as selectVcfBlockLevel } from '../../utils/vcfTileStrategy'
 import { buildDefaultScreenshotName } from '../../utils/screenshotExport'
-import { buildGeneIntervalIndex, sameGeneRange } from '../../utils/geneIntervalIndex'
-import { registerBrowserViewport } from '../../utils/browserTutorialControls'
+import { sameGeneRange } from '../../utils/geneIntervalIndex'
 import useTutorial from '../../hooks/useTutorial'
 import useNearViewport from '../../hooks/useNearViewport'
 import { resolveGeneTranscriptView } from './genomeBrowserTranscriptView'
 import { shouldResetStickyGeneRows } from './genomeBrowserTranscriptLayout'
-import {
-    DEFAULT_BROWSING_CONTROLS,
-    beginWheelGesture,
-    describeBrowsingControls,
-    isTextEntryTarget,
-    markWheelHandled,
-    readKeyEvent,
-    readWheelEvent,
-    resolveKeyAction,
-    resolveWheelAction,
-    isWheelGestureFromChrome,
-    isWheelInsideIsolatedOverlay,
-} from '../../utils/browsingControls'
+import { DEFAULT_BROWSING_CONTROLS, describeBrowsingControls } from '../../utils/browsingControls'
 import { effectiveMemberTrack, gatherRows, groupRowIdFor, isGroupRowId } from '../../utils/trackGroups'
 import { describeSessionTracks, planSessionRestore } from '../../utils/sessionTracks'
 import { classifyBiotype } from '../../utils/geneBiotypes'
@@ -57,7 +32,6 @@ import {
     getAnchoredContentPageScrollDelta,
     getFocusLocationRange,
     isSameChromToken,
-    getFeatureRowAnchor,
     getFeatureRowTargetY,
     frameRangeWithRightInset,
     rebalanceRangeForInsetChange,
@@ -78,7 +52,6 @@ import {
     CUSTOM_TRACK_TOOLTIP_MOVE_TOL_PX,
     DEFAULT_CUSTOM_TRACK_RENDER_MODE,
     EMPTY_LIST,
-    EXPANDED_FOOTER_INLINE_GAP,
     EXPANDED_FOOTER_LABEL_TOP_OFFSET,
     GENE_CHROM_CACHE_ENTER_SPAN,
     GENE_INDEX_POLL_INTERVAL_MS,
@@ -89,12 +62,7 @@ import {
     MAX_GENE_TILE_CACHE_TILES,
     MAX_TRANSCRIPT_CACHE_GENES,
     MAX_TRANSCRIPT_PREFETCH_GENES,
-    NOTE_BUBBLE_GAP,
-    NOTE_BUBBLE_MIN_GENE_WIDTH,
-    NOTE_BUBBLE_SIZE,
-    SIDEBAR_TOGGLE_HIT_RADIUS,
     SPLICE_BLOCK_LEVELS,
-    SPLICE_BLOCK_MERGE_GAP_PX,
     SPLICE_FINE_BP_PER_PX,
     SPLICE_TILE_SPAN_COARSE,
     SPLICE_TILE_SPAN_FINE,
@@ -102,25 +70,19 @@ import {
     TRACK_LOD_LEVELS,
     TRACK_PICKER_GROUP_PREFIX,
     TRANSCRIPT_DETAIL_VIEWSPAN_BP,
-    TUTORIAL_MOVE_MS,
     VCF_LOD_LEVELS,
     VCF_SETTINGS_DEFAULTS,
     isGeneModelTrack,
-    isIntervalTrackType,
 } from './browserConstants.js'
 import {
     REV_COMP,
     TILE_SIZE,
     clamp,
-    collectGenesFromList,
     getChromGeneCacheKey,
-    getFetchErrorMessage,
     getTileKey,
-    isTransientFetchErrorMessage,
     snapToTile,
 } from './trackData.js'
 import {
-    isVcfAdaptiveLikeMode,
     normalizeBedSettings,
     normalizeBigWigDisplayMode,
     normalizeBigWigSettings,
@@ -128,7 +90,6 @@ import {
     normalizeVcfDisplayMode,
     normalizeVcfSettings,
 } from './trackSettings.js'
-import { spliceJunctionKey } from './spliceGeometry.js'
 import {
     formatBp,
     formatCoord,
@@ -143,12 +104,7 @@ import {
     getTranscriptPopupMetadata,
     hasGeneCoords,
 } from './browserFormat.js'
-import {
-    getScrollerMetrics,
-    getScrollerVisibleTop,
-    measureExpandedFooterLabelWidth,
-    scrollScrollerTo,
-} from './canvasText.js'
+import { getScrollerMetrics, getScrollerVisibleTop, scrollScrollerTo } from './canvasText.js'
 import { renderPanelExportSnapshot } from './exportSnapshot.js'
 import { paintBrowserCanvas } from './paintCanvas.js'
 import { runCustomTrackFetchEngine } from './customTrackFetchEngine.js'
@@ -167,6 +123,37 @@ import { handleBrowserCanvasClick } from './pointerInput.js'
 import { handleBrowserMouseMove } from './pointerInput.js'
 import { renderBrowserToolbar } from './BrowserToolbar.jsx'
 import { renderBrowserPanel } from './BrowserPanel.jsx'
+import { registerTutorialViewport } from './tutorialViewport.js'
+import { applyPendingTranscriptPillFocus } from './panelEffects.js'
+import { attachWheelHandler } from './wheelInput.js'
+import { measureExpandedFooterViewport } from './panelEffects.js'
+import { applyExternalLocationNavigation } from './externalNavigation.js'
+import { applyExternalGeneNavigation } from './externalNavigation.js'
+import { warmVcfOverviewTiles } from './trackWarmup.js'
+import { fetchViewSequence } from './sequenceFetch.js'
+import { fetchPanelRegions } from './regionsFetch.js'
+import { pruneRemovedTrackCaches } from './trackCaches.js'
+import { syncTracksWithRegistry } from './trackRegistrySync.js'
+import { pollGeneIndexStatus } from './geneIndexPolling.js'
+import { handleBrowserMouseDown } from './pointerInput.js'
+import { handleBrowserMouseUp } from './pointerInput.js'
+import { findSequenceBaseAtMouse } from './pointerInput.js'
+import { handleBrowserKeyDown } from './keyboardInput.js'
+import { findGeneFeatureVerticalAnchor } from './hitTesting.js'
+import { computeCustomTrackGeometry } from './browserLayout.js'
+import { projectVcfTiles } from './trackProjection.js'
+import { projectSpliceBlockTiles } from './trackProjection.js'
+import { projectBigWigTiles } from './trackProjection.js'
+import { projectLevelTiles } from './trackProjection.js'
+import { projectVcfBlockTilesCascade } from './trackProjection.js'
+import { projectVcfDetail } from './trackProjection.js'
+import { preloadChromosomeGenes } from './geneTiles.js'
+import { collectCachedGenes } from './geneTiles.js'
+import { evictOldTiles } from './trackCaches.js'
+import { animateBrowserToView } from './viewMotion.js'
+import { alignGeneToTopOfView } from './viewMotion.js'
+import { renderTranscriptFooterOverlay } from './BrowserOverlays.jsx'
+import { renderGeneNoteOverlay } from './BrowserOverlays.jsx'
 
 /* The track picker adds and removes; switching a track on and off is the gutter's job.
  * Each row has one button, Add or Remove, for what it will be once applied, and rows that
@@ -1008,11 +995,7 @@ function GenomeBrowser({
     const geneIndexReadyRef = useRef(false)
     const sawPendingRef = useRef(false)
 
-    useEffect(() => {
-        geneIndexReadyRef.current = false
-        sawPendingRef.current = false
-        setGeneIndexStatus(null)
-    }, [genome, reloadEpoch])
+    useEffect((...args) => pollGeneIndexStatus({ geneIndexReadyRef, sawPendingRef, setGeneIndexStatus }, ...args), [genome, reloadEpoch])
 
     useEffect(() => {
         if (!isActive) return undefined
@@ -1154,177 +1137,25 @@ function GenomeBrowser({
 
     // Keep browser track config synced with Track Manager registry updates.
     // This avoids stale renderMode/settings when users edit a registered track.
-    useEffect(() => {
-        if (!Array.isArray(availableTracks) || availableTracks.length === 0 || !Array.isArray(customTracks) || customTracks.length === 0) return
-        const byRegistryId = new Map()
-        const byPath = new Map()
-        for (const registered of availableTracks) {
-            if (!registered) continue
-            if (registered.id !== undefined && registered.id !== null) {
-                byRegistryId.set(String(registered.id), registered)
-            }
-            if (registered.path) byPath.set(String(registered.path), registered)
-        }
-        const groupsById = new Map((Array.isArray(availableGroups) ? availableGroups : []).map((g) => [String(g.id), g]))
-
-        const fullRefreshIds = new Set()
-        let localChanged = false
-        const nextCustomTracks = customTracks.map((track) => {
-            const registryId = track?.registryTrackId ? String(track.registryTrackId) : ''
-            let registered = null
-            if (registryId && byRegistryId.has(registryId)) {
-                registered = byRegistryId.get(registryId)
-            } else if (track?.path && byPath.has(String(track.path))) {
-                registered = byPath.get(String(track.path))
-            }
-            if (!registered) return track
-
-            // One of a group's tracks shows with the group's own settings for it, and follows
-            // the group's name and layout. A group that is gone leaves a plain custom track.
-            let groupInfo = track.group
-            let joinedRowId = track.joinedRowId
-            if (track.group) {
-                const group = groupsById.get(String(track.group.id))
-                if (!group) {
-                    groupInfo = undefined
-                    joinedRowId = undefined
-                } else {
-                    const memberIndex = (group.members || []).findIndex((m) => String(m.track_id) === String(registered.id))
-                    if (memberIndex >= 0) registered = effectiveMemberTrack(registered, group.members[memberIndex])
-                    groupInfo = {
-                        id: group.id,
-                        label: group.label,
-                        layout: group.layout,
-                        index: memberIndex >= 0 ? memberIndex : track.group.index,
-                    }
-                    joinedRowId = group.layout === 'joined' ? groupRowIdFor(group.id) : undefined
-                }
-                if (joinedRowId !== track.joinedRowId || groupInfo?.index !== track.group.index) {
-                    if (groupInfo) pendingGroupOrderRef.current.add(groupInfo.id)
-                }
-            }
-
-            const registeredType = registered.type || track.type || 'bigwig'
-            const synced = {
-                ...track,
-                group: groupInfo,
-                joinedRowId,
-                registryTrackId: registered.id,
-                type: registeredType,
-                label: registered.label || track.label,
-                path: registered.path || track.path,
-            }
-
-            if (registeredType === 'bigwig') {
-                const mergedSettings = normalizeBigWigSettings(
-                    registered.bigwig_settings,
-                    track?.bigwigSettings || track?.bigwig_settings,
-                )
-                synced.bigwigSettings = mergedSettings
-                synced.renderMode = normalizeBigWigDisplayMode(registered.display_mode, mergedSettings.data_type)
-            } else if (registeredType === 'vcf') {
-                synced.vcfSettings = normalizeVcfSettings(
-                    registered.vcf_settings,
-                    track?.vcfSettings || track?.vcf_settings,
-                )
-                synced.renderMode = normalizeVcfDisplayMode(registered.display_mode)
-            } else if (registeredType === 'splice_junctions') {
-                synced.spliceSettings = normalizeSpliceTrackSettings(registered.splice_settings)
-                synced.renderMode = 'arcs'
-            } else if (registered.display_mode) {
-                synced.renderMode = registered.display_mode
-            }
-            if (isIntervalTrackType(registeredType)) {
-                synced.bedSettings = normalizeBedSettings(registered.bed_settings)
-            }
-
-            const prevBigwig = track?.bigwigSettings || track?.bigwig_settings
-            const nextBigwig = synced?.bigwigSettings || synced?.bigwig_settings
-            const settingsChanged = JSON.stringify(prevBigwig || null) !== JSON.stringify(nextBigwig || null)
-            const vcfSettingsChanged = JSON.stringify(track?.vcfSettings || track?.vcf_settings || null) !== JSON.stringify(synced?.vcfSettings || synced?.vcf_settings || null)
-            const spliceChanged = JSON.stringify(track?.spliceSettings || track?.splice_settings || null) !== JSON.stringify(synced?.spliceSettings || synced?.splice_settings || null)
-            const bedSettingsChanged = JSON.stringify(track?.bedSettings || null) !== JSON.stringify(synced?.bedSettings || null)
-            const requiresFullRefresh = (
-                String(synced.path || '') !== String(track.path || '')
-                || String(synced.renderMode || '') !== String(track.renderMode || '')
-                || String(synced.type || '') !== String(track.type || '')
-            )
-            if (requiresFullRefresh && track?.id) {
-                fullRefreshIds.add(String(track.id))
-            }
-            if (
-                synced.renderMode !== track.renderMode
-                || synced.label !== track.label
-                || synced.type !== track.type
-                || synced.path !== track.path
-                || String(synced.registryTrackId || '') !== String(track.registryTrackId || '')
-                || JSON.stringify(synced.group || null) !== JSON.stringify(track.group || null)
-                || synced.joinedRowId !== track.joinedRowId
-                || settingsChanged
-                || vcfSettingsChanged
-                || spliceChanged
-                || bedSettingsChanged
-            ) {
-                localChanged = true
-            }
-            return synced
-        })
-
-        if (localChanged) {
-            setCustomTracks(nextCustomTracks)
-        }
-        if (!localChanged || fullRefreshIds.size === 0) return
-
-        const shouldDropTrack = (rawKey) => {
-            const normalized = String(rawKey || '').replace(/^(sjblk:|sj:|vcfblk:|adpdet:|bbblk:|bbft:|bddn:)/, '')
-            const trackId = normalized.split('|', 1)[0]
-            return fullRefreshIds.has(trackId)
-        }
-
-        for (const key of Array.from(trackTileCacheRef.current.keys())) {
-            if (shouldDropTrack(key)) trackTileCacheRef.current.delete(key)
-        }
-        for (const key of Array.from(trackFeatureCacheRef.current.keys())) {
-            if (shouldDropTrack(key)) trackFeatureCacheRef.current.delete(key)
-        }
-        for (const key of Array.from(vcfTileCacheRef.current.keys())) {
-            if (shouldDropTrack(key)) vcfTileCacheRef.current.delete(key)
-        }
-        for (const key of Array.from(vcfBlockTileCacheRef.current.keys())) {
-            if (shouldDropTrack(key)) vcfBlockTileCacheRef.current.delete(key)
-        }
-        for (const key of Array.from(trackTileFetchSetRef.current.values())) {
-            if (shouldDropTrack(key)) trackTileFetchSetRef.current.delete(key)
-        }
-        for (const key of Array.from(trackFeatureFetchSetRef.current.values())) {
-            if (shouldDropTrack(key)) trackFeatureFetchSetRef.current.delete(key)
-        }
-        for (const key of Array.from(vcfTileFetchSetRef.current.values())) {
-            if (shouldDropTrack(key)) vcfTileFetchSetRef.current.delete(key)
-        }
-        for (const key of Array.from(vcfBlockTileFetchSetRef.current.values())) {
-            if (shouldDropTrack(key)) vcfBlockTileFetchSetRef.current.delete(key)
-        }
-        for (const key of Object.keys(trackChromScaleRef.current)) {
-            const trackId = String(key).split('|', 1)[0]
-            if (fullRefreshIds.has(trackId)) delete trackChromScaleRef.current[key]
-        }
-        for (const key of Object.keys(bedDensityScaleRef.current)) {
-            const trackId = String(key).split('|', 1)[0]
-            if (fullRefreshIds.has(trackId)) delete bedDensityScaleRef.current[key]
-        }
-
-        setCustomTrackData((prev) => {
-            const next = { ...prev }
-            for (const trackId of fullRefreshIds) delete next[trackId]
-            return next
-        })
-        setCustomTrackLoading((prev) => {
-            const next = { ...prev }
-            for (const trackId of fullRefreshIds) next[trackId] = true
-            return next
-        })
-    }, [availableTracks, availableGroups, customTracks])
+    useEffect((...args) => syncTracksWithRegistry({
+        availableGroups,
+        availableTracks,
+        bedDensityScaleRef,
+        customTracks,
+        pendingGroupOrderRef,
+        setCustomTrackData,
+        setCustomTrackLoading,
+        setCustomTracks,
+        trackChromScaleRef,
+        trackFeatureCacheRef,
+        trackFeatureFetchSetRef,
+        trackTileCacheRef,
+        trackTileFetchSetRef,
+        vcfBlockTileCacheRef,
+        vcfBlockTileFetchSetRef,
+        vcfTileCacheRef,
+        vcfTileFetchSetRef,
+    }, ...args), [availableTracks, availableGroups, customTracks])
 
     useEffect(() => {
         if (!clickedSpliceJunction) return
@@ -1615,62 +1446,7 @@ function GenomeBrowser({
     // Project cached block tiles into the current view, with coarse-level fallback.
     const projectVcfBlockTilesToView = useCallback((...args) => projectVcfBlockTiles({ makeVcfBlockTileKey, vcfBlockTileCacheRef }, ...args), [makeVcfBlockTileKey])
 
-    const projectVcfBlockTilesCascadeToView = useCallback((trackId, chrom, targetLevel, visStart, visEnd, outBins = 800) => {
-        const targetIdx = Math.max(0, VCF_BLOCK_LEVELS.findIndex((l) => l.id === targetLevel.id))
-        const fine = projectVcfBlockTilesToView(trackId, chrom, targetLevel, visStart, visEnd, outBins)
-        if (Number(fine?.tile_coverage || 0) >= 0.92 || targetIdx <= 0) {
-            return fine
-        }
-
-        let mergedBins = Array.isArray(fine?.density_bins) ? [...fine.density_bins] : Array(Math.max(1, outBins)).fill(0)
-        let mergedClasses = Array.isArray(fine?.density_classes)
-            ? [...fine.density_classes]
-            : Array(mergedBins.length).fill('intergenic')
-        let mergedPop = fine?.density_populated instanceof Uint8Array
-            ? new Uint8Array(fine.density_populated)
-            : new Uint8Array(mergedBins.length)
-        let mergedCoverage = Number(fine?.coverage || 0)
-        let coarseUsed = false
-
-        for (let i = targetIdx - 1; i >= 0; i--) {
-            const coarse = projectVcfBlockTilesToView(trackId, chrom, VCF_BLOCK_LEVELS[i], visStart, visEnd, outBins)
-            if (!coarse?.has_data) continue
-            const coarseBins = Array.isArray(coarse?.density_bins) ? coarse.density_bins : []
-            const coarseClasses = Array.isArray(coarse?.density_classes) ? coarse.density_classes : []
-            const coarsePop = coarse?.density_populated instanceof Uint8Array
-                ? coarse.density_populated
-                : new Uint8Array(mergedBins.length)
-            const limit = Math.min(mergedBins.length, coarseBins.length, coarseClasses.length, coarsePop.length)
-            if (limit <= 0) continue
-            coarseUsed = true
-            for (let x = 0; x < limit; x++) {
-                if (mergedPop[x]) continue
-                if (!coarsePop[x]) continue
-                mergedPop[x] = 1
-                mergedBins[x] = Number.isFinite(Number(coarseBins[x])) ? Number(coarseBins[x]) : 0
-                mergedClasses[x] = coarseClasses[x] === 'genic' ? 'genic' : 'intergenic'
-            }
-            let popCount = 0
-            for (let x = 0; x < mergedPop.length; x++) {
-                if (mergedPop[x]) popCount += 1
-            }
-            mergedCoverage = Math.max(mergedCoverage, popCount / Math.max(1, mergedPop.length))
-            if (mergedCoverage >= 0.95) break
-        }
-
-        if (!coarseUsed) return fine
-
-        const hasDensity = mergedBins.some((v) => Number(v) > 0)
-        return {
-            ...fine,
-            density_bins: mergedBins,
-            density_classes: mergedClasses,
-            density_populated: mergedPop,
-            has_data: fine.has_data || hasDensity,
-            coverage: Math.max(Number(fine?.coverage || 0), mergedCoverage),
-            detail: Number(fine?.tile_coverage || 0) < 0.95 ? 'Loading higher-resolution density…' : '',
-        }
-    }, [projectVcfBlockTilesToView])
+    const projectVcfBlockTilesCascadeToView = useCallback((...args) => projectVcfBlockTilesCascade({ projectVcfBlockTilesToView }, ...args), [projectVcfBlockTilesToView])
 
     // Project L4 detail tiles (individual variant positions) into the current view.
     const projectVcfAdaptiveDetailLevel = useCallback((trackId, chrom, level, visStart, visEnd) => {
@@ -1713,239 +1489,16 @@ function GenomeBrowser({
 
     const projectVcfBlockSpansToView = useCallback((...args) => projectVcfBlockSpans({ makeVcfTileKey, vcfTileCacheRef }, ...args), [makeVcfTileKey])
 
-    const projectVcfDetailLevel = useCallback((trackId, chrom, level, visStart, visEnd) => {
-        const tileSpan = level.bpPerBin * level.binsPerTile
-        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
-        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-        const variants = []
-        const seen = new Set()
-        let anyTile = false
-        let truncated = false
+    const projectVcfDetailLevel = useCallback((...args) => projectVcfDetail({ makeVcfTileKey, vcfTileCacheRef }, ...args), [makeVcfTileKey])
 
-        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-            const tileEnd = tileStart + tileSpan
-            const key = makeVcfTileKey(
-                trackId,
-                chrom,
-                level.id,
-                level.mode,
-                tileStart,
-                tileEnd,
-                level.blockWindowBp || 0,
-                level.blockStrideBp || 0,
-                level.blockCoverageThreshold ?? 0.5,
-                level.blockMode || '',
-            )
-            const tile = vcfTileCacheRef.current.get(key)
-            if (!tile || tile.mode !== 'detail' || !Array.isArray(tile.variants)) continue
-            anyTile = true
-            truncated = truncated || !!tile.truncated
-            for (const v of tile.variants) {
-                const pos = Number(v.pos)
-                if (!Number.isFinite(pos) || pos < visStart || pos > visEnd) continue
-                const uniq = `${pos}|${v.ref || ''}|${v.alt || ''}|${v.id || ''}|${v.type || ''}`
-                if (seen.has(uniq)) continue
-                seen.add(uniq)
-                variants.push(v)
-            }
-        }
-        variants.sort((a, b) => (Number(a.pos) || 0) - (Number(b.pos) || 0))
-        return {
-            mode: 'detail',
-            level: level.id,
-            variants,
-            has_data: anyTile && variants.length > 0,
-            coverage: anyTile ? 1 : 0,
-            truncated,
-        }
-    }, [makeVcfTileKey])
-
-    const projectVcfTilesToView = useCallback((trackId, chrom, targetLevel, visStart, visEnd, outBins) => {
-        const targetIdx = Math.max(0, VCF_LOD_LEVELS.findIndex((l) => l.id === targetLevel.id))
-        if (targetLevel.mode === 'detail') {
-            const detail = projectVcfDetailLevel(trackId, chrom, targetLevel, visStart, visEnd)
-            let summary = null
-            for (let i = targetIdx - 1; i >= 0; i--) {
-                const candidate = projectVcfSummaryLevel(trackId, chrom, VCF_LOD_LEVELS[i], visStart, visEnd, outBins)
-                if (candidate.coverage > 0) {
-                    summary = candidate
-                    if (candidate.coverage >= 0.85) break
-                }
-            }
-            const showSummaryBackdrop = detail.coverage < 0.95
-            return {
-                ...detail,
-                start: visStart,
-                end: visEnd,
-                bins: showSummaryBackdrop ? (summary?.bins || []) : [],
-                occupancy: showSummaryBackdrop ? (summary?.occupancy || []) : [],
-                dominant_effect_bins: showSummaryBackdrop ? (summary?.dominant_effect_bins || []) : [],
-                type_counts_bins: showSummaryBackdrop ? (summary?.type_counts_bins || []) : [],
-                max_count: showSummaryBackdrop ? (summary?.max_count || 0) : 0,
-                coverage: detail.coverage > 0 ? detail.coverage : (summary ? summary.coverage : 0),
-                detail_coverage: detail.coverage,
-                has_data: detail.has_data || !!summary?.has_data,
-                detail: detail.coverage < 0.95
-                    ? ((summary && summary.coverage < 0.75) ? 'Loading VCF summary tiles…' : 'Loading VCF detail tiles…')
-                    : '',
-                truncated: detail.truncated || !!summary?.truncated,
-            }
-        }
-
-        let best = projectVcfSummaryLevel(trackId, chrom, targetLevel, visStart, visEnd, outBins)
-        if (best.coverage >= 0.9) {
-            return { ...best, start: visStart, end: visEnd, detail: '' }
-        }
-        for (let i = targetIdx - 1; i >= 0; i--) {
-            const coarse = projectVcfSummaryLevel(trackId, chrom, VCF_LOD_LEVELS[i], visStart, visEnd, outBins)
-            if (!coarse.has_data) continue
-            const mergedBins = best.bins.map((v, idx) => (best.occupancy[idx] ? v : coarse.bins[idx]))
-            const mergedOcc = best.occupancy.map((v, idx) => (v ? 1 : (coarse.occupancy[idx] ? 1 : 0)))
-            const mergedDom = best.dominant_effect_bins.map((v, idx) => (best.occupancy[idx] ? v : coarse.dominant_effect_bins[idx]))
-            const mergedType = best.type_counts_bins.map((v, idx) => (best.occupancy[idx] ? v : coarse.type_counts_bins[idx]))
-            const mergedMax = mergedBins.length ? Math.max(...mergedBins) : 0
-            const mergedCoverage = mergedOcc.reduce((acc, v) => acc + (v ? 1 : 0), 0) / Math.max(1, outBins)
-            best = {
-                ...best,
-                bins: mergedBins,
-                occupancy: mergedOcc,
-                dominant_effect_bins: mergedDom,
-                type_counts_bins: mergedType,
-                max_count: mergedMax,
-                has_data: mergedMax > 0,
-                coverage: mergedCoverage,
-                truncated: best.truncated || coarse.truncated,
-            }
-            if (best.coverage >= 0.9) break
-        }
-        return {
-            ...best,
-            start: visStart,
-            end: visEnd,
-            detail: best.coverage < 0.75 ? 'Loading higher resolution VCF tiles…' : '',
-        }
-    }, [projectVcfBlockSpansToView, projectVcfDetailLevel, projectVcfSummaryLevel])
+    const projectVcfTilesToView = useCallback((...args) => projectVcfTiles({ projectVcfDetailLevel, projectVcfSummaryLevel }, ...args), [projectVcfBlockSpansToView, projectVcfDetailLevel, projectVcfSummaryLevel])
 
     // ── Project tiles at a single level → screen bins ────────────────────────────────────────
-    const projectLevelToView = useCallback((trackId, chrom, level, visStart, visEnd, outBins) => {
-        const empty = { bins: Array(outBins).fill(null), populated: new Uint8Array(outBins), has_data: false, min: null, max: null, coverage: 0, error: '' }
-        if (visEnd <= visStart || outBins <= 0) return empty
-
-        const visSpan = visEnd - visStart
-        const out = Array(outBins).fill(null)
-        // Track which screen bins were actually mapped from a cached tile (even if value is 0)
-        const populated = new Uint8Array(outBins)
-        const tileSpan = level.bpPerBin * level.binsPerTile
-        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
-        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-        let anySourceData = false
-        let bestError = ''
-
-        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-            const key = makeBigWigTileKey(trackId, chrom, level.id, tileStart)
-            const tile = trackTileCacheRef.current.get(key)
-            if (!tile) continue
-            if (tile.error) bestError = tile.error
-
-            const bins = tile.bins || []
-            for (let i = 0; i < bins.length; i++) {
-                const gStart = tile.start + i * level.bpPerBin
-                const gEnd = gStart + level.bpPerBin
-                if (gEnd < visStart || gStart > visEnd) continue
-
-                let x1 = Math.floor(((gStart - visStart) / visSpan) * outBins)
-                let x2 = Math.ceil(((gEnd - visStart) / visSpan) * outBins)
-                x1 = Math.max(0, Math.min(outBins - 1, x1))
-                x2 = Math.max(x1 + 1, Math.min(outBins, x2))
-                for (let x = x1; x < x2; x++) {
-                    populated[x] = 1
-                }
-
-                const v = bins[i]
-                if (typeof v !== 'number' || !Number.isFinite(v)) continue
-                anySourceData = true
-                for (let x = x1; x < x2; x++) {
-                    out[x] = out[x] === null ? v : Math.max(out[x], v)
-                }
-            }
-        }
-
-        // Coverage = fraction of screen bins that mapped to actual tile data
-        let populatedCount = 0
-        for (let i = 0; i < outBins; i++) if (populated[i]) populatedCount++
-        const observed = out.filter(v => typeof v === 'number')
-        return {
-            bins: out,
-            populated,
-            has_data: anySourceData,
-            min: observed.length ? Math.min(...observed) : null,
-            max: observed.length ? Math.max(...observed) : null,
-            coverage: populatedCount / Math.max(1, outBins),
-            error: bestError,
-        }
-    }, [makeBigWigTileKey])
+    const projectLevelToView = useCallback((...args) => projectLevelTiles({ makeBigWigTileKey, trackTileCacheRef }, ...args), [makeBigWigTileKey])
 
     // ── Coarse-to-fine projection: draw best available cached level ───────────────────────────
     // Always renders something — never shows blank while waiting for finer tiles
-    const projectBigWigTilesToView = useCallback((trackId, chrom, targetLevel, visStart, visEnd, outBins) => {
-        const empty = { bins: Array(outBins).fill(null), has_data: false, min: null, max: null, coverage: 0, detail: '', error: '' }
-
-        // Try from target level upward (finer → coarser) for best coverage
-        const targetIdx = TRACK_LOD_LEVELS.indexOf(targetLevel)
-
-        // First pass: try target level
-        const fine = projectLevelToView(trackId, chrom, targetLevel, visStart, visEnd, outBins)
-        if (fine.coverage >= 0.9) {
-            // Nearly full coverage from target level — use it, apply stable chrom scale
-            const scaleKey = `${trackId}|${chrom}`
-            const chromScale = trackChromScaleRef.current[scaleKey]
-            const safeMin = chromScale?.min ?? fine.min ?? 0
-            const safeMax = chromScale?.max ?? fine.max ?? (safeMin + 1e-6)
-            return { ...fine, min: safeMin, max: safeMax, detail: '', coverage: fine.coverage }
-        }
-
-        // Fallback: overlay only the immediately coarser level under fine data.
-        // Allowing detailed views to fall back all the way to L0/L1 can create
-        // long flat phantom blocks from stale overview tiles as screen-bin
-        // alignment shifts during pan/zoom.
-        let bestResult = fine
-        const fallbackLevels = targetIdx > 0
-            ? [TRACK_LOD_LEVELS[targetIdx - 1]]
-            : []
-        for (const coarseLevel of fallbackLevels) {
-            const coarse = projectLevelToView(trackId, chrom, coarseLevel, visStart, visEnd, outBins)
-            if (!coarse.has_data) continue
-            // Merge: use fine where it actually has tile coverage (populated), else coarse
-            const merged = fine.bins.map((v, idx) =>
-                fine.populated[idx] ? v : coarse.bins[idx]
-            )
-            const mergedPopulated = new Uint8Array(outBins)
-            let mergedPopCount = 0
-            for (let idx = 0; idx < outBins; idx++) {
-                mergedPopulated[idx] = fine.populated[idx] || coarse.populated[idx] ? 1 : 0
-                if (mergedPopulated[idx]) mergedPopCount++
-            }
-            const mergedObserved = merged.filter(v => typeof v === 'number')
-            bestResult = {
-                bins: merged,
-                populated: mergedPopulated,
-                has_data: mergedObserved.length > 0,
-                min: mergedObserved.length ? Math.min(...mergedObserved) : null,
-                max: mergedObserved.length ? Math.max(...mergedObserved) : null,
-                coverage: mergedPopCount / Math.max(1, outBins),
-                detail: fine.coverage < 0.5 ? '↓ Loading higher resolution…' : '',
-                error: fine.error || coarse.error,
-            }
-        }
-
-        // Apply stable chromosome-wide scale
-        const scaleKey = `${trackId}|${chrom}`
-        const chromScale = trackChromScaleRef.current[scaleKey]
-        if (chromScale) {
-            bestResult = { ...bestResult, min: chromScale.min, max: chromScale.max }
-        }
-        return bestResult
-    }, [projectLevelToView])
+    const projectBigWigTilesToView = useCallback((...args) => projectBigWigTiles({ projectLevelToView, trackChromScaleRef }, ...args), [projectLevelToView])
 
     const projectBigWigTrackToCurrentViewport = useCallback((trackId) => {
         const currentChrom = String(selectedChromRef.current || '').trim()
@@ -1964,66 +1517,7 @@ function GenomeBrowser({
 
     const projectSpliceTilesToView = useCallback((...args) => projectSpliceTiles({ trackFeatureCacheRef }, ...args), [])
 
-    const projectSpliceBlockTilesToView = useCallback((trackId, chrom, level, visStart, visEnd, innerWidthPx) => {
-        const tileSpan = level.tileSpanBp
-        const firstTile = Math.floor(visStart / tileSpan) * tileSpan
-        const lastTile = Math.floor((visEnd - 1) / tileSpan) * tileSpan
-        const spans = []
-        let expectedTiles = 0
-        let fetchedTiles = 0
-        let bestError = ''
-
-        for (let tileStart = firstTile; tileStart <= lastTile; tileStart += tileSpan) {
-            const tileEnd = tileStart + tileSpan
-            expectedTiles += 1
-            const key = makeSpliceBlockTileKey(trackId, chrom, level.id, tileStart, tileEnd)
-            const tile = trackFeatureCacheRef.current.get(key)
-            if (!tile) continue
-            fetchedTiles += 1
-            if (tile?.error && !bestError) bestError = String(tile.error)
-            const rows = Array.isArray(tile?.block_spans) ? tile.block_spans : []
-            for (const row of rows) {
-                const s = Number(row?.start)
-                const e = Number(row?.end)
-                if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
-                if (e <= visStart || s >= visEnd) continue
-                spans.push({
-                    start: Math.max(visStart, s),
-                    end: Math.min(visEnd, e),
-                    max_support: Math.max(0, Number(row?.max_support || 0)),
-                })
-            }
-        }
-
-        spans.sort((a, b) => (a.start - b.start) || (a.end - b.end))
-        const merged = []
-        const viewSpan = Math.max(1, visEnd - visStart)
-        const gapBp = SPLICE_BLOCK_MERGE_GAP_PX * (viewSpan / Math.max(1, innerWidthPx))
-        for (const span of spans) {
-            const last = merged[merged.length - 1]
-            if (last && span.start <= (last.end + gapBp)) {
-                last.end = Math.max(last.end, span.end)
-                last.max_support = Math.max(last.max_support, span.max_support)
-            } else {
-                merged.push({ ...span })
-            }
-        }
-
-        let coveredBp = 0
-        for (const span of merged) coveredBp += Math.max(0, span.end - span.start)
-        const tileCoverage = expectedTiles > 0 ? (fetchedTiles / expectedTiles) : 0
-        return {
-            mode: 'splice_blocks',
-            level: level.id,
-            start: visStart,
-            end: visEnd,
-            block_spans: merged,
-            has_data: merged.length > 0,
-            coverage: Math.max(0, Math.min(1, coveredBp / viewSpan)),
-            tile_coverage: Math.max(0, Math.min(1, tileCoverage)),
-            error: bestError,
-        }
-    }, [makeSpliceBlockTileKey])
+    const projectSpliceBlockTilesToView = useCallback((...args) => projectSpliceBlockTiles({ makeSpliceBlockTileKey, trackFeatureCacheRef }, ...args), [makeSpliceBlockTileKey])
 
     const projectBigBedBlockTilesToView = useCallback((...args) => projectBigBedBlockTiles({ makeBigBedBlockTileKey, trackFeatureCacheRef }, ...args), [makeBigBedBlockTileKey])
 
@@ -2063,117 +1557,23 @@ function GenomeBrowser({
     ])
 
     // ── LRU eviction — keep ≤2000 tiles per track in memory ──────────────────────────────────
-    const evictOldTilesIfNeeded = useCallback(() => {
-        const MAX_TILES = 2000
-        const cache = trackTileCacheRef.current
-        if (cache.size > MAX_TILES * 1.3) {
-            // Delete oldest 30% (Maps maintain insertion order)
-            const toDelete = Math.floor(cache.size - MAX_TILES)
-            let removed = 0
-            for (const key of cache.keys()) {
-                if (removed >= toDelete) break
-                cache.delete(key)
-                removed++
-            }
-        }
-
-        const MAX_VCF_TILES = 2800
-        const vcfCache = vcfTileCacheRef.current
-        if (vcfCache.size > MAX_VCF_TILES * 1.25) {
-            const toDelete = Math.floor(vcfCache.size - MAX_VCF_TILES)
-            let removed = 0
-            for (const key of vcfCache.keys()) {
-                if (removed >= toDelete) break
-                vcfCache.delete(key)
-                removed++
-            }
-        }
-
-        const MAX_FEATURE_TILES = 3000
-        const featureCache = trackFeatureCacheRef.current
-        if (featureCache.size > MAX_FEATURE_TILES * 1.25) {
-            const toDelete = Math.floor(featureCache.size - MAX_FEATURE_TILES)
-            let removed = 0
-            for (const key of featureCache.keys()) {
-                if (removed >= toDelete) break
-                featureCache.delete(key)
-                removed++
-            }
-        }
-
-        const MAX_VCF_BLOCK_TILES = 2400
-        const vcfBlockCache = vcfBlockTileCacheRef.current
-        if (vcfBlockCache.size > MAX_VCF_BLOCK_TILES * 1.25) {
-            const toDelete = Math.floor(vcfBlockCache.size - MAX_VCF_BLOCK_TILES)
-            let removed = 0
-            for (const key of vcfBlockCache.keys()) {
-                if (removed >= toDelete) break
-                vcfBlockCache.delete(key)
-                removed++
-            }
-        }
-    }, [])
+    const evictOldTilesIfNeeded = useCallback((...args) => evictOldTiles({ trackFeatureCacheRef, trackTileCacheRef, vcfBlockTileCacheRef, vcfTileCacheRef }, ...args), [])
 
     // ── Clean up caches when tracks are removed ───────────────────────────────────────────────
-    useEffect(() => {
-        const keepIds = new Set(customTracks.map((track) => track.id))
-        const visibleIds = new Set(customTracks.filter((track) => track.visible !== false).map((track) => track.id))
-
-        for (const key of Array.from(trackTileCacheRef.current.keys())) {
-            const trackId = key.split('|', 1)[0]
-            if (!keepIds.has(trackId) || !visibleIds.has(trackId)) trackTileCacheRef.current.delete(key)
-        }
-        for (const key of Array.from(trackFeatureCacheRef.current.keys())) {
-            const withoutPrefix = key
-                .replace(/^sjblk:/, '')
-                .replace(/^sj:/, '')
-                .replace(/^bbblk:/, '')
-                .replace(/^bbft:/, '')
-            const trackId = withoutPrefix.split('|', 1)[0]
-            if (!keepIds.has(trackId) || !visibleIds.has(trackId)) trackFeatureCacheRef.current.delete(key)
-        }
-        for (const key of Array.from(vcfTileCacheRef.current.keys())) {
-            const trackId = key.split('|', 1)[0]
-            if (!keepIds.has(trackId) || !visibleIds.has(trackId)) vcfTileCacheRef.current.delete(key)
-        }
-        for (const key of Array.from(vcfBlockTileCacheRef.current.keys())) {
-            // keys are "vcfblk:${trackId}|..." or "adpdet:${trackId}|..."
-            const withoutPrefix = key.replace(/^(vcfblk|adpdet):/, '')
-            const trackId = withoutPrefix.split('|', 1)[0]
-            if (!keepIds.has(trackId) || !visibleIds.has(trackId)) vcfBlockTileCacheRef.current.delete(key)
-        }
-        for (const key of Object.keys(trackChromScaleRef.current)) {
-            const trackId = key.split('|', 1)[0]
-            if (!keepIds.has(trackId) || !visibleIds.has(trackId)) delete trackChromScaleRef.current[key]
-        }
-        for (const key of Object.keys(vcfLevelStateRef.current)) {
-            if (!keepIds.has(key)) delete vcfLevelStateRef.current[key]
-        }
-        for (const key of Object.keys(spliceLodStateRef.current)) {
-            if (!keepIds.has(key) || !visibleIds.has(key)) delete spliceLodStateRef.current[key]
-        }
-        for (const key of Object.keys(bigBedLodStateRef.current)) {
-            if (!keepIds.has(key) || !visibleIds.has(key)) delete bigBedLodStateRef.current[key]
-        }
-        for (const key of Object.keys(bigBedLayoutStateRef.current)) {
-            if (!keepIds.has(key) || !visibleIds.has(key)) delete bigBedLayoutStateRef.current[key]
-        }
-
-        setCustomTrackData((prev) => {
-            const next = {}
-            for (const [id, value] of Object.entries(prev)) {
-                if (keepIds.has(id) && visibleIds.has(id)) next[id] = value
-            }
-            return next
-        })
-        setCustomTrackLoading((prev) => {
-            const next = {}
-            for (const [id, value] of Object.entries(prev)) {
-                if (keepIds.has(id) && visibleIds.has(id)) next[id] = value
-            }
-            return next
-        })
-    }, [customTracks])
+    useEffect((...args) => pruneRemovedTrackCaches({
+        bigBedLayoutStateRef,
+        bigBedLodStateRef,
+        customTracks,
+        setCustomTrackData,
+        setCustomTrackLoading,
+        spliceLodStateRef,
+        trackChromScaleRef,
+        trackFeatureCacheRef,
+        trackTileCacheRef,
+        vcfBlockTileCacheRef,
+        vcfLevelStateRef,
+        vcfTileCacheRef,
+    }, ...args), [customTracks])
 
     useEffect(() => {
         bigBedLayoutStateRef.current = {}
@@ -2241,112 +1641,24 @@ function GenomeBrowser({
 
     // ============ Tile Cache Helpers ============
 
-    const preloadChromGenes = useCallback((chrom) => {
-        const chromName = String(chrom || '').trim()
-        if (!isActive || !chromName) return null
-        if (geneTilesBlockedRef.current) return null
-
-        const cacheKey = getChromGeneCacheKey(genome, chromName)
-        const cached = chromGeneCacheRef.current.get(cacheKey)
-        if (Array.isArray(cached)) return cached
-        if (fetchingChromGenesRef.current.has(cacheKey)) return null
-
-        const generation = chromGeneGenerationRef.current
-        const requestGeneration = activeGeneRequestGenerationRef.current
-        const requestToken = Symbol(cacheKey)
-        const controller = new AbortController()
-        identityRequestControllersRef.current.add(controller)
-        fetchingChromGenesRef.current.set(cacheKey, requestToken)
-        const params = new URLSearchParams({
-            genome,
-            chrom: chromName,
-        })
-
-        fetch(`${API_BASE}/api/browse/genes?${params.toString()}`, { signal: controller.signal })
-            .then((response) => response.ok ? response.json() : null)
-            .then((data) => {
-                if (!Array.isArray(data)) return
-                if (generation !== chromGeneGenerationRef.current) return
-                if (requestGeneration !== activeGeneRequestGenerationRef.current) return
-                buildGeneIntervalIndex(data)
-                chromGeneCacheRef.current.set(cacheKey, data)
-                const tilePrefix = `${chromName}:`
-                for (const tileKey of tileCacheRef.current.keys()) {
-                    if (tileKey.startsWith(tilePrefix)) tileCacheRef.current.delete(tileKey)
-                }
-                if (getChromGeneCacheKey(genome, selectedChromRef.current) !== cacheKey) return
-                const range = genomicViewRangeRef.current || {}
-                const visible = collectGenesFromList(data, range.start, range.end)
-                setGenes((prev) => sameGeneRange(prev, visible) ? prev : visible)
-                setHasInitialViewportData(true)
-            })
-            .catch((e) => {
-                if (e?.name !== 'AbortError') {
-                    console.warn(`[GenomeBrowser:${genome}] Failed to preload genes for ${chromName}`, e)
-                }
-            })
-            .finally(() => {
-                identityRequestControllersRef.current.delete(controller)
-                if (fetchingChromGenesRef.current.get(cacheKey) === requestToken) {
-                    fetchingChromGenesRef.current.delete(cacheKey)
-                }
-            })
-
-        return null
-    }, [genome, isActive])
+    const preloadChromGenes = useCallback((...args) => preloadChromosomeGenes({
+        activeGeneRequestGenerationRef,
+        chromGeneCacheRef,
+        chromGeneGenerationRef,
+        fetchingChromGenesRef,
+        geneTilesBlockedRef,
+        genome,
+        genomicViewRangeRef,
+        identityRequestControllersRef,
+        isActive,
+        selectedChromRef,
+        setGenes,
+        setHasInitialViewportData,
+        tileCacheRef,
+    }, ...args), [genome, isActive])
 
     // Collect genes from cache over a genomic range, with optional tile padding.
-    const collectCachedGenesInRange = useCallback((chrom, start, end, tilePad = 1) => {
-        if (!chrom) {
-            return { genes: [], coverage: 0, expectedTiles: 0, fetchedTiles: 0 }
-        }
-        const chromGenes = chromGeneCacheRef.current.get(getChromGeneCacheKey(genome, chrom))
-        if (Array.isArray(chromGenes)) {
-            return {
-                genes: collectGenesFromList(chromGenes, start, end),
-                coverage: 1,
-                expectedTiles: 1,
-                fetchedTiles: 1,
-                source: 'chrom',
-            }
-        }
-
-        const cache = tileCacheRef.current
-        const rangeStart = Math.max(0, Math.floor(start))
-        const rangeEnd = Math.max(rangeStart + 1, Math.ceil(end))
-        const coreFirstTile = snapToTile(rangeStart)
-        const coreLastTile = snapToTile(Math.max(rangeStart, rangeEnd - 1))
-        let expectedTiles = 0
-        let fetchedTiles = 0
-        for (let t = coreFirstTile; t <= coreLastTile; t += TILE_SIZE) {
-            expectedTiles += 1
-            if (cache.has(getTileKey(chrom, t))) fetchedTiles += 1
-        }
-
-        const firstTile = snapToTile(Math.max(0, rangeStart - tilePad * TILE_SIZE))
-        const lastTile = snapToTile(rangeEnd + tilePad * TILE_SIZE)
-        const collected = []
-        const seen = new Set()
-        for (let t = firstTile; t <= lastTile; t += TILE_SIZE) {
-            const key = getTileKey(chrom, t)
-            const tileGenes = cache.get(key)
-            if (!tileGenes) continue
-            for (const g of tileGenes) {
-                if (!seen.has(g.id) && g.end >= rangeStart && g.start <= rangeEnd) {
-                    seen.add(g.id)
-                    collected.push(g)
-                }
-            }
-        }
-
-        return {
-            genes: collected,
-            coverage: expectedTiles > 0 ? (fetchedTiles / expectedTiles) : 1,
-            expectedTiles,
-            fetchedTiles,
-            source: 'tiles',
-        }
-    }, [genome])
+    const collectCachedGenesInRange = useCallback((...args) => collectCachedGenes({ chromGeneCacheRef, genome, tileCacheRef }, ...args), [genome])
 
     const evictOldGeneTilesIfNeeded = useCallback(() => {
         const cache = tileCacheRef.current
@@ -2420,7 +1732,7 @@ function GenomeBrowser({
 
     const regionsRetryTimerRef = useRef(null)
     const geneNavigationRef = useRef(navigateToGene)
-    geneNavigationRef.current = navigateToGene
+    fetchPanelRegions({ geneNavigationRef, navigateToGene })
 
     // Fetch available regions on mount
     useEffect(() => {
@@ -2605,207 +1917,37 @@ function GenomeBrowser({
         return true
     }, [])
 
-    useEffect(() => {
-        if (!isActive) return
-        const epoch = ++seqFetchEpochRef.current
-        const viewSpan = viewEnd - viewStart
-        if (viewSpan > 1000 || !selectedChrom) {
-            pendingSeqTargetRef.current = null
-            setSequence(null)
-            setSeqRange(null)
-            return
-        }
+    useEffect((...args) => fetchViewSequence({
+        fetchingSeqRef,
+        genome,
+        genomicViewRange,
+        isActive,
+        pendingSeqTargetRef,
+        selectedChrom,
+        seqBufferRef,
+        seqFetchEpochRef,
+        serveSequenceFromBuffer,
+        setSeqRange,
+        setSequence,
+        viewEnd,
+        viewStart,
+    }, ...args), [genome, isActive, selectedChrom, viewEnd, viewStart, genomicViewRange, serveSequenceFromBuffer])
 
-        const { start: gStart, end: gEnd } = genomicViewRange
-        const visStart = Math.max(0, Math.floor(gStart))
-        const visEnd = Math.ceil(gEnd)
-        pendingSeqTargetRef.current = { genome, chrom: selectedChrom, visStart, visEnd }
-
-        // Fast path: already covered by buffer.
-        if (serveSequenceFromBuffer(selectedChrom, visStart, visEnd)) {
-            return
-        }
-
-        // Buffer miss — chase the latest viewport target. If panning continues while
-        // a request is in-flight, we fetch the newest target immediately afterwards.
-        const fetchSeq = async () => {
-            if (fetchingSeqRef.current) return
-            fetchingSeqRef.current = true
-            try {
-                while (true) {
-                    if (epoch !== seqFetchEpochRef.current) return
-                    const target = pendingSeqTargetRef.current
-                    if (!target) return
-
-                    if (serveSequenceFromBuffer(target.chrom, target.visStart, target.visEnd)) {
-                        const latest = pendingSeqTargetRef.current
-                        if (
-                            latest
-                            && latest.genome === target.genome
-                            && latest.chrom === target.chrom
-                            && latest.visStart === target.visStart
-                            && latest.visEnd === target.visEnd
-                        ) {
-                            pendingSeqTargetRef.current = null
-                        }
-                        continue
-                    }
-
-                    const gSpan = Math.max(1, target.visEnd - target.visStart)
-                    const bufferSize = Math.min(Math.max(gSpan * 10, 2000), 50000)
-                    const center = (target.visStart + target.visEnd) / 2
-                    const fetchStart = Math.max(0, Math.floor(center - bufferSize / 2))
-                    const fetchEnd = Math.ceil(center + bufferSize / 2)
-                    const res = await fetch(
-                        `${API_BASE}/api/browse/sequence?genome=${target.genome}&chrom=${target.chrom}&start=${fetchStart}&end=${fetchEnd}`
-                    )
-                    if (!res.ok) return
-                    const data = await res.json()
-                    seqBufferRef.current = {
-                        chrom: target.chrom,
-                        start: data.start,
-                        end: data.end,
-                        sequence: data.sequence,
-                    }
-                }
-            } catch (e) {
-                console.error('Failed to fetch sequence:', e)
-            } finally {
-                fetchingSeqRef.current = false
-            }
-        }
-
-        const timer = setTimeout(fetchSeq, 10)
-        return () => clearTimeout(timer)
-    }, [genome, isActive, selectedChrom, viewEnd, viewStart, genomicViewRange, serveSequenceFromBuffer])
-
-    useEffect(() => {
-        if (!isActive || !selectedChrom || !Number(chromLength || 0)) return
-        const l0 = VCF_BLOCK_LEVELS[0]
-        const chromEnd = Number(chromLength || 0)
-        const vcfTracks = customTracks.filter((track) => (
-            track?.path
-            && track.visible
-            && (track.type || 'bigwig') === 'vcf'
-            && isVcfAdaptiveLikeMode(normalizeVcfDisplayMode(track.renderMode))
-        ))
-        if (vcfTracks.length === 0) return
-
-        let cancelled = false
-        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-        const hasForegroundVcfFetch = () => {
-            for (const key of vcfBlockTileFetchSetRef.current.values()) {
-                const token = String(key || '')
-                if (token.startsWith('adpdet:')) return true
-                if (token.startsWith('vcfblk:') && !token.includes('|L0|')) return true
-            }
-            return false
-        }
-
-        const warmTrack = async (track) => {
-            const warmupKey = buildVcfOverviewWarmupKey({
-                trackId: track.id,
-                path: track.path,
-                chrom: selectedChrom,
-                chromLength: chromEnd,
-                level: l0,
-            })
-            if (vcfOverviewWarmupDoneRef.current.has(warmupKey)) return
-            if (vcfOverviewWarmupActiveRef.current.has(warmupKey)) return
-            vcfOverviewWarmupActiveRef.current.add(warmupKey)
-            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: true }))
-
-            try {
-                const tiles = buildVcfOverviewWarmupTiles({ chromLength: chromEnd, level: l0 })
-                    .map((tileSpec) => {
-                        const tileStart = tileSpec.tileStart
-                        const tileEnd = tileSpec.tileEnd
-                        const key = makeVcfBlockTileKey(track.id, selectedChrom, l0.id, tileStart, tileEnd)
-                        return { ...tileSpec, key }
-                    })
-                    .filter((tile) => !vcfBlockTileCacheRef.current.has(tile.key))
-
-                if (tiles.length === 0) {
-                    vcfOverviewWarmupDoneRef.current.add(warmupKey)
-                    return
-                }
-
-                for (const tile of tiles) {
-                    if (cancelled) return
-                    while (!cancelled && hasForegroundVcfFetch()) {
-                        await delay(80)
-                    }
-                    if (cancelled) return
-                    if (vcfBlockTileCacheRef.current.has(tile.key)) continue
-                    if (vcfBlockTileFetchSetRef.current.has(tile.key)) continue
-
-                    vcfBlockTileFetchSetRef.current.add(tile.key)
-                    try {
-                        const response = await fetch(`${API_BASE}/api/browse/vcf/block_tiles`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                path: track.path,
-                                chrom: selectedChrom,
-                                genome,
-                                coverage_threshold: 0.25,
-                                tiles: [{
-                                    start: tile.start,
-                                    end: tile.end,
-                                    level_id: tile.level_id,
-                                    block_bp: tile.block_bp,
-                                    window_bp: tile.window_bp,
-                                }],
-                            }),
-                        })
-                        const payload = response.ok
-                            ? await response.json()
-                            : await response.json().then((e) => { throw new Error(e?.detail || `HTTP ${response.status}`) })
-                        const returnedChrom = payload?.chrom || selectedChrom
-                        const returned = Array.isArray(payload?.tiles) ? payload.tiles : []
-                        for (const returnedTile of returned) {
-                            const tStart = Math.max(0, Math.floor(Number(returnedTile.start) || 0))
-                            const tEnd = Math.max(tStart + 1, Math.ceil(Number(returnedTile.end) || 1))
-                            const levelId = String(returnedTile.level_id || l0.id)
-                            const selectedKey = makeVcfBlockTileKey(track.id, selectedChrom, levelId, tStart, tEnd)
-                            vcfBlockTileCacheRef.current.set(selectedKey, returnedTile)
-                            if (returnedChrom !== selectedChrom) {
-                                const resolvedKey = makeVcfBlockTileKey(track.id, returnedChrom, levelId, tStart, tEnd)
-                                vcfBlockTileCacheRef.current.set(resolvedKey, returnedTile)
-                            }
-                        }
-                        setCustomTrackFetchRevision((v) => v + 1)
-                    } catch (e) {
-                        const errorMessage = getFetchErrorMessage(e)
-                        if (!isTransientFetchErrorMessage(errorMessage)) {
-                            setCustomTrackData((prev) => ({
-                                ...prev,
-                                [track.id]: { ...(prev[track.id] || {}), has_data: false, error: errorMessage },
-                            }))
-                            setCustomTrackLoading((prev) => ({ ...prev, [track.id]: false }))
-                            return
-                        }
-                    } finally {
-                        vcfBlockTileFetchSetRef.current.delete(tile.key)
-                    }
-                    await delay(20)
-                }
-
-                vcfOverviewWarmupDoneRef.current.add(warmupKey)
-                setCustomTrackFetchRevision((v) => v + 1)
-            } finally {
-                vcfOverviewWarmupActiveRef.current.delete(warmupKey)
-            }
-        }
-
-        for (const track of vcfTracks) {
-            warmTrack(track)
-        }
-
-        return () => {
-            cancelled = true
-        }
-    }, [
+    useEffect((...args) => warmVcfOverviewTiles({
+        chromLength,
+        customTracks,
+        genome,
+        isActive,
+        makeVcfBlockTileKey,
+        selectedChrom,
+        setCustomTrackData,
+        setCustomTrackFetchRevision,
+        setCustomTrackLoading,
+        vcfBlockTileCacheRef,
+        vcfBlockTileFetchSetRef,
+        vcfOverviewWarmupActiveRef,
+        vcfOverviewWarmupDoneRef,
+    }, ...args), [
         chromLength,
         customTracks,
         genome,
@@ -3054,11 +2196,7 @@ function GenomeBrowser({
     // emptied wholesale whenever the genome, chromosome or reload epoch changes;
     // watching the gene id alone meant a wipe that left the same gene focused
     // never re-fetched, and the drawer listed no transcripts from then on.
-    useEffect(() => {
-        if (!selectedGene?.id) return
-        if (transcriptCache[selectedGene.id]) return
-        fetchTranscripts(selectedGene.id)
-    }, [selectedGene?.id, transcriptCache, fetchTranscripts])
+    useEffect((...args) => applyExternalGeneNavigation({ fetchTranscripts, selectedGene, transcriptCache }, ...args), [selectedGene?.id, transcriptCache, fetchTranscripts])
 
     // Navigate to a gene from external trigger
     const lastNavigateRef = useRef(null)
@@ -3171,9 +2309,7 @@ function GenomeBrowser({
     // genome's default locus the moment it lands — after this effect has already
     // framed the region the reader asked for.
     const pendingLocationNavigateRef = useRef(false)
-    pendingLocationNavigateRef.current = Boolean(
-        navigateToLocation && navigateToLocation !== lastNavigateLocationRef.current
-    )
+    applyExternalLocationNavigation({ lastNavigateLocationRef, navigateToLocation, pendingLocationNavigateRef })
     useEffect(() => {
         if (!navigateToLocation || navigateToLocation === lastNavigateLocationRef.current) return
         // Held, not dropped: without the region list there is no chromosome to
@@ -3866,50 +3002,17 @@ function GenomeBrowser({
     }, [panByPx])
 
     // Smoothly transition the viewport to a target range in fixed time.
-    const animateToView = useCallback((targetStart, targetEnd, durationMs = 1000) => {
-        const [finalStart, finalEnd] = clampView(targetStart, targetEnd)
-        const initialStart = viewStartRef.current
-        const initialEnd = viewEndRef.current
-
-        if (Math.abs(finalStart - initialStart) < 1e-6 && Math.abs(finalEnd - initialEnd) < 1e-6) {
-            return
-        }
-
-        if (animationRef.current) {
-            cancelAnimationFrame(animationRef.current)
-            animationRef.current = null
-        }
-        velocityRef.current = 0
-
-        const startTime = performance.now()
-        const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3)
-
-        const tick = (now) => {
-            const rawT = Math.min(1, (now - startTime) / durationMs)
-            const t = easeOutCubic(rawT)
-
-            let nextStart = initialStart + (finalStart - initialStart) * t
-            let nextEnd = initialEnd + (finalEnd - initialEnd) * t
-                ;[nextStart, nextEnd] = clampView(nextStart, nextEnd)
-
-            viewStartRef.current = nextStart
-            viewEndRef.current = nextEnd
-            setViewStart(nextStart)
-            setViewEnd(nextEnd)
-
-            if (onPositionChange) {
-                onPositionChange(selectedChrom, nextStart, nextEnd)
-            }
-
-            if (rawT < 1) {
-                animationRef.current = requestAnimationFrame(tick)
-            } else {
-                animationRef.current = null
-            }
-        }
-
-        animationRef.current = requestAnimationFrame(tick)
-    }, [clampView, onPositionChange, selectedChrom])
+    const animateToView = useCallback((...args) => animateBrowserToView({
+        animationRef,
+        clampView,
+        onPositionChange,
+        selectedChrom,
+        setViewEnd,
+        setViewStart,
+        velocityRef,
+        viewEndRef,
+        viewStartRef,
+    }, ...args), [clampView, onPositionChange, selectedChrom])
 
     const screenToViewCoord = useCallback((screenX) => {
         const currentStart = viewStartRef.current
@@ -4001,53 +3104,16 @@ function GenomeBrowser({
         isTranscriptCompressionActive,
     ])
 
-    const alignGeneToTop = useCallback((geneForFocus, marginPx = 18, options = {}) => {
-        if (!geneForFocus || !containerRef.current) return false
-
-        const isForward = geneForFocus.strand === '+'
-        const trackY = isForward ? layout.FORWARD_Y : layout.REVERSE_Y
-        const trackPadding = isForward ? layout.fwdPadding : layout.revPadding
-        const rawGx1 = genomicToScreen(geneForFocus.start)
-        const rawGx2 = genomicToScreen(geneForFocus.end)
-        const geneWidth = Math.max(1, Math.abs(rawGx2 - rawGx1))
-        const rowCount = getGeneRowCountForWidth(geneForFocus, geneWidth)
-        const totalGeneHeight = getGeneTotalHeight(rowCount)
-        const baseGeneY = trackY + trackPadding + ((geneForFocus._row || 0) * transcriptLayoutMetrics.rowPitch)
-
-        const container = containerRef.current
-        const containerRect = container.getBoundingClientRect()
-        const scroller = findNearestScrollable(rootRef.current)
-        const scrollerMetrics = getScrollerMetrics(scroller)
-
-        const topMarginPx = Math.max(0, Number(options.topMarginPx ?? marginPx))
-        const bottomMarginPx = Math.max(0, Number(options.bottomMarginPx ?? marginPx))
-
-        // The gene's position in client space. The panel itself never scrolls, so
-        // this only moves when the surrounding page scroller moves.
-        const geneTopClientY = containerRect.top + baseGeneY
-        const geneBottomClientY = geneTopClientY + totalGeneHeight
-
-        // Park the gene just under whichever edge is lower: the panel's own top or
-        // the visible top of the scroll viewport, below a control bar floating there.
-        const visibleTop = getScrollerVisibleTop(scroller, scrollerMetrics)
-        const topAlignDelta = geneTopClientY - (Math.max(containerRect.top, visibleTop) + topMarginPx)
-        const bottomFitDelta = Math.max(
-            0,
-            geneBottomClientY + bottomMarginPx - Math.min(containerRect.bottom, scrollerMetrics.bottom)
-        )
-        const rawScrollTop = scrollerMetrics.scrollTop
-            + (Boolean(options.preferBottomVisible) ? bottomFitDelta : topAlignDelta)
-
-        // Layout may still be growing (transcripts expanding); let the caller retry.
-        const needsMoreScrollableHeight = Boolean(options.preferBottomVisible)
-            && (rawScrollTop > (scrollerMetrics.maxScrollTop + 1))
-        if (needsMoreScrollableHeight) {
-            return false
-        }
-
-        scrollScrollerTo(scroller, scrollerMetrics, clamp(rawScrollTop, 0, scrollerMetrics.maxScrollTop))
-        return true
-    }, [layout, transcriptLayoutMetrics, genomicToScreen, getGeneRowCountForWidth, getGeneTotalHeight])
+    const alignGeneToTop = useCallback((...args) => alignGeneToTopOfView({
+        containerRef,
+        findNearestScrollable,
+        genomicToScreen,
+        getGeneRowCountForWidth,
+        getGeneTotalHeight,
+        layout,
+        rootRef,
+        transcriptLayoutMetrics,
+    }, ...args), [layout, transcriptLayoutMetrics, genomicToScreen, getGeneRowCountForWidth, getGeneTotalHeight])
 
     useEffect(() => {
         if (!focusBarRef.current) return
@@ -4075,69 +3141,13 @@ function GenomeBrowser({
         return null
     }, [layout])
 
-    const getGeneFeatureVerticalAnchor = useCallback((mouseX, mouseY, trackId) => {
-        const trackGenes = trackId === 'forward'
-            ? layout.forwardGenes
-            : trackId === 'reverse'
-                ? layout.reverseGenes
-                : []
-        if (trackGenes.length === 0) return null
-
-        const trackY = trackId === 'forward' ? layout.FORWARD_Y : layout.REVERSE_Y
-        const trackPadding = trackId === 'forward' ? layout.fwdPadding : layout.revPadding
-        let best = null
-
-        for (const gene of trackGenes) {
-            const rawGx1 = genomicToScreen(gene.start)
-            const rawGx2 = genomicToScreen(gene.end)
-            const gx1 = Math.min(rawGx1, rawGx2)
-            const gx2 = Math.max(rawGx1, rawGx2)
-            if (mouseX < gx1 - 4 || mouseX > gx2 + 4) continue
-
-            const geneWidth = Math.max(1, gx2 - gx1)
-            const displayTxs = getDisplayTranscriptsForGene(gene, geneWidth)
-            const rowCount = Math.max(1, displayTxs.length || 1)
-            const baseGeneY = trackY
-                + trackPadding
-                + ((gene._row || 0) * transcriptLayoutMetrics.rowPitch)
-            const totalGeneHeight = getGeneTotalHeight(rowCount)
-            if (mouseY < baseGeneY || mouseY > baseGeneY + totalGeneHeight) continue
-
-            const rowAnchor = getFeatureRowAnchor({
-                baseGeneY,
-                pointerY: mouseY,
-                rowPitch: transcriptLayoutMetrics.rowPitch,
-                midOffset: transcriptLayoutMetrics.midOffset,
-                rowCount,
-                transcriptIds: displayTxs.map((tx) => tx?.id),
-            })
-            if (!rowAnchor) continue
-
-            const rowMidY = baseGeneY
-                + (rowAnchor.rowIndex * transcriptLayoutMetrics.rowPitch)
-                + transcriptLayoutMetrics.midOffset
-            const distance = Math.abs(mouseY - rowMidY)
-            if (!best || distance < best.distance) {
-                best = {
-                    trackId,
-                    geneId: String(gene.id),
-                    transcriptId: rowAnchor.transcriptId,
-                    fallbackRowIndex: rowAnchor.rowIndex,
-                    rowOffset: rowAnchor.rowOffset,
-                    distance,
-                }
-            }
-        }
-
-        if (!best) return null
-        return {
-            trackId: best.trackId,
-            geneId: best.geneId,
-            transcriptId: best.transcriptId,
-            fallbackRowIndex: best.fallbackRowIndex,
-            rowOffset: best.rowOffset,
-        }
-    }, [
+    const getGeneFeatureVerticalAnchor = useCallback((...args) => findGeneFeatureVerticalAnchor({
+        genomicToScreen,
+        getDisplayTranscriptsForGene,
+        getGeneTotalHeight,
+        layout,
+        transcriptLayoutMetrics,
+    }, ...args), [
         layout,
         genomicToScreen,
         getDisplayTranscriptsForGene,
@@ -4310,72 +3320,7 @@ function GenomeBrowser({
         }
     }, [screenshotTargetDescriptor])
 
-    const getCustomTrackGeometry = useCallback((trackLayout, renderMode, trackType = '', data = null) => {
-        if (trackType === 'vcf' && isVcfAdaptiveLikeMode(renderMode)) {
-            const vcfLevel = getVcfBlockLevel(bpPerPx)
-            const isDetailMode = data?.mode === 'adp_detail' || vcfLevel?.mode === 'detail'
-            const top = trackLayout.y + (isDetailMode ? 18 : 8)
-            const bottom = trackLayout.y + trackLayout.height - 8
-            const plotHeight = Math.max(8, bottom - top)
-            const barH = Math.max(3, Math.floor(plotHeight * (isDetailMode ? 0.13 : 0.18)))
-            const barY = top + Math.floor((plotHeight - barH) / 2)
-            return {
-                top,
-                bottom,
-                plotHeight,
-                labelY: isDetailMode
-                    ? (trackLayout.y + 10)
-                    : Math.max(trackLayout.y + 10, barY - 8),
-                variantBarY: barY,
-                variantBarH: barH,
-                bumpAreaTop: top,
-                bumpAreaBottom: bottom,
-            }
-        }
-
-        if (renderMode !== 'zoned_heatmap') {
-            const top = trackLayout.y + 18
-            const bottom = trackLayout.y + trackLayout.height - 8
-            return {
-                top,
-                bottom,
-                plotHeight: Math.max(8, bottom - top),
-                labelY: trackLayout.y + 9,
-                // For ensembl VCF: allocate vertical subzones
-                variantBarY: trackLayout.y + 18,
-                variantBarH: 8,
-                bumpAreaTop: trackLayout.y + 30,
-                bumpAreaBottom: trackLayout.y + trackLayout.height - 8,
-            }
-        }
-
-        const labelBand = 14
-        const topPad = 4
-        const bottomPad = 6
-        const gap = 2
-        // In a joined group every track is named above its band, so a heatmap's name
-        // under it would read as the name of the track below.
-        const labelBelow = isPrimaryPanel && !trackLayout.joinedRowId
-        if (labelBelow) {
-            const top = trackLayout.y + topPad
-            const bottom = trackLayout.y + trackLayout.height - (labelBand + bottomPad + gap)
-            return {
-                top,
-                bottom,
-                plotHeight: Math.max(8, bottom - top),
-                labelY: trackLayout.y + trackLayout.height - bottomPad - (labelBand / 2),
-            }
-        }
-
-        const top = trackLayout.y + labelBand + topPad
-        const bottom = trackLayout.y + trackLayout.height - bottomPad
-        return {
-            top,
-            bottom,
-            plotHeight: Math.max(8, bottom - top),
-            labelY: trackLayout.y + topPad + (labelBand / 2),
-        }
-    }, [isPrimaryPanel, getVcfBlockLevel, bpPerPx])
+    const getCustomTrackGeometry = useCallback((...args) => computeCustomTrackGeometry({ bpPerPx, getVcfBlockLevel, isPrimaryPanel }, ...args), [isPrimaryPanel, getVcfBlockLevel, bpPerPx])
 
     const getCustomTrackHoverInTrackFrame = useCallback((...args) => findCustomTrackHover({
         bpPerPx,
@@ -4521,68 +3466,7 @@ function GenomeBrowser({
         colors.reverseStrandBg])
 
     const hasExpandedGeneFooters = expandedGeneFooters.length > 0
-    useLayoutEffect(() => {
-        const canvas = canvasRef.current
-        if (!canvas || !hasExpandedGeneFooters) {
-            setExpandedFooterViewport((prev) => (prev === null ? prev : null))
-            return undefined
-        }
-
-        const scrollElement = findNearestScrollable(canvas)
-        let frameId = null
-
-        const updateViewport = () => {
-            frameId = null
-            const canvasRect = canvas.getBoundingClientRect()
-            const scrollRect = scrollElement?.getBoundingClientRect?.() || null
-            const visibleTopClient = Math.max(
-                0,
-                canvasRect.top,
-                Number.isFinite(scrollRect?.top) ? scrollRect.top : 0,
-            )
-            const visibleBottomClient = Math.min(
-                window.innerHeight,
-                canvasRect.bottom,
-                Number.isFinite(scrollRect?.bottom) ? scrollRect.bottom : window.innerHeight,
-            )
-            const next = visibleBottomClient > visibleTopClient
-                ? {
-                    top: Math.max(0, visibleTopClient - canvasRect.top),
-                    bottom: Math.max(0, visibleBottomClient - canvasRect.top),
-                }
-                : null
-
-            setExpandedFooterViewport((prev) => {
-                if (prev === null || next === null) return prev === next ? prev : next
-                if (Math.abs(prev.top - next.top) < 0.5 && Math.abs(prev.bottom - next.bottom) < 0.5) return prev
-                return next
-            })
-        }
-
-        const scheduleViewportUpdate = () => {
-            if (frameId !== null) return
-            frameId = window.requestAnimationFrame(updateViewport)
-        }
-
-        updateViewport()
-        scrollElement?.addEventListener('scroll', scheduleViewportUpdate, { passive: true })
-        window.addEventListener('scroll', scheduleViewportUpdate, { passive: true, capture: true })
-        window.addEventListener('resize', scheduleViewportUpdate, { passive: true })
-
-        const resizeObserver = typeof ResizeObserver === 'function'
-            ? new ResizeObserver(scheduleViewportUpdate)
-            : null
-        resizeObserver?.observe(canvas)
-        if (scrollElement) resizeObserver?.observe(scrollElement)
-
-        return () => {
-            if (frameId !== null) window.cancelAnimationFrame(frameId)
-            scrollElement?.removeEventListener('scroll', scheduleViewportUpdate)
-            window.removeEventListener('scroll', scheduleViewportUpdate, { capture: true })
-            window.removeEventListener('resize', scheduleViewportUpdate)
-            resizeObserver?.disconnect()
-        }
-    }, [hasExpandedGeneFooters])
+    useLayoutEffect((...args) => measureExpandedFooterViewport({ canvasRef, findNearestScrollable, hasExpandedGeneFooters, setExpandedFooterViewport }, ...args), [hasExpandedGeneFooters])
 
     const expandedFooterPlacementByGeneId = useMemo(() => {
         const placements = new Map()
@@ -4689,139 +3573,45 @@ function GenomeBrowser({
         return scrollTargetRef.current !== null
     }, [])
 
-    const handleMouseDown = (e) => {
-        e.preventDefault() // Prevent browser text-selection on drag
-        // preventDefault also suppresses the default focus, so take it
-        // explicitly or keyboard navigation never reaches the clicked panel.
-        // preventScroll matters: without it the page jumps and fights the
-        // adaptive scroll anchor.
-        containerRef.current?.focus({ preventScroll: true })
-        setSidebarTooltip(null)
-        dismissCustomTrackTooltip()
-        hoveredSpliceRef.current = null
-        setHoveredSpliceJunction(null)
-        if (animationRef.current) {
-            cancelAnimationFrame(animationRef.current)
-            animationRef.current = null
-        }
-
-        const canvas = canvasRef.current
-        if (canvas) {
-            const rect = canvas.getBoundingClientRect()
-            const clickX = e.clientX - rect.left
-            const clickY = e.clientY - rect.top
-
-            // One-shot rectangular selection mode for box-zoom.
-            if (isBoxSelectMode) {
-                if (clickX <= LHS_WIDTH) return
-                suppressNextClickRef.current = true
-                setIsSelectingRect(true)
-                setSelectionRect({ x1: clickX, y1: clickY, x2: clickX, y2: clickY })
-                return
-            }
-
-            // Intercept sidebar toggling or dragging
-            if (clickX <= LHS_WIDTH) {
-                // A step that limits the browser to zooming means it: the gutter switches
-                // a track off and its handle reorders the stack, and neither is zooming.
-                // The user who was told they could only zoom should not be able to blank
-                // the track by clicking a little to the left of it.
-                if (interactionModeRef.current !== 'all') return
-                const trackId = getTrackAtY(clickY)
-
-                // Circular hit test around the toggle glyph. The radius is
-                // deliberately larger than the glyph so shrinking it did not make
-                // the control harder to hit.
-                const toggleCenterX = LHS_WIDTH - 13
-                const hitRadiusSq = SIDEBAR_TOGGLE_HIT_RADIUS * SIDEBAR_TOGGLE_HIT_RADIUS
-                const dxSq = (clickX - toggleCenterX) ** 2
-                const hitsToggle = (centerY) => dxSq + (clickY - centerY) ** 2 <= hitRadiusSq
-
-                let toggleTrackId = null
-                if (layout.forwardBgHeight > 0 && hitsToggle(layout.FORWARD_Y + layout.forwardBgHeight / 2)) {
-                    toggleTrackId = 'forward'
-                } else if (layout.reverseBgHeight > 0 && hitsToggle(layout.REVERSE_Y + layout.reverseBgHeight / 2)) {
-                    toggleTrackId = 'reverse'
-                } else if (showSequenceTrack && layout.SEQUENCE_Y >= 0 && hitsToggle(layout.SEQUENCE_Y + layout.seqBgHeight / 2)) {
-                    toggleTrackId = 'sequence'
-                } else if (layout.customTrackLayouts) {
-                    for (const [tid, tLayout] of Object.entries(layout.customTrackLayouts)) {
-                        if (tLayout.joinedRowId) continue
-                        if (hitsToggle(getCustomTrackToggleY(tLayout))) { toggleTrackId = tid; break }
-                    }
-                    for (const [rid, rLayout] of Object.entries(layout.groupRowLayouts || {})) {
-                        if (toggleTrackId) break
-                        if (hitsToggle(getCustomTrackToggleY(rLayout))) toggleTrackId = rid
-                    }
-                }
-
-                if (toggleTrackId === 'forward') {
-                    setHiddenStrands(prev => ({ ...prev, forward: !prev.forward }))
-                    return
-                } else if (toggleTrackId === 'reverse') {
-                    setHiddenStrands(prev => ({ ...prev, reverse: !prev.reverse }))
-                    return
-                } else if (toggleTrackId === 'sequence') {
-                    setHiddenStrands(prev => ({ ...prev, sequence: !prev.sequence }))
-                    return
-                } else if (toggleTrackId && isCustomTrackId(toggleTrackId)) {
-                    setCustomTracks((prev) =>
-                        prev.map((track) =>
-                            track.id === toggleTrackId
-                                ? { ...track, visible: !track.visible }
-                                : track
-                        )
-                    )
-                    return
-                } else if (toggleTrackId && isGroupRowId(toggleTrackId)) {
-                    // A joined group turns on and off as one.
-                    const turnOn = Boolean(joinedRows.get(toggleTrackId)?.hidden)
-                    setCustomTracks((prev) => prev.map((track) => (
-                        track.joinedRowId === toggleTrackId ? { ...track, visible: turnOn } : track
-                    )))
-                    return
-                }
-
-                // If not a toggle, initiate drag-and-drop
-                if (trackId) {
-                    setDraggingTrack(trackId)
-                }
-
-                return // Handled LHS interaction
-            }
-
-            // Start splice-arc vertical drag mode (separate from viewport pan).
-            const customHover = getCustomTrackHover(clickX, clickY, e.clientX, e.clientY)
-            if (customHover?.hoverSplice?.junction) {
-                const hit = customHover.hoverSplice
-                const junctionKey = spliceJunctionKey(hit.junction)
-                const mapKey = `${hit.trackId}|${junctionKey}`
-                spliceArcDragRef.current = {
-                    trackId: hit.trackId,
-                    key: junctionKey,
-                    startClientY: e.clientY,
-                    initialLift: Number(spliceArcLiftOffsets[mapKey] || 0),
-                }
-            } else {
-                spliceArcDragRef.current = null
-            }
-        }
-
-        setIsDragging(true)
-        isDraggingRef.current = true
-        dragStartXRef.current = e.clientX
-        // Anchor on the live viewport, not the last committed render: a pan that
-        // starts mid-flight would otherwise measure its progress from a stale start.
-        dragViewStartRef.current = viewStartRef.current
-        dragStartYRef.current = e.clientY
-        dragAxisRef.current = null
-        const scrollTarget = findNearestScrollable(containerRef.current)
-        scrollTargetRef.current = scrollTarget
-        dragScrollTopRef.current = scrollTarget ? scrollTarget.scrollTop : 0
-        lastPosRef.current = e.clientX
-        lastTimeRef.current = performance.now()
-        velocityRef.current = 0
-    }
+    const handleMouseDown = (...args) => handleBrowserMouseDown({
+        animationRef,
+        canvasRef,
+        containerRef,
+        dismissCustomTrackTooltip,
+        dragAxisRef,
+        dragScrollTopRef,
+        dragStartXRef,
+        dragStartYRef,
+        dragViewStartRef,
+        findNearestScrollable,
+        getCustomTrackHover,
+        getCustomTrackToggleY,
+        getTrackAtY,
+        hoveredSpliceRef,
+        interactionModeRef,
+        isBoxSelectMode,
+        isCustomTrackId,
+        isDraggingRef,
+        joinedRows,
+        lastPosRef,
+        lastTimeRef,
+        layout,
+        scrollTargetRef,
+        setCustomTracks,
+        setDraggingTrack,
+        setHiddenStrands,
+        setHoveredSpliceJunction,
+        setIsDragging,
+        setIsSelectingRect,
+        setSelectionRect,
+        setSidebarTooltip,
+        showSequenceTrack,
+        spliceArcDragRef,
+        spliceArcLiftOffsets,
+        suppressNextClickRef,
+        velocityRef,
+        viewStartRef,
+    }, ...args)
 
     const updateSelectionRectFromEvent = useCallback((e) => {
         const canvas = canvasRef.current
@@ -4834,53 +3624,22 @@ function GenomeBrowser({
     }, [viewWidth])
 
     // Returns info about the sequence base under canvas coords (mouseX, mouseY), or null.
-    const getSeqBaseAtMouse = useCallback((mouseX, mouseY) => {
-        if (!showSequenceTrack || effectiveHiddenStrands.sequence) return null
-        const { SEQUENCE_Y } = layout
-        const seqBoxT = Math.round(SEQUENCE_Y + 6)
-        const seqBoxH = 24
-        if (mouseY < seqBoxT || mouseY > seqBoxT + seqBoxH) return null
-        const trackW = viewWidth - LHS_WIDTH
-        const pxPerBp = trackW / Math.max(1, viewEnd - viewStart)
-        if (pxPerBp < 2) return null
-
-        if (isAligned && alignData && viewSpan <= 1000) {
-            const overlayPos = isFlipped
-                ? viewEnd - (mouseX - LHS_WIDTH) / pxPerBp
-                : viewStart + (mouseX - LHS_WIDTH) / pxPerBp
-            const i = Math.floor(overlayPos)
-            const alnLen = alignData.sequence.length
-            let base = null
-            if (i >= 0 && i < alnLen) {
-                base = alignData.sequence[i]
-            } else if (sequence && seqRange) {
-                const genomicBp = Math.round(overlayToGenomic(i))
-                const seqIdx = genomicBp - seqRange.start
-                if (seqIdx >= 0 && seqIdx < sequence.length) {
-                    base = sequence[seqIdx]
-                    if (alignData.strand === '-') base = REV_COMP[base] || base
-                }
-            }
-            if (!base || base === '-') return null
-            const displayBase = isFlipped ? (REV_COMP[base] || base) : base
-            const { bxL, bxR } = getBasePixelBounds(i, pxPerBp)
-            const bp = Math.round(overlayToGenomic(i))
-            return { bp, base: displayBase.toUpperCase(), bxL, bxR, seqBoxT, seqBoxH }
-        } else if (sequence && seqRange && viewSpan <= 1000) {
-            const overlayPos = isFlipped
-                ? viewEnd - (mouseX - LHS_WIDTH) / pxPerBp
-                : viewStart + (mouseX - LHS_WIDTH) / pxPerBp
-            const bp = Math.floor(overlayPos)
-            const seqIdx = bp - seqRange.start
-            if (seqIdx < 0 || seqIdx >= sequence.length) return null
-            const base = sequence[seqIdx]
-            if (!base) return null
-            const displayBase = isFlipped ? (REV_COMP[base] || base) : base
-            const { bxL, bxR } = getBasePixelBounds(bp, pxPerBp)
-            return { bp, base: displayBase.toUpperCase(), bxL, bxR, seqBoxT, seqBoxH }
-        }
-        return null
-    }, [showSequenceTrack, effectiveHiddenStrands, layout, viewWidth, viewEnd, viewStart, viewSpan,
+    const getSeqBaseAtMouse = useCallback((...args) => findSequenceBaseAtMouse({
+        alignData,
+        effectiveHiddenStrands,
+        getBasePixelBounds,
+        isAligned,
+        isFlipped,
+        layout,
+        overlayToGenomic,
+        seqRange,
+        sequence,
+        showSequenceTrack,
+        viewEnd,
+        viewSpan,
+        viewStart,
+        viewWidth,
+    }, ...args), [showSequenceTrack, effectiveHiddenStrands, layout, viewWidth, viewEnd, viewStart, viewSpan,
         isAligned, alignData, sequence, seqRange, isFlipped, overlayToGenomic, getBasePixelBounds])
 
     const handleMouseMove = useCallback((...args) => handleBrowserMouseMove({
@@ -4935,62 +3694,27 @@ function GenomeBrowser({
         viewWidth,
     }, ...args), [viewWidth, panByPx, layout, isFlipped, isSelectingRect, updateSelectionRectFromEvent, getTrackAtY, getTrackTooltip, getCustomTrackHover, getSeqBaseAtMouse, clickedSeqBase, dismissCustomTrackTooltip, queueCustomTrackTooltip, draggingTrack, clickedGeneTranscript, getSelectedGeneTranscriptHit, focusViewGeneId, focusTranscriptView?.hoverId, clearTranscriptPopupDismissTimer, scheduleTranscriptPopupDismiss, canVerticallyScrollContainer, captureAdaptiveScrollAnchor])
 
-    const handleMouseUp = useCallback(() => {
-        if (isSelectingRect) {
-            const rect = selectionRect
-            setIsSelectingRect(false)
-            setSelectionRect(null)
-            setIsBoxSelectMode(false) // one-shot mode
-
-            if (!rect) return
-
-            const minX = Math.max(LHS_WIDTH, Math.min(rect.x1, rect.x2))
-            const maxX = Math.max(LHS_WIDTH, Math.max(rect.x1, rect.x2))
-            const minY = Math.min(rect.y1, rect.y2)
-            const maxY = Math.max(rect.y1, rect.y2)
-
-            const hitsAnyTrack = layout.orderedTracks.some((track) => (
-                maxY >= track.y && minY <= (track.y + track.height)
-            ))
-
-            if (hitsAnyTrack && (maxX - minX) > 2) {
-                const v1 = screenToViewCoord(minX)
-                const v2 = screenToViewCoord(maxX)
-                let nextStart = Math.min(v1, v2)
-                let nextEnd = Math.max(v1, v2)
-                if (nextEnd <= nextStart) nextEnd = nextStart + 1
-
-                // What the user dragged out is now the location of focus. Zoomed to
-                // slightly wider than the box so its boundary lines land inside the
-                // view instead of on its edges, and framed clear of the drawer that
-                // taking focus slides over this panel's right edge.
-                const selectedSpan = nextEnd - nextStart
-                const flank = (selectedSpan / BOX_SELECT_FILL_FRACTION - selectedSpan) / 2
-                focusLocation({
-                    chrom: selectedChrom,
-                    start: Math.round(isAligned ? overlayToGenomic(nextStart) : nextStart),
-                    end: Math.round(isAligned ? overlayToGenomic(nextEnd) : nextEnd),
-                })
-                const framedBox = frameFocusRange(nextStart - flank, nextEnd + flank, { gainingFocus: true })
-                animateToView(framedBox.start, framedBox.end, 300)
-            }
-            return
-        }
-
-        if (!isDraggingRef.current) return
-        isDraggingRef.current = false
-        if (spliceArcDragRef.current) {
-            spliceArcDragRef.current = null
-            setIsDragging(false)
-            dragAxisRef.current = null
-            velocityRef.current = 0
-            return
-        }
-        const wasVertical = dragAxisRef.current === 'y'
-        setIsDragging(false)
-        dragAxisRef.current = null
-        if (!wasVertical) startMomentum()
-    }, [startMomentum, isSelectingRect, selectionRect, layout, showSequenceTrack, screenToViewCoord, animateToView, focusLocation, frameFocusRange, selectedChrom, isAligned, overlayToGenomic])
+    const handleMouseUp = useCallback((...args) => handleBrowserMouseUp({
+        animateToView,
+        dragAxisRef,
+        focusLocation,
+        frameFocusRange,
+        isAligned,
+        isDraggingRef,
+        isSelectingRect,
+        layout,
+        overlayToGenomic,
+        screenToViewCoord,
+        selectedChrom,
+        selectionRect,
+        setIsBoxSelectMode,
+        setIsDragging,
+        setIsSelectingRect,
+        setSelectionRect,
+        spliceArcDragRef,
+        startMomentum,
+        velocityRef,
+    }, ...args), [startMomentum, isSelectingRect, selectionRect, layout, showSequenceTrack, screenToViewCoord, animateToView, focusLocation, frameFocusRange, selectedChrom, isAligned, overlayToGenomic])
 
     // While box-selecting, keep tracking even if cursor leaves this browser.
     useEffect(() => {
@@ -5088,106 +3812,28 @@ function GenomeBrowser({
     }, [draggingTrack, hoveredTrack, layout, getTrackAtY])
 
     // Wheel handler
-    useEffect(() => {
-        const container = containerRef.current
-        if (!container) return
-
-        const handleWheel = (e) => {
-            // A dialog over the tracks scrolls itself and never zooms them.
-            if (isWheelInsideIsolatedOverlay(e)) return
-            // A gesture that began on a control bar or in the page margins is a
-            // page scroll. Scrolling slides this canvas under the cursor, so
-            // without this the rest of the gesture would turn into a zoom.
-            if (isWheelGestureFromChrome(e)) {
-                markWheelHandled(e)
-                return
-            }
-            if (animationRef.current) {
-                cancelAnimationFrame(animationRef.current)
-                animationRef.current = null
-            }
-            velocityRef.current = 0
-            dismissCustomTrackTooltip()
-
-            const rect = container.getBoundingClientRect()
-            const cursorX = e.clientX - rect.left
-
-            // Line/page deltas are normalised to pixels before any thresholding,
-            // or Firefox and Linux mice (deltaMode 1) are ~30x weaker.
-            const wheel = readWheelEvent(e, { pageHeight: rect.height || undefined })
-            const gesture = beginWheelGesture(wheelGestureRef.current, wheel, e.timeStamp)
-
-            const currentSpan = viewEndRef.current - viewStartRef.current
-            const intent = resolveWheelAction(wheel, browsingControlsRef.current, {
-                atMaxZoom: currentSpan >= MAX_VIEW_SPAN - 1e-6,
-                canScrollPage: Boolean(findNearestScrollable(container)),
-                gesture,
-            })
-
-            wheelGestureRef.current = { ...gesture, mode: intent.nextGestureMode }
-            // Tell the view-level fallback listener this panel has seen the
-            // event, even when the outcome is "do nothing". Must happen before
-            // any early return.
-            markWheelHandled(e)
-
-            if (intent.preventDefault) e.preventDefault()
-            if (intent.stopPropagation) e.stopPropagation()
-            if (intent.releaseScrollAnchors) releaseScrollAnchors()
-
-            // 'page_scroll' is handled by doing nothing at all: the event was
-            // not prevented, so the browser scrolls the ancestor scroller with
-            // its own inertia.
-            if (intent.type === 'page_scroll' || intent.type === 'none') return
-
-            if (intent.type === 'pan') {
-                verticalZoomTrackAnchorRef.current = null
-                if (intent.captureScrollAnchor) captureAdaptiveScrollAnchor()
-                panByPx(intent.dxPx)
-                return
-            }
-
-            if (intent.type !== 'zoom') return
-
-            const mouseY = e.clientY - rect.top + container.scrollTop
-            const targetTrack = getTrackAtY(mouseY)
-
-            const now = performance.now()
-            const existingGeneAnchor = verticalZoomTrackAnchorRef.current
-            const hasActiveGeneAnchor = Boolean(existingGeneAnchor && now <= existingGeneAnchor.expiresAt)
-            if (hasActiveGeneAnchor) {
-                // Layout changes can move the pointer over another track during
-                // a rapid wheel gesture. Keep following the feature row where
-                // the gesture began until wheel input pauses.
-                existingGeneAnchor.expiresAt = now + 450
-            } else {
-                const featureAnchor = getGeneFeatureVerticalAnchor(cursorX, mouseY, targetTrack)
-                verticalZoomTrackAnchorRef.current = featureAnchor
-                    ? {
-                        ...featureAnchor,
-                        viewportY: e.clientY - rect.top,
-                        clientY: e.clientY,
-                        expiresAt: now + 450,
-                    }
-                    : null
-            }
-
-            if (verticalZoomTrackAnchorRef.current) {
-                adaptiveScrollAnchorRef.current = null
-                if (adaptiveScrollAnchorFrameRef.current !== null) {
-                    cancelAnimationFrame(adaptiveScrollAnchorFrameRef.current)
-                    adaptiveScrollAnchorFrameRef.current = null
-                }
-            } else if (intent.captureScrollAnchor) {
-                captureAdaptiveScrollAnchor()
-            }
-
-            const anchorX = intent.anchor === 'center' ? (LHS_WIDTH + viewWidthRef.current) / 2 : cursorX
-            zoomAt(anchorX, intent.factor, targetTrack)
-        }
-
-        container.addEventListener('wheel', handleWheel, { passive: false })
-        return () => container.removeEventListener('wheel', handleWheel)
-    }, [zoomAt, panByPx, getTrackAtY, getGeneFeatureVerticalAnchor, dismissCustomTrackTooltip, captureAdaptiveScrollAnchor, releaseScrollAnchors])
+    useEffect((...args) => attachWheelHandler({
+        MAX_VIEW_SPAN,
+        adaptiveScrollAnchorFrameRef,
+        adaptiveScrollAnchorRef,
+        animationRef,
+        browsingControlsRef,
+        captureAdaptiveScrollAnchor,
+        containerRef,
+        dismissCustomTrackTooltip,
+        findNearestScrollable,
+        getGeneFeatureVerticalAnchor,
+        getTrackAtY,
+        panByPx,
+        releaseScrollAnchors,
+        velocityRef,
+        verticalZoomTrackAnchorRef,
+        viewEndRef,
+        viewStartRef,
+        viewWidthRef,
+        wheelGestureRef,
+        zoomAt,
+    }, ...args), [zoomAt, panByPx, getTrackAtY, getGeneFeatureVerticalAnchor, dismissCustomTrackTooltip, captureAdaptiveScrollAnchor, releaseScrollAnchors])
 
     // ============ Click Handler (gene selection & pill expansion) ============
 
@@ -5440,129 +4086,26 @@ function GenomeBrowser({
 
     const CONTROL_GAP_PX = 4
 
-    const transcriptFooterOverlay = useMemo(() => {
-        const controls = []
-        // Flatten is a *height* control, not a "hide the gene's own controls" one: a gene
-        // whose transcripts are showing still needs the way back, and a tutorial step
-        // pointing at that control found nothing there. Compressed and window-wide-expanded
-        // layouts do drop it — the first has no room, and in the second every gene is
-        // expanded already, so a per-gene pill would be saying something untrue.
-        if (compressTranscripts || isViewportTranscriptExpandMode) {
-            return { controls }
-        }
-        const { FORWARD_Y, REVERSE_Y, RULER_Y } = layout
-
-        for (const gene of genes) {
-            if (isGeneHiddenFromTracks(gene)) continue
-            const isForward = gene.strand === '+'
-            if (isForward && effectiveHiddenStrands.forward) continue
-            if (!isForward && effectiveHiddenStrands.reverse) continue
-            const isSelected = selectedGene && selectedGene.id === gene.id
-            const isDimmed = dimNonSelectedGenes && !!selectedGene && !isSelected
-
-            const txs = transcriptCache[gene.id]
-            if (!txs || txs.length === 0) continue
-
-            const rawGx1 = genomicToScreen(gene.start)
-            const rawGx2 = genomicToScreen(gene.end)
-            const geneWidth = Math.abs(rawGx2 - rawGx1)
-            if (geneWidth < 60) continue
-
-            const trackY = isForward ? FORWARD_Y : REVERSE_Y
-            const trackPadding = isForward ? layout.fwdPadding : layout.revPadding
-            const baseGeneY = trackY + trackPadding + ((gene._row || 0) * transcriptLayoutMetrics.rowPitch)
-            const displayRows = getDisplayTranscriptRows(gene)
-            const footer = getGeneFooterGeometry({
-                gene,
-                txs,
-                getEffectiveTranscriptLimit,
-                visibleTranscriptCount: displayRows.length,
-                genomicToScreen,
-                baseGeneY,
-                transcriptLayoutMetrics,
-                lhsWidth: LHS_WIDTH,
-                viewWidth,
-            })
-            if (!footer) continue
-            const displayFooter = expandedFooterPlacementByGeneId.get(String(gene.id)) || footer
-
-            // Transcripts the user has hidden aren't waiting to be revealed by
-            // this pill, so they don't count towards its "+N".
-            const geneView = getGeneTranscriptView(gene.id)
-            const transcriptIds = new Set(txs.map((tx) => String(tx?.id || '')))
-            const hiddenIds = (geneView?.hidden || [])
-                .map((id) => String(id))
-                .filter((id) => transcriptIds.has(id))
-            const expandableCount = hiddenIds.length
-                ? resolveGeneTranscriptView({
-                    transcripts: txs,
-                    limit: txs.length,
-                    hidden: hiddenIds,
-                }).visibleCount
-                : txs.length
-            const controlState = getTranscriptFooterControlState(
-                expandableCount,
-                displayRows.filter((row) => !row.ghost).length,
-            )
-            // A gene with everything hidden has no expand/collapse control left,
-            // but still needs the way back — so neither control alone is required.
-            if (!controlState && hiddenIds.length === 0) continue
-
-            const controlWidth = controlState
-                ? Math.max(TRANSCRIPT_FOOTER_CONTROL_HEIGHT, (controlState.label.length * 6) + 8)
-                : 0
-            const restoreLabel = hiddenIds.length
-                ? `Show ${hiddenIds.length} hidden`
-                : ''
-            const restoreWidth = restoreLabel ? (restoreLabel.length * 5.6) + 10 : 0
-            const totalWidth = controlWidth + (restoreWidth ? restoreWidth + CONTROL_GAP_PX : 0)
-            const isExpandedControl = controlState?.action === 'collapse'
-            const expandedLabelWidth = isExpandedControl && displayFooter.label
-                ? measureExpandedFooterLabelWidth(displayFooter.label)
-                : 0
-            const expandedGroupWidth = expandedLabelWidth
-                ? expandedLabelWidth + EXPANDED_FOOTER_INLINE_GAP + totalWidth
-                : 0
-            const overlayWidth = Math.max(totalWidth, expandedGroupWidth)
-            const groupX = clamp(
-                displayFooter.x,
-                LHS_WIDTH + 6,
-                Math.max(LHS_WIDTH + 6, viewWidth - overlayWidth - 6),
-            )
-            // The same rule the canvas labels follow: a track's own controls stay in their
-            // track. Reaching into the ruler makes both unreadable, and a compact panel
-            // leaves no margin between the two for an overflow to land in.
-            const rowTop = isExpandedControl
-                ? displayFooter.labelY - EXPANDED_FOOTER_LABEL_TOP_OFFSET
-                : displayFooter.controlY
-            if (intersectsRuler(rowTop, rowTop + TRANSCRIPT_FOOTER_CONTROL_HEIGHT, RULER_Y, effectiveRulerHeight)) {
-                continue
-            }
-
-            controls.push({
-                id: gene.id,
-                x: groupX,
-                controlX: isExpandedControl
-                    ? groupX + expandedLabelWidth + EXPANDED_FOOTER_INLINE_GAP
-                    : groupX,
-                y: displayFooter.controlY,
-                width: controlWidth,
-                ...(controlState || {}),
-                hasPrimary: Boolean(controlState),
-                restoreLabel,
-                restoreWidth,
-                hiddenCount: hiddenIds.length,
-                isDimmed,
-                isFocused: gene.id === selectedGene?.id,
-                totalTranscripts: txs.length,
-                geneLabel: displayFooter.label || '',
-                geneLabelY: displayFooter.labelY,
-                isExpandedControl,
-                trackBackground: displayFooter.trackBackground || '',
-            })
-        }
-        return { controls }
-    }, [genes, isGeneHiddenFromTracks, transcriptCache, getEffectiveTranscriptLimit, getDisplayTranscriptRows, getGeneTranscriptView, genomicToScreen, viewWidth, layout, effectiveHiddenStrands, selectedGene, dimNonSelectedGenes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, transcriptLayoutMetrics, expandedFooterPlacementByGeneId, effectiveRulerHeight])
+    const transcriptFooterOverlay = useMemo((...args) => renderTranscriptFooterOverlay({
+        CONTROL_GAP_PX,
+        compressTranscripts,
+        dimNonSelectedGenes,
+        effectiveHiddenStrands,
+        effectiveRulerHeight,
+        expandedFooterPlacementByGeneId,
+        genes,
+        genomicToScreen,
+        getDisplayTranscriptRows,
+        getEffectiveTranscriptLimit,
+        getGeneTranscriptView,
+        isGeneHiddenFromTracks,
+        isViewportTranscriptExpandMode,
+        layout,
+        selectedGene,
+        transcriptCache,
+        transcriptLayoutMetrics,
+        viewWidth,
+    }, ...args), [genes, isGeneHiddenFromTracks, transcriptCache, getEffectiveTranscriptLimit, getDisplayTranscriptRows, getGeneTranscriptView, genomicToScreen, viewWidth, layout, effectiveHiddenStrands, selectedGene, dimNonSelectedGenes, compressTranscripts, isViewportTranscriptExpandMode, flattenTracks, transcriptLayoutMetrics, expandedFooterPlacementByGeneId, effectiveRulerHeight])
 
     /**
      * A speech bubble at the head of every gene the user has written about.
@@ -5571,67 +4114,21 @@ function GenomeBrowser({
      * hit-testing, hover, the tooltip and an accessible name for nothing, and
      * keeps this out of the draw effect entirely.
      */
-    const geneNoteOverlay = useMemo(() => {
-        const bubbles = []
-        // Only once the track is drawing transcripts. Zoomed out, a gene is a
-        // block or a tick and a mark on it would be pointing at nothing.
-        if (!isTranscriptDetailZoomActive) return { bubbles }
-        if (!geneNoteCounts) return { bubbles }
-        const { FORWARD_Y, REVERSE_Y } = layout
-
-        for (const gene of genes) {
-            const count = Number(geneNoteCounts[String(gene.id)] || 0)
-            if (!(count > 0)) continue
-            if (isGeneHiddenFromTracks(gene)) continue
-            const isForward = gene.strand === '+'
-            if (isForward && effectiveHiddenStrands.forward) continue
-            if (!isForward && effectiveHiddenStrands.reverse) continue
-
-            const rawGx1 = genomicToScreen(gene.start)
-            const rawGx2 = genomicToScreen(gene.end)
-            if (!Number.isFinite(rawGx1) || !Number.isFinite(rawGx2)) continue
-            if (Math.abs(rawGx2 - rawGx1) < NOTE_BUBBLE_MIN_GENE_WIDTH) continue
-            // Flip-safe: a flipped view reverses genomicToScreen, so gene.start
-            // is not reliably the left edge.
-            const gx1 = Math.min(rawGx1, rawGx2)
-
-            const trackY = isForward ? FORWARD_Y : REVERSE_Y
-            const trackPadding = isForward ? layout.fwdPadding : layout.revPadding
-            const baseGeneY = trackY + trackPadding + ((gene._row || 0) * transcriptLayoutMetrics.rowPitch)
-            const footer = getGeneFooterGeometry({
-                gene,
-                txs: transcriptCache[gene.id],
-                getEffectiveTranscriptLimit,
-                genomicToScreen,
-                baseGeneY,
-                transcriptLayoutMetrics,
-                lhsWidth: LHS_WIDTH,
-                viewWidth,
-            })
-            if (!footer) continue
-
-            const top = footer.topY - NOTE_BUBBLE_SIZE - NOTE_BUBBLE_GAP
-            // Compressed and flattened layouts leave 1-2px of track padding, so
-            // there is simply nowhere to put the mark. Suppressed by the space
-            // available rather than by naming the modes, which keeps it drawn
-            // wherever it does fit.
-            if (top < trackY + 1) continue
-
-            bubbles.push({
-                id: gene.id,
-                gene,
-                count,
-                x: clamp(
-                    gx1 - 1,
-                    LHS_WIDTH + 2,
-                    Math.max(LHS_WIDTH + 2, viewWidth - NOTE_BUBBLE_SIZE - 2),
-                ),
-                y: top,
-                isDimmed: dimNonSelectedGenes && !!selectedGene && selectedGene.id !== gene.id,
-            })
-        }
-        return { bubbles }
-    }, [genes, geneNoteCounts, isTranscriptDetailZoomActive, genomicToScreen, viewWidth, layout,
+    const geneNoteOverlay = useMemo((...args) => renderGeneNoteOverlay({
+        dimNonSelectedGenes,
+        effectiveHiddenStrands,
+        geneNoteCounts,
+        genes,
+        genomicToScreen,
+        getEffectiveTranscriptLimit,
+        isGeneHiddenFromTracks,
+        isTranscriptDetailZoomActive,
+        layout,
+        selectedGene,
+        transcriptCache,
+        transcriptLayoutMetrics,
+        viewWidth,
+    }, ...args), [genes, geneNoteCounts, isTranscriptDetailZoomActive, genomicToScreen, viewWidth, layout,
         transcriptLayoutMetrics, transcriptCache, getEffectiveTranscriptLimit, effectiveHiddenStrands,
         isGeneHiddenFromTracks, selectedGene, dimNonSelectedGenes])
 
@@ -5787,17 +4284,7 @@ function GenomeBrowser({
         return true
     }, [layout, genomicToScreen, getGeneRowCountForWidth, getGeneTotalHeight, transcriptLayoutMetrics])
 
-    useEffect(() => {
-        const pendingGeneId = pendingVerticalCenterGeneIdRef.current
-        if (!pendingGeneId) return
-
-        const geneForCenter = genes.find((gene) => gene.id === pendingGeneId)
-        if (!geneForCenter) return
-
-        if (centerGeneVertically(geneForCenter)) {
-            pendingVerticalCenterGeneIdRef.current = null
-        }
-    }, [genes, layout, centerGeneVertically])
+    useEffect((...args) => applyPendingTranscriptPillFocus({ centerGeneVertically, genes, pendingVerticalCenterGeneIdRef }, ...args), [genes, layout, centerGeneVertically])
 
     useEffect(() => {
         const pending = pendingTranscriptPillFocusRef.current
@@ -6065,72 +4552,25 @@ function GenomeBrowser({
     // The key map is deliberately the same in every control scheme: schemes
     // change pointer behaviour only. Making the keyboard scheme-dependent would
     // leave Default users with no keyboard access at all.
-    const handleKeyDown = useCallback((e) => {
-        if (e.defaultPrevented) return
-        // The panel contains a search box and a track-label dialog whose keydowns
-        // bubble up to this container.
-        if (isTextEntryTarget(e.target)) return
-
-        const intent = resolveKeyAction(readKeyEvent(e))
-        if (intent.type === 'none') return
-        if (intent.preventDefault) e.preventDefault()
-
-        const currentStart = viewStartRef.current
-        const currentEnd = viewEndRef.current
-        const span = Math.max(1, currentEnd - currentStart)
-        const trackWidth = Math.max(1, viewWidth - LHS_WIDTH)
-
-        if (intent.type === 'pan') {
-            // At base-level zoom a "fine" step should be exactly one base,
-            // otherwise a percentage of the span.
-            const stepPx = (intent.fineStep && span <= 1000)
-                ? Math.sign(intent.dxFraction) * (trackWidth / span)
-                : intent.dxFraction * trackWidth
-            captureAdaptiveScrollAnchor()
-            panByPx(stepPx)
-            return
-        }
-
-        if (intent.type === 'zoom') {
-            zoomAt(LHS_WIDTH + trackWidth / 2, intent.factor, null)
-            return
-        }
-
-        if (intent.type === 'jump') {
-            if (onManualNavigate) onManualNavigate()
-            const maxEnd = Math.max(2, chromLength || currentEnd)
-            const [nextStart, nextEnd] = intent.edge === 'start'
-                ? clampView(1, 1 + span)
-                : clampView(maxEnd - span, maxEnd)
-            animateToView(nextStart, nextEnd, 400)
-            return
-        }
-
-        if (intent.type === 'reset') {
-            if (intent.scope === 'gene') {
-                // "Reset to what is focused": whichever kind of focus the panel holds.
-                if (selectedGene) handleRecenterSelectedGene()
-                else handleRecenterSelectedLocation()
-                return
-            }
-            if (onManualNavigate) onManualNavigate()
-            const maxEnd = Math.max(2, chromLength || currentEnd)
-            animateToView(1, maxEnd, 500)
-            return
-        }
-
-        if (intent.type === 'dismiss') {
-            if (selectedGene) {
-                setSelectedGene(null)
-                return
-            }
-            if (selectedLocation) {
-                setSelectedLocation(null)
-                return
-            }
-            containerRef.current?.blur()
-        }
-    }, [
+    const handleKeyDown = useCallback((...args) => handleBrowserKeyDown({
+        animateToView,
+        captureAdaptiveScrollAnchor,
+        chromLength,
+        clampView,
+        containerRef,
+        handleRecenterSelectedGene,
+        handleRecenterSelectedLocation,
+        onManualNavigate,
+        panByPx,
+        selectedGene,
+        selectedLocation,
+        setSelectedGene,
+        setSelectedLocation,
+        viewEndRef,
+        viewStartRef,
+        viewWidth,
+        zoomAt,
+    }, ...args), [
         viewWidth, chromLength, selectedGene, selectedLocation, panByPx, zoomAt, animateToView, clampView,
         onManualNavigate, captureAdaptiveScrollAnchor, handleRecenterSelectedGene, handleRecenterSelectedLocation,
     ])
@@ -6230,105 +4670,29 @@ function GenomeBrowser({
         && viewSpan <= 1000
     )
 
-    useEffect(() => {
-        const panelKey = String(screenshotTargetId || genome || '')
-        if (!panelKey) return undefined
-        const span = () => Math.max(1, viewEndRef.current - viewStartRef.current)
-        const duration = (ms) => (Number(ms) > 0 ? Number(ms) : TUTORIAL_MOVE_MS)
-        const bare = (name) => String(name || '').trim().toLowerCase().replace(/^chr/, '')
-
-        return registerBrowserViewport(panelKey, {
-            recipeId: tutorialRecipeId,
-            frameFocusedRange: (start, end) => frameFocusRange(start, end, { gainingFocus: true }),
-            setTracks: (tracks) => setHiddenStrands((prev) => ({ ...prev, ...Object.fromEntries(Object.entries(tracks).map(([key, visible]) => [key, !visible])) })),
-            setInteraction: (mode) => { interactionModeRef.current = mode },
-            resetScroll: () => {
-                // The panel lives inside the view's scroller, not its own, so this walks
-                // up to whatever is actually scrolling.
-                let node = rootRef.current
-                while (node && node !== document.body) {
-                    if (node.scrollHeight > node.clientHeight + 1) { node.scrollTop = 0; return }
-                    node = node.parentElement
-                }
-            },
-            describe: () => ({
-                chrom: selectedChrom,
-                start: viewStartRef.current,
-                end: viewEndRef.current,
-                sequenceVisible: tutorialSequenceVisibleRef.current,
-                bounds: browsableRange,
-                tracks: Object.fromEntries(Object.entries(hiddenStrands).map(([key, hidden]) => [key, !hidden])),
-                focus: selectedGene?.name || selectedGene?.id || '',
-                // The location of focus, so an arrival can tell "already right" from
-                // "needs setting" rather than re-focusing on every visit to a step.
-                locationFocus: isLocationFocusVisible && focusLocationRange
-                    ? { ...focusLocationRange }
-                    : null,
-                ready: Boolean(selectedChrom && regions.length),
-            }),
-            // The location of focus, set the way the gene of focus is: through the panel's
-            // own handler rather than behind it, so the drawer, the focus bar, the boundary
-            // lines and the gene that gives way to it all stay in step.
-            //
-            // Deliberately not "press the Focus this window button": that control focuses
-            // whatever the window happens to be showing, so a step wanting a particular
-            // region would have to travel there first and then be moved back — a journey
-            // and a correction, which is exactly what docs/TUTORIALS.md says a tutorial
-            // must not do. This leaves the view alone; the step's own `browserView`
-            // arrival puts it where the card describes, in one move.
-            setLocationFocus: (range) => {
-                if (!range) {
-                    if (!selectedLocation) return false
-                    focusLocation(null)
-                    return true
-                }
-                const wanted = getFocusLocationRange(range)
-                if (!wanted) return false
-                if (!isSameChromToken(wanted.chrom, selectedChrom)) return false
-                const current = focusLocationRange
-                if (current
-                    && isSameChromToken(current.chrom, wanted.chrom)
-                    && Math.round(current.start) === Math.round(wanted.start)
-                    && Math.round(current.end) === Math.round(wanted.end)) return false
-                focusLocation(wanted)
-                return true
-            },
-            panByWindows: (fraction, ms) => {
-                const shift = span() * (Number(fraction) || 0)
-                if (!shift) return false
-                animateToView(viewStartRef.current + shift, viewEndRef.current + shift, duration(ms))
-                return true
-            },
-            zoomBy: (factor, ms) => {
-                const value = Number(factor)
-                if (!(value > 0)) return false
-                const centre = viewStartRef.current + (span() / 2)
-                const next = Math.max(2, span() * value)
-                animateToView(centre - (next / 2), centre + (next / 2), duration(ms))
-                return true
-            },
-            goToLocus: (text, ms) => {
-                const parsed = String(text || '').match(/^\s*([^:\s]+)\s*:\s*([\d,\s]+)\s*-\s*([\d,\s]+)\s*$/)
-                if (!parsed) return false
-                const start = parseInt(parsed[2].replace(/[,\s]/g, ''), 10)
-                const end = parseInt(parsed[3].replace(/[,\s]/g, ''), 10)
-                if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return false
-                // A locus on some other region is not a move, it is a navigation — leave
-                // that to the search box, which knows how to switch region.
-                const showing = chromDisplayMap[selectedChrom] || selectedChrom
-                if (bare(parsed[1]) !== bare(showing) && bare(parsed[1]) !== bare(selectedChrom)) return false
-                // Through the same framing every other "put this on screen" path uses, so
-                // a locus a tutorial asks for lands in the part of the track the reader can
-                // actually see. Without it a step that names a region around the focused
-                // gene centres that gene behind the drawer — the drawer overlays the canvas
-                // rather than narrowing it, so the window itself never shrank. A no-op
-                // whenever no drawer is open, since the inset is then zero.
-                const framed = frameFocusRange(start, end)
-                animateToView(framed.start, framed.end, duration(ms))
-                return true
-            },
-        })
-    }, [animateToView, browsableRange, chromDisplayMap, frameFocusRange, genome, screenshotTargetId, selectedChrom, tutorialRecipeId, hiddenStrands, selectedGene, regions.length, focusLocation, focusLocationRange, isLocationFocusVisible, selectedLocation])
+    useEffect((...args) => registerTutorialViewport({
+        animateToView,
+        browsableRange,
+        chromDisplayMap,
+        focusLocation,
+        focusLocationRange,
+        frameFocusRange,
+        genome,
+        hiddenStrands,
+        interactionModeRef,
+        isLocationFocusVisible,
+        regions,
+        rootRef,
+        screenshotTargetId,
+        selectedChrom,
+        selectedGene,
+        selectedLocation,
+        setHiddenStrands,
+        tutorialRecipeId,
+        tutorialSequenceVisibleRef,
+        viewEndRef,
+        viewStartRef,
+    }, ...args), [animateToView, browsableRange, chromDisplayMap, frameFocusRange, genome, screenshotTargetId, selectedChrom, tutorialRecipeId, hiddenStrands, selectedGene, regions.length, focusLocation, focusLocationRange, isLocationFocusVisible, selectedLocation])
 
     // ============ Render ============
 
