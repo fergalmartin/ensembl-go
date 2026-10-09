@@ -16,6 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import app_paths  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 
@@ -411,7 +412,7 @@ class UserNotesEnvironmentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             with patch.dict(main.os.environ, {"ENSEMBL_GO_USER_DATA_DIR": str(root)}):
-                self.assertEqual(main.get_cache_dir(), (root / "cache").resolve())
+                self.assertEqual(app_paths.get_cache_dir(), (root / "cache").resolve())
 
 
 if __name__ == "__main__":

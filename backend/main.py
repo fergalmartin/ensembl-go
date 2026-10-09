@@ -195,6 +195,7 @@ from security_utils import (
     validate_remote_download_url,
     validate_trackhub_data_url,
 )
+import app_paths
 
 # Configure logging
 logging.basicConfig(
@@ -339,151 +340,8 @@ def open_indexed_fasta(fasta_path: str, force_reindex: bool = False) -> ThreadSa
     return ThreadSafeFasta(pysam.FastaFile(indexed_path))
 
 
-# Configuration
-def get_base_path():
-    """Get the base path for bundled resources (data files etc), handling PyInstaller."""
-    if getattr(sys, 'frozen', False):
-        # Running as PyInstaller bundle — _MEIPASS has bundled data files
-        return Path(sys._MEIPASS)
-    else:
-        # Running as script
-        return Path(__file__).parent
-
-def get_cache_dir():
-    """Get a persistent, writable cache directory.
-
-    In dev mode: <backend_dir>/cache
-    In packaged mode: ~/Library/Application Support/Ensembl Go/cache (macOS)
-                      %LOCALAPPDATA%/Ensembl Go/cache (Windows)
-                      or ~/.ensembl_go/cache (other platforms)
-    """
-    user_data_override = (
-        os.environ.get("ENSEMBL_GO_USER_DATA_DIR")
-        or os.environ.get("ENSEMBL_LOCAL_USER_DATA_DIR")
-        or ""
-    ).strip()
-    if user_data_override:
-        cache = Path(user_data_override).expanduser().resolve() / "cache"
-    elif getattr(sys, 'frozen', False):
-        # Packaged app — use a stable user-writable location
-        if sys.platform == 'darwin':
-            app_data = Path.home() / "Library" / "Application Support" / "Ensembl Go"
-        elif sys.platform == 'win32':
-            local_app_data = os.environ.get("LOCALAPPDATA")
-            app_data = Path(local_app_data) / "Ensembl Go" if local_app_data else Path.home() / "AppData" / "Local" / "Ensembl Go"
-        else:
-            app_data = Path.home() / ".ensembl_go"
-        cache = app_data / "cache"
-    else:
-        # Dev mode — use <backend_dir>/cache as before
-        cache = Path(__file__).parent / "cache"
-    cache.mkdir(exist_ok=True, parents=True)
-    return cache
-
-BASE_PATH = get_base_path()
-CACHE_DIR = get_cache_dir()
-
-# MAFFT Path handling
-def find_mafft() -> Tuple[str, Dict[str, str]]:
-    env_overrides: Dict[str, str] = {}
-    executable_names = ["mafft"]
-    if sys.platform == "win32":
-        executable_names = ["mafft.bat", "mafft.exe", "mafft.cmd", "mafft"]
-
-    # Electron passes explicit bundled MAFFT locations in packaged builds.
-    env_mafft_path = os.environ.get("ENSEMBL_LOCAL_MAFFT_PATH")
-    env_mafft_binaries = os.environ.get("ENSEMBL_LOCAL_MAFFT_BINARIES")
-    if env_mafft_binaries:
-        env_overrides["MAFFT_BINARIES"] = env_mafft_binaries
-    if env_mafft_path and os.path.exists(env_mafft_path):
-        return env_mafft_path, env_overrides
-
-    candidates = []
-
-    if getattr(sys, 'frozen', False):
-        exe_dir = Path(sys.executable).resolve().parent
-        for executable_name in executable_names:
-            candidates.extend([
-                str(exe_dir / "mafft_bin" / "bin" / executable_name),
-                str(exe_dir / "mafft" / "bin" / executable_name),
-                str(BASE_PATH / executable_name),
-            ])
-
-        bundled_binaries = [
-            str(exe_dir / "mafft_bin" / "libexec" / "mafft"),
-            str(exe_dir / "mafft" / "libexec" / "mafft"),
-        ]
-        for binaries in bundled_binaries:
-            if os.path.isdir(binaries):
-                env_overrides["MAFFT_BINARIES"] = binaries
-                break
-
-    candidates.extend([
-        "/opt/homebrew/bin/mafft",
-        "/usr/local/bin/mafft",
-    ])
-    candidates.extend(executable_names)
-
-    for path in candidates:
-        try:
-            if os.path.isabs(path) or os.path.sep in path or (os.path.altsep and os.path.altsep in path):
-                if os.path.exists(path):
-                    return path, env_overrides
-                continue
-            resolved = shutil.which(path)
-            if resolved:
-                return resolved, env_overrides
-        except Exception:
-            continue
-
-    return ("mafft.exe" if sys.platform == "win32" else "mafft"), env_overrides
-
-
-def _mafft_missing_error() -> RuntimeError:
-    return RuntimeError(
-        "MAFFT executable was not found. Install MAFFT on this machine or bundle it into the packaged app."
-    )
-
-
-MAFFT_PATH, MAFFT_ENV = find_mafft()
-
-# Default test data paths (relative to project root)
-# When running as standalone app, we generally expect files to be provided or selected via UI.
-# However, we bundle cluster_test_data for the default example.
-# Default test data paths (relative to project root)
-if getattr(sys, 'frozen', False):
-    # Running as frozen bundle — data files are inside _MEIPASS
-    PROJECT_ROOT = BASE_PATH
-else:
-    # Running from source
-    PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
 # Initialize Download Manager
-def _resolve_species_json_path() -> Path:
-    env_path = os.environ.get("ENSEMBL_LOCAL_SPECIES_JSON")
-    if env_path:
-        p = Path(env_path).expanduser()
-        if p.exists():
-            return p
-
-    # Distributions do not bundle a species catalogue; it is downloaded from Ensembl on
-    # first run (see DownloadManager.ensure_catalog_available). These paths only serve
-    # development and offline use, where a catalogue can be placed in the repository or
-    # pointed at with ENSEMBL_LOCAL_SPECIES_JSON.
-    candidates = [
-        BASE_PATH / "cluster_test_data" / "species.new_ftp_structure.json",
-        BASE_PATH / "cluster_test_data" / "species.json",
-        PROJECT_ROOT / "cluster_test_data" / "species.new_ftp_structure.json",
-        PROJECT_ROOT / "cluster_test_data" / "species.json",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return candidates[0]
-
-
-SPECIES_JSON_PATH = _resolve_species_json_path()
-download_manager = DownloadManager(SPECIES_JSON_PATH, cache_dir=CACHE_DIR)
+download_manager = DownloadManager(app_paths.SPECIES_JSON_PATH, cache_dir=app_paths.CACHE_DIR)
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
@@ -513,7 +371,7 @@ from transcript_msa.regions import params_of as _tmsa_params_of, structure_hash 
 app.include_router(create_gene_trees_router(
     library_path_provider=lambda: gene_trees_library_path(),
     genomes_provider=lambda: gene_trees_local_genomes(),
-    cache_dir=CACHE_DIR / "gene_trees",
+    cache_dir=app_paths.CACHE_DIR / "gene_trees",
     neighbourhood_lookup=lambda db_path, gene_id, window: gene_trees_neighbourhood(db_path, gene_id, window),
     alignment_hooks={
         "store_root": lambda: gene_trees_alignments_root(),
@@ -1381,7 +1239,7 @@ GFF_INDEX_FORMAT_VERSION = "6"
 # the SQLite schema. Version 5 indexes therefore remain safe to read and must
 # not trigger a destructive, multi-genome rebuild during application startup.
 GFF_INDEX_COMPATIBLE_VERSIONS = frozenset({"5", GFF_INDEX_FORMAT_VERSION})
-_ENA_METADATA_CACHE_PATH = CACHE_DIR / "ena_metadata_cache.json"
+_ENA_METADATA_CACHE_PATH = app_paths.CACHE_DIR / "ena_metadata_cache.json"
 
 _STRUCTURAL_REQUIRED_FIELDS = (
     "regular_cds_count",
@@ -2180,7 +2038,7 @@ def run_mafft_alignment(seq1: str, seq2: str) -> Tuple[str, str]:
     try:
         # --auto automatically converts to the most appropriate method
         # --quiet suppresses output
-        cmd = [MAFFT_PATH, "--auto", "--quiet", input_file]
+        cmd = [app_paths.MAFFT_PATH, "--auto", "--quiet", input_file]
         log_progress(f"  Running MAFFT...")
         try:
             result = subprocess.run(
@@ -2188,10 +2046,10 @@ def run_mafft_alignment(seq1: str, seq2: str) -> Tuple[str, str]:
                 capture_output=True,
                 text=True,
                 timeout=300,
-                env={**os.environ, **MAFFT_ENV},
+                env={**os.environ, **app_paths.MAFFT_ENV},
             )
         except FileNotFoundError as exc:
-            raise _mafft_missing_error() from exc
+            raise app_paths._mafft_missing_error() from exc
         
         if result.returncode != 0:
             raise RuntimeError(f"MAFFT failed: {result.stderr}")
@@ -2279,17 +2137,17 @@ def run_mafft_alignment_multi(
             f.write(f">{seq_id}\n{seq}\n")
 
     try:
-        cmd = [MAFFT_PATH, *mafft_args, input_file]
+        cmd = [app_paths.MAFFT_PATH, *mafft_args, input_file]
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=max(30, int(timeout_sec)),
-                env={**os.environ, **MAFFT_ENV},
+                env={**os.environ, **app_paths.MAFFT_ENV},
             )
         except FileNotFoundError as exc:
-            raise _mafft_missing_error() from exc
+            raise app_paths._mafft_missing_error() from exc
         if result.returncode != 0:
             raise RuntimeError(f"MAFFT failed: {result.stderr}")
 
@@ -2394,10 +2252,10 @@ def run_mafft_alignment_multi_progress(
     output: List[bytes] = []
     try:
         try:
-            proc = subprocess.Popen([MAFFT_PATH, *args, input_file], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    env={**os.environ, **MAFFT_ENV})
+            proc = subprocess.Popen([app_paths.MAFFT_PATH, *args, input_file], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    env={**os.environ, **app_paths.MAFFT_ENV})
         except FileNotFoundError as exc:
-            raise _mafft_missing_error() from exc
+            raise app_paths._mafft_missing_error() from exc
         readers = [threading.Thread(target=lambda: output.append(proc.stdout.read()), daemon=True),
                    threading.Thread(target=read_progress, args=(proc.stderr,), daemon=True)]
         for reader in readers:
@@ -3016,7 +2874,7 @@ def get_cache_path(transcript_id: str, target_id: str, ref_flank: int = 0, tgt_f
     """Get cache path including flanking info and target ID."""
     safe_id = transcript_id.replace(":", "_").replace("/", "_")
     safe_target = target_id.replace(":", "_").replace("/", "_")
-    return CACHE_DIR / f"{safe_id}_vs_{safe_target}_rf{ref_flank}_tf{tgt_flank}.json"
+    return app_paths.CACHE_DIR / f"{safe_id}_vs_{safe_target}_rf{ref_flank}_tf{tgt_flank}.json"
 
 
 def get_max_flanking_cache(transcript_id: str, target_id: str) -> Optional[Tuple[Path, int, int]]:
@@ -3030,7 +2888,7 @@ def get_max_flanking_cache(transcript_id: str, target_id: str) -> Optional[Tuple
     best_ref_flank = -1
     best_tgt_flank = -1
     
-    for path in CACHE_DIR.glob(pattern):
+    for path in app_paths.CACHE_DIR.glob(pattern):
         # Extract flanking values from filename
         match = re.search(r'_rf(\d+)_tf(\d+)\.json$', path.name)
         if match:
@@ -4399,7 +4257,7 @@ class HomologySearchRequest(BaseModel):
     focus_target_key: str = ""
 
 
-homology_search_store = HomologySearchStore(CACHE_DIR / "homology_search")
+homology_search_store = HomologySearchStore(app_paths.CACHE_DIR / "homology_search")
 
 
 def _homology_source_path(species: Dict[str, Any], cfg: Dict[str, Any]) -> str:
@@ -6049,7 +5907,7 @@ def _generate_indexes_blocking(request: IndexRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-CONFIG_FILE = CACHE_DIR / "config.json"
+CONFIG_FILE = app_paths.CACHE_DIR / "config.json"
 OUTPUT_DIR_CONFIG_FILENAME = "configuration.json"
 OUTPUT_DIR_PLAYLISTS_FILENAME = "genome_playlists.json"
 
@@ -7204,7 +7062,7 @@ def load_custom_config(request: LoadConfigRequest):
 async def clear_cache():
     """Delete all cached alignment files."""
     count = 0
-    for f in CACHE_DIR.glob("*.json"):
+    for f in app_paths.CACHE_DIR.glob("*.json"):
         if f.name == "config.json":
             continue  # Don't delete configuration
         try:
@@ -7371,7 +7229,6 @@ async def create_directory(request: MkdirRequest):
         logger.error("Error creating directory %s: %s", target, exc)
         raise HTTPException(status_code=400, detail="Failed to create directory")
     return {"status": "created", "path": str(target)}
-
 
 
 # ============ Download / Remote Data API ============
@@ -9947,7 +9804,7 @@ def _plan_genome_removal(
         manual_plan = removal_rules.plan_manual_genome_removal(
             entry,
             output_dir=output_dir,
-            cache_root=CACHE_DIR,
+            cache_root=app_paths.CACHE_DIR,
             foreign_seeds=foreign_seeds,
             index_basename=_index_basename_for_annotation(gff_path) if gff_path else "genome.gff3.index.db",
             genome_key=plan.genome_key,
@@ -10351,7 +10208,7 @@ def _cancel_stats_task_genome(task_id: str, genome_key_value: str) -> bool:
 
 def _clear_structural_cache_for_species(species: Dict[str, Any], output_dir: str):
     try:
-        cache_path = choose_stats_cache_path(species, output_dir, CACHE_DIR)
+        cache_path = choose_stats_cache_path(species, output_dir, app_paths.CACHE_DIR)
         if not cache_path.exists():
             return
         update_stats_cache(cache_path, None, None, drop=("structural",))
@@ -10499,7 +10356,7 @@ def _compute_stats_summary_sync(
             species.get("provider", ""),
             bool(species.get("is_manual")),
         )
-        cache_path = choose_stats_cache_path(species, output_dir, CACHE_DIR)
+        cache_path = choose_stats_cache_path(species, output_dir, app_paths.CACHE_DIR)
         existing_cache = load_stats_cache(cache_path)
         loaded_sections = dict(existing_cache.get("sections") or {})
         previous_fingerprints = existing_cache.get("source_fingerprints") or {}
@@ -10731,7 +10588,7 @@ async def _run_structural_stats_task(
                 )
                 continue
 
-            cache_path = choose_stats_cache_path(species, output_dir, CACHE_DIR)
+            cache_path = choose_stats_cache_path(species, output_dir, app_paths.CACHE_DIR)
             existing_cache = load_stats_cache(cache_path)
             previous_fingerprints = existing_cache.get("source_fingerprints") or {}
             cache = ensure_stats_cache_base(existing_cache, species, fingerprints)
@@ -12472,7 +12329,6 @@ async def browse_regions(genome: str = "reference", min_length: int = 0):
     return await run_in_threadpool(_query)
 
 
-
 @app.get("/api/browse/genes")
 async def browse_genes(
     genome: str = "reference",
@@ -13298,7 +13154,7 @@ def gene_trees_library_path() -> Path:
             return _resolve_local_data_root(output_dir) / "gene_trees_index.sqlite"
         except Exception:
             logger.warning("Gene trees: output_dir %s is unusable; using the cache", output_dir)
-    return CACHE_DIR / "gene_trees" / "gene_trees_index.sqlite"
+    return app_paths.CACHE_DIR / "gene_trees" / "gene_trees_index.sqlite"
 
 
 _GENE_TREE_GENOMES: Dict[str, Any] = {"key": None, "at": 0.0, "genomes": []}
@@ -15701,7 +15557,7 @@ MAX_STRUCTURE_MODEL_BYTES = 96 * 1024 * 1024
 ALPHAFOLD_ENTRY_URL = "https://alphafold.ebi.ac.uk/entry/{accession}"
 # Marks a cached "no such prediction" answer, so it is not mistaken for a model.
 STRUCTURE_ABSENT_KEY = "__absent__"
-STRUCTURE_ASSET_DIR = BASE_PATH / "static" / "structure"
+STRUCTURE_ASSET_DIR = app_paths.BASE_PATH / "static" / "structure"
 
 # A remote accession lookup is the only expensive step in deciding whether a
 # transcript has a structure at all, and the answer barely changes. Persisting it
@@ -15734,7 +15590,7 @@ _uniprot_mapping_cache: Dict[str, Tuple[float, "protein_structure.UniProtMapping
 
 
 def _structure_cache_dir() -> Path:
-    path = CACHE_DIR / "structures"
+    path = app_paths.CACHE_DIR / "structures"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -20925,13 +20781,12 @@ async def save_export_file(payload: SaveExportRequest):
     return await run_in_threadpool(_run)
 
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Track Manager — Registry & Data Endpoints
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OUTPUT_DIR_TRACK_REGISTRY_FILENAME = "track_registry.json"
-DEFAULT_TRACK_REGISTRY_FILE = CACHE_DIR / OUTPUT_DIR_TRACK_REGISTRY_FILENAME
+DEFAULT_TRACK_REGISTRY_FILE = app_paths.CACHE_DIR / OUTPUT_DIR_TRACK_REGISTRY_FILENAME
 TRACK_REGISTRY_FILE = DEFAULT_TRACK_REGISTRY_FILE
 
 TRACK_EXTENSION_MAP: Dict[str, str] = {
@@ -21186,7 +21041,7 @@ _track_registry_lock = threading.Lock()
 # transcripts or regions need no migration when they arrive.
 
 OUTPUT_DIR_USER_NOTES_FILENAME = "user_notes.json"
-DEFAULT_USER_NOTES_FILE = CACHE_DIR / OUTPUT_DIR_USER_NOTES_FILENAME
+DEFAULT_USER_NOTES_FILE = app_paths.CACHE_DIR / OUTPUT_DIR_USER_NOTES_FILENAME
 USER_NOTES_FILE = DEFAULT_USER_NOTES_FILE
 USER_NOTES_STORE_VERSION = 2
 MAX_NOTE_TITLE_CHARS = 200
@@ -21881,7 +21736,6 @@ async def delete_user_note(note_id: str):
     return await run_in_threadpool(_run)
 
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Notes Transfer — export a selection, and import one back
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -22271,7 +22125,7 @@ async def apply_user_notes_import(payload: NotesImportApplyRequest):
 # reads them all and merges, so progress made before an output directory was chosen
 # follows the user into it on the next write.
 
-DEFAULT_ACHIEVEMENTS_FILE = CACHE_DIR / achievements_store.ACHIEVEMENTS_FILENAME
+DEFAULT_ACHIEVEMENTS_FILE = app_paths.CACHE_DIR / achievements_store.ACHIEVEMENTS_FILENAME
 ACHIEVEMENTS_FILE = DEFAULT_ACHIEVEMENTS_FILE
 _achievements_lock = threading.Lock()
 
@@ -23990,7 +23844,7 @@ _VCF_HANDLE_CACHE: Dict[str, Dict[str, Any]] = {}
 _VCF_HANDLE_CACHE_GUARD = threading.Lock()
 _VCF_HANDLE_LOCKS: Dict[str, threading.Lock] = {}
 _VCF_HANDLE_LOCKS_GUARD = threading.Lock()
-_VCF_TILE_DISK_CACHE_DIR = CACHE_DIR / "vcf_tiles"
+_VCF_TILE_DISK_CACHE_DIR = app_paths.CACHE_DIR / "vcf_tiles"
 _VCF_TILE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _VCF_TILE_CACHE_SCHEMA = "v6"
 
@@ -24027,7 +23881,7 @@ class VcfTilesRequest(BaseModel):
 
 VCF_BLOCK_DENSITY_BIN_BP = 100
 _VCF_BLOCK_TILE_CACHE_SCHEMA = "v5"
-_VCF_BLOCK_TILE_DISK_CACHE_DIR = CACHE_DIR / "vcf_block_tiles"
+_VCF_BLOCK_TILE_DISK_CACHE_DIR = app_paths.CACHE_DIR / "vcf_block_tiles"
 _VCF_BLOCK_TILE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 

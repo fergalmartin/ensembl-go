@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import app_paths  # noqa: E402
 
 
 def _playlist():
@@ -33,7 +34,7 @@ class ConfigPlaylistPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             with patch.dict(main.os.environ, {"ENSEMBL_GO_USER_DATA_DIR": str(root)}):
-                self.assertEqual(main.get_cache_dir(), (root / "cache").resolve())
+                self.assertEqual(app_paths.get_cache_dir(), (root / "cache").resolve())
 
     def test_track_registry_is_persisted_with_output_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:

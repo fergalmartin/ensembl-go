@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import app_paths  # noqa: E402
 from stats_utils import choose_stats_cache_path  # noqa: E402
 
 
@@ -109,7 +110,7 @@ class StatsCacheNamingTests(unittest.TestCase):
         shutil.rmtree(self.root, ignore_errors=True)
 
     def _cache_path(self):
-        return choose_stats_cache_path(self.species, str(self.root), main.CACHE_DIR)
+        return choose_stats_cache_path(self.species, str(self.root), app_paths.CACHE_DIR)
 
     def test_the_annotation_extension_is_stripped_from_the_cache_name(self):
         self.assertEqual(
