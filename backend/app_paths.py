@@ -162,3 +162,6 @@ def _resolve_species_json_path() -> Path:
 
 
 SPECIES_JSON_PATH = _resolve_species_json_path()
+
+
+_ENA_METADATA_CACHE_PATH = CACHE_DIR / "ena_metadata_cache.json"

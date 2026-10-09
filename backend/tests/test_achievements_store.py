@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import achievements_store as store  # noqa: E402
 import main  # noqa: E402
+import routes.downloads  # noqa: E402
 import demo_genome  # noqa: E402
 import routes.achievements  # noqa: E402
 import config_store  # noqa: E402
@@ -261,7 +262,7 @@ class AchievementEndpointTests(unittest.TestCase):
 
     def test_downloads_are_not_recorded_during_a_tutorial(self):
         with _app() as (root, _cache):
-            request = main.DownloadRequest(
+            request = routes.downloads.DownloadRequest(
                 url="https://example.org/x.fa.gz", filename="x.fa.gz", species_key="Felis_catus",
                 assembly="GCA_000181335.5", file_type="fasta", output_dir=str(root / "out"), taxid=9685,
             )
@@ -290,7 +291,7 @@ class AchievementEndpointTests(unittest.TestCase):
 
     def test_only_sequence_and_annotation_count_as_a_download(self):
         with _app() as (root, _cache):
-            request = main.DownloadRequest(
+            request = routes.downloads.DownloadRequest(
                 url="https://example.org/x.tsv.gz", filename="x.tsv.gz", species_key="Felis_catus",
                 assembly="GCA_000181335.5", file_type="homology", output_dir=str(root / "out"),
             )

@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import download_manager as dm  # noqa: E402
 import main  # noqa: E402
+import routes.downloads  # noqa: E402
 import app_state  # noqa: E402
 from download_manager import DownloadTask  # noqa: E402
 
@@ -46,7 +47,7 @@ class CancelByIdTests(unittest.TestCase):
         self.tasks["a"] = _task("a", file_type="homology", status="downloading")
         self.tasks["b"] = _task("b", file_type="cdna")
 
-        cancelled = main._cancel_download_tasks_by_id(["a"])
+        cancelled = routes.downloads._cancel_download_tasks_by_id(["a"])
 
         self.assertEqual(cancelled, ["a"])
         self.assertEqual(self.tasks["a"].status, "canceled")
@@ -58,7 +59,7 @@ class CancelByIdTests(unittest.TestCase):
         self.tasks["meta"] = _task("meta", file_type="metadata")
         self.tasks["other_meta"] = _task("other_meta", file_type="metadata", assembly="GCA_2")
 
-        cancelled = main._cancel_download_tasks_by_id(["fa"])
+        cancelled = routes.downloads._cancel_download_tasks_by_id(["fa"])
 
         self.assertEqual(set(cancelled), {"fa", "meta"})
         self.assertEqual(self.tasks["other_meta"].status, "pending")
@@ -69,7 +70,7 @@ class CancelByIdTests(unittest.TestCase):
         self.tasks["done"] = _task("done", status="completed")
         self.tasks["failed"] = _task("failed", status="failed")
 
-        cancelled = main._cancel_download_tasks_by_id([], cancel_all=True)
+        cancelled = routes.downloads._cancel_download_tasks_by_id([], cancel_all=True)
 
         self.assertEqual(set(cancelled), {"a", "b"})
         self.assertEqual(self.tasks["done"].status, "completed")
@@ -81,12 +82,12 @@ class CancelByIdTests(unittest.TestCase):
         partial.write_bytes(b"partial")
         self.tasks["a"] = _task("a", status="downloading", destination=str(destination))
 
-        main._cancel_download_tasks_by_id(["a"])
+        routes.downloads._cancel_download_tasks_by_id(["a"])
 
         self.assertFalse(partial.exists())
 
     def test_endpoint_reports_not_found_when_nothing_matches(self):
-        result = asyncio.run(main.cancel_download_tasks(main.CancelDownloadTasksRequest(task_ids=["missing"])))
+        result = asyncio.run(routes.downloads.cancel_download_tasks(routes.downloads.CancelDownloadTasksRequest(task_ids=["missing"])))
         self.assertEqual(result, {"status": "not_found", "task_ids": [], "count": 0})
 
 

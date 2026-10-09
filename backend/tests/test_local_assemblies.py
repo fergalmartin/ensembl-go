@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.downloads  # noqa: E402
 import local_inventory  # noqa: E402
 import gff_index  # noqa: E402
 import app_state  # noqa: E402
@@ -309,7 +310,7 @@ class LocalAssembliesTests(unittest.TestCase):
             source_gff = root / "custom_source.gff3"
             source_gff.write_text("##gff-version 3\nchr1\tcustom\tgene\t1\t10\t.\t+\t.\tID=gene1\n", encoding="utf-8")
 
-            result = asyncio.run(main.import_custom_annotation(main.CustomAnnotationRequest(
+            result = asyncio.run(routes.downloads.import_custom_annotation(routes.downloads.CustomAnnotationRequest(
                 output_dir=str(root),
                 provider="ensembl",
                 species_key="Test_species",
@@ -318,7 +319,7 @@ class LocalAssembliesTests(unittest.TestCase):
                 label="custom review",
             )))
 
-            duplicate = asyncio.run(main.import_custom_annotation(main.CustomAnnotationRequest(
+            duplicate = asyncio.run(routes.downloads.import_custom_annotation(routes.downloads.CustomAnnotationRequest(
                 output_dir=str(root),
                 provider="ensembl",
                 species_key="Test_species",
@@ -348,7 +349,7 @@ class LocalAssembliesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             app_state.download_manager.tasks = {}
-            request = main.DownloadRequest(
+            request = routes.downloads.DownloadRequest(
                 url="https://ftp.ebi.ac.uk/pub/ensemblorganisms/GCA/000/005/845/2/ensembl/2025_12/geneset/genes.gff3.gz",
                 filename="genes.gff3.gz",
                 species_key="Test_species",
@@ -365,7 +366,7 @@ class LocalAssembliesTests(unittest.TestCase):
             )
             with patch.object(app_state.download_manager, "download_file", side_effect=_noop_download), \
                     patch.object(app_state.download_manager, "get_download_urls", return_value=[]):
-                result = asyncio.run(main.start_download(request))
+                result = asyncio.run(routes.downloads.start_download(request))
 
             self.assertEqual(result["status"], "started")
             task = next(iter(app_state.download_manager.tasks.values()))
@@ -379,7 +380,7 @@ class LocalAssembliesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             app_state.download_manager.tasks = {}
-            request = main.DownloadRequest(
+            request = routes.downloads.DownloadRequest(
                 url="https://ftp.ebi.ac.uk/pub/ensemblorganisms/GCA/018/472/595/2/ensembl/2024_10/geneset/genes.gff3.gz",
                 filename="genes.gff3.gz",
                 species_key="Homo_sapiens",
@@ -392,7 +393,7 @@ class LocalAssembliesTests(unittest.TestCase):
             )
             with patch.object(app_state.download_manager, "download_file", side_effect=_noop_download), \
                     patch.object(app_state.download_manager, "get_download_urls", return_value=[]):
-                result = asyncio.run(main.start_download(request))
+                result = asyncio.run(routes.downloads.start_download(request))
 
             self.assertEqual(result["status"], "started")
             task = next(iter(app_state.download_manager.tasks.values()))
