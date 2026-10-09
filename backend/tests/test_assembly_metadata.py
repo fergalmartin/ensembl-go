@@ -17,6 +17,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.stats  # noqa: E402
 import file_io  # noqa: E402
 from stats_utils import compute_fasta_assembly_stats  # noqa: E402
 
@@ -113,8 +114,8 @@ class AssemblyAccessionFallbackTests(unittest.TestCase):
                 return {"status": "ready", "data": {"accession": accession}, "source": "ena"}
             return {"status": "error", "message": "not found", "data": None, "source": "none"}
 
-        with patch.object(main, "fetch_ena_metadata", side_effect=fake_fetch):
-            result = main._fetch_assembly_metadata_for_species(species)
+        with patch.object(routes.stats, "fetch_ena_metadata", side_effect=fake_fetch):
+            result = routes.stats._fetch_assembly_metadata_for_species(species)
 
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["accession"], "GCA_000001405.29")
@@ -128,11 +129,11 @@ class AssemblyAccessionFallbackTests(unittest.TestCase):
             "files": {},
         }
         with patch.object(
-            main,
+            routes.stats,
             "fetch_ena_metadata",
             side_effect=lambda accession, _p: {"status": "ready", "data": {"accession": accession}, "source": "ena"},
         ):
-            result = main._fetch_assembly_metadata_for_species(species)
+            result = routes.stats._fetch_assembly_metadata_for_species(species)
         self.assertEqual(result["data"]["accession"], "GCA_000001405.29")
         self.assertIsNone(result.get("accession"), "no note needed when its own accession resolved")
 
@@ -152,7 +153,7 @@ class AssemblyAccessionFallbackTests(unittest.TestCase):
                 "files": {"fasta": str(fasta)},
             }
             self.assertEqual(
-                main._manifest_equivalent_accessions(species),
+                routes.stats._manifest_equivalent_accessions(species),
                 ["GCA_000001405.29"],
             )
         finally:

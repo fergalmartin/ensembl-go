@@ -29,6 +29,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import stats_utils  # noqa: E402
 import genome_context  # noqa: E402
 import gff_index  # noqa: E402
 import config_store  # noqa: E402
@@ -78,7 +79,7 @@ class IndexProgressTests(unittest.TestCase):
             "index_path": None,
             "error": None,
             "progress": None,
-            "queued_at": main.now_iso(),
+            "queued_at": stats_utils.now_iso(),
         }
         task.update(fields)
         with gff_index._index_tasks_guard:
@@ -197,7 +198,7 @@ class IndexProgressTests(unittest.TestCase):
     # -- getting out of a failed build -------------------------------------
 
     def test_a_remembered_failure_can_be_discarded(self):
-        self._record_task("failed", status="failed", error="bad line 4", completed_at=main.now_iso())
+        self._record_task("failed", status="failed", error="bad line 4", completed_at=stats_utils.now_iso())
         self.assertEqual(genome_context._index_build_error_for(str(self.gff), str(self.db)), "bad line 4")
 
         self.assertEqual(gff_index.forget_index_failures(str(self.gff), str(self.db)), 1)
@@ -207,14 +208,14 @@ class IndexProgressTests(unittest.TestCase):
         # The failure belongs to the bytes that caused it. Re-download a
         # truncated file and the genome must start building again unaided.
         self._record_task("failed", status="failed", error="unexpected end of file",
-                          completed_at=main.now_iso())
+                          completed_at=stats_utils.now_iso())
         self.assertNotEqual(genome_context._index_build_error_for(str(self.gff), str(self.db)), "")
 
         self.gff.write_text(TOY_GFF + "chr1\ttest\tgene\t200\t300\t.\t-\t.\tID=g2;Name=G2\n")
         self.assertEqual(genome_context._index_build_error_for(str(self.gff), str(self.db)), "")
 
     def test_a_failure_survives_a_poll_of_the_same_unchanged_file(self):
-        self._record_task("failed", status="failed", error="bad line 4", completed_at=main.now_iso())
+        self._record_task("failed", status="failed", error="bad line 4", completed_at=stats_utils.now_iso())
         for _ in range(3):
             self.assertEqual(genome_context._index_build_error_for(str(self.gff), str(self.db)), "bad line 4")
 

@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.stats  # noqa: E402
 import genome_context  # noqa: E402
 import gff_index  # noqa: E402
 import app_paths  # noqa: E402
@@ -63,7 +64,7 @@ class StatsIndexRecoveryTests(unittest.TestCase):
         db = self.release_dir / "GCF_000001405.40.genomic.gff3.index.db"
         gff_index.ensure_gff_index(str(self.gff), str(db))
 
-        resolved = main._stats_species_with_index(self._species(), self.cfg)
+        resolved = routes.stats._stats_species_with_index(self._species(), self.cfg)
         self.assertEqual(
             gff_index._normalize_fs_path(resolved["files"]["index"]),
             gff_index._normalize_fs_path(str(db)),
@@ -73,19 +74,19 @@ class StatsIndexRecoveryTests(unittest.TestCase):
         # Browsing may name a build target because the browser polls until it
         # lands. Stats have nothing to poll on, so an unbuilt index has to stay
         # reported as missing rather than as a genome that is ready to read.
-        resolved = main._stats_species_with_index(self._species(), self.cfg)
+        resolved = routes.stats._stats_species_with_index(self._species(), self.cfg)
         self.assertEqual(resolved["files"]["index"], "")
 
     def test_a_record_that_already_names_a_real_index_is_left_alone(self):
         db = self.release_dir / "explicit.index.db"
         gff_index.ensure_gff_index(str(self.gff), str(db))
         species = self._species(index=str(db))
-        self.assertIs(main._stats_species_with_index(species, self.cfg), species)
+        self.assertIs(routes.stats._stats_species_with_index(species, self.cfg), species)
 
     def test_a_genome_without_an_annotation_is_left_alone(self):
         species = self._species()
         species["files"]["gff3"] = ""
-        self.assertIs(main._stats_species_with_index(species, self.cfg), species)
+        self.assertIs(routes.stats._stats_species_with_index(species, self.cfg), species)
 
 
 class StatsCacheNamingTests(unittest.TestCase):

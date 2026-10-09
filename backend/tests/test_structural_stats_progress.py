@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import routes.stats  # noqa: E402
 from stats_utils import compute_structural_stats  # noqa: E402
 
 GENE_COUNT = 250
@@ -86,8 +87,8 @@ class StructuralProgressReporterTest(unittest.TestCase):
     GENOME = "genome-a"
 
     def setUp(self):
-        with main._stats_tasks_guard:
-            main._stats_tasks[self.TASK_ID] = {
+        with routes.stats._stats_tasks_guard:
+            routes.stats._stats_tasks[self.TASK_ID] = {
                 "id": self.TASK_ID,
                 "task_type": "structural",
                 "status": "running",
@@ -101,14 +102,14 @@ class StructuralProgressReporterTest(unittest.TestCase):
             }
 
     def tearDown(self):
-        with main._stats_tasks_guard:
-            main._stats_tasks.pop(self.TASK_ID, None)
+        with routes.stats._stats_tasks_guard:
+            routes.stats._stats_tasks.pop(self.TASK_ID, None)
 
     def test_sequence_pass_progress_lands_after_the_quick_pass_share(self):
-        share = main._STRUCTURAL_QUICK_PASS_SHARE
-        report = main._structural_progress_reporter(self.TASK_ID, self.GENOME, share, 1.0 - share, "Checking")
+        share = routes.stats._STRUCTURAL_QUICK_PASS_SHARE
+        report = routes.stats._structural_progress_reporter(self.TASK_ID, self.GENOME, share, 1.0 - share, "Checking")
         report(50, 100)
-        task = main._read_stats_task(self.TASK_ID)
+        task = routes.stats._read_stats_task(self.TASK_ID)
         expected = share + ((1.0 - share) * 0.5)
         self.assertAlmostEqual(task["results"][self.GENOME]["progress"], expected)
         self.assertAlmostEqual(task["progress"], expected)
@@ -116,10 +117,10 @@ class StructuralProgressReporterTest(unittest.TestCase):
         self.assertEqual(task["results"][self.GENOME]["status"], "running")
 
     def test_a_cancelled_genome_stops_at_the_next_report(self):
-        report = main._structural_progress_reporter(self.TASK_ID, self.GENOME, 0.0, 0.25, "Measuring")
-        with main._stats_tasks_guard:
-            main._stats_tasks[self.TASK_ID]["cancelled_genome_keys"] = [self.GENOME]
-        with self.assertRaises(main._StructuralRunCancelled):
+        report = routes.stats._structural_progress_reporter(self.TASK_ID, self.GENOME, 0.0, 0.25, "Measuring")
+        with routes.stats._stats_tasks_guard:
+            routes.stats._stats_tasks[self.TASK_ID]["cancelled_genome_keys"] = [self.GENOME]
+        with self.assertRaises(routes.stats._StructuralRunCancelled):
             report(10, 100)
 
 

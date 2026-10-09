@@ -26,6 +26,7 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
+import stats_utils  # noqa: E402
 import genome_context  # noqa: E402
 import gff_index  # noqa: E402
 import config_store  # noqa: E402
@@ -184,7 +185,7 @@ class BrowseIndexRecoveryTests(unittest.TestCase):
                 "db_path": gff_index._normalize_fs_path(str(db)),
                 "gff_path": gff_index._normalize_fs_path(str(self.gff)),
                 "error": "unreadable attributes on line 4",
-                "completed_at": main.now_iso(),
+                "completed_at": stats_utils.now_iso(),
             }
 
         context = {"db_path": str(db), "gff_path": str(self.gff)}
