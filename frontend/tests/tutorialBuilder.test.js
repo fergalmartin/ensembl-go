@@ -1,12 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { readSources } from './helpers/readSource.js'
 
 const builder = readFileSync(new URL('../src/components/TutorialBuilderOverlay.jsx', import.meta.url), 'utf8')
 const provider = readFileSync(new URL('../src/hooks/useTutorial.jsx', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8')
 const api = readFileSync(new URL('../src/tutorials/demoGenomeApi.js', import.meta.url), 'utf8')
-const selector = readFileSync(new URL('../src/components/GenomeSelectorView.jsx', import.meta.url), 'utf8')
+const selector = readSources('src/components/GenomeSelectorView.jsx', 'src/components/genome-selector')
 
 test('picking and recording expose the whole app instead of leaving the builder panel over it', () => {
   assert.match(builder, /const captureMode = Boolean\(builder\.picking \|\| builder\.recording\)/)
@@ -172,7 +173,7 @@ test('playlist edits in a tutorial scene update scratch config rather than being
 
 test('the whole Genome Selector list is available as a spotlight target', () => {
   const selectorTargets = readFileSync(new URL('../src/tutorialTargets/genomeSelector.js', import.meta.url), 'utf8')
-  const selectorView = readFileSync(new URL('../src/components/GenomeSelectorView.jsx', import.meta.url), 'utf8')
+  const selectorView = readSources('src/components/GenomeSelectorView.jsx', 'src/components/genome-selector')
   assert.match(selectorTargets, /id: 'selector\.genomeList'/)
   assert.match(selectorTargets, /anchor: 'selector-genome-list'/)
   assert.match(selectorTargets, /label: 'Genome list'/)
@@ -183,7 +184,7 @@ test('the whole Genome Selector list is available as a spotlight target', () => 
 
 test('the Genome Selector shows ten rows and delegates vertical scrolling to the full-width page', () => {
   const selectorTargets = readFileSync(new URL('../src/tutorialTargets/genomeSelector.js', import.meta.url), 'utf8')
-  const selectorView = readFileSync(new URL('../src/components/GenomeSelectorView.jsx', import.meta.url), 'utf8')
+  const selectorView = readSources('src/components/GenomeSelectorView.jsx', 'src/components/genome-selector')
   assert.match(selectorView, /const LOCAL_PAGE_SIZE = 10/)
   assert.match(selectorTargets, /id: 'selector\.genomeList'[\s\S]*?capabilities: \['spotlight'\]/)
   assert.match(selectorView, /overflowAnchor: 'none'/)
@@ -195,7 +196,7 @@ test('the Genome Selector shows ten rows and delegates vertical scrolling to the
 })
 
 test('Genome Selector steps can frame a complete fixed list without granting scroll interaction', () => {
-  const selectorView = readFileSync(new URL('../src/components/GenomeSelectorView.jsx', import.meta.url), 'utf8')
+  const selectorView = readSources('src/components/GenomeSelectorView.jsx', 'src/components/genome-selector')
   assert.match(builder, /Genome list arrival state/)
   assert.match(builder, /Frame a fixed, complete genome list/)
   assert.match(builder, /fitAllRows: true/)
@@ -439,7 +440,7 @@ test('builder highlight geometry is repaired immediately when a nested panel scr
 
 test('row and bulk playlist controls are available as tutorial targets', () => {
   const selectorTargets = readFileSync(new URL('../src/tutorialTargets/genomeSelector.js', import.meta.url), 'utf8')
-  const selectorView = readFileSync(new URL('../src/components/GenomeSelectorView.jsx', import.meta.url), 'utf8')
+  const selectorView = readSources('src/components/GenomeSelectorView.jsx', 'src/components/genome-selector')
   assert.match(selectorTargets, /id: 'selector\.addToPlaylist'/)
   assert.match(selectorTargets, /anchorTemplate: 'selector-playlist-\{genomeKey\}'/)
   assert.match(selectorTargets, /id: 'selector\.addSelectedToPlaylist'/)
@@ -449,7 +450,7 @@ test('row and bulk playlist controls are available as tutorial targets', () => {
 })
 
 test('bulk playlist and removal actions start from the active selected genomes', () => {
-  const selectorView = readFileSync(new URL('../src/components/GenomeSelectorView.jsx', import.meta.url), 'utf8')
+  const selectorView = readSources('src/components/GenomeSelectorView.jsx', 'src/components/genome-selector')
   assert.match(selectorView, /const selectedAssemblies = useMemo/)
   assert.match(selectorView, /genomes: selectedAssemblies,[\s\S]*addOnly: true/)
   assert.match(selectorView, /setRemovalKeys\(new Set\(selectedAssemblies\.map\(\(item\) => itemKey\(item\)\)\)\)/)
