@@ -22,7 +22,7 @@ class LayerAnnotationProjectionTests(unittest.TestCase):
                 for row_strand in ('+','-'):
                     with self.subTest(transcript=tx_strand,row=row_strand):
                         tx=gff_index.SimpleTranscript('tx','chr1',101,104,tx_strand,[gff_index.SimpleFeature('exon',101,102,tx_strand)],[],[])
-                        with patch.object(genome_context,'_get_browse_db',return_value=path),patch.object(main,'_resolve_db_chrom_name_for_genome',return_value='chr1'),patch.object(gff_index,'find_transcript_in_index',return_value=tx):
+                        with patch.object(genome_context,'_get_browse_db',return_value=path),patch.object(genome_context,'_resolve_db_chrom_name_for_genome',return_value='chr1'),patch.object(gff_index,'find_transcript_in_index',return_value=tx):
                             features=main.alignment_explorer_annotation_features('genome','1',101,104,'AC-GT',row_strand,'tx')
                         exon=next(f for f in features if f['type']=='exon')
                         self.assertEqual((exon['start'],exon['end']),(0,1) if row_strand=='+' else (3,4))

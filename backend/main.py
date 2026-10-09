@@ -1841,7 +1841,7 @@ async def browse_canonical_transcripts(
 
     def _query():
         requested_chrom = str(chrom or "").strip()
-        resolved_chrom = _resolve_db_chrom_name_for_genome(db_path, requested_chrom, genome) or requested_chrom
+        resolved_chrom = genome_context._resolve_db_chrom_name_for_genome(db_path, requested_chrom, genome) or requested_chrom
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
@@ -1971,7 +1971,7 @@ def alignment_explorer_block_genes(genome, chrom, start, end, expand=(), gene_li
     reads. Everything returned is zero-based half-open.
     """
     db_path = genome_context._get_browse_db(genome)
-    resolved = _resolve_db_chrom_name_for_genome(db_path, chrom, genome) or chrom
+    resolved = genome_context._resolve_db_chrom_name_for_genome(db_path, chrom, genome) or chrom
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -2054,7 +2054,7 @@ def alignment_explorer_genome_availability(assembly, region):
     if not db_path:
         return 'no-annotation'
     try:
-        if _resolve_db_chrom_name_for_genome(db_path, region, assembly) is None:
+        if genome_context._resolve_db_chrom_name_for_genome(db_path, region, assembly) is None:
             return 'no-region'
     except Exception:
         return 'no-region'
@@ -2223,7 +2223,7 @@ def gene_trees_alignments_root() -> Optional[Path]:
 def alignment_explorer_annotation_features(genome, chrom, start, end, sequence, strand, transcript_id=None):
     """Project indexed GFF3 transcript features using the existing MSA annotation mapper."""
     db_path = genome_context._get_browse_db(genome)
-    resolved = _resolve_db_chrom_name_for_genome(db_path, chrom, genome) or chrom
+    resolved = genome_context._resolve_db_chrom_name_for_genome(db_path, chrom, genome) or chrom
     conn = sqlite3.connect(db_path)
     try:
         if transcript_id:
@@ -5663,72 +5663,6 @@ async def structure_model_file(accession: str):
     )
 
 
-def _normalize_chrom_token(token: str) -> str:
-    t = (token or "").strip()
-    if t.lower().startswith("chr"):
-        t = t[3:]
-    upper = t.upper()
-    if upper in {"M", "MT", "CHRM", "CHRMT"}:
-        return "MT"
-    return upper
-
-
-def _resolve_bigwig_chrom_name(
-    requested_chrom: str,
-    chrom_sizes: Dict[str, int],
-    requested_chrom_len: Optional[int] = None,
-) -> Optional[str]:
-    if requested_chrom in chrom_sizes:
-        return requested_chrom
-
-    if requested_chrom.startswith("chr"):
-        alt = requested_chrom[3:]
-        if alt in chrom_sizes:
-            return alt
-    else:
-        alt = f"chr{requested_chrom}"
-        if alt in chrom_sizes:
-            return alt
-
-    mt_alts = {
-        "MT": ["chrM", "M", "chrMT"],
-        "chrM": ["MT", "M", "chrMT"],
-        "M": ["MT", "chrM", "chrMT"],
-        "chrMT": ["MT", "chrM", "M"],
-    }
-    for alt in mt_alts.get(requested_chrom, []):
-        if alt in chrom_sizes:
-            return alt
-
-    # Case-insensitive exact name fallback.
-    req_lower = requested_chrom.lower()
-    for key in chrom_sizes.keys():
-        if key.lower() == req_lower:
-            return key
-
-    # Ensembl-style BigWig names often look like:
-    # chromosome:GRCm39:4:1:156860686:1
-    # scaffold:GRCm39:GL456239.1:1:40056:1
-    req_norm = _normalize_chrom_token(requested_chrom)
-    token_matches: List[str] = []
-    for key in chrom_sizes.keys():
-        parts = key.split(":")
-        if len(parts) >= 3 and _normalize_chrom_token(parts[2]) == req_norm:
-            token_matches.append(key)
-    if token_matches:
-        token_matches.sort(key=lambda k: (0 if k.startswith("chromosome:") else 1, len(k)))
-        return token_matches[0]
-
-    # Last-resort fallback by chromosome length if provided by the active genome FASTA.
-    if requested_chrom_len and requested_chrom_len > 0:
-        len_matches = [k for k, v in chrom_sizes.items() if int(v) == int(requested_chrom_len)]
-        if len_matches:
-            len_matches.sort(key=lambda k: (0 if k.startswith("chromosome:") else 1, len(k)))
-            return len_matches[0]
-
-    return None
-
-
 def _bigwig_binned_means(
     bw: Any,
     chrom: str,
@@ -5916,7 +5850,7 @@ async def browse_bigwig(
 
         try:
             chrom_sizes = bw.chroms() or {}
-            resolved_chrom = _resolve_bigwig_chrom_name(chrom, chrom_sizes, requested_chrom_len=requested_chrom_len)
+            resolved_chrom = genome_context._resolve_bigwig_chrom_name(chrom, chrom_sizes, requested_chrom_len=requested_chrom_len)
 
             if not resolved_chrom:
                 return {
@@ -6935,20 +6869,6 @@ def _select_sv_dataset(ref_assembly: str, tgt_assembly: str, alignment_id: str =
     return None
 
 
-def _sv_aliases_for_sequence(token: str) -> List[str]:
-    t = (token or "").strip()
-    if not t:
-        return []
-    out = {t}
-    out.add(t.lower())
-    out.add(t.upper())
-    if t.lower().startswith("chr") and len(t) > 3:
-        out.add(t[3:])
-    else:
-        out.add(f"chr{t}")
-    return [v for v in out if v]
-
-
 def _load_sv_mapping(mapping_path: Path) -> Dict[str, Any]:
     """Parse a legacy mapping TSV.
 
@@ -6987,7 +6907,7 @@ def _load_sv_mapping(mapping_path: Path) -> Dict[str, Any]:
                 continue
             hal_to_assembly[hal_seq] = assembly_seq
             assembly_to_hal.setdefault(assembly_seq, hal_seq)
-            for alias in _sv_aliases_for_sequence(hal_seq) + _sv_aliases_for_sequence(assembly_seq):
+            for alias in genome_context._sv_aliases_for_sequence(hal_seq) + genome_context._sv_aliases_for_sequence(assembly_seq):
                 alias_to_assembly[alias.lower()] = assembly_seq
 
     result = {
@@ -7076,7 +6996,7 @@ def _sv_alignment_reference_regions(dataset: Dict[str, Any], limit: int = 500) -
                 continue
             indexed_region = str(ref_region)
 
-        chain_chrom = _resolve_bigwig_chrom_name(indexed_region, chrom_sizes)
+        chain_chrom = genome_context._resolve_bigwig_chrom_name(indexed_region, chrom_sizes)
         if not chain_chrom:
             continue
         out.append({
@@ -7102,117 +7022,6 @@ def _resolve_sv_sequence(mapping: Dict[str, Any], token: str) -> Optional[str]:
     return mapping["alias_to_assembly"].get(t.lower())
 
 
-def _resolve_db_chrom_name(db_path: str, chrom: str) -> Optional[str]:
-    token = (chrom or "").strip()
-    if not token:
-        return None
-
-    candidates = _sv_aliases_for_sequence(token)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    try:
-        for candidate in candidates:
-            c.execute("SELECT chrom FROM genes WHERE chrom = ? LIMIT 1", (candidate,))
-            row = c.fetchone()
-            if row:
-                return str(row["chrom"])
-
-        token_l = token.lower()
-        c.execute("SELECT chrom FROM genes WHERE LOWER(chrom) = ? LIMIT 1", (token_l,))
-        row = c.fetchone()
-        if row:
-            return str(row["chrom"])
-
-        for candidate in candidates:
-            c.execute("SELECT chrom FROM genes WHERE LOWER(chrom) = ? LIMIT 1", (candidate.lower(),))
-            row = c.fetchone()
-            if row:
-                return str(row["chrom"])
-    finally:
-        conn.close()
-    return None
-
-
-_DB_GENE_CHROMS_CACHE: Dict[str, Dict[str, Any]] = {}
-_DB_GENE_CHROMS_CACHE_LOCK = threading.Lock()
-
-
-def _get_db_gene_chrom_names(db_path: str) -> List[str]:
-    path = str(db_path or "").strip()
-    try:
-        st = os.stat(path)
-        sig = (int(st.st_mtime_ns), int(st.st_size))
-    except Exception:
-        sig = (0, 0)
-
-    with _DB_GENE_CHROMS_CACHE_LOCK:
-        cached = _DB_GENE_CHROMS_CACHE.get(path)
-        if cached and cached.get("sig") == sig:
-            return list(cached.get("chroms") or [])
-
-    chroms: List[str] = []
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    try:
-        c.execute("SELECT DISTINCT chrom FROM genes")
-        chroms = [str(r["chrom"] or "").strip() for r in c.fetchall() if str(r["chrom"] or "").strip()]
-    finally:
-        conn.close()
-
-    with _DB_GENE_CHROMS_CACHE_LOCK:
-        _DB_GENE_CHROMS_CACHE[path] = {"sig": sig, "chroms": chroms}
-    return list(chroms)
-
-
-def _resolve_db_chrom_name_for_genome(db_path: str, chrom: str, genome: str) -> Optional[str]:
-    direct = _resolve_db_chrom_name(db_path, chrom)
-    if direct:
-        return direct
-    token = str(chrom or "").strip()
-    if not token:
-        return None
-    known_regions = _get_db_gene_chrom_names(db_path)
-    resolved = genome_context._resolve_browse_chrom_name(genome, token, known_regions)
-    if resolved and resolved in known_regions:
-        return resolved
-    if resolved:
-        return _resolve_db_chrom_name(db_path, resolved)
-    return None
-
-
-def _resolve_genome_chrom_length(genome: str, *tokens: Optional[str]) -> Tuple[Optional[str], int]:
-    try:
-        fasta = genome_context._get_browse_fasta(genome)
-    except Exception:
-        return None, 0
-
-    available = [str(name or "").strip() for name in (fasta.references or []) if str(name or "").strip()]
-    if not available:
-        return None, 0
-
-    resolved: Optional[str] = None
-    for token in tokens:
-        requested = str(token or "").strip()
-        if not requested:
-            continue
-        candidate = _resolve_track_chrom_with_aliases(requested, available, genome=genome)
-        if candidate in available:
-            resolved = candidate
-            break
-
-    if not resolved:
-        return None, 0
-
-    try:
-        chrom_length = int(fasta.get_reference_length(resolved))
-    except Exception:
-        chrom_length = 0
-
-    return resolved, max(0, chrom_length)
-
-
 def _build_sv_chrom_size_aliases(chrom_length: int, *tokens: Optional[str]) -> Dict[str, int]:
     if int(chrom_length or 0) <= 0:
         return {}
@@ -7222,7 +7031,7 @@ def _build_sv_chrom_size_aliases(chrom_length: int, *tokens: Optional[str]) -> D
         raw = str(token or "").strip()
         if not raw:
             continue
-        for alias in _sv_aliases_for_sequence(raw):
+        for alias in genome_context._sv_aliases_for_sequence(raw):
             out[alias] = int(chrom_length)
     return out
 
@@ -7231,7 +7040,7 @@ def _fetch_genes_for_window(db_path: str, chrom: str, start: int, end: int, limi
     if not chrom or end <= start:
         return []
 
-    resolved = _resolve_db_chrom_name(db_path, chrom) or chrom
+    resolved = genome_context._resolve_db_chrom_name(db_path, chrom) or chrom
     q_start = max(0, int(start))
     q_end = max(q_start + 1, int(end))
 
@@ -8311,7 +8120,7 @@ async def structural_variation_view(
                 indexed_side = "target"
 
             chain_lookup_seq = str(ref_seq) if indexed_side == "reference" else str(tgt_seq)
-            chain_chrom = _resolve_bigwig_chrom_name(chain_lookup_seq, chrom_sizes)
+            chain_chrom = genome_context._resolve_bigwig_chrom_name(chain_lookup_seq, chrom_sizes)
             if not chain_chrom:
                 return {
                     "supported": False,
@@ -8463,23 +8272,23 @@ async def structural_variation_view(
             tgt_display = tgt_map["assembly_to_hal"].get(str(tgt_seq), str(tgt_seq))
 
             ref_db_chrom = (
-                _resolve_db_chrom_name_for_genome(ref_db_path, ref_chrom, resolved_ref_browse_genome)
-                or _resolve_db_chrom_name_for_genome(ref_db_path, ref_display, resolved_ref_browse_genome)
-                or _resolve_db_chrom_name_for_genome(ref_db_path, str(ref_seq), resolved_ref_browse_genome)
+                genome_context._resolve_db_chrom_name_for_genome(ref_db_path, ref_chrom, resolved_ref_browse_genome)
+                or genome_context._resolve_db_chrom_name_for_genome(ref_db_path, ref_display, resolved_ref_browse_genome)
+                or genome_context._resolve_db_chrom_name_for_genome(ref_db_path, str(ref_seq), resolved_ref_browse_genome)
                 or ref_chrom
             )
             tgt_db_chrom = (
-                _resolve_db_chrom_name_for_genome(tgt_db_path, tgt_chrom, resolved_tgt_browse_genome) if tgt_chrom else None
-            ) or _resolve_db_chrom_name_for_genome(tgt_db_path, tgt_display, resolved_tgt_browse_genome) or _resolve_db_chrom_name_for_genome(tgt_db_path, str(tgt_seq), resolved_tgt_browse_genome) or tgt_display
+                genome_context._resolve_db_chrom_name_for_genome(tgt_db_path, tgt_chrom, resolved_tgt_browse_genome) if tgt_chrom else None
+            ) or genome_context._resolve_db_chrom_name_for_genome(tgt_db_path, tgt_display, resolved_tgt_browse_genome) or genome_context._resolve_db_chrom_name_for_genome(tgt_db_path, str(tgt_seq), resolved_tgt_browse_genome) or tgt_display
 
-            ref_fasta_chrom, ref_chrom_length = _resolve_genome_chrom_length(
+            ref_fasta_chrom, ref_chrom_length = genome_context._resolve_genome_chrom_length(
                 resolved_ref_browse_genome,
                 ref_db_chrom,
                 ref_chrom,
                 ref_display,
                 str(ref_seq),
             )
-            tgt_fasta_chrom, tgt_chrom_length = _resolve_genome_chrom_length(
+            tgt_fasta_chrom, tgt_chrom_length = genome_context._resolve_genome_chrom_length(
                 resolved_tgt_browse_genome,
                 tgt_db_chrom,
                 tgt_chrom,
@@ -8691,7 +8500,7 @@ async def sv_alignments(
             else:
                 chain_seq = tgt_seq or lookup_seq
 
-            chain_chrom = _resolve_bigwig_chrom_name(chain_seq, chrom_sizes)
+            chain_chrom = genome_context._resolve_bigwig_chrom_name(chain_seq, chrom_sizes)
             if not chain_chrom:
                 return []
 
@@ -8927,7 +8736,7 @@ async def sv_variants(
             chrom_sizes = bw.chroms() or {}
             chain_seq = ref_seq if indexed_side == "reference" else (tgt_seq or str(ref_seq))
 
-            chain_chrom = _resolve_bigwig_chrom_name(chain_seq, chrom_sizes)
+            chain_chrom = genome_context._resolve_bigwig_chrom_name(chain_seq, chrom_sizes)
             if not chain_chrom:
                 return []
 
@@ -11300,43 +11109,6 @@ def _get_sj_available_chroms(path: Path) -> List[str]:
     return ordered
 
 
-def _resolve_track_chrom_with_aliases(requested: str, available: List[str], genome: str = "reference") -> str:
-    token = str(requested or "").strip()
-    if not token:
-        return token
-    known = [str(v or "").strip() for v in available if str(v or "").strip()]
-    if not known:
-        return token
-
-    if token in known:
-        return token
-
-    lower_map: Dict[str, str] = {}
-    for name in known:
-        lower_map.setdefault(name.lower(), name)
-    lower_hit = lower_map.get(token.lower())
-    if lower_hit:
-        return lower_hit
-
-    query_tokens = chrom_token_variants(token)
-    variant_matches = [name for name in known if chrom_token_variants(name) & query_tokens]
-    if len(variant_matches) == 1:
-        return variant_matches[0]
-
-    # Assembly-report aware resolver (RefSeq/GenBank/UCSC/canonical aliases).
-    resolved = genome_context._resolve_browse_chrom_name(genome, token, known)
-    if resolved in known:
-        return resolved
-    resolved_l = str(resolved or "").lower()
-    if resolved_l and resolved_l in lower_map:
-        return lower_map[resolved_l]
-
-    # Deterministic fallback when token-variant matching is ambiguous.
-    if variant_matches:
-        return sorted(variant_matches, key=lambda v: (len(v), v.lower()))[0]
-    return token
-
-
 def _db_file_signature(path: str) -> Tuple[int, int]:
     try:
         st = os.stat(path)
@@ -11682,7 +11454,7 @@ async def browse_bed(
             try:
                 chrom_sizes = bb.chroms() or {}
                 available_chroms = list(chrom_sizes.keys())
-                resolved_chrom = _resolve_track_chrom_with_aliases(chrom, available_chroms, genome=genome)
+                resolved_chrom = genome_context._resolve_track_chrom_with_aliases(chrom, available_chroms, genome=genome)
                 schema_info = _get_bigbed_schema_info(p, bb)
                 if resolved_chrom not in chrom_sizes:
                     if level == "fine":
@@ -11759,7 +11531,7 @@ async def browse_bed(
                     tbx = pysam.TabixFile(str(p))
                     try:
                         available_chroms = list(tbx.contigs or [])
-                        resolved_chrom = _resolve_track_chrom_with_aliases(chrom, available_chroms, genome=genome)
+                        resolved_chrom = genome_context._resolve_track_chrom_with_aliases(chrom, available_chroms, genome=genome)
                         if resolved_chrom in set(available_chroms):
                             for row in tbx.fetch(resolved_chrom, max(0, start - 1), end):
                                 rec = _parse_bed_line(row)
@@ -11775,7 +11547,7 @@ async def browse_bed(
                     index = get_plain_bed_index(p)
                     known_chroms = sorted(index.chroms().keys())
                     if known_chroms:
-                        resolved_chrom = _resolve_track_chrom_with_aliases(chrom, known_chroms, genome=genome)
+                        resolved_chrom = genome_context._resolve_track_chrom_with_aliases(chrom, known_chroms, genome=genome)
                         for f_start, f_end, rest in index.entries(resolved_chrom, max(0, start), end):
                             rec = _parse_bed_line(f"{resolved_chrom}\t{f_start}\t{f_end}\t{rest}")
                             if rec:
@@ -12056,7 +11828,7 @@ async def browse_bigbed_block_tiles(payload: BigBedBlockTilesRequest):
         try:
             chrom_sizes = bb.chroms() or {}
             available = list(chrom_sizes.keys())
-            resolved_chrom = _resolve_track_chrom_with_aliases(chrom_req, available, genome=genome)
+            resolved_chrom = genome_context._resolve_track_chrom_with_aliases(chrom_req, available, genome=genome)
             schema_info = _get_bigbed_schema_info(p, bb)
             if resolved_chrom not in chrom_sizes:
                 return {
@@ -12153,7 +11925,7 @@ async def browse_bigbed_feature_tiles(payload: BigBedFeatureTilesRequest):
         try:
             chrom_sizes = bb.chroms() or {}
             available = list(chrom_sizes.keys())
-            resolved_chrom = _resolve_track_chrom_with_aliases(chrom_req, available, genome=genome)
+            resolved_chrom = genome_context._resolve_track_chrom_with_aliases(chrom_req, available, genome=genome)
             schema_info = _get_bigbed_schema_info(p, bb)
             if resolved_chrom not in chrom_sizes:
                 return {
@@ -12276,7 +12048,7 @@ async def browse_splice_junctions(
         )
 
         available_chroms = _get_sj_available_chroms(p)
-        resolved_chrom = _resolve_track_chrom_with_aliases(chrom, available_chroms, genome=genome)
+        resolved_chrom = genome_context._resolve_track_chrom_with_aliases(chrom, available_chroms, genome=genome)
         local_annotated_pairs = _load_splice_local_annotation_pairs(genome, resolved_chrom, chrom)
 
         try:
@@ -12355,7 +12127,7 @@ async def browse_splice_junctions_block_tiles(payload: SpliceBlockTilesRequest):
         req_end = max(max(int(tile.start) + 1, int(tile.end)) for tile in payload.tiles)
 
         available_chroms = _get_sj_available_chroms(p)
-        resolved_chrom = _resolve_track_chrom_with_aliases(chrom_req, available_chroms, genome=genome)
+        resolved_chrom = genome_context._resolve_track_chrom_with_aliases(chrom_req, available_chroms, genome=genome)
         local_annotated_pairs = _load_splice_local_annotation_pairs(genome, resolved_chrom, chrom_req)
         try:
             junctions = _collect_splice_junctions(
@@ -12580,7 +12352,7 @@ async def browse_bigwig_batch(payload: BigWigBatchRequest):
 
         try:
             chrom_sizes = bw.chroms() or {}
-            resolved_chrom = _resolve_bigwig_chrom_name(
+            resolved_chrom = genome_context._resolve_bigwig_chrom_name(
                 chrom,
                 chrom_sizes,
                 requested_chrom_len=requested_chrom_len,
