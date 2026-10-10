@@ -173,6 +173,40 @@ export function buildNoteSections(notes, activeGenomes, { geneSortMode = DEFAULT
 }
 
 /**
+ * The sections as one note set (active or archived) shows them.
+ *
+ * buildNoteSections groups every note regardless of set, so a target whose notes
+ * are all in the other set would otherwise render as a row with nothing under it.
+ * Each set keeps only the rows that hold some of its notes, and a filter keeps only
+ * rows with a matching note. A section survives a filter if anything in it matched;
+ * without a filter, the archived set keeps only genomes with archives, and the
+ * active set keeps every top-bar genome (see buildNoteSections) plus any other
+ * genome that still has active notes.
+ */
+export function filterSectionsForNoteSet(sections, { showingArchived = false, visibleNoteIds = null } = {}) {
+    const hasFilters = visibleNoteIds instanceof Set
+    const keepRow = (row) => {
+        if ((showingArchived ? row.archivedCount : row.activeCount) === 0) return false
+        if (!hasFilters) return true
+        return row.notes.some((note) => visibleNoteIds.has(note.id))
+    }
+    return (Array.isArray(sections) ? sections : [])
+        .map((section) => ({
+            ...section,
+            genes: section.genes.filter(keepRow),
+            locations: section.locations.filter(keepRow),
+        }))
+        .filter((section) => {
+            if (hasFilters) {
+                const generalMatches = section.generalNotes.some((note) => visibleNoteIds.has(note.id))
+                return section.genes.length > 0 || section.locations.length > 0 || generalMatches
+            }
+            if (showingArchived) return section.archivedNoteCount > 0
+            return section.inTopBar || section.activeNoteCount > 0
+        })
+}
+
+/**
  * Notes matching a query, over everything the store already holds.
  *
  * Gene symbol, stable id, note title and note body — the body included because

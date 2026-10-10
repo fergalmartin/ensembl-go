@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
     buildNoteSections,
+    filterSectionsForNoteSet,
     groupNotesByGene,
     looksLikeFeatureId,
     matchNotes,
@@ -140,6 +141,49 @@ test('an archive-only genome remains available for restoring its notes', () => {
     assert.deepEqual(sections.map((section) => section.genomeKey), [HUMAN, RAT])
     assert.equal(sections[1].activeNoteCount, 0)
     assert.equal(sections[1].archivedNoteCount, 1)
+})
+
+test('each note set drops the gene rows whose notes are all in the other set', () => {
+    const sections = buildNoteSections([
+        note('active', { geneId: 'ENSG1' }),
+        note('archived', { geneId: 'ENSG1', archived: true }),
+        note('archived-only', { geneId: 'ENSG2', archived: true }),
+        note('active-only', { geneId: 'ENSG3' }),
+    ], [genome(HUMAN, 'Human')])
+
+    const geneIds = (showingArchived) => filterSectionsForNoteSet(sections, { showingArchived })[0]
+        .genes.map((row) => row.geneId).sort()
+    assert.deepEqual(geneIds(false), ['ENSG1', 'ENSG3'])
+    assert.deepEqual(geneIds(true), ['ENSG1', 'ENSG2'])
+})
+
+test('the active set keeps empty top-bar genomes but not archive-only extras', () => {
+    const sections = buildNoteSections([
+        note('archived', { genomeKey: RAT, archived: true }),
+        note('active', { genomeKey: MOUSE }),
+    ], [genome(HUMAN, 'Human')])
+
+    assert.deepEqual(
+        filterSectionsForNoteSet(sections, { showingArchived: false }).map((section) => section.genomeKey),
+        [HUMAN, MOUSE],
+    )
+    assert.deepEqual(
+        filterSectionsForNoteSet(sections, { showingArchived: true }).map((section) => section.genomeKey),
+        [RAT],
+    )
+})
+
+test('a filter keeps only rows and sections with a matching note in the set', () => {
+    const sections = buildNoteSections([
+        note('match', { geneId: 'ENSG1' }),
+        note('miss', { geneId: 'ENSG2' }),
+        note('archived-match', { geneId: 'ENSG3', archived: true }),
+    ], [genome(HUMAN, 'Human'), genome(MOUSE, 'Mouse')])
+
+    const visibleNoteIds = new Set(['match', 'archived-match'])
+    const filtered = filterSectionsForNoteSet(sections, { showingArchived: false, visibleNoteIds })
+    assert.deepEqual(filtered.map((section) => section.genomeKey), [HUMAN])
+    assert.deepEqual(filtered[0].genes.map((row) => row.geneId), ['ENSG1'])
 })
 
 test('gene rows sort by each mode without mutating the input', () => {

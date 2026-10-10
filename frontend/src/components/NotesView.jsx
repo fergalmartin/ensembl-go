@@ -28,6 +28,7 @@ import {
 import {
     DEFAULT_GENE_SORT_MODE,
     buildNoteSections,
+    filterSectionsForNoteSet,
     summariseNotes,
 } from '../utils/notesViewModel'
 import {
@@ -485,33 +486,15 @@ export default function NotesView({
     }, [tagCatalogue, tagCatalogueQuery, tagCatalogueSort])
     const visibleNoteIds = useMemo(() => new Set(visibleNotes.map((note) => note.id)), [visibleNotes])
     const hasFilters = Boolean(query.trim() || selectedTags.length > 0)
-    const sections = useMemo(() => buildNoteSections(allNotes, activeGenomes, { geneSortMode: DEFAULT_GENE_SORT_MODE })
-        .map((section) => {
-            const localGenome = section.genome || availableLocalGenomes.find(
-                (candidate) => genomeKeysMatch(candidate.species, section.genomeKey),
-            ) || null
-            // The same test for every target row, gene or location: archived
-            // view shows only what has archives, a search shows only what matches.
-            const keepRow = (row) => {
-                if (showingArchived && row.archivedCount === 0) return false
-                if (!hasFilters) return true
-                return row.notes.some((note) => visibleNoteIds.has(note.id))
-            }
-            return {
-                ...section,
-                genome: localGenome,
-                genes: section.genes.filter(keepRow),
-                locations: section.locations.filter(keepRow),
-            }
-        })
-        .filter((section) => {
-            if (hasFilters) {
-                const generalMatches = section.generalNotes.some((note) => visibleNoteIds.has(note.id))
-                return section.genes.length > 0 || section.locations.length > 0 || generalMatches
-            }
-            if (showingArchived) return section.archivedNoteCount > 0
-            return true
-        }), [activeGenomes, allNotes, availableLocalGenomes, hasFilters, showingArchived, visibleNoteIds])
+    const sections = useMemo(() => filterSectionsForNoteSet(
+        buildNoteSections(allNotes, activeGenomes, { geneSortMode: DEFAULT_GENE_SORT_MODE }),
+        { showingArchived, visibleNoteIds: hasFilters ? visibleNoteIds : null },
+    ).map((section) => ({
+        ...section,
+        genome: section.genome || availableLocalGenomes.find(
+            (candidate) => genomeKeysMatch(candidate.species, section.genomeKey),
+        ) || null,
+    })), [activeGenomes, allNotes, availableLocalGenomes, hasFilters, showingArchived, visibleNoteIds])
     const totals = useMemo(
         () => summariseNotes(buildNoteSections(visibleNotes, [], { geneSortMode: DEFAULT_GENE_SORT_MODE })),
         [visibleNotes],
