@@ -1,14 +1,6 @@
-// Geometry shared by the overlays that dim the app and cut holes in the dimming.
-//
-// Two overlays need this: the screenshot selection overlay, which cuts holes so the
-// user can see what they are about to capture, and the tutorial overlay, which cuts a
-// hole so the user can see *and click* the control a step is about. Both work in
-// container-relative coordinates: rects arrive from `getBoundingClientRect()` (viewport
-// coordinates) and are clipped and rebased against the container they are drawn into.
-//
-// Everything here is pure, so the awkward cases — a target scrolled half out of view, a
-// hole flush against an edge, a zero-area container — are settled in tests rather than
-// by squinting at the running app.
+// Share clipping geometry for screenshot and tutorial spotlight overlays.
+// Convert viewport rectangles from getBoundingClientRect into clipped,
+// container-relative rectangles. All calculations are pure for direct tests.
 
 /** How dark the app goes outside a tutorial's cutouts.
  *

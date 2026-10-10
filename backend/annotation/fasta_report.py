@@ -345,7 +345,7 @@ def scan_fasta(
     fai_path = path + ".fai"
     report.fai_present = os.path.exists(fai_path)
     if compression == "gzip":
-        # pysam cannot read plain gzip; main.ensure_fasta_index silently writes a
+        # pysam cannot read plain gzip; file_io.ensure_fasta_index writes a
         # full decompressed copy next to it, so warn about the disk cost up front.
         report.usable_by_pysam = False
         report.decompression_required = True

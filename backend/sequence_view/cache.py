@@ -1,17 +1,10 @@
-"""Remembering the answers that were expensive to work out.
+"""Cache derived feature-class runs, leaving raw sequence reads to pysam.
 
-Class runs are cached; sequence is not, deliberately.
+Classifying a gene requires parsing and combining its isoforms. Raw FASTA
+reads already benefit from the operating system's page cache, so duplicating
+sequence on disk would add stale data without useful reuse.
 
-Working out a gene's classes means reading every isoform's exons out of a JSON
-blob, voting on every boundary and resolving the overlaps, and a reader moves
-between a gene and its transcripts and back repeatedly. Reading sequence, by
-contrast, is pysam on a bgzipped FASTA -- about a millisecond for the 12 kb the
-view asks for -- and the operating system's page cache already holds the blocks.
-A disk cache of raw sequence would be a second, staler copy of the FASTA, so
-there is not one here and there should not be one later.
-
-The key carries a schema version. Bumping SCHEMA_VERSION when the payload shape
-changes retires every stale entry without anyone having to find and delete them.
+Bump SCHEMA_VERSION when the payload shape changes to invalidate old entries.
 """
 
 import hashlib

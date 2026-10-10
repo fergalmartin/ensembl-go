@@ -1,27 +1,8 @@
-// What the sequence view can hand over as a file: what may be downloaded, how
-// it is shaped, and the row model every format is written from.
-//
-// The view already knows how to decide what a base looks like. Rather than
-// describe that a second time for a file, an export walks the *same* layout
-// through the *same* painter the canvas uses -- `buildDisplayLayout`,
-// `displayRow`, `paintDisplayRow` -- with a reader over downloaded sequence
-// standing in for the scroll buffer. So a coloured export cannot drift from the
-// screen: there is one description of what a row is, and a file is that
-// description written out instead of drawn.
-//
-// Three things vary, and they are the three questions the panel asks:
-//
-//   - **What.** The thing in focus, anywhere along the chain from the location
-//     down to one exon, or the records a reader has ticked. Both modes are the
-//     same list of *entries* here, which is why nothing below this point has to
-//     know which one it is in.
-//   - **Shape.** As shown -- collapsed stretches left out, read in the view's
-//     direction, the reader's flank included -- or the whole span, forward.
-//   - **Format.** FASTA and plain text are bases. RTF and HTML carry the
-//     colours, which is the whole point of having them.
-//
-// Coordinates are 1-based inclusive on the forward strand, as everywhere else
-// in this subsystem.
+// Build sequence exports using the view's layout and row painter.
+// Replace the scroll buffer with downloaded sequence, preserving the same
+// colours and collapse rules. Entries represent focus or selected records;
+// shape chooses the displayed reading or whole forward span, and format chooses
+// FASTA, text, RTF or HTML. Genomic coordinates are one-based inclusive.
 
 import {
     DEFAULT_COLLAPSE,

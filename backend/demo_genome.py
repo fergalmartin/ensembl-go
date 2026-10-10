@@ -56,10 +56,10 @@ class BundledGenome:
     display_name: str
     # A URL scheme that is obviously not a download, but is non-empty — which is what
     # marks the files as ours to delete rather than as something the user brought in.
-    # See ``main._is_download_managed_assembly``.
+    # See ``local_inventory._is_download_managed_assembly``.
     url_scheme: str
     # source filename -> (path within the assembly directory, file type). The accession
-    # prefix is what ``main._downloaded_assembly_files`` looks for, so it is not
+    # prefix is what ``local_inventory._downloaded_assembly_files`` looks for, so it is not
     # decoration. A file type of "" is a sidecar: copied, but not a file in its own right.
     files: Dict[str, Tuple[str, str]]
     # Region -> (start, end) that is worth looking at, when that is narrower than the
@@ -158,8 +158,7 @@ def bundled_genome(genome_id: Any = None) -> BundledGenome:
     return genome
 
 
-# Kept as names because the first tutorial, the download view and a good deal of
-# main.py refer to the demo genome by them. They are the demo genome's fields.
+# Keep aliases for callers that use the original demo genome's fields.
 DEMO_PROVIDER = DEMO_GENOME.provider
 DEMO_SPECIES_KEY = DEMO_GENOME.species_key
 DEMO_ASSEMBLY = DEMO_GENOME.assembly
@@ -308,7 +307,7 @@ def install_demo_track_files(workspace: str) -> Dict[str, Any]:
     Inside the workspace for the same two reasons the demo genome's sources are: it is swept
     at the start and end of every run, so a tutorial cannot leave files in the user's
     directories; and the track registry written while a tutorial runs is the workspace's own
-    (``main._tracks_config``), which is deleted with it — so a registration must not name a
+    (``routes.tracks._tracks_config``), which is deleted with it — so a registration must not name a
     file that outlives the registry pointing at it.
 
     The tabix index travels with the VCF. Without it the variant track registers and then
@@ -447,7 +446,7 @@ def _manifest(now: str, asm_dir: Path, genome: BundledGenome) -> Dict[str, Any]:
             "url": f"{genome.url_scheme}/{Path(installed_path).name}",
             "downloaded_at": now,
         }
-        # Mirrors main.ASSEMBLY_SCOPED_FILE_TYPES; a gff3 is dataset-scoped.
+        # Mirrors local_inventory.ASSEMBLY_SCOPED_FILE_TYPES; a gff3 is dataset-scoped.
         if file_type in {"fasta", "metadata"}:
             manifest["assembly_files"][file_type] = record
         else:
@@ -521,7 +520,7 @@ def demo_index_target(output_dir: str, genome_id: Any = None) -> Optional[tuple]
 #
 # A tutorial never writes to the user's configuration — that is the whole point of the
 # sandbox. But the genome browser is resolved *server-side*, from the configuration on
-# disk: ``main._resolve_browse_genome_context`` looks the requested genome key up in
+# disk: ``genome_context._resolve_browse_genome_context`` looks the requested genome key up in
 # ``active_species`` and rejects anything it cannot find. So a genome that exists only in
 # the frontend's config override is, to the browser, not a genome at all — every request
 # comes back 400 and the tracks stay blank.
@@ -535,7 +534,7 @@ def demo_index_target(output_dir: str, genome_id: Any = None) -> Optional[tuple]
 # than the browser: notes are written through ``load_config()``, which reads the *real*
 # configuration, so without knowing where the tutorial is running a note taken during one
 # would land in the user's own notes file and outlive the tutorial. See
-# ``main._notes_config``.
+# ``routes.notes._notes_config``.
 
 _tutorial_session: Dict[str, Dict[str, Any]] = {}
 _tutorial_workspace_root: Optional[str] = None

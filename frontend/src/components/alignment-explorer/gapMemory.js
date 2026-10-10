@@ -1,17 +1,9 @@
 import { unionRanges } from './layers.js'
 
-/** Column ranges known to hold no bases at all, remembered per block and row.
- *
- * A run of gap is monotonic: if a bin of N columns is entirely '-', so is every
- * column inside it, and so is every finer bin the next zoom level cuts it into.
- * A gap can therefore only ever gain detail as the camera closes in — it can
- * never turn back into sequence.
- *
- * The renderer does not see it that way on its own. It paints whichever tile is
- * to hand, and a coarse bin holding a few bases among mostly gap is drawn filled,
- * so a gap resolved at one zoom is filled back in the moment a coarser tile drives
- * a repaint, and flickers as the two alternate. Remembering the ranges settles
- * it: once known, a gap is drawn from memory whatever the current tile says.
+/**
+ * Remember verified all-gap ranges per block and row.
+ * Once a range is known to contain only gaps, retain it across zoom levels.
+ * This prevents coarser mixed bins from repainting known gaps as sequence.
  */
 export function createGapMemory() {
   const memory=new Map();memory.rangeCount=0;return memory

@@ -83,11 +83,10 @@ safe to re-run; an existing virtual environment is reused rather than rebuilt. A
 `--with-packaging` to also install PyInstaller, which is needed to build a
 distributable package but not to run the application.
 
-When run interactively it also offers to refresh the species grouping data, which
-decides how species are grouped in the download view. Saying no is fine — the copy in
-the checkout works, it just may not cover species Ensembl has added recently.
-Refreshing downloads about 76 MB from NCBI. Use `--with-grouping` or `--no-grouping`
-to answer in advance, which is also what non-interactive runs need.
+Interactive runs also offer to refresh the species grouping data used by the
+Download view. The committed copy works, but may not cover newly added species.
+A refresh may download about 76 MB from NCBI. Use `--with-grouping` or
+`--no-grouping` to choose in advance, including for non-interactive runs.
 
 To do the same by hand instead:
 
@@ -163,24 +162,18 @@ require the per-launch API token used by Electron.
 
 ## First run: the species catalogue
 
-The list of downloadable species comes from a catalogue that is fetched from the
-Ensembl FTP site the first time the backend starts. The fetch begins at startup
-rather than when the download view is opened, so it is normally finished before
-you get there. While it is in progress the download view shows "Fetching species
-catalogue", and the list fills in on its own when it completes — no reload needed.
-Local genomes remain available throughout.
+The backend fetches the downloadable-species catalogue from Ensembl at startup.
+The Download view shows "Fetching species catalogue" until it is ready, then
+fills the list automatically. Local genomes remain available while it loads.
 
-The catalogue is cached under the application's user data directory, so later
-starts load it from disk and refresh it in the background once a day. A cached
-catalogue is only used when it is verifiably complete: a truncated or empty file,
-which is what an interrupted first run leaves behind, is discarded and downloaded
-again rather than being treated as valid.
+The catalogue is cached under the application's cache directory. Later starts
+load that copy and refresh it in the background when it is more than a day old.
+Empty or incomplete copies are discarded and fetched again.
 
-A build can also ship a bundled catalogue, in which case it is used immediately and
-no first-run download is needed. Builds made on a machine without a catalogue
-available ship an empty placeholder instead, which is detected and replaced by the
-download described above. This means a first run needs network access to
-`ftp.ebi.ac.uk` unless a real catalogue was bundled.
+Distribution builds do not bundle the species catalogue, so their first run
+needs access to `ftp.ebi.ac.uk`. Source and offline runs can use a complete
+catalogue placed under `cluster_test_data/`, or selected through
+`ENSEMBL_LOCAL_SPECIES_JSON`.
 
 ## First-run data setup
 

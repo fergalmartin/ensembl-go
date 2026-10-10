@@ -1,11 +1,11 @@
 # Achievements
 
-Achievements is an optional view that gives small rewards for finding the less obvious
-parts of Ensembl Go. It can be opened from Home or added to the top bar, and it shows
-switched off until the user presses **Enable achievements** in it. That press is
-achievement #1. Whether the view has a top-bar button makes no difference to anything.
+Achievements rewards exploration of Ensembl Go. Open it from Home or add it to
+the top bar. Progress is tracked silently until **Enable achievements** is
+pressed, which unlocks achievement #1 and reveals earlier progress. Top-bar
+visibility does not affect tracking.
 
-## Where things live
+## Code layout
 
 | Part | File |
 |---|---|
@@ -27,7 +27,7 @@ achievement #1. Whether the view has a top-bar button makes no difference to any
    `trackAchievement('area.event')` call next to code that already runs when the user
    does the thing. Use `trackAchievement('area.set', key)` for "N different things" and
    `raiseAchievementCount('area.count', n)` for totals read off existing state.
-4. Run `npm test`. The tests fail if any of these is wrong:
+4. Run `npm --prefix frontend test` from the repository root. Tests reject:
    - an id was removed or renamed;
    - a number was changed or reused;
    - an id is missing from the lock file;
@@ -53,7 +53,7 @@ deletions and GRCh37.
 
 ## Rules for call sites
 
-Tracking has to cost nothing noticeable.
+Tracking must remain cheap on common interaction paths.
 
 - **Only in intent handlers.** Call the tracker from click, change or commit handlers,
   or from a successful fetch. Never call it from render, `pointermove`, scroll,
@@ -79,7 +79,7 @@ always resolves store paths from the saved configuration, never from a request.
 
 Time spent in the app counts even during a tutorial.
 
-## Switching on, and notifications
+## Enabling achievements and notifications
 
 - **Tracking always runs.** Before achievements are switched on, unlocks are recorded
   silently and the view shows the cabinet greyed out and empty.
@@ -96,7 +96,7 @@ Time spent in the app counts even during a tutorial.
   - Unlocks that arrive together merge into "You've unlocked N achievements".
 - **The toggle.** "Enable notifications" in the view is stored in the achievements file,
   so it follows the output directory.
-- **When there are none.** Nothing is shown during a tutorial or in screenshot mode.
+- **Suppression.** Notifications are hidden during tutorials and screenshot mode.
 
 ## Storage and upgrades
 
@@ -105,7 +105,7 @@ Progress is stored in `<output_dir>/local_data/achievements.json`, beside
 cache directory, which is used before an output directory is set. Every copy is read
 and merged, and writes go to the output directory.
 
-The merge is monotonic:
+Progress merges only move forwards:
 
 - unlocks keep their earliest date;
 - counters keep their highest value;
@@ -136,8 +136,8 @@ After the store loads, and after a reset, reconcilers re-derive what is already 
 - completed tutorials.
 
 Genome clades come from the lineages in `backend/data/taxonomy_classification.json`.
-The Download view now sends each species' taxid with a download, and it is kept in the
-genome manifest. For genomes downloaded before that, the backend tries these sources
+The Download view sends each species' taxid, which is kept in the genome manifest.
+For older downloads without a taxid, the backend tries these sources
 in order:
 
 1. the Ensembl catalogue;

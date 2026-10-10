@@ -4,18 +4,11 @@ import { TileScheduler } from './tileScheduler'
 import { clipRuns, packCollapsed } from './collapse.js'
 import { collapseKey, collapseRequests, collapseTaskKey } from './collapsePlan.js'
 
-/** Fragments with their uninformative columns marked, and nothing else changed.
- *
- * Collapsing is derived, never stored. What is uninformative is a fact about
- * the cohort on screen and not about the alignment, so it is recomputed from
- * whatever is being drawn: showing a sequence again changes the cohort, which
- * changes the key, which fetches a different answer and puts the columns that
- * sequence fills back. Nothing has to notice the reversal and undo it, because
- * nothing ever recorded it.
- *
- * Until an answer arrives a fragment is drawn whole. A collapse that guessed
- * from the last cohort's answer would hide columns the reader has just asked to
- * see, which is the one mistake this must not make.
+/**
+ * Derive collapsed columns from the current visible cohort.
+ * Changing the cohort changes the request key. Until its answer arrives, draw
+ * the full fragment so a stale result cannot hide a newly visible row's bases.
+ * Collapse results are view state and never alter the stored alignment.
  */
 export default function useGapCollapse(dataset,layer,enabled,minRun,percent,onError,pack=false) {
   const [tick,repaint]=useState(0)

@@ -1,16 +1,8 @@
-"""What two aligned rows actually differ by, counted rather than interpreted.
+"""Count differences between aligned rows relative to a named reference.
 
-The vocabulary here is deliberately observational and deliberately directional.
-There is no "insertion" and no "deletion": which of those a column is depends on
-a history neither row records, and a pairwise alignment is not evidence for it.
-What can be said is that one row has a base where the other has a gap, and which
-row is which — so every count names the row it is about, relative to the row it
-is being read against.
-
-Columns where both rows are gapped are excluded from every comparable total.
-They are an artefact of the other rows in the block and say nothing about these
-two. Unknown sequence (``N`` and the rest of IUPAC) and absent coverage are
-likewise never counted as difference: not knowing is not the same as differing.
+Report which row has a base or gap without inferring insertions or deletions.
+Double-gap columns are excluded from comparable totals. Unknown bases and
+absent coverage are reported separately and never counted as differences.
 """
 from collections import Counter
 

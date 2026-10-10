@@ -3,12 +3,12 @@
 React/Vite renderer for the Ensembl Go desktop app. In production it runs inside
 Electron and talks to the local FastAPI backend on `127.0.0.1`.
 
-## Runtime Contract
+## Backend connection
 
 - Backend URL comes from Electron runtime metadata, then `VITE_API_BASE` /
   `VITE_BACKEND_URL`, then `http://127.0.0.1:8000`.
 - Electron also provides a per-launch API token. `src/backendRuntime.js`
-  installs a fetch shim and exports `apiFetch()` so requests to `/api/**` carry
+  installs a fetch wrapper and exports `apiFetch()` so requests to `/api/**` carry
   `X-Ensembl-Local-Token` automatically.
 - Browser-only development still works without a token when the backend is
   launched without `ENSEMBL_LOCAL_API_TOKEN`.
@@ -34,20 +34,20 @@ bundle. No additional language toolchain is required.
 The user-facing SV file formats and alignment-registration steps are documented
 in [../docs/STRUCTURAL_VARIATION.md](../docs/STRUCTURAL_VARIATION.md).
 
-## Release Checks
+## Checks before packaging
 
 Run these before packaging:
 
 ```bash
 npm --prefix frontend ci
-npm --prefix frontend test
+TZ=UTC npm --prefix frontend test
 npm --prefix frontend run lint
 npm --prefix frontend run build
 npm --prefix frontend audit --omit=dev
 ```
 
-`npm run lint` is a release gate: it must exit successfully. Existing warnings
-track legacy cleanup work but should not block packaging.
+Lint must exit successfully; existing warnings do not block packaging.
+`TZ=UTC` matches the screenshot filename tests' assumptions.
 
 ## Notes
 

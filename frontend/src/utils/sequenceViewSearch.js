@@ -1,26 +1,7 @@
-// What a reader means by what they typed into the search box.
-//
-// Three things can be typed, and they ask for different things:
-//
-//   - **A range** -- `1:1-5,000,000`, or `1000-2000` on the chromosome already
-//     open. The reader has named both ends, so that is the region shown. This is
-//     the whole of it: a range is never interpreted as anything softer.
-//   - **A bare coordinate** -- `119,711,874`. Not a region but a destination.
-//     Somewhere inside what is already open it moves the page there and leaves
-//     the region alone, because narrowing a chromosome to a screenful around one
-//     base would throw away what the reader was reading. Outside it, there is
-//     nothing to stay within, so a screenful is framed around it.
-//   - **Anything else** is a name, and a question for the annotation.
-//
-// Pulled out of the view because the difference between the first two is
-// genuinely subtle and was got wrong: the containment shortcut was applied to
-// ranges as well as to coordinates, so opening a chromosome and then asking for
-// a few megabases of it did nothing whatever -- the new range was inside the old
-// one, so it was treated as a jump to a base that was already on screen. Every
-// narrower range after that was inside the first, and there was no way back out
-// except through a gene name.
-//
-// Coordinates are 1-based inclusive, as everywhere else in this subsystem.
+// Parse sequence searches into ranges, coordinate jumps or annotation queries.
+// An explicit range replaces the displayed region. A bare coordinate inside
+// the current region scrolls to it; outside, it opens a surrounding window.
+// Other text is resolved through annotation. Coordinates are one-based inclusive.
 
 /** How much sequence is framed around a bare coordinate, either side. */
 export const COORDINATE_WINDOW = 600

@@ -1,15 +1,8 @@
-/** Column identity among a cohort of sequences, and the colour ramp it drives.
- *
- * Observed agreement between the sequences in view. It is not an evolutionary
- * constraint score, and nothing here should be labelled as one.
- *
- * Two independent quantities are carried at once, because agreement alone
- * misleads. A block holding three of the ten sequences someone is reading can
- * agree with itself perfectly while being, as a piece of alignment, thin. So
- * identity says how well the sequences that are present agree, representation
- * says how much of the cohort is there to agree, and the two are kept on
- * channels that cannot be confused: identity is the colour, representation is
- * how much of the row that colour fills.
+/**
+ * Compute observed column agreement and cohort representation.
+ * Colour encodes identity among comparable bases; bar height encodes the share
+ * of the cohort present. These are alignment measurements, not evolutionary
+ * constraint scores.
  */
 import { rampStops } from './palettes.js'
 

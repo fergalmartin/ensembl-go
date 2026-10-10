@@ -13,7 +13,7 @@ from typing import Dict, Tuple
 
 # Configuration
 def get_base_path():
-    """Get the base path for bundled resources (data files etc), handling PyInstaller."""
+    """Return the resource directory for a source or PyInstaller build."""
     if getattr(sys, 'frozen', False):
         # Running as PyInstaller bundle — _MEIPASS has bundled data files
         return Path(sys._MEIPASS)
@@ -23,12 +23,11 @@ def get_base_path():
 
 
 def get_cache_dir():
-    """Get a persistent, writable cache directory.
+    """Return the writable cache directory, creating it if needed.
 
-    In dev mode: <backend_dir>/cache
-    In packaged mode: ~/Library/Application Support/Ensembl Go/cache (macOS)
-                      %LOCALAPPDATA%/Ensembl Go/cache (Windows)
-                      or ~/.ensembl_go/cache (other platforms)
+    Electron supplies its user-data directory through ENSEMBL_GO_USER_DATA_DIR
+    (or the older ENSEMBL_LOCAL_USER_DATA_DIR). Without an override, source runs
+    use backend/cache and frozen builds use a platform-specific user directory.
     """
     user_data_override = (
         os.environ.get("ENSEMBL_GO_USER_DATA_DIR")
@@ -48,7 +47,7 @@ def get_cache_dir():
             app_data = Path.home() / ".ensembl_go"
         cache = app_data / "cache"
     else:
-        # Dev mode — use <backend_dir>/cache as before
+        # Source runs without an override keep their cache beside the backend.
         cache = Path(__file__).parent / "cache"
     cache.mkdir(exist_ok=True, parents=True)
     return cache
@@ -60,8 +59,9 @@ BASE_PATH = get_base_path()
 CACHE_DIR = get_cache_dir()
 
 
-# MAFFT Path handling
+# MAFFT discovery
 def find_mafft() -> Tuple[str, Dict[str, str]]:
+    """Find MAFFT and any environment overrides needed for its helper binaries."""
     env_overrides: Dict[str, str] = {}
     executable_names = ["mafft"]
     if sys.platform == "win32":
@@ -125,10 +125,7 @@ def _mafft_missing_error() -> RuntimeError:
 MAFFT_PATH, MAFFT_ENV = find_mafft()
 
 
-# Default test data paths (relative to project root)
-# When running as standalone app, we generally expect files to be provided or selected via UI.
-# However, we bundle cluster_test_data for the default example.
-# Default test data paths (relative to project root)
+# Resolve optional repository resources from the source root or bundle directory.
 if getattr(sys, 'frozen', False):
     # Running as frozen bundle — data files are inside _MEIPASS
     PROJECT_ROOT = BASE_PATH
@@ -137,7 +134,7 @@ else:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-# The species catalogue the download manager starts from.
+# Optional starting catalogue for development and offline use.
 def _resolve_species_json_path() -> Path:
     env_path = os.environ.get("ENSEMBL_LOCAL_SPECIES_JSON")
     if env_path:

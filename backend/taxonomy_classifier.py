@@ -85,9 +85,7 @@ TAXONOMY_ANCHOR_RULES: Tuple[Tuple[Tuple[int, ...], Tuple[str, Optional[str]]], 
         ("Fish", None),
     ),
     ((8782,), ("Birds", None)),                 # Aves
-    # Reptiles are not one NCBI taxon: they are the non-bird Sauropsida. Turtles
-    # (Testudines) used to be missing here, so they fell through to the Vertebrata
-    # fallback below and were filed under Fish.
+    # Claim non-bird reptile groups, including turtles, before the fish fallback.
     ((1294634, 8504, 8459), ("Reptiles", None)), # Crocodylia/Lepidosauria/Testudines
     ((8292,), ("Amphibians", None)),            # Amphibia
     ((7742,), ("Fish", None)),                  # Vertebrata fallback, after tetrapods

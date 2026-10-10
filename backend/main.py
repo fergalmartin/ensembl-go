@@ -1,15 +1,11 @@
-"""
-Ensembl Go Backend - the FastAPI application.
+"""Assemble the FastAPI app, middleware, startup tasks and routers.
 
-This module only assembles the app: logging, the origin/token middleware, and the
-routers. The endpoints live in routes/ (one router per domain, see
-routes/__init__.py for the conventions they follow), the shared core in the
-modules beside this one (app_paths, app_state, config_store, genome_context,
-gff_index, ...), and the self-contained alignment_explorer, gene_trees and
-sequence_view packages are handed what they need from package_providers.
+Endpoints live in routes/ and the feature packages; shared services live in the
+modules beside this file. Feature packages receive providers when their routers
+are created, rather than importing the app.
 
-Electron and the packaged app run this file as __main__, so no other module may
-import it: that would load a second copy of the app and of all shared state.
+Electron runs this file as __main__. Other application modules must not import
+main, which would create a second app instance.
 """
 
 import hmac
@@ -23,9 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 
-# Configure logging before importing this application's own modules, so that what
-# they log while being imported (the download manager loading its catalogue, say)
-# is not lost.
+# Configure logging before imports so startup messages are captured.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -72,9 +66,7 @@ from sequence_view import create_router as create_sequence_view_router
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    # Start the catalogue download as soon as the server is up, so it is already under
-    # way — usually finished — before the user opens the download view. Non-blocking:
-    # the fetch runs on a background thread and startup continues immediately.
+    # Fetch the catalogue on a background thread without delaying startup.
     try:
         app_state.download_manager.ensure_catalog_available()
     except Exception:
@@ -84,17 +76,13 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Ensembl Go API", lifespan=_lifespan)
 
-# The self-contained packages never import the app; each is handed the functions
-# it needs. They are passed as lambdas that look the function up on every call, so
-# a test that patches the defining module (package_providers, genome_context, ...)
-# is seen here too.
+# Look up providers on each call so patches to their defining modules take effect.
 app.include_router(create_alignment_explorer_router(
     annotation_provider=lambda *args, **kwargs: package_providers.alignment_explorer_annotation_features(*args, **kwargs),
     gene_provider=lambda *args, **kwargs: package_providers.alignment_explorer_block_genes(*args, **kwargs),
     availability_provider=lambda *args, **kwargs: package_providers.alignment_explorer_genome_availability(*args, **kwargs)))
 
-# Gene trees: the library lives beside the user's genomes, the protein maps it
-# builds from their GFFs are derived data and live in the cache.
+# Store the gene-tree library with the genomes and derived protein maps in the cache.
 app.include_router(create_gene_trees_router(
     library_path_provider=lambda: package_providers.gene_trees_library_path(),
     genomes_provider=lambda: package_providers.gene_trees_local_genomes(),
@@ -107,7 +95,7 @@ app.include_router(create_gene_trees_router(
         "align_fn": lambda *args: package_providers.gene_trees_align(*args),
     }))
 
-# The sequence view, wired the same way.
+# Inject the sequence view's genome and translation providers.
 app.include_router(create_sequence_view_router(
     db_provider=lambda *args, **kwargs: genome_context._get_browse_db(*args, **kwargs),
     db_optional_provider=lambda *args, **kwargs: genome_context._get_browse_db_optional(*args, **kwargs),
@@ -115,18 +103,14 @@ app.include_router(create_sequence_view_router(
     chrom_resolver=lambda *args, **kwargs: genome_context._resolve_browse_chrom_name(*args, **kwargs),
     tx_feature_intervals=lambda *args, **kwargs: sequence_windows._build_tx_feature_intervals(*args, **kwargs),
     mode_segments=lambda *args, **kwargs: sequence_windows._build_mode_segments(*args, **kwargs),
-    # The one translation in this application. It is the Feature Explorer's, and
-    # it is the only one that knows about organelle genetic codes, non-ATG
-    # initiation and how Ensembl's own pep file renders an incomplete CDS -- so
-    # the sequence view asks it rather than carrying a second, simpler answer
-    # that would disagree with the protein rows a reader can already see.
+    # Share translation with Feature Explorer, including organelle codes,
+    # non-ATG initiation and incomplete CDS handling.
     translate_transcript=lambda *args, **kwargs: transcript_translation._sequence_view_protein(*args, **kwargs),
     normalize_intervals=lambda *args, **kwargs: sequence_windows._normalize_interval_list(*args, **kwargs),
     ordered_five_to_three=lambda *args, **kwargs: sequence_windows._ordered_five_to_three(*args, **kwargs)))
 
-# Endpoints that live in backend/routes/, one router per domain. Their position in
-# the route table does not matter: no two routes in the app can match one request
-# (tests/test_route_contract.py checks that).
+# Register domain routers. The route-contract test pins registration order
+# wherever routes could match the same request.
 app.include_router(routes.achievements.router)
 app.include_router(routes.notes.router)
 app.include_router(routes.tracks.router)
@@ -203,10 +187,8 @@ async def enforce_local_origin(request: Request, call_next):
         if not _is_allowed_origin(origin) or not _is_allowed_referer(referer):
             return JSONResponse(status_code=403, content={"detail": "Forbidden origin"})
         if app_state.API_TOKEN and request.method.upper() != "OPTIONS":
-            # The structure viewer is loaded as an iframe and then fetches its own
-            # assets and model file. Neither a frame navigation nor a fetch the
-            # third-party viewer issues on its own behalf can carry a header, so
-            # this one prefix accepts the token from the query string instead.
+            # Iframe navigation and viewer asset requests cannot attach our token
+            # header. Accept a query token only under the structure-viewer prefix.
             provided = (
                 request.query_params.get("token", "")
                 if framed else
@@ -222,8 +204,7 @@ async def health():
     return {"status": "ok"}
 
 
-# The local genome inventory is a function the whole backend calls; it is also
-# served as an endpoint.
+# Expose the shared local-genome inventory as an endpoint.
 app.get("/api/remote/local-assemblies")(local_inventory.list_local_assemblies)
 
 

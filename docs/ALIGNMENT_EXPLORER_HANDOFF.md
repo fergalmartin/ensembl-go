@@ -1,8 +1,13 @@
 # Alignment Explorer — engineering handoff
 
-Updated: 10 September 2026.
+Initial handoff: 10 September 2026; later sections record subsequent changes.
 
-This document describes the current implementation and the decisions needed to continue it. [ALIGNMENT_EXPLORER.md](ALIGNMENT_EXPLORER.md) is the usage guide. The final section proposes efficient local genome association through identifiers, k-mer fingerprints and sequence verification, with explicit TSV precedence. This handoff is a working-tree snapshot, not a release certification or a claim that the original multi-stage proposal is complete.
+These engineering notes record design decisions, implementation snapshots and
+remaining proposals. [ALIGNMENT_EXPLORER.md](ALIGNMENT_EXPLORER.md) is the usage
+guide. Read dated reviews and measurements as snapshots of the code tested at
+that time; later changes can supersede them. The genome-association proposal
+covers identifiers, k-mer fingerprints and sequence verification, with explicit
+TSV precedence.
 
 ## Product direction and decisions to preserve
 

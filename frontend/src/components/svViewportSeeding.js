@@ -1,17 +1,9 @@
 /**
- * Who decides which region the Structural Variation view is showing.
+ * Choose the initial Structural Variation region from browser state.
  *
- * Three sources compete: the genome browser's focused gene, the genome
- * browser's viewport, and the view's own anchor-region selector. Each is
- * applied by an effect, and effects re-run on mount — so without a guard that
- * survives a remount, navigating away and back silently re-seeds the view from
- * whatever the genome browser happens to be showing (chromosome 1 by default)
- * while the region selector still displays the region the user chose. The
- * alignment for the third genome is then requested for the wrong chromosome and
- * fails with "reference chromosome '1' is not aligned", permanently.
- *
- * Pulled out of the component so the precedence rules are unit-testable; the
- * failure they prevent only shows up across a mount boundary.
+ * An explicit SV selection survives remounts. A newly focused browser gene may
+ * seed a region, but ambient viewport reports must not overwrite a selection
+ * when the user switches views.
  */
 
 const token = (value) => String(value ?? '').trim()

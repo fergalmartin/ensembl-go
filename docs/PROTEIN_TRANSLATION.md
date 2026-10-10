@@ -10,6 +10,11 @@ FastAPI or SQLite — and the genome plumbing (which genetic code a contig uses,
 bases out of the FASTA) is in [`backend/transcript_translation.py`](../backend/transcript_translation.py),
 which the Feature Explorer, sequence view and structure panel all call.
 
+The sequence view's genomic protein lane is a separate, standard-code overlay
+computed from buffered bases in `frontend/src/utils/sequenceViewProtein.js`.
+It does not apply the backend's organelle or partial-CDS rules. Spliced protein
+readings and protein FASTA exports use the shared backend translation.
+
 ## The rules
 
 1. **CDS fragments are concatenated in biological 5'→3' order**, deduplicated on exact
@@ -21,10 +26,10 @@ which the Feature Explorer, sequence view and structure panel all call.
    pep file does.
 3. **A trailing incomplete codon is dropped**, not padded. Mitochondrial genes whose stop
    codon is completed by polyadenylation (`MT-ND1`, `MT-CO3`, …) rely on this.
-4. **A terminal stop is stripped; internal stops are kept.** An internal `*` is real
-   information about the annotation — readthrough, a frameshift, a mis-annotation — and
-   hiding it would hide the bug. Ensembl's own pep file contains internal stops for 83
-   human transcripts.
+4. **A terminal stop is stripped; internal stops are kept.** An internal `*` may
+   indicate readthrough, a frameshift or an annotation error, so it remains
+   available for inspection. The GRCh38 Ensembl validation below found internal
+   stops in 83 transcripts.
 5. **A valid initiation codon is reported as `M`** even when it is not ATG (CTG/TTG in the
    standard code, ATT/ATA/GTG in the mitochondrial and bacterial codes). Codons that are
    not initiation codons for the code in use keep their own residue.
@@ -53,11 +58,12 @@ extend past the last whole codon.
 
 ## Known divergences from the published proteins
 
-These are annotation the GFF3 does not carry, so they cannot be derived from coordinates:
+These differences depend on information beyond the CDS coordinates used here.
+The counts refer to the human validation datasets below:
 
 | Case | Effect |
 | --- | --- |
-| Selenocysteine (and pyrrolysine) recoding | Ensembl/RefSeq show `U`; we show `*` at that residue. 88 human transcripts. |
+| Selenocysteine and pyrrolysine recoding | Provider proteins can show `U` or `O`; we show `*`. The human validation found 88 selenocysteine cases. |
 | Ensembl curated start-codon substitutions | Ensembl shows `M` for a handful of non-ATG starts that are not initiation codons; we show the encoded residue. 76 human transcripts. |
 | RefSeq transcript/genome discrepancies (`exception=annotated by transcript or proteomic data`) | The RefSeq protein comes from the mRNA, which differs from the genome by an indel; ours follows the genome. 2 human transcripts. |
 

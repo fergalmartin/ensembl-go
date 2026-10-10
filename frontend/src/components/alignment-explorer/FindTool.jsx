@@ -3,18 +3,9 @@ import ControlChevron from './ControlChevron'
 import { shortPattern } from '../../utils/findPatterns'
 
 /**
- * Looking for something, on the bar - the sequence view's Find, in this bar's
- * chrome.
- *
- * A face and a chevron. The face opens the find box; the chevron opens it with
- * the whole list of saved patterns in it. Neither opens a menu: a find box is
- * typed in, looked past and stepped through, so it is a band under the bar that
- * stays until it is closed. See the sequence view's FindBar.jsx, which this
- * view shares.
- *
- * It was the Colour menu's Find tab. It is its own control now because what a
- * reader is looking for is not a way of colouring, and because a box that has
- * to be reopened from a menu for every new search is not a find box.
+ * Open the shared FindBar below the toolbar.
+ * The face opens the search box; the chevron opens the saved-pattern list.
+ * Keep the box open until dismissed so matches can be inspected and stepped.
  */
 export default function FindTool({ open = '', query = '', matches = null, disabled = false, onOpen }) {
   const first = String(query || '').trim()

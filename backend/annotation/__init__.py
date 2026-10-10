@@ -1,15 +1,8 @@
-"""Dialect-tolerant annotation ingest for user-supplied genomes.
+"""Validate and convert user-supplied FASTA and annotation files.
 
-This package is additive: nothing here is wired into ``main.create_gff_index``.
-The existing Ensembl/RefSeq indexing path is untouched and remains the only
-parser used for browsing until the normaliser has been validated against the
-fixture corpus in ``backend/tests/fixtures/annotation``.
-
-Public surface used by the API layer:
-
-    sniff_annotation(path)      -> DialectInfo
-    scan_fasta(path)            -> FastaReport
-    build_annotation_report(..) -> AnnotationReport
+The import routes use sniff_annotation, scan_fasta and build_annotation_report
+to validate inputs. Conversion normalises supported dialects into canonical
+GFF3 for the existing browse indexer in gff_index.
 """
 
 from .cooperative import CooperativeYielder, yielding_enabled  # noqa: F401

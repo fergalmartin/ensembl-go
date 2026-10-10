@@ -1,18 +1,9 @@
-"""Map arbitrary annotation vocabularies onto the Ensembl biotype model.
+"""Map annotation vocabularies to Ensembl-style transcript biotypes.
 
-Resolution order for a transcript (documented in docs/CUSTOM_GENOMES.md §3.5):
-
-1. an explicit biotype attribute, mapped through the synonym table;
-2. no biotype but a CDS (or start/stop codon) present -> ``protein_coding``;
-3. no biotype, no CDS, mature length >= 200 -> ``lncRNA``;
-4. no biotype, no CDS, mature length < 200 -> ``sncRNA``.
-
-Step 3/4 use the *mature* length (sum of exon lengths), not the genomic span, so
-a short single-exon gene inside a long locus is classified on what it transcribes.
-
-``sncRNA`` is not an Ensembl core term. It is used deliberately for the inferred
-case so the display never claims more specificity than the input supports; see
-the open question in docs/CUSTOM_GENOMES.md §8.
+Prefer an explicit biotype, then infer protein_coding from CDS or codon rows.
+Without coding evidence, mature exon length selects lncRNA (at least 200 bases)
+or sncRNA. sncRNA is an Ensembl Go extension for an unspecified short RNA;
+biotype_source records whether the class was explicit or inferred.
 """
 
 from __future__ import annotations

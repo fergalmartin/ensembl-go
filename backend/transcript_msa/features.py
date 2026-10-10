@@ -1,16 +1,12 @@
-"""A transcript's features in alignment columns, for a region made of segments.
+"""Map transcript features into inclusive alignment-column intervals.
 
-The same features, in the same shape and order, as the MSA view's
-``map_features_to_alignment`` (main.py), which it generalises: that one assumes a single
-contiguous window, this one follows a region's segments, so a trimmed intron still maps.
-``{type, start, end, original_start, original_end}``, start/end being alignment columns
-(inclusive) and original_* the feature's genomic span. Features come lowest priority first
-(exon/intron, then CDS/UTR, then splice sites and codons), so a painter taking the last
-feature covering a column shows the most specific one.
+Generalise routes.alignment.map_features_to_alignment to segmented regions,
+including trimmed introns. Preserve each feature's original genomic span.
+Return exon/intron features first, then CDS/UTR, then splice sites and codons,
+so painters can use the last covering feature as the most specific one.
 
-One type is new: ``intron_cut``, where intron sequence was left out of the region. Its
-start and end are the columns of the bases either side of the cut, and ``removed_bp`` says
-how much is missing. Painters that don't know it skip it.
+intron_cut marks omitted intron sequence: start/end flank the cut and
+removed_bp records its length.
 """
 from __future__ import annotations
 

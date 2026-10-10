@@ -1,30 +1,8 @@
-// The virtual scroller's arithmetic: how a scroll position becomes a row, and
-// back again.
-//
-// A focus region can be a whole chromosome. Human chr1 is 248,956,422 bases,
-// which is 4,149,274 rows of 60, which at 26 px a row is 107.9 million pixels of
-// content — several times what a browser will let an element be tall. So the
-// spacer is capped, and row positions are a proportion of it rather than a
-// multiplication.
-//
-// The cap costs nothing in the normal case. Below MAX_SCROLL_PX / rowHeight
-// rows — around 27 Mb of sequence at the default row height — the spacer is the
-// true content height and `scrollTopForRow` reduces exactly to `row * rowHeight`.
-// Every focus level except a whole-chromosome location is in that range; the
-// largest human gene is 2.5 Mb, which is under a tenth of it. Compression is an
-// edge case, and `wheelTargetRow` is what keeps that edge case readable.
-//
-// Rows are not all the same height any more: a row carrying a protein lane is
-// taller than one that does not. Everything here is therefore expressed through
-// a *height index* (utils/sequenceViewHeights.js), which answers where a row
-// begins and which row is at a pixel. With no lanes that index is a multiply and
-// a divide, so every line below reduces to exactly the arithmetic it was — the
-// compressed path included, which is tested against the formula it replaced.
-//
-// The two features cannot meet in any case: a lane needs a single reading frame,
-// which means a transcript or a feature in focus, and the largest of those is
-// two and a half megabases against the twenty-seven a compressed spacer starts
-// at.
+// Map between sequence rows and virtual scroll positions.
+// Cap spacers that would exceed browser element-height limits and map rows
+// proportionally within the cap. Smaller documents use their true height.
+// The height index accounts for protein lanes and reduces to uniform row
+// arithmetic when none are present.
 
 import { createHeightIndex } from './sequenceViewHeights.js'
 

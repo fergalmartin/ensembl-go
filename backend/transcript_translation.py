@@ -1,6 +1,8 @@
-"""Translating a transcript: the genetic code for its genome and contig (organelle tables
-from the lineage, with a cached per-genome context), CDS assembly from the annotation,
-and the protein the Feature Explorer, sequence view and structure panel all show.
+"""Assemble CDS and translate transcripts consistently across sequence views.
+
+Cache genome context and select genetic codes from lineage and contig molecule
+type. Feature Explorer, the sequence view and the structure panel share this
+translation path.
 """
 
 import threading

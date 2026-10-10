@@ -80,17 +80,10 @@ export function denseOriginal(layer,camera,size,plane=1) {
 }
 export const originalHeight=layer=>Math.max(1,...layer.fragments.map(rowCount))
 
-/** The topmost hit region at a point, as the reader could actually reach it.
- *
- * Original paints its name gutter *over* the blocks, so every hit region behind
- * that gutter - block headers, connectors, jump markers - is a target nobody
- * can see. A press there used to find whichever of them lay underneath: above
- * the first name, that was the header of a block whose drawn header is far off
- * to the right, and the press was taken as a click on it. Under the gutter only
- * the gutter's own names answer.
- *
- * Last-published wins, which is what the reverse walk is for: the painter draws
- * in order, so the region pushed last is the one on top.
+/**
+ * Hit-test only visible targets, choosing the last painted region first.
+ * The opaque name gutter covers block headers, links and jump markers beneath
+ * it, so only the gutter's own name regions may answer inside it.
  */
 export function hitAtPoint(hits, point, { original = false, marginX = MARGIN_X, filter = null } = {}) {
   const buried = original && point.x < marginX

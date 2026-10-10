@@ -1,9 +1,8 @@
-"""The genes around a leaf's gene in its local genome, for the tree's Neighbourhood column.
+"""Build local gene neighbourhoods for linked tree leaves.
 
-The window is the Neighbourhood view's (the genes on the same chromosome in start order),
-cut down to the centre gene and the nearest protein-coding genes on each side, and turned
-so the centre gene always points right: a row whose centre gene is on the minus strand is
-reversed, every strand swapped. Rows from different genomes then read the same way.
+Keep the centre gene and nearest protein-coding neighbours in chromosome order.
+Reverse minus-strand neighbourhoods and swap strands so the centre gene always
+points right and rows can be compared across genomes.
 """
 from __future__ import annotations
 

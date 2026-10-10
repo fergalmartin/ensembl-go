@@ -508,32 +508,17 @@ export function firstBlocks(layer) {
 export function coordinateFragments(layer) {
   return (layer?.fragments||[]).filter(f=>!f.aggregate)
 }
-/** Separation drawn between adjacent source blocks, in screen pixels.
- *
- * Blocks are evenly spaced in the stored layout, but that spacing is measured in
- * alignment columns and block lengths span three orders of magnitude, so no
- * column count reads well beside both a 955-column and a 1,000,000-column block.
- * The separation the reader sees is therefore drawn here instead: each block's
- * body is compressed into its own rect minus this gap, leaving a constant pixel
- * channel before the next block at every zoom.
- *
- * The block's LEFT edge stays on its exact affine position, so camera.x keeps its
- * meaning and zoom anchoring, camera bounds and layout-region requests are all
- * unaffected. Only positions within a block shift, by at most this gap. */
-/** Level of detail for the Original layout, chosen from the visible span.
- *
- * Individual blocks keep their headers, rulers and connecting chevrons up to
- * BLOCK_DETAIL_SPAN columns, and past it for as long as no more than
- * BLOCK_DETAIL_COUNT of them are in view (the server applies that second half,
- * since only it knows how many blocks a span holds). Merging earlier than that
- * produces merged blocks holding one or two blocks, which says less than the
- * blocks themselves and costs their headers, rulers and connections.
- *
- * The merge width tracks the span so roughly a dozen merged blocks are on screen
- * at any zoom, and is rounded to a power of two so the grid nests as you zoom:
- * merged blocks split in half rather than resegmenting into unrelated groups,
- * and every level stays cacheable. On a 43M-column file the widest level lands
- * near 4M columns per merged block. Returns 0 when individual blocks are wanted.
+/**
+ * Keep a constant screen-pixel gap between adjacent source blocks.
+ * Compress each block body by this gap while preserving its left affine edge.
+ * Camera bounds, zoom anchors and layout requests retain their column positions.
+ */
+/**
+ * Choose Original's detail level from span and visible block count.
+ * Keep individual blocks below BLOCK_DETAIL_SPAN or BLOCK_DETAIL_COUNT; the
+ * server checks the count. Coarser levels aim for roughly a dozen groups and
+ * use power-of-two widths so cached groups nest across zoom levels.
+ * Return 0 for individual blocks.
  */
 export const BLOCK_DETAIL_SPAN=500_000
 export const BLOCK_DETAIL_COUNT=40
@@ -553,23 +538,11 @@ export function blockAtLayoutX(fragment,layoutX) {
   if(!edges?.length)return null
   return edges.find(e=>layoutX>=e.x&&layoutX<e.end_x)||null
 }
-/** Whether a wheel event belongs to the row list rather than the track.
- *
- * The name gutter and the alignment share one vertical space, so scrolling the
- * list has to carry the tracks with it; a wheel there driving the horizontal
- * controls instead leaves the reader unable to move down a long row list at all.
- * Only a vertically dominant wheel counts, so a sideways trackpad swipe over the
- * gutter still pans the alignment as it does everywhere else.
- *
- * `scrollable` is what stops the gutter taking a wheel it has no use for. Left
- * of the gutter edge is not by itself a row list: a layer that draws no gutter
- * has sequence there, and a list wholly on screen has nowhere to scroll to, so
- * in both cases the notch was a zoom near the left edge and swallowing it turned
- * that zoom into a scroll — or into nothing at all.
- *
- * A modified wheel is never the list's either. Ctrl is an explicit zoom or pinch
- * and Shift a deliberate second axis; both mean over the names what they mean
- * over the sequence. */
+/**
+ * Route an unmodified vertical wheel gesture to a scrollable name gutter.
+ * Horizontal, Ctrl and Shift gestures retain their normal navigation meaning.
+ * Without an overflowing list, the left edge must not swallow a zoom gesture.
+ */
 export function wheelScrollsRowList(pointX,descriptor,marginX,scrollable) {
   if(!scrollable)return false
   if(!(pointX<marginX))return false
@@ -588,20 +561,11 @@ export function columnScale(f,camera) {
 /** Inverse of the painter's column placement: an undistorted layer-space x back
  * to the source column actually drawn there. Without a camera this is the plain
  * linear mapping, which is what layer geometry tests describe. */
-/** Where a path leaves one block and where it arrives in another, for links
- * that skip blocks in between.
- *
- * Drawing such a link as a line means routing it around every block it is not a
- * member of, which is a lot of ink for a relationship that is really just "this
- * continues over there". Each end becomes a marker on its own block edge instead:
- * a chevron out of the block it leaves, a chevron into the block it enters, each
- * labelled with the block at the other end and each a jump target.
- *
- * `edge` is the side of the fragment the marker sits on (1 right, -1 left), and
- * it always faces the block named on the label - forward to where the path goes,
- * back to where it came from - so the chevron drawn along it points at whatever
- * clicking the marker would open. A link whose far end is outside the loaded
- * window contributes only the end that exists. */
+/**
+ * Replace links that skip blocks with jump markers at their visible ends.
+ * edge is 1 for right or -1 for left, facing the destination named by the marker.
+ * If the other block is unloaded, emit only the marker on the loaded block.
+ */
 export function blockJumpMarkers(connections,offWindow,rects,buried={}) {
   const markers=[]
   for(const c of connections){
@@ -630,20 +594,11 @@ export function pathIsOccluded(connection,rects,everyBlockExists=false) {
   if(everyBlockExists)return high-low>1
   return rects.some(r=>r.sourceBlock>low&&r.sourceBlock<high)
 }
-/** Whether a link is buried by what is drawn over it, and so has to be carried
- * by edge markers instead of a line.
- *
- * One rule for both passes. The painter draws the lines first and the panels
- * over them, then adds markers for the buried ones; when the two passes asked
- * this question differently, a link could be dropped from the first as buried
- * and from the second as not, and vanish from the picture altogether.
- *
- * A packed sheet answers from what it draws, the way a layer does. Hiding is
- * what put the gaps in its numbering, so a path from 7 to 9 over a hidden 8 is
- * an ordinary line: the reader asked for the blocks that are left to sit
- * together. A block still standing between the ends is a different matter and
- * still buries the link - drawn as a line it would run behind that block and
- * read as a sequence passing through one it is not in.
+/**
+ * Use one occlusion rule for connection lines and edge markers.
+ * A visible intervening block hides the line and requires markers. Hidden blocks
+ * do not obstruct links on a packed sheet. Sharing this rule prevents a link
+ * from being omitted by both painting passes.
  */
 export const linkIsBuried=(connection,rects,{original=false,packed=false}={})=>
   pathIsOccluded(connection,rects,original&&!packed)
@@ -710,21 +665,11 @@ export function viewBounds(layer) {
     bottom:Math.max((layer.rowExtent||1)*ROW_HEIGHT,...layer.fragments.map(f=>f.y*ROW_HEIGHT+rowCount(f)*ROW_HEIGHT))}
   return layerBounds(layer)
 }
-/** Zooming the whole arrangement as one flat sheet.
- *
- * The ordinary zoom is horizontal: it changes how many columns a pixel covers
- * and leaves rows 26 pixels tall, because that is what reading an alignment
- * wants. It can never answer "what does all of this look like", since the rows
- * always outrun the window however far out it goes.
- *
- * Plane zoom shrinks the drawing instead of the biology. Nothing in the layout
- * changes: the painter keeps working in exactly the units it always did and the
- * canvas is scaled once at the end, so blocks, names, labels, strings and every
- * hit region shrink together and stay in register. Dragging, picking and
- * reordering therefore need no special case; a pointer position is divided by
- * the plane factor and everything downstream is unchanged. The viewport the
- * painter is told about grows by the same factor, and that is where the
- * whitespace around the edges comes from. */
+/**
+ * Scale the whole sheet for Panel zoom while preserving layout coordinates.
+ * Blocks, labels, links and hit regions share the same plane factor. Divide
+ * pointer positions by it and expand the painter's viewport by the same factor.
+ */
 /** How far out the sheet may be pushed. One limit for everything, so a layer
  * offers the same travel as Original rather than stopping early because it
  * happens to be small.
@@ -754,18 +699,10 @@ export function blockFitScale(layer,camera,size) {
   const fit=target?.fragments?.length?fitCamera(target,size.width,size.height).scale:Math.max(Number.EPSILON,Number(camera?.scale)||1)
   return layer?.id==='original'?Math.max(fit,size.width/BLOCK_DETAIL_SPAN):fit
 }
-/** One zoom step in panel mode: the panel, and nothing else.
- *
- * Always the sheet, never the columns. Spending the column magnification first
- * made the mode a hybrid - zooming out over the alignment behaved exactly like
- * Alignment mode until that magnification ran out, which is not what a control
- * called Panel should do. One gesture, one meaning: out shrinks the sheet from
- * the first step, in gives its size back and stops at full size, because going
- * closer than that is what Alignment mode is for.
- *
- * Always about the middle of the window, never the cursor. That is what centres
- * the view: every zoom out pulls the drawing toward the middle, so whitespace
- * opens above and below it instead of the blocks staying pinned under the ruler. */
+/**
+ * Apply Panel zoom to the sheet from the first step, about the view centre.
+ * Stop at full size; Alignment zoom handles closer inspection of columns.
+ */
 export function panelZoom(camera,factor,{size,floor=PLANE_MIN}) {
   const plane=planeOf(camera)
   return zoomPlane(camera,factor,{x:size.width/plane/2,y:size.height/plane/2},floor)
@@ -1050,16 +987,11 @@ export function chunkGap(fragments,width=1000) {
   const room=width-MARGIN_X-24-110*Math.max(0,fragments.length-1)
   return Math.max(6,room>=240?110*bases/room:bases/fragments.length/4)
 }
-/** Insert by source order, moving only obstructing successors horizontally.
- * Existing vertical placements and row slots are deliberately preserved.
- *
- * A row keeps one slot across the whole layer. Each chunk used to take its rows
- * from the neighbour it was placed beside and put anything the neighbour did not
- * hold on a fresh slot below it, which is right for one chunk and ruinous for a
- * batch: chained down a run of blocks whose membership varies - most files - the
- * same three sequences stepped one row lower at every chunk, and moving them out
- * of a 200-block alignment drew a staircase hundreds of rows deep instead of
- * three straight lines. */
+/**
+ * Insert chunks in source order, moving only obstructing successors sideways.
+ * Preserve vertical placements and give each row one slot across the layer,
+ * so batch insertion cannot turn shared sequences into a descending staircase.
+ */
 export function insertChunks(existing,incoming,gap=64) {
   let result=existing.map(f=>({...f}))
   // Rows already placed keep the slot they have; rows arriving with the batch

@@ -1,27 +1,12 @@
-// The achievement tracker: one module-level instance, no React.
+// Track achievement facts without involving React in each event.
 //
-// Views call `trackAchievement('some.event')` from handlers that already run — a click,
-// a commit, a successful fetch. That call has to cost nothing measurable, because it
-// sits on paths people use constantly and achievements are an optional game:
+// Ignore inputs no locked achievement needs, batch writes and notify only the
+// mounted view and toast. Tutorial events are ignored except those explicitly
+// allowed in TUTORIAL_ALLOWED_EVENTS.
 //
-// * It never touches React. Nothing re-renders because something was tracked; only the
-//   Achievements view and the unlock toast subscribe, and only while mounted.
-// * It returns at once for anything no locked achievement is listening to. The `live`
-//   set holds the inputs some locked achievement still needs; once they are all
-//   unlocked, every call on that input is a Set lookup and a return.
-// * It never does I/O on the caller's time. Changes are batched and sent a few seconds
-//   later, or when the window is hidden.
-//
-// A running tutorial is a sandbox: autoplay clicks through the browser on the reader's
-// behalf, and even a reader doing it by hand is following instructions. Nothing done in
-// one counts, except the tutorial achievements themselves (TUTORIAL_ALLOWED_EVENTS).
-//
-// Tracking always runs, whether or not achievements have been switched on, so that
-// switching them on reveals what the user has already done. They are switched on once,
-// with the Enable achievements button in the view (`enableAchievements`), and that is
-// stored with the rest of the progress. Notifications only appear once they are on, and
-// while the user has not turned notifications off. Whether the view has a button in the
-// top bar makes no difference to any of this.
+// Tracking runs before achievements are enabled. enableAchievements reveals
+// existing progress and persists the switch; notifications also respect the
+// user's notification setting. Top-bar visibility has no effect on tracking.
 
 import { API_BASE } from '../backendRuntime.js'
 import { isTutorialSandboxActive } from '../tutorials/sandbox.js'

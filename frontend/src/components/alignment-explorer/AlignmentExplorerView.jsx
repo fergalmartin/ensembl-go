@@ -172,18 +172,9 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   // Original's hide. It alone drives the layout fetch and the repack below: a
   // layer's hide never reaches the server and never rearranges Original.
   const hiddenBlocks=state.hidden?.blocks,hiddenRows=state.hidden?.rows
-  // ---- finding something ------------------------------------------------
-  //
-  // The sequence view's find box, over the whole alignment. The face of the Find
-  // control opens the box, its chevron the saved list; the box stays until it is
-  // closed, and while it is open the alignment is painted in what it found.
-  // Closing it is turning it off: the reader has stopped looking. Colour keeps
-  // whatever it was set to underneath, and is back the moment the box shuts.
-  //
-  // Searching is the server's: a job prepares every block once, and drawing
-  // only ever reads what it prepared. So a search starts on submit, never as
-  // the reader types, and a submit that changes nothing searched for - a new
-  // colour, the same patterns again - reuses what is already prepared.
+  // Find uses the shared sequence-view box and saved-pattern list.
+  // Submit starts server preparation; typing does not search. Colour-only changes
+  // reuse prepared results. Closing Find restores the selected Colour scheme.
   const findOpen=state.find||''
   const setFindOpen=useCallback(mode=>patch({find:mode||''}),[patch])
   const [motifSnapshot,setMotifSnapshot]=useState(null)
@@ -313,16 +304,9 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
   // between to keep consistent.
   const collapse=useGapCollapse(dataset,shownLayer,!!state.collapseGaps&&!contextLayer,state.collapseMin||DEFAULT_COLLAPSE_MIN,gapPercent(state.collapsePercent),setError,!!state.original)
   const layer=collapse.layer
-  // Packing moves the blocks; this moves the camera with them.
-  //
-  // Closing the channels shifts every block after a collapsed one to the left,
-  // and a reader halfway down the file would otherwise find the sheet had slid
-  // out from under them - on switching the option, and again each time an
-  // answer arrives for a block behind them or a block behind them is unloaded.
-  // The block nearest the camera is watched: while it is the same block, any
-  // change in how far it has moved is applied to the camera as well, so what is
-  // under the viewport stays under it. A different block means the reader
-  // panned there themselves, which is a camera move of their own to leave alone.
+  // Keep the camera anchored when gap collapse shifts the packed blocks.
+  // While the nearest block is unchanged, apply its layout displacement to the
+  // camera. A new nearest block means the user moved; preserve that navigation.
   const packAnchor=useRef(null)
   const packSolid=layer.fragments?.filter(f=>!f.aggregate)||[]
   const packNearest=packSolid.length?sourceViewAnchor(packSolid,stateRef.current.camera):null
@@ -597,15 +581,9 @@ export default function AlignmentExplorerView({theme='dark',config,genomes=[],to
     if(viewHidden?.rows?.length)parts.push(`${viewHidden.rows.length.toLocaleString()} of ${viewTotals.rows.toLocaleString()} sequences`)
     return parts.join(' · ')
   },[viewHidden,viewTotals])
-  // What the view is holding back, said once, beside the totals it is measured
-  // against. Both counts used to sit in the control bar next to the switch that
-  // set them, which is the obvious place for them until a wide one pushes Cycle
-  // off the end and the bar has to be scrolled to reach its own buttons. The
-  // switches keep them in their tooltips; the sidebar card gives them a line
-  // that is always in view and never competes for width.
-  // "Gap-only" only while the threshold is the whole cohort. Below that the
-  // hidden columns hold bases, and a line still calling them empty would be the
-  // view telling the reader the opposite of what it had just done for them.
+  // Show hidden-block and hidden-column totals in the sidebar to save toolbar
+  // space. Call columns gap-only only at the 100% threshold; lower thresholds
+  // can hide columns containing bases.
   const gapShareApplied=gapPercent(state.collapsePercent)
   const narrowedSummary=[hiding?`Showing ${hidingSummary}`:hiddenSummary,
     collapse.columns?(gapShareApplied<100

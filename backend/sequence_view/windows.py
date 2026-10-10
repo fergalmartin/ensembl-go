@@ -1,11 +1,7 @@
-"""Working out which stretch of a chromosome a focus level is asking for.
+"""Resolve focus levels to one-based inclusive forward-strand genomic windows.
 
-Pure: plain values in, plain values out, no FastAPI and no import of ``main``.
-
-Every coordinate here is 1-based inclusive on both ends, on the forward genomic
-strand. That is the convention for the whole sequence view. The one place it is
-not true is the pysam call itself, which is 0-based half-open; that conversion
-happens in ``api.py`` at the moment of reading and nowhere else.
+These are pure functions with no FastAPI dependency. api.py converts to
+zero-based half-open coordinates when reading FASTA.
 """
 
 from typing import Dict, List, Optional, Tuple

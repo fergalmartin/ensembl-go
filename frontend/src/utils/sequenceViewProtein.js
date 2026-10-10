@@ -1,24 +1,11 @@
-// The protein a coding stretch spells, placed over the bases that spell it.
+// Place standard-code amino acids above genomic CDS bases.
+// Use cached sequence and spliced CDS offsets to read codons across exon
+// junctions. The middle base carries the letter, preserving the 60-cell row.
+// Coordinates are one-based inclusive on the forward strand; minus-strand
+// codons are read in reverse and complemented.
 //
-// Translation happens here rather than on the backend because everything it
-// needs is already on screen. `cdsFrame` gives each CDS segment's offset in
-// *spliced* coding sequence -- the only space in which codons are contiguous --
-// and the sequence buffer holds the bases. Asking the backend for a protein
-// would be a second description of the same thing, arriving at a different time
-// and able to disagree with the stripes the frame already draws.
-//
-// One letter per codon, on the codon's middle base. That is what puts it
-// visually over its codon without needing a wider cell or a second row model:
-// the letter is centred in a cell that is already the right width, and a codon
-// split across a row edge still shows its letter as long as the middle base is
-// on the row. Every row is therefore still sixty cells of the same width, and
-// the protein is one more equal-length channel beside the bases, their classes
-// and their marks.
-//
-// Coordinates are 1-based inclusive genomic on the forward strand, as
-// everywhere else in this subsystem. A minus-strand transcript's codons are
-// read from the high coordinate down and complemented, which is what
-// `strand` decides here and nothing downstream has to know about.
+// This local overlay uses the standard code. Spliced protein readings use the
+// backend translation, which also handles organelle codes and partial CDS.
 
 import { complementBase } from './locationFocus.js'
 import { PLACEHOLDER_BASE } from './sequenceViewChunks.js'

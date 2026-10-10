@@ -1,7 +1,8 @@
-"""Genomic windows of sequence: normalising interval lists, building spliced/unspliced
-segments for a transcript in 5' to 3' order, extracting oriented window sequence from
-FASTA, and projecting features into window slices. Shared by the Feature Explorer, the
-sequence view and splice tracks.
+"""Build oriented transcript windows and project their features into slices.
+
+Normalise intervals, order spliced or genomic segments from 5' to 3', extract
+FASTA sequence and map features into each window. Shared by Feature Explorer,
+the sequence view and splice tracks.
 """
 
 from typing import Any, Dict, List, Optional, Tuple

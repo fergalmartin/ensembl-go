@@ -1,18 +1,12 @@
-"""Reconstruct a gene -> transcript -> exon hierarchy from any annotation flavour.
+"""Reconstruct gene, transcript and exon hierarchies from supported dialects.
 
-The rules are documented in docs/CUSTOM_GENOMES.md §3.4. In summary:
+Use recognised SO terms and graph structure to identify feature roles. Read
+GFF3 ID/Parent, GTF gene_id/transcript_id and AUGUSTUS bare identifiers.
+Reconstruct missing parents and exons, derive UTRs and recompute CDS phase,
+preserving the leading source phase. Record each inference for the report.
 
-* feature roles are decided from the SO term where it is recognised, and from the
-  graph shape where it is not, so an unknown column-3 term never silently drops
-  a locus the way a fixed allowlist does;
-* GFF3 hierarchy comes from ``ID``/``Parent``; GTF hierarchy comes from
-  ``gene_id``/``transcript_id``; AUGUSTUS bare tokens are recovered from the
-  ``gene_id`` its children carry;
-* missing levels are synthesised, missing exons are derived from CDS, missing
-  UTRs are computed, and phase is recomputed — each recorded so the caller can
-  tell the user exactly what was inferred.
-
-Nothing here touches ``main.create_gff_index``; it is a parallel implementation.
+The resulting model is converted to GFF3 for gff_index; this module does not
+replace the browse indexer.
 """
 
 from __future__ import annotations

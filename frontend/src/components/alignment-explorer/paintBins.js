@@ -1,28 +1,8 @@
-/** A span of binned coverage cut into the rectangles actually worth drawing.
- *
- * Separated from the painting for the same reason `uniformRuns` is: what to
- * draw here is arithmetic over counts, and arithmetic can be checked without a
- * canvas. The painter below reads a run and fills it; every decision about
- * what a run means is made in here.
- *
- * Two things were wrong with doing this inline, and both only showed up on
- * large alignments.
- *
- * The first is that the loop walked every bin the tile holds and threw away the
- * ones outside the span. That is free when a span is a whole tile and very
- * expensive when it is not - and a collapsed block hands this function one span
- * per kept run, so a block cut into four thousand runs walked a tile's bins
- * four thousand times to draw each of them once.
- *
- * The second is that a bin is not a unit of drawing. Coverage is resolved
- * finest-first, so zooming out keeps whatever detailed tiles are already in
- * hand rather than waiting for coarse ones, and a bin can end up a small
- * fraction of a pixel wide. Drawn one rectangle apiece those are thousands of
- * fills landing on the same few pixels, where the last one written wins and the
- * rest were work done to be overwritten. `minColumns` is how wide a rectangle
- * has to be to be worth its own fill; under it, neighbouring bins are summed
- * and drawn as one, which is both cheaper and a truer answer than whichever bin
- * happened to be painted last.
+/**
+ * Convert visible coverage bins into drawable runs before painting.
+ * Visit only bins intersecting the span; collapsed blocks may have many spans.
+ * Sum neighbouring bins below minColumns into one rectangle to avoid repeated
+ * subpixel fills and preserve their combined counts.
  */
 
 const CANONICAL = ['A', 'C', 'G', 'T']

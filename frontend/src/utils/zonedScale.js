@@ -1,13 +1,7 @@
-// The zoned heatmap's zones: four value ranges stacked up the track, each coloured and
-// each given a fixed share of the height, so a value's height says which range it is in
-// and how far through it.
-//
-// The fixed zones (100 / 1k / 10k / 100k) were made for RNA-seq read coverage. A signal
-// in other units — ATAC fold enrichment tops out below 10 — sat in the bottom few percent
-// of the first zone and drew nothing. "Scaled to this file" takes the zone edges from the
-// file's own peak heights instead (its 50th/90th/99th/99.9th percentile peak, computed by
-// the backend), so the same four zones span that file's range. "Custom" uses four edges
-// the user typed; the last ones saved are remembered as a starting point for the next track.
+// Map signal values into four stacked heatmap zones.
+// Fixed edges suit read coverage. File scaling uses peak percentiles
+// 50/90/99/99.9 from the backend; custom scaling uses user-supplied edges.
+// Each zone receives a fixed share of track height.
 
 export const FIXED_ZONE_THRESHOLDS = [100, 1000, 10000, 100000]
 export const ZONE_HEIGHTS = [0.4, 0.2, 0.2, 0.2]

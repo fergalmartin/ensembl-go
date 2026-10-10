@@ -1,14 +1,7 @@
-// Codon stripes that follow the alignment, not each row's own count.
-//
-// A CDS is drawn in two alternating shades, a codon each, so reading frame shows without
-// counting. Counting each row's coding bases from its own start puts aligned codons out of
-// step as soon as one row has an indel upstream (or a longer 5' end): the same codon, in
-// the same columns, gets different shades in different rows. So the shade is worked out
-// per alignment column instead. Every row votes, at each coding base, for that base's
-// place in its codon (0, 1 or 2, counted from its start codon); a column takes the
-// majority, and a new codon — the next shade — starts at each column whose majority place
-// is 0. Every row's coding base in a column is then drawn in that column's shade, so
-// aligned codons always match.
+// Assign codon stripes by alignment column so aligned codons share a shade.
+// Each coding base votes for its position within a codon. The majority position
+// wins for the column; position 0 starts the next stripe. Counting separately
+// per row would put stripes out of step after an upstream indel.
 
 /**
  * `rows`: `[{ sequence, coding, anchor }]` — the aligned sequence, `coding` a per-column

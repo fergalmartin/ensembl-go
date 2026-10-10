@@ -1,12 +1,8 @@
-"""Taxon labels and events for trees that arrive without them.
+"""Infer missing taxon labels and tree events from species lineages.
 
-Ensembl trees name every internal node's taxon and mark duplications. A plain
-Newick from OrthoFinder or IQ-TREE has neither, which leaves the view nothing to
-put on a collapsed clade. Here each internal node gets the last common ancestor
-of the species beneath it (from the NCBI lineages the app already ships in
-``data/taxonomy_classification.json``), and — only when the tree carries no events
-at all — speciation/duplication by the species-overlap rule. Both are marked as
-inferred so the view can say so.
+Assign each internal node the last common ancestor of its descendant species.
+Infer speciation or duplication by species overlap only when the tree has no
+events. Mark inferred values so the view distinguishes them from source data.
 """
 from __future__ import annotations
 

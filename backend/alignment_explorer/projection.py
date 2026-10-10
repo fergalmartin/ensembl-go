@@ -1,20 +1,11 @@
-"""Alignment columns to genomic coordinates, and back, for one row of one block.
+"""Map alignment columns to genomic coordinates and back for one row.
 
-Two conventions meet here and neither may be allowed to leak into the other.
+All intervals here are zero-based and half-open, including forward-strand
+genomic intervals for reverse-aligned rows. The annotation provider uses
+one-based inclusive GFF3 coordinates; api.py converts at that boundary.
 
-* Stored alignment rows carry **zero-based, half-open** forward-strand genomic
-  intervals, whichever strand the row is on (``store.maf_blocks`` normalises
-  them on import). Alignment columns are likewise zero-based and half-open.
-* The GFF3 index the annotation provider reads is **one-based, inclusive**.
-
-Everything in this module is zero-based half-open. Conversion happens once, at
-the provider boundary in ``api.py``, and nowhere else.
-
-The work is done from *runs of sequence*, not from a per-base map. A row's
-chunks already carry ``ungapped_before``, so a single pass over the chunks that
-a column window actually touches yields the segments of contiguous non-gap
-bases in it, and both directions then cost a bisect. This is what keeps a block
-of millions of columns bounded: only the requested window is ever read.
+Projection reads sequence runs only in the requested window. Chunk-level
+ungapped offsets and binary searches avoid allocating a per-base map.
 """
 from bisect import bisect_right
 

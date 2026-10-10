@@ -1,10 +1,17 @@
-# Genome Browser — Implementation Progress
+# Genome Browser implementation notes
 
-**Status**: Core implementation complete, ready for testing.
+This records the initial browser implementation and its acceptance checklist.
+It is a historical snapshot, not a statement of release readiness. The browser
+now supports multiple genomes; Reference / Target / Both below describes the
+original two-genome layout.
 
-## What's Done
+See [DEVELOPMENT.md](DEVELOPMENT.md) for current module ownership and
+[the performance review](docs/GENOME_BROWSER_PERFORMANCE.md) for later changes
+and regression checks.
 
-### Backend (main.py)
+## Initial implementation
+
+### Backend
 - **GFF3 Indexer** updated:
   - `is_canonical` column on `transcripts` table (from `tag=Ensembl_canonical`)
   - `biotype` column on `genes` table
@@ -16,7 +23,7 @@
   - `GET /api/browse/sequence` — raw sequence fetch (max 10kb)
 - All endpoints use `run_in_threadpool` for non-blocking I/O
 
-### Frontend Components
+### Frontend
 - **GenomeBrowser.jsx** — Canvas-based browser:
   - Coordinate ruler with adaptive tick spacing
   - Forward/reverse strand gene tracks
@@ -33,12 +40,12 @@
 - **App.jsx** — Integrated:
   - Import + chromosome icon nav button + view switch case
 
-## Design Decisions
+## Design decisions
 - **Pixel-based pan sync** (not genomic coordinates) — per user preference
 - **Canonical transcript** identified via `tag=Ensembl_canonical` in GFF3
 - **Aesthetic** matches existing app theme system (not strict Ensembl copy)
 
-## What Needs Testing
+## Original acceptance checks
 1. Regenerate GFF3 indexes to pick up new schema (is_canonical, biotype)
 2. Start backend + frontend dev servers
 3. Click genome browser nav button → verify regions load
@@ -47,5 +54,13 @@
 6. Zoom to sequence level → verify bases render
 7. Test dual browser mode with lock controls
 
-## Resume Context
-If switching models: the core files are `alignment_viewer/backend/main.py` (browse endpoints near end of file), `alignment_viewer/frontend/src/components/GenomeBrowser.jsx`, `GenomeBrowserView.jsx`, and `App.jsx`.
+## Current source locations
+
+| Area | Location |
+| --- | --- |
+| Annotation index and worker | `backend/gff_index.py` |
+| Browse endpoints | `backend/routes/browse.py` |
+| Genome resolution and FASTA access | `backend/genome_context.py`, `backend/file_io.py` |
+| Single-panel browser and helpers | `frontend/src/components/genome-browser/` |
+| Multi-panel view helpers | `frontend/src/components/genome-browser/view/` |
+| App state and layout | `frontend/src/App.jsx`, `frontend/src/app/`, `frontend/src/components/app-shell/` |

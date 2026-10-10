@@ -1,16 +1,7 @@
-// Turning one laid-out row into the strings a row component draws.
-//
-// A row's whole appearance is a handful of equal-length strings -- the
-// characters, their classes, the selection mask, the gene-edge marks and, when
-// the protein track is on, the amino acid over each codon. That is what lets the
-// memoised row decide whether to repaint with a few string compares, and it is
-// why the collapsed view had to fit into the same shape rather than growing a
-// per-cell object.
-//
-// A row is built stretch by stretch. Each contiguous genomic piece goes through
-// exactly the same functions the uncollapsed view uses, is oriented for reading
-// direction, and is then placed at its column; the gap markers fill the columns
-// between. So collapsing adds no second way of deciding what colour a base is.
+// Build equal-length strings describing each displayed row.
+// Characters, classes, selection, edge marks and protein letters can be compared
+// cheaply by memoised rows. Paint each genomic stretch in reading direction,
+// then place gap markers between stretches using the same row model.
 
 import { BASES_PER_ROW } from './sequenceViewRows.js'
 import { PLACEHOLDER_BASE, assembleRowSequence, readBaseAt } from './sequenceViewChunks.js'

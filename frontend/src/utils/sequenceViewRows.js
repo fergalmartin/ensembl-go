@@ -1,17 +1,6 @@
-// How a focus region is cut into rows of sequence, and what the coordinate
-// gutters either side of a row say.
-//
-// Every coordinate in this module — and in every other module named
-// sequenceView* — is 1-based inclusive on both ends, on the forward genomic
-// strand. That is one convention for the whole sequence view, chosen because it
-// is what the annotation tables hold, what the gutters print and what a FASTA
-// header carries. /api/browse/sequence is 0-based half-open; nothing here ever
-// speaks that dialect, and the conversion happens once, on the backend.
-//
-// Reverse display is a presentation choice, not a second coordinate system. A
-// region read on the reverse strand still has the same genomic extent; only the
-// order the rows are read in changes, so `reverse` is a flag on the row lookup
-// rather than a different region.
+// Split genomic focus regions into 60-base rows and coordinate gutters.
+// Coordinates are one-based inclusive on the forward strand. Reverse reading
+// changes row order and orientation, while the genomic extent stays the same.
 
 export const BASES_PER_ROW = 60
 

@@ -1,16 +1,7 @@
-// Genome colours, one per genome.
+// Store genome colours by assembly key (provider::species::assembly).
 //
-// The colour a genome is drawn in used to be a property of *where it sat*: the
-// configuration view held a list and the browser's first panel took the first
-// entry, the second the second, and so on. Reordering the pills therefore
-// recoloured every genome, and the same genome was a different colour in two
-// sessions. Here the colour belongs to the genome itself: an assignment keyed on
-// the assembly, carried in the user's configuration, with one default colour for
-// every genome that has never been given one.
-//
-// Keys are assembly keys (`provider::species::assembly`) rather than selection
-// keys, so a genome keeps its colour when a different dataset release of the
-// same assembly is what happens to be loaded.
+// Assignments live in configuration and survive selection reordering or dataset
+// changes. Unassigned genomes use the configured default colour.
 
 import { getAssemblyGenomeKey } from './utils/genomeIdentity.js'
 

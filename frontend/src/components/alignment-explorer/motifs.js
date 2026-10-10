@@ -1,22 +1,8 @@
-// The explorer's find patterns: the shared model, wearing this view's key.
-//
-// What a reader is looking for is not an idea about alignments, so the model --
-// the ordered list, the colours, the priority resolution, what a stored list is
-// worth after an upgrade -- lives in `utils/findPatterns.js` and the sequence
-// view uses the same one. Two copies would have drifted about what a regex
-// means, which is the one thing a reader may not be told two different answers
-// to by two views of the same genome.
-//
-// **The word is Find now.** It was *motif*, which named what a biologist looks
-// for rather than what the control does, and left the sequence view with
-// nothing to call the same thing. The identifiers here still say motif -- the
-// colour scheme's id, the storage key, the `/motif-jobs` routes on the backend
-// -- because those are written into stored workspaces and running servers, and
-// renaming them would cost a migration to change a word nobody sees.
-//
-// `color` rather than `colour` on the way in and out, for the same reason: it
-// is what is in every reader's browser already. The shared model reads both and
-// writes the British one, so this converts at the edge.
+// Adapt the shared Find model to the Explorer's stored pattern format.
+// utils/findPatterns.js owns patterns, priority and persistence semantics.
+// Keep motif identifiers, storage keys and routes for workspace compatibility.
+// Convert the Explorer's stored color field to the shared model's colour field
+// at this boundary.
 
 import {
     MAX_PATTERNS,

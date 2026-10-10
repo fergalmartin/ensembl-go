@@ -1,16 +1,7 @@
-// Part-to-whole in one row: a horizontal stacked bar plus the list that names
-// its parts.
+// Show proportions as a horizontal stacked bar with exact values beside it.
 //
-// Part-to-whole rides on a stacked bar rather than a pie because the values it
-// shows here are close together — A against T, C against G — and neighbouring
-// slices of a circle are the one comparison people cannot make by eye. Along a
-// shared baseline they are directly comparable, the exact figures sit in the
-// list beside it, and eleven chromosomes fit where a pie would need eleven
-// labelled wedges.
-//
-// Marks follow the house chart specs: 2px of surface between touching segments
-// doing the separating (never a stroke), rounded outer ends, and the list
-// carrying the values so no number is written across a segment.
+// Use 2px gaps between segments and rounded outer ends. Keep labels in the list
+// so narrow segments remain readable.
 
 import { useState } from 'react'
 

@@ -1,14 +1,12 @@
-"""The sequence view's endpoints.
+"""Serve sequence-view endpoints using injected genome and feature providers.
 
-Built as a router factory taking provider callables, like the alignment
-explorer's, so this package never imports ``main``. Every provider is a function
-``main`` already has; passing them in keeps genome resolution, index readiness
-and the motif-verified feature derivation in one place rather than reimplemented
-here, where the second copy would be the one that drifted.
+main.py supplies functions from the shared core modules, keeping genome
+resolution, index readiness, feature derivation and translation consistent
+with the other views.
 
-Coordinates in and out are 1-based inclusive on both ends, forward strand. The
-single place that is not true is the ``fasta.fetch`` call, which is 0-based
-half-open; ``_read_window`` converts, and nothing else in the package does.
+Genomic coordinates are one-based inclusive on the forward strand. Spliced
+readings use transcript, CDS or residue positions with genomic segment maps.
+_read_window converts to zero-based half-open coordinates for FASTA reads.
 """
 
 import json

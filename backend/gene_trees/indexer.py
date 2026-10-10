@@ -1,11 +1,8 @@
-"""Turning a tree source into index records, and a record back into a tree.
+"""Index tree sources and materialise individual trees on demand.
 
-Indexing reads the source once, a tree at a time, and stores for each tree its
-original text (compressed) and the identifiers of its leaves. It deliberately does
-as little else as it can: an EMF block's leaves are all in its ``SEQ`` lines, so a
-Compara release is indexed without parsing a single Newick string. Parsing, label
-interpretation and taxon naming happen in :func:`materialize`, when a tree is
-opened — one tree, not fifty thousand.
+Read each source once, storing compressed tree text and leaf identifiers.
+Compara EMF leaves come from SEQ lines, so indexing does not parse Newick.
+materialize() parses and interprets one tree when it is opened.
 """
 from __future__ import annotations
 

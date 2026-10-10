@@ -306,14 +306,10 @@ def _build_known_token_map(known_regions: Iterable[str]) -> Dict[str, Set[str]]:
 
 
 class KnownRegions:
-    """The three lookups every region-name resolution needs, built once.
+    """Build reusable exact, lower-case and normalised region-name lookups.
 
-    A scaffold-level assembly brings hundreds of thousands of sequence names,
-    and resolving a name used to scan all of them (and rebuild the token map)
-    on each lookup. Since a synonym index performs a lookup per alias, that made
-    /api/browse/regions quadratic: it never returned, the browser sat on
-    "Building Index" waiting for it, and the polls that followed took a request
-    thread each until the backend had none left to answer anything else with.
+    Reuse avoids scanning every sequence name for every alias, which would make
+    synonym resolution quadratic on scaffold-rich assemblies.
     """
 
     __slots__ = ("values", "lower_map", "token_map")

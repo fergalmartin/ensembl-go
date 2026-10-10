@@ -3,32 +3,12 @@ import { MARGIN_X, MARGIN_Y, ROW_HEIGHT } from './layout.js'
 
 const rectOf=(f,camera)=>({...panelGeometry(f,camera,MARGIN_X),y:MARGIN_Y+f.y*ROW_HEIGHT-camera.y})
 
-/** Where a row dragged over Original would land.
- *
- * The rows to aim between are the ones on screen where the cursor is, and that
- * is not always the gutter's list. The gutter names the file-wide row order, or,
- * once a compact block claims it, that one block's rows; every other compact
- * block packs the sequences it happens to hold from its own top. Reading the
- * drop off the gutter therefore offered a handful of positions belonging to a
- * different block and inserted the row before whichever sequence the gutter had
- * at that height, which is not the one under the cursor.
- *
- * An aligned block is the one case where the gutter is both right and richer: it
- * draws its rows on the file-wide slots the gutter is already publishing, and
- * the gutter also offers the empty slots between them, which belong to
- * sequences this block does not hold.
- *
- * A dragged jump marker names the block it points into, and that block alone
- * answers the drag. The cursor's height chooses the gap; its horizontal position
- * chooses nothing. A marker sits in the channel between blocks, so a drag from
- * one is usually over no block at all, and letting the cursor's column claim the
- * insertion meant the target changed under the hand as it crossed a neighbour.
- *
- * Markers are also drawn for blocks outside the loaded window — that is what
- * most of them are for — and those name a block with no rows on screen to aim
- * between. The drag falls back to the block the marker is drawn on, which does
- * hold the sequence, and never to whatever the cursor happens to be over: a
- * block that does not carry this row is never a place to put it.
+/**
+ * Resolve row insertion from the block being targeted.
+ * Compact blocks use their own visible rows; aligned blocks use the gutter's
+ * file-wide slots, including empty ones. A dragged jump marker targets its
+ * destination block, falling back to its source if the destination is unloaded.
+ * Horizontal pointer movement must not switch that target.
  */
 export function originalRowDropTarget({point,fragments=[],camera,gutterRows=[],gutterAnchor=null,order=[],jumpBlock=null,fragmentId=null,rowId=null}) {
   const blocks=fragments.filter(f=>!f.aggregate)

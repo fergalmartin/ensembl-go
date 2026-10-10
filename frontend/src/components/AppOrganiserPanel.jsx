@@ -15,18 +15,11 @@ import {
 } from '../appButtonConfig.js'
 
 /**
- * The app organiser: activate, deactivate and reorder the buttons of the top app bar.
+ * Activate, deactivate and reorder top-bar buttons in either host.
  *
- * Lives in its own component because it now has two homes — the Configuration view's
- * "Organise Apps" section and the drawer under the top bar itself — and two copies of
- * this would drift apart the first time either changed.
- *
- * `onChange` is the only way out: it takes the next button list, or an updater given
- * the current one, exactly like a state setter. Each host decides where that list is
- * stored. `onNotice` is optional; without it the panel says its own piece inline.
- *
- * `previewScrollRef` hands the active grid's scroll container back to the host, which
- * the top bar uses to keep the preview and the real bar scrolled to the same place.
+ * onChange accepts a list or state updater; the host owns persistence.
+ * onNotice is optional, with an inline fallback. previewScrollRef exposes the
+ * grid's scroll container so the top bar can keep its preview aligned.
  */
 export default function AppOrganiserPanel({
     theme,

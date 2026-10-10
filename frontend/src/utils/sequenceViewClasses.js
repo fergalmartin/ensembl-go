@@ -1,16 +1,6 @@
-// Turning the class runs the backend sends into the per-base codes a row draws,
-// and flipping a row round when it is read on the reverse strand.
-//
-// The backend never sends a class per base. A megabase of intron would be a
-// megabyte of the letter "i" for no information, so classes travel as runs —
-// {s, e, c}, non-overlapping, ascending, with gaps where no class applies. This
-// module is where a run list meets a row.
-//
-// Runs always arrive in forward genomic order, including for a gene on the
-// reverse strand. Reverse reading is a display transform applied at the very
-// end, by orientRowForDisplay, to the sequence and its classes together — so
-// there is exactly one place where the two could fall out of step, and it is
-// eight lines long.
+// Expand backend feature runs into per-base class strings for visible rows.
+// Runs are sorted, non-overlapping {s, e, c} intervals in forward genomic order.
+// orientRowForDisplay reverses sequence and classes together when needed.
 
 import { complementBase } from './locationFocus.js'
 import { PLACEHOLDER_BASE } from './sequenceViewChunks.js'

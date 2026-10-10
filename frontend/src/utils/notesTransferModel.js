@@ -1,18 +1,7 @@
-// The Notes export tree: what can be picked, what is picked, and what a click does.
-//
-// Pure and separate from the dialog, because the frontend test harness is bare
-// `node --test` with no renderer — anything that lives inside a component is
-// untestable, and the tri-state arithmetic is exactly the part worth testing.
-//
-// Two decisions shape everything here:
-//
-//   * **Selection is a flat Set of note ids.** Branch state is derived, never
-//     stored. buildNoteSections hands back freshly constructed objects on every
-//     render and nodes come and go as filters change, so per-node state would
-//     need reconciling constantly; derived state has nothing to reconcile.
-//   * **Node ids are opaque.** A genome key already contains '::', so splitting
-//     an id apart is ambiguous. Everything a caller needs is a field on the node;
-//     the id string is only a React key and a member of the expansion set.
+// Pure selection rules for the Notes export tree.
+// Store selected note IDs in a flat Set and derive branch states from them.
+// Node IDs are opaque keys: genome keys already contain ::, so callers use
+// node fields rather than splitting IDs.
 
 import {
     GENERAL_NOTES_TARGET_ID,

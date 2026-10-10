@@ -12,6 +12,8 @@ identifiers resolve to the TSV's local query genes, whose full hit lists are the
 loaded. This is a single relationship step, not transitive family inference.
 Multiple local genes remain separate and carry their match provenance.
 
+## Results and navigation
+
 The **Summary matrix** groups target genes by species and assembly. Columns are
 searched genomes, with separate columns for multiple resolved local genes. Cells
 show homology types, identity, coverage, evidence counts, and ranked best hits.
@@ -44,6 +46,8 @@ lead directly into table headings, without a repeated query/assembly bar.
 Gene links use the shared Genome Browser icon where a local annotation is
 available; query-group links open the source gene and hit links open the target.
 
+## Ranking and evidence
+
 A ranked best hit is computed separately for each local gene and target genome:
 RBBH outranks BBH, which outranks other types; within a tier the score is
 `0.6 × identity + 0.4 × coverage`. If one score is missing, the available score is
@@ -63,6 +67,8 @@ active genomes, locally available genomes, or an individual target assembly.
 Browser links select the target genome's annotation; if several datasets match,
 the user chooses one. Targets without a local annotation can still be compared.
 
+## Session state and source discovery
+
 Queries, filters, tables, and selections survive view changes and genome toggles
 within the app session. Removing a genome from the active set cancels its pending
 work; completed results can be reused on reactivation. Results are invalidated
@@ -79,11 +85,11 @@ download's dataset identity.
 
 ## Backend interface
 
-The original `GET /api/homology/query` retains its existing behavior and response.
+The original `GET /api/homology/query` retains its existing behaviour and response.
 The workspace uses `POST /api/homology/search`, with an exact, release-aware
 `genome_key` and `gene_query`. Optional request fields are `min_identity`,
 `min_coverage`, `types` (`null` means all; `[]` means none), `target_assemblies`
-(JSON strings containing normalized species/assembly pairs), `offset`, `limit`,
+(JSON strings containing normalised species/assembly pairs), `offset`, `limit`,
 `query_gene_id`, `target_key`, `sort_key`, `direction`, and `include_evidence`.
 `focus_query_gene_id` and `focus_target_key` locate the first supporting row in
 the complete filtered/sorted result set, select its normal page, and return its
@@ -105,7 +111,7 @@ path validation. Missing files, unknown genome keys, unsupported headers, and
 invalid percentage thresholds produce explicit errors.
 
 SQLite indexes under the backend cache retain both endpoints' searchable IDs and
-names and each original row. Cold builds are serialized, streamed, and atomically
+names and each original row. Cold builds are serialised, streamed, and atomically
 published. The schema version, file size, and nanosecond modification time determine
 reuse; these indexes can be discarded and rebuilt without affecting source TSVs.
 

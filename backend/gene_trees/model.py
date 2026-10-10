@@ -1,11 +1,8 @@
-"""The normalised tree: leaf-label interpretation, statistics and export.
+"""Normalise gene-tree labels, compute statistics and export trees.
 
-A leaf's label is all a plain Newick file gives us, and tools write very different
-things there: ``ENSP00000369497_Hsap`` (Ensembl web), ``Homo_sapiens_ENSP00000369497``
-(OrthoFinder, prefixed by the proteome file name), ``Homo_sapiens.GRCh38.pep.all_ENSP…``,
-``sp|P51587|BRCA2_HUMAN``. :func:`interpret_leaf_label` pulls a species token and an
-identifier out of those; a collection can override it with its own pattern when the
-guess is wrong.
+interpret_leaf_label extracts species tokens and identifiers from Ensembl,
+OrthoFinder and UniProt label conventions. Collections can supply a custom
+pattern when those conventions do not fit.
 """
 from __future__ import annotations
 

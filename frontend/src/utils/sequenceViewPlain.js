@@ -1,28 +1,7 @@
-// Reading the sequence as text, for readers who would rather have the browser's
-// own cursor than the view's.
-//
-// The interactive display is sixty elements a row carrying a colour, an outline,
-// a rule, a mask and a hover target apiece. That is what a per-base view costs,
-// and it is what buys clicking a base to ask about it. It also means the
-// sequence is not *text*: a drag draws the view's own selection rather than the
-// browser's, `Ctrl-C` has nothing selected to copy, and `Ctrl-F` finds nothing
-// because no run of bases exists as a string in the document.
-//
-// The plain displays give that back. The rows are the same rows -- same
-// document, same layout, same collapse, same reading direction -- written into
-// one `<pre>` as lines, so everything the browser does with text works on them
-// and nothing new has to be invented for selecting, copying or finding.
-//
-// Two of them, because a reader wanting text wants one of two different things:
-//
-//   * **Plain text** is the view written out: coordinates down both margins,
-//     markers where sequence is collapsed. What you see is what you copy.
-//   * **Plain FASTA** is what you paste into something else: a header line and
-//     bases, nothing in the margins and no markers among the letters.
-//
-// Colouring survives both, as the letters' own ink rather than as a fill behind
-// them -- a background per base would be the interactive view again, in a mode
-// whose whole point is that it is not that.
+// Render the shared sequence rows as selectable text in one pre element.
+// Plain text retains coordinates and collapse markers; plain FASTA uses headers
+// and bases only. Both retain reading direction and optional letter colours,
+// while native text selection supports copying and browser search.
 
 import { CLASS_GAP, CLASS_NONE } from './sequenceViewPalette.js'
 import { FIND_NONE } from './sequenceViewPaint.js'

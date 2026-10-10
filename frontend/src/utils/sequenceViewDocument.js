@@ -1,26 +1,7 @@
-// Several named stretches of sequence, one after another, as one scrollable
-// thing.
-//
-// The view shows either a region or a collection: the genes a reader ticked off
-// a location, the transcripts they ticked off a gene, the exons and introns they
-// ticked off a transcript. Each of those is a *record* -- a name and a range --
-// and the records are stacked, each headed by its name, the way a FASTA file
-// stacks its entries.
-//
-// A plain region is the same thing with one record and no name, which is why
-// there is no second code path for it. That is the same choice the layout module
-// makes about full and collapsed sequence, for the same reason: two row models
-// that had to agree about gutters, hover, selection and buffering would drift,
-// and the one nobody exercised would be the broken one.
-//
-// Rows are counted across the whole document, so the scroller stays what it was:
-// one row space and a proportional map from scroll position to row. A header
-// costs a row like any other.
-//
-// A row's *height* is no longer part of that: a record can carry a protein lane
-// over the rows that hold coding sequence, so each entry brings the rows of its
-// own that want one and they are translated into document row space here, which
-// is the only place that knows where a record's rows begin.
+// Stack named sequence records into one scrollable document.
+// A plain region is one unnamed record. Headers occupy rows, and row numbers
+// span the document. Translate each record's protein-lane runs into document
+// row space so the shared scroller can account for variable heights.
 
 import { rowAtCoord } from './sequenceViewDisplay.js'
 import { mergeRowRuns } from './sequenceViewHeights.js'

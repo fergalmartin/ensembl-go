@@ -10,23 +10,10 @@ export function rowIndex(data){let index=indexes.get(data);if(!index){index=new 
  * making. */
 export const drawnUnit = scale => scale > 0 ? .5 / scale : 0
 
-/** Which of two tiles a stretch is better drawn from, when both hold it.
- *
- * Finest first was the rule, and above what a pixel can show it still is:
- * there the difference between one tile and another can be seen, and the
- * sharper answer is the better one. Detail stays ahead of all of it, because a
- * sequence is a sequence at any zoom.
- *
- * Below `unit` it is not a preference any more, it is a coin toss with a bill
- * attached. A tile binned a tenth of a pixel and one binned half a pixel put
- * the same picture on screen - the painters collapse both to half a pixel - and
- * the finer one gets there by reading five times as many bins to do it. Zooming
- * out is where that bites: the levels the reader has just left are all still in
- * hand, every one of them finer than the level they are now looking at, and
- * finest-first picked the very finest of them every time.
- *
- * With no `unit` nothing is under it and this is the old rule exactly, which is
- * what a readout with no camera behind it still wants.
+/**
+ * Prefer detail, then the finest tile whose resolution is visible.
+ * Below unit, prefer a coarser adequate tile to avoid reading extra bins that
+ * paint the same pixels. Without unit, retain the finest-first rule.
  */
 const band = (data, unit) => data.detail ? 0 : data.bin_size <= unit ? 1 : 2
 export const byDrawnResolution = (unit = 0) => (a, b) => {

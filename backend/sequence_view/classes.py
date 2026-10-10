@@ -1,15 +1,10 @@
-"""What each base of a window is, expressed as runs.
+"""Classify sequence windows as sorted, non-overlapping feature runs.
 
-Pure: plain values in, plain values out, no FastAPI and no import of ``main``.
+Use one-based inclusive forward-strand coordinates, including minus-strand
+genes. The client reverses sequence, labels and runs together for reverse
+reading. Gaps between runs mean no class applies.
 
-The view never receives a class per base. A megabase of intron would be a
-megabyte of the letter "i" carrying no information, so a window's description is
-a list of non-overlapping runs, ascending, with gaps where nothing applies.
-
-Coordinates are 1-based inclusive on both ends, forward strand, throughout --
-including for a gene on the minus strand. Reverse reading is a display transform
-the client applies to the sequence, the gutters and these runs together; a
-backend that emitted them reversed would double every test here for no gain.
+These are pure functions with no FastAPI dependency.
 """
 
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple

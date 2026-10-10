@@ -876,13 +876,8 @@ async def discover_trackhub_tracks(request: TrackHubDiscoverRequest):
             "assembly_name": str(genome.assembly_name or "").strip(),
         })
 
-    # Runs on a worker thread. On a cache miss this crawls the remote Track Hub
-    # Registry: up to eighty paginated searches per filter candidate per genome, each
-    # with its own twenty-second timeout, and then a trackDb fetch per matching hub. A
-    # genome the registry has nothing for is the worst case, because it exhausts every
-    # candidate before giving up. Doing that on the event loop stopped the process
-    # answering anything at all for minutes, and this view discovers silently on mount,
-    # so the only visible symptom was the rest of the app going dead.
+    # Registry discovery can require many paginated requests on a cache miss.
+    # Keep this handler on a worker thread so it cannot block the API event loop.
     grouped = await run_in_threadpool(list_tracks_for_genomes, genomes, bool(request.refresh))
     items = []
     for genome in genomes:
@@ -1080,12 +1075,8 @@ async def register_track(entry: TrackRegistryEntry):
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
-    # A file inside a tutorial workspace may only ever be registered into that workspace's
-    # own registry. Everything else about this is timing-dependent — the frontend override,
-    # the tutorial session, the order arrivals happen to run in — and a write that lands a
-    # moment after a tutorial ends would otherwise put a track in the user's real registry
-    # pointing at a directory that is about to be deleted. That happened, which is why this
-    # is here: it is the one refusal that cannot be raced.
+    # Tutorial files belong only in their workspace's registry. Check the path
+    # even if a delayed request arrives after the tutorial session has ended.
     config = _tracks_config()
     if is_inside_tutorial_workspace(path) and not is_inside_tutorial_workspace(
         _primary_track_registry_store_path(config)

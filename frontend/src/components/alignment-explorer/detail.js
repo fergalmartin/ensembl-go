@@ -1,23 +1,11 @@
 import { highlightedRows, rowSlot, panelRect } from './layers.js'
 import { ROW_HEIGHT, MARGIN_X } from './layout.js'
 
-/** Block context: one source block, read against an explicit comparison.
- *
- * The model here is deliberately transient. It is never written into the saved
- * workspace, because a lens onto a block is not a statement about the alignment
- * and a saved one could name a block, a row or a transcript that is no longer
- * there. Closing puts back the layer, camera, selection and row order the reader
- * came in with, and that restoration is what `origin` carries.
- *
- * Three separate ideas, which earlier drafts kept confusing with one another:
- *
- * - the **reference** is what everything is compared against,
- * - the **order** is where the rows sit,
- * - the **pair** is the two rows being inspected in detail.
- *
- * Changing any one of them leaves the other two alone. In particular, moving a
- * row never changes what it is compared against, and choosing a new reference
- * never rearranges the stack.
+/**
+ * Transient block-context state, kept out of saved workspaces.
+ * origin records the layer, camera, selection and row order to restore on close.
+ * Reference, row order and inspected pair are independent: changing one must
+ * leave the other two unchanged.
  */
 
 export const COMPARISON_MODES = ['reference', 'adjacent']

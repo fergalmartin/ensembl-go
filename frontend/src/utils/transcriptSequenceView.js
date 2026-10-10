@@ -1,31 +1,12 @@
-// A transcript read in its own coordinates.
+// Render transcript, CDS and protein readings in their own spliced coordinates.
+// Positions count one-based from the transcript's 5' end, increasing as genomic
+// coordinates decrease on the minus strand. genomicAt and splicedRangeFor map
+// between the two spaces.
 //
-// Everywhere else in this subsystem a position is a genomic coordinate, 1-based
-// inclusive on the forward strand. Here it is not: a *spliced position* counts
-// from the transcript's first base, 5' to 3', with the introns already gone --
-// so on the minus strand it rises as the genomic coordinate falls. That is the
-// space `/transcript-sequence` answers in, and it is the only space in which a
-// codon is three consecutive characters.
-//
-// The conversion between the two happens in `genomicAt` and `splicedRangeFor`,
-// and nowhere else. Everything above them talks about spliced positions;
-// everything below them talks about coordinates.
-//
-// The rows are the view's own: sixty to a line, a number down either margin.
-// They are built here rather than borrowed from `sequenceViewDisplay` because a
-// spliced sequence has nothing to collapse -- no introns are left in it, and
-// nothing between genes -- so the layout is one uninterrupted stretch and the
-// arithmetic is a divide. What is shared is `SequenceRow` itself, which takes
-// equal-length strings and knows nothing about what a position means.
-//
-// **Nothing here translates.** There is one translation in this application, in
-// `backend/translation.py`, and it is the only one that knows a mitochondrial
-// contig uses a different genetic code, that a non-ATG initiation codon is
-// rendered M, that a terminal stop is stripped and an internal one kept, and
-// that a CDS beginning mid-codon starts with an X. A codon table here would get
-// all four wrong in silence and would disagree with the protein the Feature
-// Explorer already shows for the same transcript. What this module does with a
-// protein is place it in rows and map its residues back to the chromosome.
+// Use uninterrupted 60-character rows because introns are already removed.
+// SequenceRow shares the rendering channels with genomic readings. Protein
+// translation comes from the backend; this module lays out residues and maps
+// their codons back to genomic coordinates.
 
 import { BASES_PER_ROW } from './sequenceViewRows.js'
 import { CLASS_CODES, CLASS_NONE } from './sequenceViewPalette.js'

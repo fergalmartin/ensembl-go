@@ -1,15 +1,8 @@
-"""Columns that carry nothing: the intersection of a cohort's gap runs.
+"""Find gap runs shared by a selected cohort of alignment rows.
 
-A column is uninformative to a reader looking at a set of sequences when every
-one of those sequences is a gap there. That is a property of the cohort and not
-of the alignment: the same column is meaningful to a reader who has the sequence
-whose insertion made it, and empty to one who has hidden that sequence. Nothing
-here is stored against the block, because nothing here is true of the block.
-
-Rows the block does not hold are not part of the answer. A sequence that is
-absent has no gap there and no base there either — it says nothing about the
-column, and counting its absence as a gap would let a block's non-members decide
-what its members are allowed to see.
+Only rows present in the block contribute to the threshold. Results depend on
+the selected cohort, so they are computed for the view rather than stored as a
+property of the source block.
 """
 import re
 from array import array

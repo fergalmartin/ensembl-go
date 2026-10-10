@@ -2,18 +2,15 @@
 
 ## Changes
 
-The primary genome reports its viewport through App, which re-renders the browser
-view. Previously the view created a new biotype filter array and new callbacks
-for every panel each time. The filter invalidated gene layout, which in turn
-repainted every canvas, including unrelated genomes. Stable filter and callback
-props plus React's ordinary shallow memoization now isolate unchanged panels.
-No custom comparator ignores callback or data changes.
+Stable biotype-filter arrays and callbacks let React's shallow memoisation
+isolate unchanged panels. Primary viewport reports are committed through App
+after navigation settles, so they do not re-render the app on every frame.
+Callback and data changes still participate in comparison.
 
 Canvas painting pauses when a panel is outside the viewport plus a 600px margin.
-The margin is measured against the nearest `overflow-y: auto|scroll` ancestor
-(the app's content area), not the window: `rootMargin` only grows the observer's
-root, so against the window a nested scroll box clipped at its own edge and
-panels woke only once they were already scrolling into view. Layout heights stay current,
+The observer uses the nearest `overflow-y: auto|scroll` ancestor, usually the
+app's content area. A window-rooted observer would still be clipped by that
+nested container. Layout heights stay current,
 so scrolling and cycling retain their geometry. Approaching the viewport paints
 the latest state; screenshot export also explicitly paints before reading the
 canvas. High-DPI resolution is unchanged. Browsers without IntersectionObserver
@@ -25,9 +22,8 @@ footers. The cache is discarded when transcript data, expansion, ordering,
 hidden rows or ghost previews change. Footer viewport observers now survive
 horizontal pans instead of being torn down and rebuilt each time.
 
-Off-screen linked panels no longer follow every frame. A panel that does not
-paint still cost most of a visible panel's work to re-render and lay out each
-frame. While pan-locked, a panel beyond the margin is held at its last position
+Off-screen linked panels update less often to reduce rendering and layout work.
+While pan-locked, a panel beyond the margin is held at its last position
 and caught up at most every 200ms, so its data keeps loading along the way; it
 goes back to live positions as soon as it is inside the margin. Zoom-only lock
 stays live because it zooms each panel from that panel's last reported position.

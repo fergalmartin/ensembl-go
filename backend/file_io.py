@@ -1,5 +1,6 @@
 """Reading genome files: gzip/bgzip-aware opening, FASTA indexing, and a FASTA
-handle that is safe to share between the threadpool's request threads."""
+handle that is safe to share between the threadpool's request threads.
+"""
 
 import gzip
 import logging
@@ -19,12 +20,7 @@ def log_progress(msg: str):
 
 
 def open_maybe_gz(filepath, mode: str = 'r') -> IO:
-    """Open a file, transparently handling gzip compression.
-
-    Detects gzip/BGZF by extension (.gz/.bgz) and opens accordingly.
-    Works for both compressed and uncompressed files.
-    Accepts both str and Path objects.
-    """
+    """Open a str or Path, using gzip for .gz/.bgz and UTF-8 in text mode."""
     filepath = str(filepath)
     is_text = 'b' not in mode
     if filepath.endswith(('.gz', '.bgz')):
@@ -92,20 +88,11 @@ def ensure_fasta_index(fasta_path: str, force_reindex: bool = False) -> str:
 
 
 class ThreadSafeFasta:
-    """Serialises access to a ``pysam.FastaFile``.
+    """Serialise access to a shared ``pysam.FastaFile``.
 
-    htslib keeps seek and block-decompression state on the handle, so two threads
-    fetching from the same ``FastaFile`` corrupt each other. htslib then reports
-    ``Failed to retrieve block. (Seeking in a compressed, .gzi unindexed, file?)``
-    and the fetch either raises or hands back the wrong bases — which surfaces as
-    a blank sequence track, or as runs of N and protein X in Feature Explorer.
-
-    Handles are cached per genome and every browse endpoint runs on a threadpool,
-    so sharing one unguarded handle is exactly the situation that triggers it.
-
-    A lock rather than one handle per thread: the ``.fai`` of a fragmented
-    assembly can hold hundreds of thousands of records, and a handle per worker
-    thread would multiply that resident cost.
+    htslib stores mutable seek and decompression state on each handle; concurrent
+    reads can fail or return wrong bases. A lock lets request threads safely
+    share one cached handle without duplicating large FASTA indexes per thread.
     """
 
     __slots__ = ("_fasta", "_lock")

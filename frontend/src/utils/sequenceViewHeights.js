@@ -1,31 +1,7 @@
-// How tall each row is, when they are not all the same.
-//
-// Every row used to be exactly `rowHeight`, and the scroller turned a scroll
-// position into a row with one divide. That is worth keeping: it is what makes a
-// whole chromosome scrollable at all. But the protein lane only has anything to
-// draw over coding sequence, and adding its eighteen pixels to every row of a
-// transcript to serve the third of them that are exonic is eighteen pixels of
-// nothing on all the others.
-//
-// So a row's height is the base height plus, on the rows that carry a lane, the
-// lane's. The rows that carry one are given as *runs* -- `{from, to}` inclusive,
-// in document row space -- because they come from CDS segments, which are tens
-// of stretches and not tens of thousands of rows. A transcript with a hundred
-// coding exons has at most a hundred runs, so everything here is a binary search
-// over a couple of hundred numbers rather than a table with a row in it for every
-// row on the chromosome.
-//
-// **A uniform document is one with no runs**, and then every function below
-// reduces exactly to the multiplication or the divide it used to be. That is the
-// point of the shape: there is one row model, the arithmetic path is the one
-// almost every document takes, and it is the same code that a document with
-// lanes in it exercises.
-//
-// The scroller's compression -- for regions too tall for a browser's element --
-// is untouched by this, and cannot meet it: a lane needs a single reading frame,
-// which means a transcript or a feature in focus, and the largest of those is
-// two and a half megabases against the twenty-seven a compressed spacer starts
-// at.
+// Index variable row heights without allocating a record for every row.
+// Protein-lane rows are inclusive {from, to} runs in document row space.
+// Binary searches add the lane height only within those runs. Without runs,
+// lookups reduce to ordinary multiplication and division.
 
 function num(value, fallback = 0) {
     const parsed = Number(value)

@@ -1,19 +1,8 @@
 /**
- * Split a transcript exon into coding / non-coding drawing segments.
- *
- * Annotation coordinates here are GFF-style, 1-based and inclusive on both ends,
- * so a single-base feature is `start === end`. Gene predictors emit those freely:
- * the Helixer human annotation, for example, has ~22.7k single-base exons (11% of
- * its exons are 3bp or shorter), typically as a 1bp 5' UTR opening a transcript.
- * Treating a single-base exon as empty makes the 5' end of such a gene disappear,
- * leaving only the bare intron line running to the transcript start.
- *
- * Segments are returned in the same inclusive convention as the input, so a
- * segment covers every base from `start` to `end` and a single-base segment has
- * `start === end`. Callers must therefore map them to pixels as the half-open
- * range [x(start), x(end + 1)) — `getGenomicIntervalPixelBounds` does this.
- *
- * Returns [] only when the exon is genuinely unusable (non-finite, or inverted).
+ * Split exons into coding and non-coding drawing segments.
+ * Input and output use one-based inclusive coordinates, so start === end is a
+ * valid single-base exon. Map segments to pixels as [x(start), x(end + 1)).
+ * Return [] only for invalid or inverted coordinates.
  */
 export function getTranscriptExonSegments({ exonStart, exonEnd, cdsList = [] }) {
   const start = Number(exonStart)

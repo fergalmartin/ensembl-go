@@ -1,21 +1,10 @@
-"""Keep the API answering while a long parse holds the interpreter.
+"""Yield periodically during long annotation work to keep the API responsive.
 
-The heavy annotation work — analysing a GFF3, building a browse index — runs on
-a background thread inside the API process. CPython lets one thread at a time
-run bytecode, and a tight parse loop reacquires the interpreter lock so quickly
-that the event loop is starved rather than merely slowed: measured against the
-7 MB C. elegans GFF3, ``/api/health`` went from 1.4 ms to 2.8 s and the download
-view's genome list from 32 ms to 3.0 s. On the 1.6 GB RefSeq human GFF3 the same
-starvation lasts for the whole analysis, which is why the download and genome
-views looked like they had hung.
+Parsing runs on background threads but can still starve the event loop by
+repeatedly reacquiring CPython's interpreter lock. Brief, regular pauses let
+other threads run at a small cost to parsing speed.
 
-Standing aside briefly and regularly fixes that. The parse pays a bounded
-fraction of its runtime — roughly a tenth — and every other request stays
-interactive, which is the trade the app wants: an analysis taking eleven minutes
-instead of ten is invisible, an app that stops answering for ten minutes is not.
-
-Set ``ENSEMBL_GO_COOPERATIVE_YIELD=0`` to turn the yielding off (benchmarks that
-want the raw parse speed).
+Set ENSEMBL_GO_COOPERATIVE_YIELD=0 to disable yielding for benchmarks.
 """
 
 from __future__ import annotations

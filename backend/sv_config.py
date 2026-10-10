@@ -208,7 +208,7 @@ def locate_pointer_lines(text: str, diagnostics: List[Dict[str, Any]]) -> List[D
 
 
 # ---------------------------------------------------------------------------
-# Small pure helpers, shared with main.py
+# Pure helpers shared by SV configuration and dataset resolution
 # ---------------------------------------------------------------------------
 
 

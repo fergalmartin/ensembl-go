@@ -5,18 +5,9 @@ export default function AppButtonIcon({ buttonId, isLight, compact = false }) {
   const size = compact ? 18 : 24
   const strokeWidth = compact ? 1.8 : 2
 
-  // Three codons, filling the tile.
-  //
-  // This went through abstract dashes, then letters with a magnifying glass over them.
-  // Both failed the same way: the icon renders at 18px, and anything layered over the
-  // lettering — a lens ring, a masked disc, a magnified glyph — collapses into noise at
-  // that size. What survives the reduction is the lettering itself, so the lettering is
-  // all there is, set as large as three rows will go.
-  //
-  // Height is the binding constraint, not width: three cap-heights plus gaps fit at
-  // about font-size 10 and no more, which is why the width is filled with letter-spacing
-  // rather than a larger face. Weight 800 rather than 700 because the extra stem width
-  // is what keeps the glyphs legible against the tile.
+  // Draw three codons at a size that remains legible in an 18px icon.
+  // Height limits the font size; letter spacing fills the width. Weight 800 keeps
+  // the stems visible at that scale.
   if (buttonId === 'sequence') return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <g fill="currentColor" fontFamily={FONT_MONO} fontSize="10" fontWeight="800" letterSpacing="2">

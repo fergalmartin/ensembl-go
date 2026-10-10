@@ -1,22 +1,10 @@
-"""Where the genes are in a region, and where their exons are.
+"""Return gene and exon spans for client-side sequence collapse.
 
-The view can collapse the parts a reader is not looking at -- intergenic
-sequence between genes, intronic sequence inside them -- into a marker saying
-how much was skipped. The two are separate switches, each with its own flank and
-its own floor, so what the backend answers is not "what to keep" but the two
-span lists every version of that question is derived from:
+The client derives intergenic ranges by subtracting genes from the region,
+and intronic ranges by subtracting exons from genes. It applies flank and
+minimum-length settings locally, without another annotation request.
 
-    intergenic = the region, minus the genes
-    intronic   = the genes, minus their exons
-
-Both subtractions are the client's, and so are the flanks, the floors and the
-markers. That is deliberate: a reader changing their mind about which kind to
-hide, or how much of its edges to keep, is changing nothing about the annotation,
-and it re-lays-out the view without a round trip. What needs the annotation --
-where the genes and exons are -- is answered once and cached.
-
-Coordinates are 1-based inclusive on both ends, on the forward strand, as
-everywhere else in this package.
+All coordinates are one-based inclusive on the forward strand.
 """
 
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple

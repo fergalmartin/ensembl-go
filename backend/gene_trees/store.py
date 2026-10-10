@@ -1,18 +1,10 @@
-"""The gene-tree library: an index over imported tree collections, in one SQLite file.
+"""Store imported gene-tree collections in a searchable SQLite library.
 
-One file, not a folder: ``local_data/`` is scanned for species directories, and a
-``gene_trees/`` folder there would be read as a species.
+Use one file: a gene_trees/ directory under local_data would be mistaken for a
+species. Keep each tree's original text compressed and materialise nodes only
+when opened. Index leaf identifiers for lookup without scanning the source.
 
-A collection is whatever one import produced — a single tree, a multi-tree Newick
-file, a whole Compara EMF release or an OrthoFinder ``Gene_Trees/`` folder. It is
-*indexed*, not loaded: each tree is kept as its original text, compressed, and
-turned into nodes only when it is opened; what is searchable up front is every
-leaf's identifiers (``members``). A Compara release of 54,000 trees and four million
-leaves costs about what its .gz does, and finding the trees that hold a gene is an
-index lookup rather than a scan.
-
-Rows use integer keys (``cid``, ``tid``, ``sid``) because ``members`` has millions of
-them; the public identifiers are the collection's uuid and the tree's ``tree_id``.
+Rows use integer cid/tid/sid keys; public IDs use collection UUIDs and tree_id.
 """
 from __future__ import annotations
 

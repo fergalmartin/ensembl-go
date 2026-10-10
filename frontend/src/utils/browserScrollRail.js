@@ -1,16 +1,6 @@
-// The genome browser's own scroll bar: the vertical rail down the left-hand
-// gutter, carrying a coloured dot per active genome and a ring showing where the
-// page currently is.
-//
-// The dots are not decoration. A dot sits at exactly the scroll position that
-// parks its genome's control bar against the app's top bar — the same position
-// the Cycle wheel's Jump scrolls to — so the ring coming to rest on a dot and
-// the genome arriving at the top are the same event, not two things that have to
-// be kept in step.
-//
-// Everything that reads the page's geometry lives here, shared with the browser
-// view, so the rail and the Cycle wheel's alignment can never disagree about
-// where a genome begins.
+// Share scroll geometry between the browser rail and Cycle's Jump action.
+// A genome dot marks the scroll position that aligns its control bar below
+// the app's top bar. The position ring uses that same coordinate system.
 
 // The app's scroll container. Deliberately does *not* insist the content already
 // overflows: the whitespace under the last panel exists precisely to create that

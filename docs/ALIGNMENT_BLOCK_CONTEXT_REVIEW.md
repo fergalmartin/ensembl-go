@@ -1,6 +1,10 @@
 # Block context review — 14 September 2026
 
-Reviewed the initial implementation and the running 44-mammal EPO alignment, including block 3 and its human, mouse and rat rows. The changes below are a corrective pass over the existing implementation, not a claim that the full earlier proposal has been delivered.
+Historical review of the initial implementation and the 44-mammal EPO alignment,
+including block 3's human, mouse and rat rows. Findings, completed fixes and
+remaining work below refer to 14 September 2026. See the
+[usage guide](ALIGNMENT_EXPLORER.md) and [engineering handoff](ALIGNMENT_EXPLORER_HANDOFF.md)
+for later implementation notes.
 
 ## Main design finding: shared gaps dominate the selected comparison
 

@@ -1,15 +1,9 @@
-"""Finding a pattern in a region, however large the region is.
+"""Search a focused region in bounded blocks, including reverse reading.
 
-Separated from the router the way ``spans`` and ``windows`` are: the awkward
-part here is not the HTTP but the walk -- a region in focus can be a whole
-chromosome, and a scan that held one would cost this process a quarter of a
-gigabyte for one request. So the region is walked in blocks, and the only things
-that can go wrong are about where the blocks meet.
-
-Coordinates are 1-based inclusive on both ends, as everywhere else in this
-package. Offsets, which are what this module works in, are 0-based along the
-sequence *as displayed* -- so on a region the reader has turned round, offset 0
-is the region's last base. ``matches_in_region`` converts back before returning.
+Block scanning avoids holding a whole chromosome in memory. Internal offsets
+are zero-based along the displayed sequence; offset 0 is the region's last
+base when reversed. matches_in_region returns one-based inclusive genomic
+coordinates.
 """
 
 import re

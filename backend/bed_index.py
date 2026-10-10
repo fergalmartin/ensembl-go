@@ -1,24 +1,13 @@
-"""Random access to plain BED and GFF/GTF files, shaped like a pyBigWig BigBed handle.
+"""Expose plain BED and GFF/GTF tracks through a BigBed-compatible interface.
 
-A plain BED file has no index, so the browser used to scan the whole file on every
-request — once per pan step, per track. Here a file is read once into per-chromosome
-arrays sorted by start, and then answers range queries by binary search until the file
-changes on disk. A bgzipped file with a tabix index is queried through the index instead,
-so a very large annotation is never pulled into memory.
+Plain files are cached as sorted per-chromosome arrays and queried by binary
+search until the source changes. BGZF files with tabix indexes are read through
+those indexes. GFF/GTF tracks can expose individual intervals or transcript
+models assembled into BED12 rows; they do not replace the genome annotation.
 
-GFF3 and GTF files are read the same way, as generic intervals: one feature per line.
-Or, as gene models: exons, CDS and UTRs gathered under their transcripts into BED12-
-shaped rows, so the browser draws transcript structures. That is display only — nothing
-here joins the annotation the app uses for genes (the custom-genome import does that).
-Each line becomes a BED-shaped row — 0-based start, a name taken from the usual
-attributes, the file's own colour where it gives one — and its type, source and
-attributes ride along as named extra fields.
-
-Both sources expose the three calls the BigBed tile endpoints make — ``chroms()``,
-``entries(chrom, start, end)`` and ``SQL()`` — with ``entries`` returning the same
-``(start, end, rest)`` rows pyBigWig does, ``rest`` being the tab-joined columns after
-the first three. That lets plain BED share the BigBed tiling, parsing and summarising
-unchanged.
+chroms(), entries() and SQL() match the interface used by the BigBed tile routes.
+entries() returns (start, end, rest), with zero-based half-open coordinates and
+the remaining BED columns joined by tabs.
 """
 
 from __future__ import annotations

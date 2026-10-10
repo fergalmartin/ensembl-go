@@ -1,14 +1,8 @@
-/** What a comparison band can say, and the colour it says it in.
- *
- * Deliberately not the base palette and not the feature palette: a band is a
- * measurement, and colouring it like sequence or like annotation would invite
- * it to be read as either. Substitution is warm because it is the only kind
- * that is a difference between two known bases; both gap kinds are cool and
- * distinct from each other because which row is missing is the whole point;
- * unknown and unavailable are neutral, because neither is evidence of anything.
- *
- * Order is significance, not size: one substituted column inside a bin of a
- * hundred matches is worth seeing, so difference is drawn before absence.
+/**
+ * Colour measured differences separately from bases and annotation.
+ * Substitutions are warm; the two directional gap types use distinct cool
+ * colours. Unknown and unavailable data are neutral. Prioritise differences
+ * over absence so a small substitution remains visible within a larger bin.
  */
 export const BAND_KINDS = [
   ['substitution', '#e0913a', 'Substituted'],

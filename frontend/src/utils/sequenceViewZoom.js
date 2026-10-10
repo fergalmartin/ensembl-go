@@ -1,24 +1,7 @@
-// Reading the sequence from further away.
-//
-// At full size the view is what it has always been: sixty letters a row, a
-// coordinate down each margin, every base its own element and every one of them
-// clickable. That is the right thing for reading sequence and the wrong thing
-// for seeing shape -- where the exons of a transcript fall, how much of a gene
-// is intron, whether the thing being looked for is above or below. Answering
-// that meant scrolling and remembering.
-//
-// Zooming out keeps the same rows and shrinks them. Sixty bases a row does not
-// change -- it is what the view is -- so a smaller row is not more sequence per
-// line but more lines on the screen, which is exactly the axis the question is
-// asked along.
-//
-// Below full size the letters go. They are unreadable long before the row is
-// small enough to be worth zooming out for, and drawing them is what makes the
-// view expensive: a screenful at a quarter size is four times the rows and four
-// times the elements, which is a slideshow. So anything short of full size is
-// drawn as one canvas of coloured blocks instead -- no elements per base, no
-// sequence to fetch, and the colours that carry the annotation kept exactly as
-// they are. See components/sequence-view/SequenceOverview.jsx.
+// Zoom the sequence view by shrinking rows while keeping 60 bases per row.
+// At full size, individual cells support base inspection. Below full size,
+// SequenceOverview draws annotation colours on one canvas without letters or
+// sequence fetches, avoiding a growing number of per-base elements.
 
 import {
     BASE_ROW_PX,

@@ -243,17 +243,13 @@ export default function FocusLocationDrawer({
         ? (open ? (wideSlotOccupied ? LOCATION_DRAWER_DETAIL_WIDTH : LOCATION_DRAWER_WIDTH) : LOCATION_DRAWER_RAIL_WIDTH)
         : 0
 
-    /* Ask the panel for the height this drawer actually needs.
+    /*
+     * Report the drawer's required height as a delta from its current height.
      *
-     * Reported as a delta against what it has now — the shortfall of the list
-     * that is scrolling, or the floor the wide slot needs — because the panel is
-     * what owns its own height and this is the only party that can see whether
-     * the content fits. A delta rather than an absolute so the two converge in a
-     * frame or two without either having to model the other's layout.
-     *
-     * The sequence box is deliberately not measured: it holds up to a megabase
-     * and would ask for the whole screen, so the wide slot asks for a fixed floor
-     * and scrolls inside it. */
+     * The panel owns resizing; the drawer measures list overflow and the wide-slot
+     * minimum. Use a fixed floor for the sequence box, whose contents can be much
+     * taller than the screen, and let it scroll internally.
+     */
     const reportFit = useCallback(() => {
         if (!onHeightFitChange) return
         const root = rootRef.current

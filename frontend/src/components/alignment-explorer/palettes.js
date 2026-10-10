@@ -1,14 +1,7 @@
-/** The colours a scheme can be drawn in, kept apart from what a scheme means.
- *
- * Two kinds, because the two kinds of scheme ask different questions. `bases`
- * needs four unordered colours that stay apart from each other; conservation
- * and presence need one ordered ramp, where the order is the whole message.
- *
- * Every palette carries both themes explicitly rather than deriving one from
- * the other. A ramp has to gain contrast against the page as the quantity
- * rises - darkening toward the high end on a light ground, brightening on a
- * dark one - so the two are not the same colours with the lightness flipped,
- * and a palette that got that backwards would read as an inverted scale.
+/**
+ * Define base palettes and ordered ramps independently of scheme semantics.
+ * Each palette has explicit light and dark forms. Ramps gain contrast as values
+ * increase: darker on a light background and brighter on a dark one.
  */
 import { NUCLEOTIDE_COLORS } from '../../utils/nucleotideStyle.js'
 

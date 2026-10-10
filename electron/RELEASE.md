@@ -1,10 +1,9 @@
-# Release Packaging
+# Release packaging
 
 Use this when creating distributable artifacts for other users. Sections 0-3 cover
 macOS; Windows and Linux have their own sections at the end.
 
-Each platform packages its backend differently, and this is the main thing to keep
-in mind when releasing:
+Backend packaging differs by platform:
 
 | Target  | Backend shipped as                               | Must be built on |
 | ------- | ------------------------------------------------ | ---------------- |
@@ -12,9 +11,8 @@ in mind when releasing:
 | Linux   | native PyInstaller executable in app resources   | Linux            |
 | Windows | Python source tree, run through WSL at first use | Windows          |
 
-PyInstaller emits a host-native executable, so the macOS and Linux targets cannot be
-cross-built. `check-backend-prereqs.js` refuses a target that does not match the host
-rather than letting a long build silently package a foreign binary.
+PyInstaller produces a native executable for the build host.
+`check-backend-prereqs.js` rejects macOS or Linux targets that do not match it.
 
 ## 0) Release preflight
 
@@ -24,9 +22,10 @@ Run from a clean source checkout before packaging:
 npm --prefix frontend ci
 npm --prefix electron ci
 python3 -m pip install -r backend/requirements.txt
+python3 -m pip install pytest httpx
 python3 -m pytest backend/tests -q
-python3 -m py_compile backend/main.py backend/download_manager.py backend/security_utils.py backend/assembly_report.py backend/genome_identity.py backend/stats_utils.py backend/trackhub_registry.py
-npm --prefix frontend test
+python3 -m compileall -q backend
+TZ=UTC npm --prefix frontend test
 npm --prefix frontend run lint
 npm --prefix frontend run build
 npm --prefix frontend audit --omit=dev
@@ -40,27 +39,24 @@ Expected notes:
   backlog item, not a release blocker.
 - Frontend lint may report warnings; packaging should stop only on lint errors.
 - The backend dependency set is constrained by `backend/constraints.txt`.
+- `TZ=UTC` matches the screenshot filename tests' assumptions.
 
 ### Species grouping artifacts
 
-The download view groups species (Mammals, Insects, Plants and so on) using
-`backend/data/taxonomy_classification.json`, which maps each catalogue taxid to its
-NCBI lineage. That artifact does most of the work: with it, every species in the
-catalogue it was generated against lands in a real group, and without it the name
-heuristic leaves roughly a third of them in "Other".
+The Download view uses `backend/data/taxonomy_classification.json` to group
+species by NCBI lineage. Species missing from that file fall back to name
+heuristics, which can place them in less specific groups.
 
-The artifact is generated at build time, but the species catalogue is downloaded at
-run time and Ensembl keeps adding to it, so coverage decays. Species the artifact does
-not cover fall back to the heuristic.
+The catalogue is downloaded at runtime and gains new species, so refresh the
+classification data before releasing.
 
-**The distribution builds handle this themselves.** `dist:mac:release`, `dist:win` and
-`dist:linux` all run `npm run refresh:classification` before packaging, so a release
-cannot ship a stale artifact by accident. That step:
+`dist:mac:release`, `dist:win` and `dist:linux` run
+`npm run refresh:classification` before packaging. It:
 
-1. downloads the current species catalogue (small) and measures coverage;
-2. stops there if coverage is within 1%, which costs about a second;
-3. otherwise downloads the NCBI taxdump (~76 MB), regenerates the artifact, and
-   refreshes `project_classification.json` too.
+1. Downloads the current catalogue and measures classification coverage.
+2. Stops if the uncovered share is at most 1%.
+3. Otherwise downloads the NCBI taxdump (about 76 MB), regenerates taxonomy
+   classification and refreshes `project_classification.json`.
 
 To run it by hand, or to see where things stand without building:
 
@@ -88,33 +84,24 @@ since a package without them mis-groups a large share of the catalogue.
 
 ### Reading the npm audit output
 
-`npm audit` without `--omit=dev` reports a large number of findings for both
-packages. Those are build tooling — Vite, Rollup, PostCSS, electron-builder and
-its dependencies — which runs on the build machine and is never shipped. The
-`--omit=dev` runs above are the ones that gate a release, and they cover what
-actually reaches users.
+Use `npm audit --omit=dev` for production npm dependencies, and review the full
+audit separately for build tools such as Vite, Rollup, ESLint and
+electron-builder. An audit result describes the dependencies and advisory data
+checked at that time; rerun it for each release.
 
-Do not run `npm audit fix --force` to clear the noise. Nearly all of these need
-major version bumps, and `--force` would silently change Electron and
-electron-builder majors mid-release.
+Review dependency changes before applying fixes. `npm audit fix --force` can
+change major versions of Electron or the packager during a release.
 
-**The production audit has one blind spot.** `electron` is a devDependency, so
-`--omit=dev` ignores it, but electron-builder bundles the Electron *runtime
-binary* into the shipped application. An unsupported Electron therefore ships
-unpatched Chromium to users while the audit reports zero production
-vulnerabilities. Check it explicitly:
+Electron is a dev dependency, but its runtime binary ships with the application.
+The production audit excludes it, so check the runtime separately:
 
 ```bash
 npm --prefix electron run check:electron-runtime
 ```
 
-Electron supports only the latest three majors. The check compares the bundled
-version against the current release and, because the runtime is currently within
-that window, runs in `--strict` mode: it **fails** the release builds if the
-bundled Electron falls out of support. That is deliberate — it is what stops the
-runtime drifting out of support unnoticed again. If you ever need to ship from an
-unsupported runtime knowingly, drop `--strict` from the `check:electron-runtime`
-script rather than removing the check.
+`check:electron-runtime` compares the bundled version with the support window
+configured in `scripts/check-electron-runtime.js`. It runs in `--strict` mode
+and fails release builds when the runtime falls outside that window.
 
 Desktop security smoke checks:
 
@@ -124,7 +111,8 @@ Desktop security smoke checks:
   header is missing.
 - Remote genome downloads and Track Hub imports reject non-HTTPS/private-host
   URLs.
-- Deleting a local file outside `output_dir/local_data` is rejected.
+- Managed-genome deletion rejects paths outside `output_dir/local_data`.
+- Manual-genome removal preserves source files and checks generated-file ownership.
 
 ## 1) Configure Apple signing + notarization
 

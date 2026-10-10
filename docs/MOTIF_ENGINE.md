@@ -1,19 +1,11 @@
 # Find: pattern preparation and rendering
 
-> **The word is Find.** This engine was built for the alignment explorer under
-> the name *motif*, which named what a biologist looks for rather than what the
-> control does — and left the sequence view with nothing to call the same thing
-> when it grew one. Everything a reader sees now says Find.
->
-> The identifiers did not change: the colour scheme's id, the storage key and
-> the `/motif-jobs` routes below are all still `motif`. They are written into
-> stored workspaces and into a running server, and renaming them would cost a
-> migration to change a word nobody sees.
->
-> The *model* — the ordered list of patterns, their colours and switches, and
-> which of two overlapping patterns wins a base — is now
-> `frontend/src/utils/findPatterns.js`, shared with the sequence view. See
-> **Finding something** in `SEQUENCE_VIEW.md` for the other half.
+The interface calls this feature **Find**. Internal `motif` identifiers, storage
+keys and `/motif-jobs` routes remain for compatibility with saved workspaces.
+
+`frontend/src/utils/findPatterns.js` defines the shared pattern list, colours,
+enabled switches and overlap priority. See **Finding something** in
+[SEQUENCE_VIEW.md](SEQUENCE_VIEW.md) for the sequence-view integration.
 
 In the alignment explorer, Find is its own control on the bar, next to Colour,
 and works as the sequence view's does: the face opens a find box under the bar,
@@ -81,7 +73,7 @@ runs = cache.region(key, composition_key(motifs), 0, 9, step=1)
 
 An adapter supplies immutable sequence revision keys, a lazy sequence loader,
 ordered motifs, a cancellation callback and a progress callback. The alignment
-adapter lives in `backend/alignment_explorer/motif_jobs.py`; one worker serializes
+adapter lives in `backend/alignment_explorer/motif_jobs.py`; one worker serialises
 preparation without blocking HTTP request handling. Separate views do not cancel
 one another's jobs.
 

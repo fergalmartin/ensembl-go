@@ -23,20 +23,12 @@ export function hiddenSelection(selection=[],highlighted=[],fragments=[]) {
 /** Whether there is anything to hide down to. */
 export const canHide=choice=>!!(choice.blocks.length||choice.rows.length)
 
-/** Every block the choice keeps, in file order.
- *
- * `or` takes the union: each thing picked out brings its blocks with it, so
- * picking two blocks and three sequences keeps both blocks and every block any
- * of the three runs through. It answers "show me everything I marked".
- *
- * `and` reads the picks as conditions on one block, which is a different
- * question: not "where does any of this appear" but "where does all of it
- * coincide". Picked blocks become the candidates — nothing outside them is
- * considered — and each candidate has to hold every picked sequence. With no
- * sequences picked the blocks stand alone, and with no blocks picked the whole
- * file is the candidate list, so three sequences keep only the blocks holding
- * all three. A condition nothing satisfies keeps nothing, which is an answer
- * rather than a failure and is reported as one.
+/**
+ * Return kept blocks in file order.
+ * or unions picked blocks with blocks containing any picked sequence.
+ * and uses picked blocks as candidates, then requires every picked sequence.
+ * With no block picks, all blocks are candidates; with no sequence picks, keep
+ * the picked blocks. No matching candidate produces an empty result.
  */
 export function keptBlocks(choice,membership=[],mode='or') {
   const order=blocks=>[...blocks].sort((a,b)=>a-b)
@@ -73,18 +65,11 @@ export function hideResult(choice,membership=[],{what='blocks',mode='or'}={}) {
   return {blocks:blocks.filter(block=>holds.has(block)),rows}
 }
 
-/** Which of a layer's blocks hold each picked sequence.
- *
- * Original has to ask the server this: a sequence runs the length of the file
- * and the blocks it visits are mostly not loaded. A layer neither can nor needs
- * to. It holds only the chunks taken into it, and those chunks are the whole
- * truth about which of its blocks carry which sequences - a block the layer
- * does not have is not a block the layer can keep.
- *
- * A block can be several chunks once pieces of it have been moved separately,
- * so what each of them holds is unioned under the one block number, and a block
- * holding none of the picks is left out entirely: `keptBlocks` reads an entry's
- * presence as "this block carries a pick" when it takes the union.
+/**
+ * Find picked-sequence membership from a layer's own chunks.
+ * Union membership when several chunks share a source block, and omit blocks
+ * holding none of the picks. Original needs server membership because most
+ * source blocks are not loaded; a layer already holds its complete membership.
  */
 export function layerMembership(fragments=[],rows=[]) {
   if(!rows.length)return []
@@ -99,27 +84,11 @@ export function layerMembership(fragments=[],rows=[]) {
   return [...byBlock].map(([block,ids])=>({block,ids:[...ids]})).sort((a,b)=>a.block-b.block)
 }
 
-/** A layer's hide, applied where the layer is read rather than to the layer.
- *
- * Original answers a hide by fetching the survivors' layout and packing them
- * shoulder to shoulder, because its arrangement is the file's and the file's
- * order is all it has. A layer's arrangement is the reader's own work, so
- * hiding must not move anything: the chunks that go are simply not drawn, and
- * the ones that stay are exactly where they were left. Auto arrange is there
- * for closing the gaps, and it is a separate decision.
- *
- * Rows are a separate question, and `rowLayout` answers it. Compact, the
- * default, gives the survivors one slot each in the layer's row order - the
- * same numbering `tidyLayer` gives a whole layer - so they rise to the top of
- * every chunk and a row shared by two chunks still lines up with itself across
- * them. Renumbering each chunk on its own would also close the gaps, but it
- * would put that shared row on a different line in each chunk it appears in,
- * and those lines are what the connection strings are drawn along. Keep leaves
- * every survivor on the slot it had, gaps and all, for a layer whose vertical
- * arrangement means something.
- *
- * `layoutRows` is dropped either way, so a chunk whose lowest rows all went
- * hidden shrinks to what it is still showing.
+/**
+ * Derive a layer's hidden view without moving its saved chunks.
+ * Compact rows share one slot per surviving identity across the layer; Keep
+ * preserves existing slots. Drop layoutRows so chunks shrink to visible rows.
+ * Auto arrange remains a separate action.
  */
 export function hideLayerFragments(fragments=[],hidden,rowOrder=[]) {
   if(!hidden)return fragments

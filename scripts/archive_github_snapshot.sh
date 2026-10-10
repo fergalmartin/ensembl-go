@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 
-# This script needs real bash: it uses arrays to build the rsync exclusion lists, and a
-# process substitution in the completeness check. Running it as `sh archive_github_snapshot.sh`
-# bypasses the shebang, and on macOS `sh` is bash in POSIX mode, which parses the arrays
-# but rejects the process substitution — a syntax error two thirds of the way in, after
-# the staging has already started. Re-exec rather than fail, so any of `./script`,
-# `bash script` and `sh script` behave the same.
+# Arrays and process substitution require Bash outside POSIX mode.
+# Re-exec before staging so invocation through sh works too.
 if [ -z "${BASH_VERSION:-}" ] || shopt -qo posix 2>/dev/null; then
   exec bash "$0" "$@"
 fi

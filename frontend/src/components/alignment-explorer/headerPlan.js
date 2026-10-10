@@ -1,17 +1,7 @@
-/** What a block header can say at the width it has.
- *
- * The block's number is what identifies it, so it is the last thing to go: the
- * coordinate interval drops first, then the header's actions, then the word
- * "Block" itself, down to the bare number. Nothing is ever drawn wider than the
- * room it was measured against, so a header cannot run over its own block's
- * edges into its neighbour.
- *
- * The rungs only ever improve as `room` grows, which is the property that keeps
- * zooming in from taking away a header a narrower block was already showing.
- *
- * Room is the block's own visible span and nothing else. How crowded the view is
- * as a whole has no say: one wide block among slivers has the room for all of it,
- * and used to be cut back to its number alone because its neighbours were small.
+/**
+ * Fit block headers to their own visible width.
+ * Drop coordinates first, then actions, then the word Block; retain the number
+ * as long as it fits. Wider space must never select a less detailed header.
  */
 export function blockHeaderPlan({room,actionsWidth,sourceBlock,interval,note='',compact=false,measure}) {
   const long=`Block ${sourceBlock}`,suffix=compact?` · compact`:''
@@ -35,19 +25,10 @@ export function blockHeaderPlan({room,actionsWidth,sourceBlock,interval,note='',
   return plan?{...plan,width:width(plan),line:lineOf(plan)}:null
 }
 
-/** Where a block's ruler puts its marks, and which of them can be named.
- *
- * A tick is inside the block by construction - the loop stops at its last
- * column - but the number beside it is not, and the panel is clipped at its own
- * edge. So the last tick of a block was labelled with half a number, and at the
- * edge of the viewport with half a number that continued nowhere. A mark whose
- * number does not fit is still worth drawing: it says where the column is, and
- * the two ends of the interval are already named in the header.
- *
- * `limit` is the right edge the text has to stay inside - the block's own edge,
- * or the viewport's where the block runs past it - and `from` is the first
- * column to consider, which is where the view starts rather than where the
- * block does.
+/**
+ * Place ruler ticks inside the block and labels inside the visible right edge.
+ * Keep a tick when its label will not fit. from is the first visible column;
+ * limit is the block or viewport edge the text must stay within.
  */
 export function rulerTicks({from,end,x,start,scale,step,limit,viewport=Infinity,measure,pad=3}) {
   const ticks=[]

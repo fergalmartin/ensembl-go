@@ -37,21 +37,10 @@ function layoutSignature(layout) {
 }
 
 /**
- * The genome browser's scroll bar.
+ * Draw the browser's scroll rail with one dot per active genome.
  *
- * The app's own scrollbar is a few pixels of overlay on the far right, which is
- * a poor handle for a page that is several genomes tall — and it says nothing
- * about what is on it. This replaces it with a permanent rail down the left
- * gutter, drawn in the Cycle wheel's language: one coloured dot per *active*
- * genome, and a ring for where the page is.
- *
- * The ring and the dots share one coordinate system with the Cycle wheel's Jump,
- * so "the ring is over the mouse dot" and "the mouse control bar is against the
- * top bar" are the same statement. Clicking a dot runs that same Jump.
- *
- * With a single genome there is one dot and the rail is simply a scroll bar —
- * still worth having, because one genome with every transcript expanded is an
- * easy three screens tall.
+ * Dots and the position ring use the same geometry as Cycle's Jump action.
+ * Clicking a dot aligns that genome's control bar below the app's top bar.
  */
 /**
  * Also used outside the genome browser (the Feature Explorer's sections), which

@@ -1,17 +1,7 @@
-// The gene track while its index is still being built.
-//
-// A genome can be browsed the moment its assembly is known — the ruler, the
-// regions, the sequence track all come from the FASTA. Only the genes wait for
-// the index, and on a large annotation that is minutes. So the panel opens on a
-// real browser with an empty gene track and a note saying what is happening,
-// rather than holding the whole view behind a spinner.
-//
-// Two things about that note matter more than they sound. It must not move: the
-// user pans and zooms while they wait, and a message anchored to the genes drifts
-// off screen the moment they do. And the gene track must not resize underneath
-// it: laid out from its contents the track collapses to its minimum when empty,
-// so the message would sit in a sliver and then everything below it would jump
-// when the genes arrived.
+// Keep the browser usable while its annotation index builds.
+// Regions, ruler and sequence can load from FASTA before genes are available.
+// Anchor the status message to the panel and reserve gene-track height so
+// panning cannot move it away or index completion shift the tracks.
 
 /** Height held by each gene track while its index builds, in CSS pixels. */
 export const GENE_INDEX_TRACK_HEIGHT = 104

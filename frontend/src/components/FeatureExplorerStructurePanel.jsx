@@ -866,16 +866,12 @@ export default function FeatureExplorerStructurePanel({
           >
             <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0,1fr) 260px' }}>
               <div ref={viewerBoxRef} className={`relative rounded-lg overflow-hidden ${isLight ? 'bg-gray-50' : 'bg-gray-900/40'}`} style={{ height: 420 }}>
-                {/* allow-same-origin keeps the frame on the backend's origin rather
-                    than an opaque one. It needs that for two reasons: its own CSP
-                    restricts it to connect-src 'self', which matches nothing from an
-                    opaque origin, and postMessage from an opaque origin arrives as
-                    "null", which the bridge cannot distinguish from any other
-                    sandboxed frame. It is safe here precisely because that origin is
-                    not the app's: the pairing is only dangerous when the framed page
-                    is same-origin with its embedder and could clear its own sandbox.
-                    Everything else stays denied — no popups, no top-level navigation,
-                    no forms, no downloads. */}
+                {/*
+                 * allow-same-origin preserves the backend origin for CSP 'self' and
+                 * postMessage validation. That origin differs from the embedding app's, so the
+                 * viewer cannot remove its sandbox. Popups, forms, downloads and top-level
+                 * navigation remain disabled.
+                 */}
                 <iframe
                   ref={frameRef}
                   title="Protein structure viewer"

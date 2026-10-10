@@ -407,17 +407,9 @@ export function placeNonOverlappingGeneLabels(candidates, options = {}) {
   return placed.sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
 }
 /**
- * Whether something belonging to a track would be drawn into the ruler.
- *
- * The ruler is its own band, and a gene label or footer control that reaches into it is
- * unreadable over the ticks and makes the ticks unreadable too. It happens where the two
- * are flush: a compact panel puts the ruler immediately after the last track, so anything
- * that overflows its track by even a few pixels lands on it rather than in a margin.
- *
- * A backstop, not the fix — a track that reserves the room its footer needs never reaches
- * here. It is worth having because the arithmetic has several inputs (row pitch, mid
- * offset, gap, which layout is on) and being wrong about one of them should cost a hidden
- * label rather than a ruler drawn through a gene symbol.
+ * Reject track labels or controls that would overlap the ruler.
+ * Tracks should reserve enough footer space; this guard protects the ruler
+ * when layout inputs still produce overflow.
  */
 export function intersectsRuler(top, bottom, rulerY, rulerHeight) {
   const height = Number(rulerHeight) || 0

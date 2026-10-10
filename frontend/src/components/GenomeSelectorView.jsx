@@ -2234,17 +2234,11 @@ export default function GenomeSelectorView({
         setModalOpen(false)
     }
 
-    // Build a selector record from a bundle entry (or the manual add form).
+    // Build a selector record while preserving the bundle's declared provider.
     //
-    // The declared provider is preserved rather than forced to 'manual', so a
-    // genome exported from a downloaded set and re-registered from local files
-    // reads as what it actually is. It also makes the genome key collide
-    // correctly with the same genome downloaded later — allAssemblies already
-    // prefers the download-managed record on a key clash.
-    // `prepared` is the /api/custom/prepare-annotation result, when there was one.
-    // Recording what it converted, and from what, is the only way a later removal
-    // can tell our converted GFF3 from the file the user pointed us at — the
-    // record keeps only the converted path in files.gff3.
+    // This lets imported records match later downloads; allAssemblies prefers the
+    // download-managed record on a key clash. Keep preparation provenance so removal
+    // can distinguish converted GFF3 from the user's source annotation.
 
     const mergeManualGenomeRecords = (
         records,

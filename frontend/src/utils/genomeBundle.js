@@ -1,17 +1,7 @@
-// Portable genome bundles.
-//
-// A bundle describes a set of genomes — downloaded, manually added, or
-// previously imported — with enough metadata and enough file paths to rebuild
-// the Genome Selector row exactly, provided the files are already on disk.
-//
-// This module owns the two directions:
-//   * export — turn selector records into the document the backend writes
-//   * import — turn the backend's parse result into the review matrix model
-//
-// Playlists are deliberately not the transport: a playlist entry stores identity
-// only, so a member that is not present locally cannot be recovered from it. The
-// bundle is what carries paths; playlists remain the way sets are *named*, and
-// exporting the current selection is how a playlist becomes a bundle.
+// Build portable genome bundles and import-review models.
+// Bundles carry metadata and local file paths; playlists carry identity only.
+// Export resolves selector records into a bundle, while import maps the
+// backend's parse result into the review matrix.
 
 import {
     BUNDLE_REQUIRED_FILE_TYPE,

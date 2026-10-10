@@ -1,9 +1,8 @@
-"""The application configuration: defaults, the cache-dir config file, the
-output-directory sidecars (configuration and playlists) with their schema
-migrations and revision guards, and the cached load_config / atomic save_config.
+"""Load, migrate and atomically save application configuration and playlists.
 
-Refer to this module's names as `config_store.<name>`; tests patch
-`config_store.CONFIG_FILE` and must reach every reader.
+Manage the cache-directory config, output-directory sidecars, schema migrations,
+revision guards and load cache. Access names through config_store.<name> so
+tests that patch the defining module reach every caller.
 """
 
 import copy

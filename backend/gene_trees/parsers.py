@@ -1,10 +1,7 @@
-"""Readers for gene-tree files.
+"""Read Newick, NHX, Ensembl REST JSON and Compara EMF into ParsedTree records.
 
-Every reader returns :class:`ParsedTree` objects in one flat shape, so the rest of
-the package never cares whether a tree arrived as Newick, NHX, an Ensembl REST
-JSON document or an EMF dump. Nodes are a list indexed by ``id``; the root is
-always node 0. Nothing here recurses: Compara and OrthoFinder trees can be
-thousands of nodes deep on a caterpillar-shaped branch, well past Python's stack.
+Nodes use a flat list indexed by id, with root 0. Iterative parsing supports
+trees deeper than Python's recursion limit.
 """
 from __future__ import annotations
 

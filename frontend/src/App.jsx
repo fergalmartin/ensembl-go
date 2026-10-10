@@ -2292,17 +2292,9 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nextConfig)
       })
-      // What comes back is not always what went out. The backend merges in whatever the
-      // output directory already held the first time a configuration is pointed at one,
-      // and that merge used to be discarded here: the next autosave then wrote this
-      // pre-adoption state straight back over the user's colours, playlists and
-      // selections. Take the server's answer as the saved state, so the settings the
-      // directory carried survive into the session that just adopted them.
-      //
-      // Only what the server itself changed is taken, and only where nothing here has
-      // changed it since this write went out. The answer describes the moment of this
-      // request, and several are often in flight: taking all of it let a slow reply
-      // restore a genome that had been deselected in the meantime.
+      // Adopt settings merged by the backend from the chosen output directory.
+      // Apply only fields changed by the server that are still unchanged locally
+      // since this request began, so a delayed save cannot overwrite newer edits.
       let saved = nextConfig
       if (res.ok) {
         try {

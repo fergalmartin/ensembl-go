@@ -1,24 +1,9 @@
-"""The achievements progress store: what it holds, how copies merge, how it reaches disk.
+"""Store achievement progress and merge copies without losing unlocks.
 
-Achievements are a game, but the file is still the user's data. Someone who has
-spent months unlocking them should find every one still there after a reinstall, an
-upgrade or a change of output directory, so the store is built on the same footing
-as the notes store in main.py:
-
-* **Merge, never replace.** Several copies can exist (the output-directory sidecar,
-  the working-directory sidecar, the cache fallback used before an output directory
-  was set). Loading reads all of them and unions them; nothing is ever lost by
-  picking the wrong winner.
-* **Monotonic.** Every field only grows. An unlock keeps its earliest date, a counter
-  its highest value, a set every key it has ever held. That is what makes merging
-  safe, and it is also the rule the frontend relies on: an unlock is never taken
-  back, even if a later version tightens the rule that granted it.
-* **Forward compatible.** Ids this version does not know, and top-level fields it has
-  never heard of, are carried through untouched. A file written by a *newer* schema is
-  read for display but never written, so an older app cannot flatten it.
-
-Nothing here knows what any achievement means. The rules live in the frontend
-catalogue; this module only stores the facts they are evaluated against.
+Read copies from the output directory, working directory and cache fallback.
+Merge unlocks by earliest date, counters and durations by maximum, and sets by
+union. Preserve unknown fields and refuse to overwrite a newer schema.
+Achievement rules live in the frontend; this module stores their supporting facts.
 """
 
 from __future__ import annotations

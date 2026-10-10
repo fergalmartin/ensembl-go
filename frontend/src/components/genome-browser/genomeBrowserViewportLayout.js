@@ -181,18 +181,9 @@ export function alignBandToBar({ barTop, barHeight, hostTop = 0 }) {
 }
 
 /**
- * Re-balances the current view when the right-hand overlay changes width.
- *
- * Unlike `frameRangeWithRightInset` this does not re-frame around the gene's
- * extent: it keeps whatever zoom the user is on and rescales it by the ratio of
- * visible widths, so the focus gene ends up occupying the same share of the
- * newly visible track that it did of the old one. Collapsing a 300px drawer on a
- * 1550px track is a ~21% change either way, whether the user is looking at
- * 100kb or at 10Mb — which is what stops a zoomed-out view being hauled back in
- * just to fill the space.
- *
- * Exactly reversible: the two ratios are reciprocals, so opening the drawer
- * again undoes the span change.
+ * Adjust the span by the ratio of visible widths when an overlay changes.
+ * Preserve the current framing instead of refitting the gene. Reciprocal ratios
+ * make opening and closing the drawer reversible.
  */
 export function rebalanceRangeForInsetChange({
   start,

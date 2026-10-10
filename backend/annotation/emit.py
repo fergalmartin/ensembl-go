@@ -1,16 +1,8 @@
-"""Write the canonical Ensembl-style GFF3 that everything downstream consumes.
+"""Write canonical Ensembl-style GFF3 for the browse indexer in gff_index.
 
-Output shape (docs/CUSTOM_GENOMES.md §3.7):
-
-    gene -> mRNA -> exon / CDS / five_prime_UTR / three_prime_UTR
-
-with ``gene:`` and ``transcript:`` ID prefixes, explicit ``biotype`` attributes and
-an ``Ensembl_canonical`` tag on exactly one transcript per gene. That is precisely
-the dialect ``main.create_gff_index`` already handles best, which is why
-conversion is the integration point rather than replacing the indexer.
-
-Rows are sorted by sequence region then start so the file is tabix-indexable and
-byte-stable between runs.
+Emit gene -> mRNA/transcript -> exon/CDS/UTR hierarchies with gene: and
+transcript: ID prefixes, explicit biotypes and one Ensembl_canonical tag per
+gene. Sort by sequence region and start for tabix indexing and stable output.
 """
 
 from __future__ import annotations

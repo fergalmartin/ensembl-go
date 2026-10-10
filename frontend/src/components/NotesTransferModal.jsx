@@ -1,22 +1,8 @@
-// Getting notes out of the app, and back in.
+// Import and export notes through separately sized dialogs.
 //
-// One component, two modes, because they share the plumbing — but they are
-// separate dialogs to the reader: the Notes toolbar opens whichever one was
-// asked for, and each is sized for its own job. Export needs room for a tree
-// and a note reader; import is a short form, and forcing it into the same
-// frame left it mostly empty.
-//
-// Two things about the shape are deliberate:
-//
-//   * Export is a dialog rather than a mode inside the Notes view. An export
-//     wants active and archived notes visible together, and the view's
-//     Active/Archived switch shows one set at a time.
-//   * Import cannot apply anything until it has scanned. That is enforced by
-//     the Apply button needing a scan digest, not by remembering to ask.
-//
-// Filtering decides only what the tree shows; the export sends the selection
-// and nothing else. Every rule about what is selected is in
-// utils/notesTransferModel.js.
+// Export shows active and archived notes together. Import requires a scan digest
+// before Apply. Filters affect the tree's display; only selected note IDs are
+// exported. Selection rules live in utils/notesTransferModel.js.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE } from '../backendRuntime'

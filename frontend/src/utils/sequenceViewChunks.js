@@ -1,16 +1,6 @@
-// Which pieces of sequence to ask for, in what order, and how a row's 60
-// characters are assembled out of them.
-//
-// Chunks sit on a grid anchored at genomic coordinate 1, not at the start of the
-// focus region. That way moving from a gene to one of its transcripts, or out to
-// the location around it, reuses every chunk already fetched — the sequence has
-// not changed, only the window onto it. A grid anchored at the region would
-// throw the cache away on every focus change.
-//
-// The cost of the absolute grid is that a chunk boundary can fall inside a row,
-// since the region start is not aligned to it. That is what `assembleRowSequence`
-// is for. A row is 60 bases and a chunk is 12,000, so a row straddles at most two
-// chunks and the stitch is a short loop.
+// Plan sequence fetches on a grid anchored at genomic coordinate 1.
+// The absolute grid reuses cached chunks across focus changes. A 60-base row
+// can cross at most two 12,000-base chunks; assembleRowSequence joins them.
 
 import { BASES_PER_ROW } from './sequenceViewRows.js'
 

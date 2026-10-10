@@ -1,9 +1,7 @@
-"""Resolving a genome for the browse endpoints: which configured genome a request
-means, its annotation index and FASTA handle, and the chromosome-name synonyms
-that let any naming of a region find it.
+"""Resolve configured genomes, browse indexes, FASTA handles and region aliases.
 
-The FASTA handles, recovered index paths, assembly-report rows and region/synonym
-lookups are cached here; every browse endpoint goes through these functions.
+Cache FASTA handles, recovered index paths, assembly reports and synonym
+lookups for reuse across browse endpoints.
 """
 
 import os

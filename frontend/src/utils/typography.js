@@ -1,16 +1,8 @@
 /**
- * Ensembl brand typography, shared by CSS, canvas and SVG.
- *
- * The style guide names two typefaces:
- *   - Lato          — body copy, UI chrome, small text
- *   - IBM Plex Mono — sequences, numbers and any text inside a visualisation
- *
- * The stacks below are the ones www.ensembl.org itself ships, so text rendered
- * on a canvas lines up with text rendered by the DOM even before the webfonts
- * have finished loading. `index.css` feeds the same two strings to Tailwind as
- * `--font-sans` / `--font-mono`; anything drawing into a canvas (where there is
- * no cascade to inherit from) should build its `ctx.font` with the helpers here
- * rather than hardcoding a family.
+ * Share font stacks across CSS, canvas and SVG.
+ * Use Lato for interface text and IBM Plex Mono for sequence, numbers and
+ * visualisations. index.css supplies the same stacks to Tailwind; canvas code
+ * uses these helpers because it cannot inherit CSS font settings.
  */
 
 export const FONT_SANS = 'Lato, "Helvetica Neue", Helvetica, Roboto, Arial, sans-serif'

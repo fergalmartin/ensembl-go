@@ -1,38 +1,43 @@
 # Sequence view
 
-Sequence laid out the way a file lays it out: sixty bases to a row, with the
-coordinate of the first and last base of each row down either margin, and the
-annotation painted onto the bases themselves.
+The sequence view lays out sixty bases per row, with coordinates at both margins
+and annotation drawn on the bases. It also supports spliced transcript, CDS and
+protein readings, collapsed regions, Find, selection and export.
 
-The colours are the Feature Alignment view's, from `frontend/src/utils/featureColors.js`
-— the same blue for coding sequence, the same alternating pair for codons, the
-same orange for a splice site. A reader who has learned one view can read the
-other.
+Default annotation colours come from `frontend/src/utils/featureColors.js`,
+shared with Feature Alignment. Sequence-view palettes and user overrides are
+resolved in `sequenceViewPalette.js` and `sequenceViewColours.js`.
+
+## Code layout
+
+| Area | Location |
+| --- | --- |
+| View, controls, rendering and data hooks | `frontend/src/components/sequence-view/` |
+| Layout, coordinates, classes, preferences and exports | `frontend/src/utils/sequenceView*.js` |
+| Spliced readings and residue mapping | `frontend/src/utils/transcriptSequenceView.js` |
+| API, focus windows, class runs, Find and caches | `backend/sequence_view/` |
+| Shared genome and annotation access | `backend/genome_context.py`, `backend/sequence_windows.py` |
+| Shared protein translation | `backend/transcript_translation.py`, `backend/translation.py` |
+
+The sections below include design rationale and earlier fixes. The API and
+coordinate conventions describe the contracts that callers must preserve.
 
 ## The two conventions
 
-Both are worth stating before anything else, because most of what could go wrong
-here is one of them going wrong quietly.
-
 **Coordinates are 1-based and inclusive of both ends, on the forward genomic
-strand.** That holds in `/api/sequence-view/*`, in `backend/sequence_view/`, and
-in every frontend module named `sequenceView*`. It is what the annotation tables
-hold, what the gutters print and what a FASTA header carries. The one place it is
-not true is the `fasta.fetch` call itself, which is 0-based half-open; that
-conversion happens in `_read_window` and nowhere else.
+strand for genomic readings.** Annotation runs and genomic FASTA headers use
+this convention. `_read_window` converts to zero-based half-open coordinates
+for FASTA access. Spliced readings use one-based transcript, CDS or residue
+positions instead; their segment maps retain the genomic relationship.
 
-`/api/browse/sequence` is 0-based half-open. It is a different dialect, and the
-trap it sets is documented at `frontend/src/components/genome-browser/genomeBrowserExonSegments.js:1-17`.
-Nothing in this subsystem speaks it.
+`/api/browse/sequence` accepts zero-based half-open windows. Keep this boundary
+distinct from sequence-view genomic coordinates. Inclusive exon-to-pixel
+conversion is documented in `genome-browser/genomeBrowserExonSegments.js`.
 
-**Rows are all the same height, except where one carries a lane.** A uniform row
-height is what lets the scroller turn a scroll position into a row with one
-multiply, and that is still what happens whenever nothing is drawing a lane —
-which is every document except a transcript or an exon with the protein switched
-on. Where lanes exist, the scroller asks a *height index* instead; see **A row is
-only as tall as it needs to be** below. The two costs cannot meet: a lane needs a
-single reading frame, and a compressed spacer needs a region fifty times larger
-than the largest thing that has one.
+**Rows have a uniform base height, with extra height for protein lanes.** The
+height index in `sequenceViewHeights.js` maps rows to pixels without allocating
+an entry per row. Without lanes, it reduces to multiplication and division.
+See **A row is only as tall as it needs to be** below.
 
 ## The control bar
 
@@ -2395,11 +2400,10 @@ its own.
 
 ## API
 
-All under `/api/sequence-view`, from `backend/sequence_view/`, wired in
-`backend/main.py` immediately after the alignment explorer's router. The package
-never imports `main`; it is handed the eight functions it needs, each as a lambda,
-because all of them are defined further down that file than the `include_router`
-call.
+Routes live under `/api/sequence-view` in `backend/sequence_view/`.
+`backend/main.py` registers the router and injects providers from
+`genome_context`, `sequence_windows` and `transcript_translation`. Lambdas look
+up each provider on every call so tests can patch its defining module.
 
 `POST /find` is the only one with a body rather than a query string. A regular
 expression is not a word — it is full of the characters a URL reserves — and

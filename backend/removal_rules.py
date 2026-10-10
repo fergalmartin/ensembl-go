@@ -1,26 +1,13 @@
-"""Which files may be deleted when a genome is removed.
+"""Identify app-generated files that can be removed with a manual genome.
 
-Kept free of FastAPI, sqlite-of-the-app and pysam imports so the rules can be unit
-tested directly; ``main.py`` owns the endpoints and the download-managed side.
+routes.genome_removal owns the endpoints and download-managed removal.
+Protect the user's source FASTA and annotation. Derive candidates only from
+registered paths, then check ownership: index source metadata, the converted
+GFF3 pragma, known sidecar suffixes or the stats-cache format.
 
-The hard case is a manually added genome. Its FASTA and annotation live wherever
-the user put them and must never be deleted, but the app writes real data beside
-them — a GFF3 index and its lock, ``.fai``/``.gzi``, tabix indexes, a converted
-``.ensembl.gff3.gz``, stats caches, and a decompressed copy of a gzipped FASTA
-that can run to several GB. Nothing cleans any of that up today.
-
-Every rule here is a whitelist with a proof attached:
-
-* a candidate is only ever *derived* from a registered file (the "seeds"),
-* it must then prove it is ours — an index must be SQLite naming this genome's
-  GFF as its source, a converted annotation must carry the
-  ``#!ensembl-go-converted`` pragma we wrote into it, a stats cache must parse as
-  our JSON,
-* and it must not be a seed of any other registered genome, a symlink, or a
-  directory.
-
-Anything that fails a proof is reported as protected with a reason, so the
-confirmation dialog can show the user exactly which of their files are staying.
+Reject symlinks, directories and files used by another registered genome.
+Return a reason for each protected file so the confirmation dialog can explain
+what will be kept. The rules have no FastAPI or pysam dependency.
 """
 
 from __future__ import annotations

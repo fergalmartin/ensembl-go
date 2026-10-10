@@ -1,17 +1,7 @@
 /**
- * Coordinate-ruler geometry for the genome browser, styled after the ruler on
- * www.ensembl.org.
- *
- * The Ensembl ruler is deliberately spare: no filled band, no minor ticks, and
- * no centred labels. It is a single hairline rule along the edge of the track
- * area, a 1px tick dropped at each round coordinate, and the coordinate set in
- * IBM Plex Mono immediately to the *right* of its tick. Measuring the live site
- * at 1x gives the numbers encoded below — a 16px band, 12px labels, a 4px gap
- * between a tick and its label, and a baseline 5px clear of the rule.
- *
- * Because labels sit beside their tick rather than straddling it, the tick
- * interval has to leave room for a whole label plus clearance; `rulerTicks`
- * works that out from the widest coordinate actually in view.
+ * Compute ruler geometry with labels to the right of major ticks.
+ * Use a 16px band, 12px labels, 4px tick-to-label gap and 5px baseline clearance.
+ * rulerTicks reserves the widest visible label plus clearance between ticks.
  */
 
 /** Height of the ruler band, including its 1px rule. */

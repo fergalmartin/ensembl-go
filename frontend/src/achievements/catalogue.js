@@ -1,27 +1,11 @@
-// Every achievement, in the order they are numbered.
+// Achievement definitions in number order; rules are evaluated by rules.js.
 //
-// This file is data. What an achievement *means* is its `rule`, evaluated by
-// ./rules.js against the facts the tracker collects; what the user *did* is recorded by
-// `trackAchievement(...)` calls in the views, each one a single line beside code that
-// already runs.
+// IDs are permanent progress keys and numbers are permanent display labels.
+// Append new achievements with the next number. To withdraw one, keep its entry
+// and set retired: true. achievements.lock.json and the tests enforce these rules.
 //
-// Two things here are promises to every user who has ever unlocked anything, and are
-// enforced by tests/achievements.test.js against ./achievements.lock.json:
-//
-// * `id` is the key progress is stored under. It never changes and is never reused.
-//   Rename the `name` as often as you like; never the id.
-// * `number` is what the view shows, and people use it to spot what they are missing.
-//   New achievements take the next number; numbers are never reshuffled. A retired
-//   achievement keeps its entry with `retired: true`, so its number is never reused.
-//
-// Rule types (see ./rules.js):
-//   event     — `event` has happened at least once
-//   count     — `event` has happened `target` times
-//   distinct  — `target` different keys seen for `set` (only `keys`, when given)
-//   taxon     — a downloaded genome's lineage includes any of `taxa`
-//   allOf     — every rule in `rules`
-//   meta      — `target` other achievements unlocked
-//   duration  — `metric` has accumulated `targetMs` of active use
+// Rule types: event, count, distinct, taxon, allOf, meta and duration.
+// Views record facts through the tracker from existing action handlers.
 
 const MINUTE = 60 * 1000
 const HOUR = 60 * MINUTE

@@ -1,15 +1,8 @@
 /**
- * Data views subtree by subtree.
- *
- * The Original tree shows one data view, or none. In a subtree layer each subtree carries
- * its own (`fragment.dataView`, saved with the layer), so one can show its transcripts while
- * another shows its neighbourhoods. The Data view button acts on the subtrees the selection
- * touches, or on all of them when nothing is picked (`viewScope`).
- *
- * Drawing them: one column per view in use, each told which lanes (subtrees) are its own,
- * put together as one column the painter and the canvas already know how to use
- * (`composeColumns`). Subtrees showing Structure or Sequence share one alignment of all
- * their genes, so their columns line up and conservation means the same everywhere.
+ * Choose and compose data columns for Original or individual subtrees.
+ * Original has one data view; each layer fragment stores its own dataView.
+ * The control acts on selected subtrees, or all when nothing is selected.
+ * Structure and Sequence share one alignment so columns and conservation agree.
  */
 
 export const DATA_VIEWS = ['neighbourhood', 'structure', 'sequence']

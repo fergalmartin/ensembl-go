@@ -1,20 +1,6 @@
-// How this view writes down the small facts about a feature.
-//
-// One module because the same three facts -- what kind of thing it is, which
-// strand it is on, how long it is -- are written in the gene list, the transcript
-// list, the record headings, the box a click opens and the hover readout, and
-// they were being written five different ways: "Protein-coding" in one place and
-// "protein coding" in another, a bare "+" here and "+ strand" there.
-//
-// The rules:
-//
-//   * A biotype is the annotation's own word, lower case, with underscores as
-//     spaces. `protein_coding` is "protein coding" everywhere. Names that carry
-//     an acronym keep it: lncRNA, snoRNA, TEC.
-//   * A strand is "+ strand" or "- strand", never a bare sign.
-//   * Facts are separated by space, not by punctuation. A row of middle dots is
-//     furniture: it takes a line that reads as three facts and makes it read as
-//     one sentence with something missing.
+// Format feature facts consistently across lists, headings and readouts.
+// Biotypes use lower case with spaces, preserving acronyms such as lncRNA.
+// Strands read + strand or - strand. Separate facts with spaces.
 
 /**
  * One word of a biotype, in this view's case.

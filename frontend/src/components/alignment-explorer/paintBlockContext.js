@@ -6,19 +6,11 @@ import { monoFont } from '../../utils/typography'
 import { bandSlices } from './comparisonBands.js'
 import { annotationModels, MODEL_PITCH, orderedContextHits } from './contextModelLayout.js'
 
-/** Gene models in alignment-column space, under the sequence they belong to.
- *
- * Drawn after the layer painter and over its panels, with its own clip, its own
- * hit regions and no opinion about anything the layer painter drew. Three
- * things are kept apart here and must stay apart:
- *
- * - a row's **own annotation**, which is solid and belongs to that genome;
- * - a **reference guide**, which is faint and outlined and is only the columns
- *   the reference's chosen transcript occupies, projected across;
- * - a **comparison band**, which is measured difference, not annotation.
- *
- * A guide drawn like an annotation would assert that another genome has a
- * feature there, which the alignment is not evidence of.
+/**
+ * Paint gene models in alignment columns, with separate clipping and hits.
+ * Own annotation is solid, projected reference guides are faint outlines, and
+ * comparison bands encode measured differences. Keep these visually distinct:
+ * a projected guide does not establish annotation in another genome.
  */
 /** Lane geometry. A track lane is one row tall; the band runs along its top
  * edge, and the models sit under it. */

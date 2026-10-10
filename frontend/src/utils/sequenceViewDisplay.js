@@ -1,28 +1,11 @@
-// What the rows actually show, once the dull parts have been taken out.
+// Lay out full or collapsed sequence as stretches and gap markers.
+// Full mode is one stretch; collapsed mode replaces omitted sequence with
+// length-labelled markers. Both use the same row model for coordinates,
+// selection, hover and buffering.
 //
-// The view has two modes. In full mode every base of the region is drawn, in
-// order. In collapsed mode the stretches a reader is not looking at -- introns
-// inside a transcript or a gene, intergenic sequence between genes -- are
-// replaced by a marker saying how much was skipped:
-//
-//     AAATTTGGC<------- 12,345 bp ------->CCCTTTAAA
-//
-// Both are the same thing. A layout is an ordered list of items, each either a
-// stretch of sequence to draw base by base or a gap marker to draw as text, and
-// full mode is simply the layout with one item and no gaps. That is deliberate:
-// the alternative is two row models -- one arithmetic, one segmented -- that
-// have to agree about gutter numbers, hover coordinates, selection, which
-// sequence to fetch and where a coordinate jump lands. They would drift. This
-// way the collapsing code runs on every row the view has ever drawn.
-//
-// Positions along the layout are *columns*: column 0 is the first character
-// drawn, and row N holds columns [N*60, N*60+59]. Coordinates are 1-based
-// inclusive genomic, as everywhere else in the sequence view.
-//
-// Reverse display is baked into the layout rather than applied afterwards. A
-// minus-strand transcript reads from its far end, so its items are enumerated
-// from the highest coordinate down and columns within an item count backwards.
-// Everything downstream then works in one direction and needs no reverse case.
+// Layout columns start at 0; genomic coordinates are one-based inclusive.
+// Reverse layouts enumerate items from high coordinates down, so downstream
+// row traversal remains in display order.
 
 import { BASES_PER_ROW } from './sequenceViewRows.js'
 

@@ -1,9 +1,8 @@
 # Structural-variation view
 
-The Structural Variation view compares one anchor (reference) genome with one or
-two target genomes. Downloading the genomes through the Download view prepares
-everything on the genome side automatically. The only thing you supply is the
-alignment between them.
+The Structural Variation view compares an anchor (reference) genome with one or
+two targets. The Download view prepares genome files and indexes; you supply
+the alignment between them.
 
 ## What an alignment needs
 
@@ -16,9 +15,8 @@ alignment between them.
 | Sequence names | Yes | Derived from the assemblies. Nothing to supply. |
 | BigWig / BigBed tracks | No | Optional files you can attach. |
 
-Earlier versions also asked for a pair of `hal_mapping.tsv` files. They are no
-longer needed: the sequence names come from the assemblies themselves and from
-the chain file. Existing alignments that reference those TSVs keep working — see
+Sequence names are resolved from the assemblies and chain file. Older
+registrations with `hal_mapping.tsv` files remain supported; see
 [Alignments registered before this format](#alignments-registered-before-this-format).
 
 ## The configuration file

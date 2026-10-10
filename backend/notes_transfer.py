@@ -1,21 +1,9 @@
-"""Notes import/export: the shapes on the way out, and the arithmetic on the way in.
+"""Convert notes between store records and JSON, CSV or TSV import/export files.
 
-Deliberately free of FastAPI and of ``main`` — this module does row↔record shape
-work and merge arithmetic only, and hands ``main`` candidate records in the JSON
-store shape. Every candidate still goes through ``main._normalize_note_record``
-before it is saved, so validation has exactly one home and this file can be
-unit-tested with nothing but the standard library.
-
-Three formats, and they are not equals:
-
-  * **JSON** is the store's own shape. It round-trips exactly, and it is what a
-    backup should use.
-  * **CSV/TSV** are a flat table for Excel and Google Sheets, one row per note,
-    with the todo-only columns left blank on note rows so todos and notes can
-    share one file. They are a *lossy view*: Excel truncates any cell over 32,767
-    characters and a note body may be 200,000, so a spreadsheet round-trip can
-    quietly drop the tail of a long note. Nothing here can fix that — it is a
-    property of the medium — so the scan says so out loud instead.
+JSON preserves the full store shape. CSV/TSV flatten one note or task per row;
+spreadsheet tools may truncate long cells, so import reports that risk.
+Candidate records are validated by routes.notes._normalize_note_record before
+saving. This module has no FastAPI dependency and can be tested independently.
 """
 
 from __future__ import annotations
@@ -31,13 +19,12 @@ TRANSFER_SCHEMA_VERSION = 1
 TRANSFER_FORMATS = ("json", "csv", "tsv")
 MERGE_STRATEGIES = ("newer_wins", "replace_matching", "add_as_new", "replace_all")
 
-# Excel's hard per-cell limit. A body arriving at exactly this length is near
-# certain evidence that a spreadsheet ate the rest of it.
+# Excel's per-cell limit; a body at this length may have been truncated.
 SPREADSHEET_CELL_LIMIT = 32_767
 MAX_TRANSFER_FILE_BYTES = 64 * 1024 * 1024
 
-# Mirrors of main.py's caps. Duplicated rather than imported to keep this module
-# free of main; main re-applies them anyway, so these only drive warnings.
+# Mirror routes.notes limits for import warnings without importing the router.
+# The notes routes enforce these limits again before saving.
 MAX_NOTE_TITLE_CHARS = 200
 MAX_NOTE_BODY_CHARS = 200_000
 
@@ -66,9 +53,8 @@ TRANSFER_COLUMNS = (
 # is a whole-document failure rather than a per-row one.
 REQUIRED_COLUMNS = ("id", "genome_key", "target_id")
 
-# Tags are joined with "|" and never ",": _normalize_note_tags in main already
-# rejects a comma inside a tag, so the pipe cannot collide and the split back is
-# lossless.
+# Delimit tags in CSV/TSV with a pipe. Tags containing a pipe cannot round-trip
+# through this representation; JSON preserves the original list.
 TAG_SEPARATOR = "|"
 
 # The fields the transfer schema actually carries. Comparisons use exactly these,

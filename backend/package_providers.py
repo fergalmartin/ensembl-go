@@ -1,7 +1,8 @@
-"""What the self-contained packages (gene_trees, alignment_explorer) are handed by main:
-the user's genomes and gene trees library, annotation and gene lookups for alignment
-blocks, neighbourhoods, transcripts, FASTA fetchers and the aligner. The packages
-never import the app; main passes these in when it builds their routers.
+"""Adapt shared genome services for the Alignment Explorer and Gene Trees.
+
+Provide local genomes, annotation, neighbourhoods, transcripts, FASTA fetchers
+and alignment services. main.py injects these providers into router factories
+so feature packages do not import the app.
 """
 
 import json

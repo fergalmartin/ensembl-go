@@ -1,13 +1,7 @@
-// Which way a wheel gesture goes: sideways (a pan) or up and down (the scheme's zoom), never
-// both. It is settled over the gesture's first few pixels, and a swipe that wanders off its
-// line keeps to it.
-//
-// A pause ends a gesture, but a pause is not enough on its own: a macOS trackpad goes on
-// sending a swipe's coasting events for a second or more after the fingers lift, so the next
-// swipe often starts with no gap at all. Held until a pause, a zoom's lock outlived it and the
-// pan that followed had its sideways movement thrown away (stuck, or nudged by what vertical
-// wobble was left). So a lock also gives way to a run of events that clearly go the other
-// way; those events move nothing until it does, rather than leaking into the old axis.
+// Lock wheel gestures to horizontal pan or vertical zoom after a few pixels.
+// A pause ends the gesture. A sustained change of direction also releases the
+// lock because trackpad momentum can overlap a new swipe; suppress those
+// transition events until the new axis is established.
 
 export const WHEEL_AXIS_DECIDE_PX = 6
 export const WHEEL_AXIS_IDLE_MS = 180

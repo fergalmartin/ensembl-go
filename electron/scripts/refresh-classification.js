@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 //
-// Keep the species classification artifacts current for a distribution build.
+// Refresh species classification artifacts before distribution builds.
 //
-// Wraps backend/scripts/refresh_classification_artifacts.py so the build resolves Python
-// the same way every other build step does. Arguments are passed through, so the build can
-// use `-- --force` or `-- --max-uncovered-percent 0.5`.
+// Use the shared Python resolver and forward arguments to the backend script,
+// including `-- --force` and `-- --max-uncovered-percent 0.5`.
 //
-// Cheap by default: it downloads the current species catalogue, measures how much of it
-// the existing artifact covers, and only downloads the NCBI taxdump and regenerates when
-// coverage has drifted. A build where nothing changed costs under a second.
+// Check catalogue coverage first; download the NCBI taxdump and regenerate
+// only when coverage falls below the configured threshold.
 
 const path = require('path');
 const { PROJECT_DIR, log, resolvePythonCommand, runCommand } = require('./utils');

@@ -37,16 +37,11 @@ export function planConservationTiles(fragment, camera, size, level, cohort) {
   return tasks
 }
 
-/** The cohort is the sequences the blocks on the sheet actually hold, narrowing
- * to whatever is picked. Sorted, so the key survives a reorder, and taken from
- * the laid-out blocks rather than the rows that happen to be within the window,
- * so it survives scrolling too.
- *
- * Not the whole inventory. A 200-block MAF names a distinct identity for every
- * sequence in every block - 3,881 of them for 44 mammals - while any one block
- * holds around 45. Measured against the inventory, every bin came out at about
- * a hundredth of the cohort, the second axis went flat, and the answer to "how
- * much of what you are reading is here" was always "almost none".
+/**
+ * Build a stable cohort from sequences in the laid-out blocks, narrowed by
+ * the current picks. Sort IDs for a reorder-stable key. Use the sheet rather
+ * than the visible viewport or full inventory so scrolling does not change
+ * the denominator and unrelated identities do not dilute representation.
  */
 export function cohortOf(layer, inventory, lit) {
   const laid = (layer?.fragments || []).filter(f => !f.aggregate)

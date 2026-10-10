@@ -1,24 +1,11 @@
-"""Protein structure lookup and genomic-to-structural coordinate mapping.
+"""Resolve protein structures and map local CDS residues onto their models.
 
-The Feature Explorer already knows a transcript's translation and, through
-``translation.CdsSegment``, exactly which coding exon contributes which amino
-acid.  What it cannot do on its own is find a three-dimensional model for that
-protein or say which residue of the model a given exon lands on.
+resolve_uniprot_accession prefers local mappings before remote lookup.
+build_residue_map aligns the transcript's translation to the UniProt canonical
+sequence, since their residue numbers may differ, and reports mapping quality.
 
-Two problems stand between the two coordinate systems:
-
-1.  AlphaFold DB is keyed by UniProt accession, while the annotation the app
-    reads gives Ensembl or RefSeq protein IDs.  ``resolve_uniprot_accession``
-    walks a tier of sources to bridge that, preferring whatever is local.
-2.  AlphaFold models the UniProt *canonical* sequence.  A transcript that is not
-    the canonical isoform translates to something else, so residue *n* of the
-    local translation is not residue *n* of the model.  ``build_residue_map``
-    aligns the two and reports how well they actually correspond, so the caller
-    can colour honestly rather than plausibly.
-
-Deliberately free of FastAPI and of any network client: HTTP is injected by the
-caller, which keeps the allowlist enforcement in one place and lets every rule
-in here be tested without a socket.
+HTTP is injected by the caller to centralise allowlist checks and support
+offline tests. This module has no FastAPI or network-client dependency.
 """
 
 from __future__ import annotations

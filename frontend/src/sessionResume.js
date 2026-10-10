@@ -1,25 +1,10 @@
-// Picking up where the reader left off when the page reloads underneath them.
+// Restore view state after a reload within the same app launch.
 //
-// The window can reload without anyone asking it to: the dev server's client reloads
-// the page when its socket comes back after the laptop sleeps, a crashed renderer is
-// reloaded by Electron, and a code edit can force a full reload. None of those should
-// cost the reader their place — which app they were in, where each browser panel was,
-// what was focused. Quitting and relaunching is different, and deliberately starts on
-// Home with only the configuration (the active genomes) carried over.
-//
-// So nothing here is tracked as the reader works. Each part of the app that has
-// something worth putting back registers a getter, and the getters are only called at
-// the moments a reload could follow: the page being hidden or unloaded, or Electron
-// saying the machine is about to sleep or the screen is locking. Panning a browser
-// costs nothing extra; the browser is asked where it is once, on the way out.
-//
-// The snapshot lives in sessionStorage, which survives a reload of the same window and
-// is gone with it, and it carries Electron's per-launch id as well, so even a window
-// that somehow kept its storage across a relaunch does not resume an old session.
-//
-// Restoring is a one-time offer. A value is available from load until its owner takes
-// it, or until the reader moves on (endSessionRestore), after which a component that
-// mounts later starts fresh rather than reviving something from before the reload.
+// Components register getters, called only on capture: hide, unload, sleep or
+// screen lock. This adds no work to normal panning or rendering.
+// Snapshots use sessionStorage and Electron's launch ID to prevent restoration
+// after a relaunch. Each value can be consumed once; endSessionRestore discards
+// anything left when the user starts a new action.
 
 import { isTutorialSandboxActive } from './tutorials/sandbox.js'
 

@@ -1,7 +1,12 @@
-# Custom genomes & annotation — review and plan
+# Custom genomes and annotation
 
-Status: in progress (2026-07-28). Covers the "add your own genome/annotation" path reached
-from the Genome Selector, and what needs to change to support arbitrary GFF3/GTF producers.
+The Genome Selector accepts local FASTA files, with optional annotation and
+homology data. `backend/annotation/` validates supported GFF3/GTF dialects and
+converts annotations that need repair before the browse indexer reads them.
+
+The implementation notes below describe the import and removal behaviour.
+Sections 1–8 preserve the original July 2026 review and proposal; their descriptions
+of missing validation and planned work refer to that earlier implementation.
 
 ## Implementation status
 
@@ -58,21 +63,17 @@ Only `files.fasta` is required. Any other file that is listed but not present on
 reported, and the per-genome file editor is how the user repoints it. Earlier versions
 failed the whole entry in that case.
 
-196 tests cover the package end to end, including a round-trip suite that converts every
-fixture and loads the result through the unmodified `create_gff_index`.
+The annotation tests include round trips that convert fixtures and load the
+results through `gff_index.create_gff_index`.
 
-### The existing parser is untouched
+### Conversion and indexing
 
-`create_gff_index`, `init_index_db`, `ensure_gff_index` and `ensure_fasta_index` are
-byte-identical to their committed versions. Conversion works *with* that parser rather
-than replacing it: a GTF becomes canonical Ensembl-style GFF3, which is precisely the
-dialect the existing indexer already handles best. Ensembl and RefSeq files that need no
-repair are still copied verbatim and parsed exactly as before.
+Conversion produces canonical Ensembl-style GFF3 for the browse indexer in
+`backend/gff_index.py`. FASTA preparation lives in `backend/file_io.py`.
+Ensembl and RefSeq annotations that need no repair pass through without conversion.
 
-Phase 5 — collapsing the six ad-hoc GFF readers onto the shared helpers — is deliberately
-left undone. Those readers currently work; rewriting them buys tidiness at the cost of
-risk to the download path, and it should wait until the normaliser has been exercised
-against real annotation files rather than fixtures.
+Consolidating the separate GFF readers is deferred. It needs validation against
+real annotation files as well as fixtures before changing the download path.
 
 ### Reconstruction from CDS-only files
 
@@ -135,33 +136,21 @@ source file**, in the directory the user chose. Indexes follow the same rule: be
 annotation they were built from, falling back to `output_dir/indexes/` only when that
 directory is not writable. Nothing is written to the working-directory root.
 
-### Concurrent FASTA reads
+### Concurrent file reads
 
-Not a custom-genome bug, but found through one and worth recording. `pysam.FastaFile`
-keeps seek and block-decompression state on the handle. `_get_browse_fasta` caches one
-handle per genome and every browse endpoint runs on `run_in_threadpool`, so concurrent
-requests were reading through the same handle at once. htslib then reports
-`Failed to retrieve block. (Seeking in a compressed, .gzi unindexed, file?)` and the fetch
-either raises or returns the wrong bases — a blank sequence track, and runs of N and
-protein X in Feature Explorer.
+`pysam.FastaFile` holds mutable seek and decompression state. Browse requests
+share cached handles, so `file_io.ThreadSafeFasta` serialises access to prevent
+failed reads or incorrect bases.
 
-Measured on a 748 MB bgzipped assembly: **23 of 24** concurrent fetches failed. Handles are
-now wrapped in `ThreadSafeFasta`, which serialises every access; the same 80 fetches now
-all succeed in 0.01 s.
+The original check on a 748 MB BGZF assembly saw 23 of 24 concurrent reads fail.
+With locking, 80 reads succeeded in 0.01 seconds. These are historical local
+measurements, not a performance guarantee.
 
-A lock rather than a handle per thread, deliberately: the `.fai` of a fragmented assembly
-holds hundreds of thousands of records (13 MB for 371 342 contigs here), and one handle per
-worker thread would multiply that resident cost for no real gain — fetches are sub-millisecond.
+Sharing a locked handle avoids duplicating large FASTA indexes for each worker.
 
-**The VCF handle does *not* have this defect** — an earlier note in this document claimed
-it did, and that was wrong. Both callers of the cached `pysam.VariantFile` already hold a
-per-path lock across the whole scan, and there is exactly one place a handle is
-constructed, so no unguarded route to it exists.
-
-What was fragile was that the safety held only by convention: nothing stopped a future
-caller taking the handle and forgetting the lock. That is now structural. The handle is
-reachable only through the `locked_vcf(path)` context manager, and the underlying accessor
-is named `_open_vcf_handle_unlocked` so misuse is visible at the call site.
+VCF scans use `locked_vcf(path)` to hold a per-path lock throughout iteration.
+The internal accessor is named `_open_vcf_handle_unlocked` to make accidental
+unlocked use visible.
 
 The lock has to span the whole block here, more so than for FASTA:
 `FastaFile.fetch()` completes its I/O before returning a string, whereas
@@ -170,22 +159,25 @@ the call that creates the iterator would leave the actual scan unguarded.
 `tests/test_vcf_handle_locking.py` asserts mutual exclusion, per-path independence, lock
 release on exception, and that no new caller bypasses the context manager.
 
-### Decisions taken
+### Import decisions
 
-Two open questions from §8 were resolved to their recommended answers, so the work could
-land as one piece:
+Two questions from the original proposal were resolved:
 
 - `sncRNA` is emitted as a biotype, documented as an Ensembl Go extension. Files also
   carry `biotype_source=` on each transcript recording which rule assigned it, so an
   inferred class is never mistaken for an asserted one.
-- Converted files sit beside the original in `datasets/custom/<label>/`, with the source
-  copied as `source_<name>` and `id_map.tsv` alongside when identifiers were minted.
-
-Both are cheap to change later if you disagree.
+- Managed custom annotations use `datasets/custom/<label>/`, with the source
+  copied as `source_<name>` and `id_map.tsv` alongside when identifiers are minted.
+  Manual-genome preparation writes beside the source, as described above.
 
 ---
 
-## 1. What exists today
+## Original review and proposal (July 2026)
+
+The following sections retain the initial problem analysis and proposed design.
+Use the implementation notes above for current behaviour and module ownership.
+
+## 1. Starting implementation
 
 ### 1.1 Two separate entry points
 
@@ -313,7 +305,8 @@ readers keep working unchanged because they only ever see canonical files.
 
 ### 3.2 New module layout
 
-A new package `backend/annotation/`, kept out of `main.py` (already 18.6k lines):
+A separate `backend/annotation/` package (the proposal predates the split of
+`main.py` into shared modules and domain routers):
 
 ```
 backend/annotation/

@@ -1,19 +1,7 @@
-// How the reader likes to read, and how to make sense of what they stored last
-// time.
-//
-// Everything here is a per-viewer convenience kept in localStorage: which
-// classes are highlighted, how much sequence sits around the thing in focus,
-// what is collapsed, which way round the sequence reads and whether the protein
-// is drawn over its codons. None of it describes the data, so none of it is
-// worth a round trip, and a reader who clears their browser loses nothing but
-// their own settings.
-//
-// Reading is done field by field rather than by merging wholesale. A switch
-// added after a reader last visited is missing from what they stored, and a
-// wholesale merge leaves it off -- which looks exactly like the new thing not
-// working. The same rule is what lets an older shape be read forward: a flank
-// stored as one number was symmetric, and a collapse stored as a boolean plus a
-// single flank meant both kinds at once.
+// Read and migrate per-view sequence preferences from localStorage.
+// Restore fields individually so newly added settings receive their defaults.
+// Migrate older symmetric-flank and combined-collapse shapes when reading.
+// These preferences affect presentation and do not change genome data.
 
 import { DEFAULT_COLOURS, normaliseColours } from './sequenceViewColours.js'
 import { COLLAPSE_KINDS, DEFAULT_COLLAPSE } from './sequenceViewDisplay.js'

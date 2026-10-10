@@ -1,6 +1,10 @@
 # Alignment Explorer rendering optimisation plan
 
-Reviewed 11 September 2026. Scope: current Original alignment and working-layer rendering, both Alignment and Panel zoom. This is a code review and targeted backend benchmark; it is not a browser frame trace or a claim that the reported whole-view flash has been reproduced. Application behaviour has not been changed.
+Historical review: 11 September 2026, covering Original and working-layer
+rendering in Alignment and Panel zoom. Findings and file line numbers refer to
+that snapshot. The review includes backend benchmarks, but no browser frame
+trace or reproduction of the reported whole-view flash. For implementation
+updates, see [the engineering handoff](ALIGNMENT_EXPLORER_HANDOFF.md).
 
 The recommended design is a persistent, coverage-aware view backed by fixed multiresolution tiles. Navigation should immediately reproject compatible cached content, fill newly exposed areas with inexpensive coarse data, and replace that data locally as detail arrives. A smaller response alone will not solve the current backend cost.
 

@@ -1,19 +1,9 @@
 /**
- * Comparing two subtrees of a layer (a tanglegram): which leaves stand for each other, and
- * where the two trees agree.
- *
- * Leaves are matched by species, symbol or gene ID (`MATCH_BY`). A match is one-to-one when
- * each leaf has only the other as its partner; a species with several genes in either tree
- * (paralogues) links every copy to every copy, and those links are one-to-many.
- *
- * Agreement is measured on the one-to-one leaves only, as unrooted splits: each branch cuts
- * the matched leaves in two, and a branch is shared when the other tree has a branch cutting
- * them the same way. Rooting is ignored, so two methods that root the same tree differently
- * do not disagree everywhere. Sets of leaves are hashed (a random 64 bits per leaf, XORed),
- * so a split is compared in constant time however big the tree.
- *
- * Everything here is in the ids of the layer's forest (workspace.js `forestTree`), and
- * nothing recurses, as in treeModel.js.
+ * Compare subtree topology on one-to-one matched leaves.
+ * Match by species, symbol or gene ID; paralogues retain one-to-many links.
+ * Compare unrooted splits so rooting differences do not count as disagreement.
+ * XOR hashes give constant-time split comparison. IDs belong to the layer's
+ * forest, and traversal is iterative.
  */
 import { isLeaf, orderedChildren } from './treeModel.js'
 

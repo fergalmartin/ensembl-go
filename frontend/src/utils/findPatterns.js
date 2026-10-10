@@ -1,21 +1,7 @@
-// Finding a string or a pattern in sequence, wherever sequence is drawn.
-//
-// The alignment explorer has had this for a while under the name *motif*: an
-// ordered list of patterns, each with a colour and a switch, the topmost winning
-// where two of them cover the same base. That model is not about alignments at
-// all -- it is about what a reader is looking for -- so it lives here now and
-// the explorer and the sequence view share it rather than growing two of them
-// that would disagree about what a regex means.
-//
-// What each view does with a match is its own business: the explorer paints
-// tiles the server prepared, the sequence view underlines the run and steps
-// between them. What they may not differ on is which runs matched, what happens
-// where two patterns overlap, and what a reader's saved list is worth after an
-// upgrade.
-//
-// One list per view, because the two are looking at different things: the
-// patterns a reader wants over a protein alignment are not the ones they want
-// over a chromosome. `loadPatterns` therefore takes the key to read.
+// Share Find pattern semantics between the Explorer and sequence view.
+// Patterns have colours, enabled switches and list priority: the first enabled
+// match wins an overlap. Each view keeps its own list through a storage key
+// passed to loadPatterns, and handles rendering and navigation separately.
 
 import { BUILTIN_GENOME_COLOR_PALETTE, sanitizeHexColor } from '../genomeColorSchemes.js'
 

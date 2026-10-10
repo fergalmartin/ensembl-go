@@ -1,4 +1,4 @@
-# Development Workflow
+# Development
 
 Complete the source installation in [INSTALLATION.md](./INSTALLATION.md) before
 using these commands. On a fresh checkout that is:
@@ -8,25 +8,17 @@ using these commands. On a fresh checkout that is:
 source .venv/bin/activate
 ```
 
-`run_ensembl_go.sh` checks that the Python and Node dependencies are actually
-installed before it starts anything, and points at the bootstrap script if they
-are not.
+## Run with hot reload
 
-For rapid development without rebuilding the application, use the
-`run_ensembl_go.sh` script.
-
-## Fast Dev Mode (Hot Reload)
-
-Instead of rebuilding the Electron app every time you make a change, you can run:
+From the repository root:
 
 ```bash
 ./run_ensembl_go.sh
 ```
 
-This script will:
-1. Start the **Backend** (FastAPI) with auto-reload enabled (port 8000).
-2. Start the **Frontend** (Vite) with HMR (Hot Module Replacement) enabled (port 5173).
-3. launch **Electron** pointing to your local dev servers.
+The launcher checks dependencies, then starts FastAPI with auto-reload on port
+8000, Vite with hot module replacement on port 5173, and Electron using those
+servers. Missing dependencies are reported with a link to the bootstrap script.
 
 Ports 8000 and 5173 are checked independently before anything starts. If a
 port is occupied, the script displays the listening process and asks whether
@@ -39,38 +31,28 @@ differently. Their managed backend prefers port 8000, but automatically uses a
 free loopback port when 8000 is unavailable and does not terminate the existing
 process.
 
-In this fast mode the backend is started without `ENSEMBL_LOCAL_API_TOKEN`, so
-browser development remains frictionless. When Electron launches the backend
-itself, it generates a per-launch token and the frontend sends it automatically.
+The development backend runs without `ENSEMBL_LOCAL_API_TOKEN`. When Electron
+manages the backend itself, it generates a per-launch token that the frontend
+sends automatically.
 
-### Benefits
-- **Backend changes**: Modify any module under `backend/` and the server restarts instantly (this also cancels any download in progress).
-- **Frontend changes**: Modify React components and the browser updates instantly without losing state.
-- **Electron changes**: You still need to restart the script if you change `electron/main.js`, but you don't need to rebuild the binary.
+Backend edits restart the server and cancel active downloads. Frontend edits
+usually update in place, though changes that cannot be hot-reloaded reload the
+page. Restart the launcher after editing Electron's main or preload code.
 
 ## Code layout and conventions
 
 ### Backend
 
-`backend/main.py` is only the entry point: logging, the FastAPI app and its lifespan,
-CORS and the local-origin middleware, the `include_router` calls and the `__main__`
-block. Electron, PyInstaller and `uvicorn main:app` all start it, and under Electron and
-the packaged app it runs as `__main__`.
+`backend/main.py` assembles the FastAPI app, logging, startup tasks, middleware
+and routers. Electron runs it as `__main__`; browser development imports it
+through `uvicorn main:app`.
 
-- **Shared core modules** sit directly in `backend/`: `app_paths` (base, cache and
-  project paths; MAFFT discovery), `app_state` (process singletons such as the download
-  manager and API token), `config_store` (config file, defaults, migrations, load/save),
-  `file_io` (indexed FASTA and gzip helpers), `gff_index` (GFF parsing, SQLite indexing,
-  the index worker), `local_inventory` (what is on disk), `genome_context` (browse
-  context, browse DB, chromosome resolution), plus `data_paths`, `mafft`,
-  `sequence_windows`, `transcript_translation`, `sv_datasets` and `package_providers`.
-  `app_paths` uses `Path(__file__)`, so it must stay in `backend/`.
 - **Endpoints** live in `backend/routes/<domain>.py`, one `router = APIRouter()` per
   domain together with its request/response models and private helpers. Larger features
   keep their own packages (`alignment_explorer/`, `sequence_view/`, `gene_trees/`, ...),
   wired up in `main.py`.
-- **Nothing may `import main`.** Doing so would load a second copy of the app with its
-  own state. `tests/test_module_boundaries.py` enforces this.
+- **Application modules must not `import main`.** Under Electron, this would load
+  a second app instance. `tests/test_module_boundaries.py` enforces the boundary.
 - **Import core modules as modules** (`import config_store`, then
   `config_store.load_config()`), not `from config_store import load_config`. A test that
   patches the defining module then reaches every caller.
@@ -78,11 +60,28 @@ the packaged app it runs as `__main__`.
   `patch.object(config_store, "CONFIG_FILE", ...)`. `tests/conftest.py` points
   `ENSEMBL_GO_USER_DATA_DIR` at a temporary directory, so a patch that misses cannot write
   to real user data.
-- **`def` versus `async def`** matters. Handlers that only do blocking work are `def`, so
-  they run on the threadpool; see the docstring in `routes/__init__.py`.
+- **Use `def` for blocking handlers**, so FastAPI runs them in its threadpool.
+  An `async def` handler must move blocking work into `run_in_threadpool`.
+  See `routes/__init__.py` for the conventions.
 - `tests/test_route_contract.py` snapshots every route and the OpenAPI schema
   (`tests/fixtures/route_contract.json`). Regenerate the fixture deliberately when you
   change the API, and keep request/response model names unique.
+
+Shared services sit directly in `backend/`:
+
+| Module | Responsibility |
+| --- | --- |
+| `app_paths`, `data_paths` | Resource, cache and genome paths; MAFFT discovery. |
+| `app_state` | Process-wide download manager and API token. |
+| `config_store` | Configuration, playlists, migrations and atomic writes. |
+| `file_io`, `gff_index` | FASTA access and annotation indexing. |
+| `local_inventory`, `genome_context` | Local genomes, browse context and region aliases. |
+| `sequence_windows`, `transcript_translation` | Sequence geometry and shared protein translation. |
+| `mafft`, `sv_datasets` | Alignment execution and structural-variation data. |
+| `package_providers` | Adapters injected into feature-package routers. |
+
+Keep `app_paths` directly in `backend/`: source paths are derived from its
+`__file__` location.
 
 ### Frontend
 
@@ -106,7 +105,33 @@ the packaged app it runs as `__main__`.
   `tests/helpers/readSource.js` and read a whole feature folder, so moving code between
   files of the same feature does not break them.
 
-## Building for Production
+### Comments and documentation
+
+Use short, direct sentences and British spelling in prose. Keep identifiers,
+file names and labels as written in the code. Explain a module's role, a
+constraint or a reason that is not clear from the implementation. State
+coordinate conventions and units where they matter. Keep detailed design
+history in dated review documents and link to it when useful.
+
+After moving code, update documentation to name the module that now owns it.
+Keep current behaviour separate from proposals and historical measurements.
+
+## Check a change
+
+From the repository root, with the Python environment active:
+
+```bash
+python -m pytest backend/tests -q
+TZ=UTC npm --prefix frontend test
+npm --prefix frontend run lint
+npm --prefix frontend run build
+```
+
+Backend tests also need `pytest` and `httpx`; see the installation guide.
+`TZ=UTC` matches the screenshot filename tests' assumptions. Lint errors fail
+the check; existing warnings and Vite's large-bundle warning do not.
+
+## Build packages
 
 The standard frontend is built directly with Vite and has no additional
 language toolchain prerequisites. WSL remains supported for browser
@@ -119,7 +144,8 @@ cd electron
 npm run dist
 ```
 
-`npm run dist` now performs a macOS release build preflight and expects:
+`npm run dist` performs a macOS release preflight and requires:
+
 - A valid `Developer ID Application` certificate in your keychain.
 - Notarization credentials in environment variables.
 

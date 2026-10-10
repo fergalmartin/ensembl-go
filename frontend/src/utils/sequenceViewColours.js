@@ -1,28 +1,7 @@
-// What colour each kind of annotation is drawn in, and the reader's changes to
-// it.
-//
-// `sequenceViewPalette.js` says what the app paints by default and why, and it
-// stays the source of those defaults; this is the layer over it that a reader
-// can move. The two are kept apart because the defaults carry arguments -- why
-// intergenic cannot borrow the intron's colour, why genic cannot borrow the
-// exon blue -- and an override is just a preference.
-//
-// Grouped the way the view is read rather than by class code, because the class
-// codes are an implementation detail of a row's 60-character class string and
-// nobody picking a colour is thinking in them:
-//
-//   - a location and a gene are the same vocabulary at two scales, so they
-//     share one list
-//   - a transcript, an exon and an intron are the same vocabulary as each other,
-//     so they share the other
-//   - two kinds appear in both, and are listed once in their own group rather
-//     than twice with the same value, which reads as a bug the moment a reader
-//     changes one and watches the other move
-//
-// A reader's choice is stored against the *item* -- "CDS", "splice site" -- and
-// resolved to class codes here. That is what lets one choice drive the two
-// shades a CDS alternates between, and what keeps a stored preference readable
-// when the codes behind an item change.
+// Resolve user colour preferences over sequenceViewPalette defaults.
+// Group controls by location/gene, transcript/feature and shared classes.
+// Store choices by named item rather than class code, so one CDS choice drives
+// both codon shades and survives changes to internal codes.
 
 import { sanitizeHexColor } from '../genomeColorSchemes.js'
 import { CDS_STRIPE_COLORS, hexLuminance, TEXT_FLIP_LUMINANCE } from './featureColors.js'

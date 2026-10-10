@@ -1,20 +1,7 @@
-// The sequence view as rich text.
-//
-// RTF because it is the one coloured format every word processor opens without
-// argument -- Word, Pages, LibreOffice, TextEdit -- and because a reader taking
-// a coloured exon into a manuscript or a slide wants to keep editing it, not
-// paste a picture of it.
-//
-// What makes a base look the way it does on screen is a fill behind it and an
-// ink on it, so that is what this writes: `\chshdng0\chcbpatN` for the cell and
-// `\cfN` for the letter. Character shading rather than a table, because sixty
-// cells a row over thousands of rows is a table no word processor will lay out
-// in reasonable time -- and a run of same-coloured bases collapses to one
-// control sequence followed by its letters, which is what keeps the file to a
-// size a document can hold.
-//
-// Everything arrives already decided, as the row model `sequenceViewExport`
-// builds from the view's own painter. Nothing here chooses a colour.
+// Write the prepared sequence row model as editable rich text.
+// Use character shading for cell backgrounds and text colours for bases.
+// Combine neighbouring cells with identical styling to keep files compact.
+// Colours are resolved by sequenceViewExport before reaching this writer.
 
 /** RTF's own escapes, plus the non-ASCII characters a marker can carry. */
 function escapeRtf(text) {

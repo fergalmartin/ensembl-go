@@ -3,19 +3,10 @@ import { firstMotifSpan } from './motifs.js'
 import { readableTextOn } from '../../utils/genomePillColors.js'
 import { monoFont } from '../../utils/typography'
 
-/** One cell per alignment column, coloured by its base.
- *
- * Lifted out of the layer painter unchanged so that block context draws the
- * sequence with exactly the same code the sheet does. Two things read a
- * sequence and they must not be allowed to disagree about what a base looks
- * like, how wide a column is, or when a letter becomes legible.
- *
- * `top` and `height` are parameters rather than the constants they used to be,
- * because the same cells are drawn at row height on the sheet and at a
- * different height beside a gene model. Everything else is as it was.
- *
- * `sequence` is indexed from `sequenceStart`, which is the column its first
- * character stands for - a tile's own start, not the fragment's.
+/**
+ * Paint base cells identically on the sheet and in block context.
+ * top and height allow each view's row geometry. Index sequence from
+ * sequenceStart, the tile's first column, rather than the fragment start.
  */
 export function paintBases(ctx,{sequence,sequenceStart,start,end,x,scale,fragmentStart,top,height,
   colors,baseColors,onScreen,light,motifMode=false,motifSpans=[],neutral=null,motifTextColors=null}) {

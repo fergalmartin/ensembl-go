@@ -1,15 +1,8 @@
 /**
- * Subtree layers: the workspace the user builds trees in.
- *
- * Modelled on the Alignment Explorer's layers (alignment-explorer/layers.js). The tree
- * being browsed is the Original: never stored, never edited, shown as a pseudo-layer in
- * front of the user's own. A layer is a named, coloured set of fragments — small trees
- * copied out of any tree in the library (see subtreeOps.js) — so one layer can hold a
- * SAMD11 clade beside a BRCA2 clade.
- *
- * Only the layers and which one is showing are saved, with the data view each fragment
- * shows (`dataView`, see dataColumns.js). Picks, the current tool and any drag in progress
- * are view state, kept elsewhere, and never saved or undone.
+ * Store editable subtree layers while keeping Original immutable.
+ * Each layer holds fragments copied from library trees, with a data view per
+ * fragment. Save layers and the active layer only; picks, tools and active drags
+ * are transient view state outside persistence and undo.
  */
 import { BUILTIN_GENOME_COLOR_PALETTE } from '../../genomeColorSchemes.js'
 import { isDataView } from './dataColumns.js'
