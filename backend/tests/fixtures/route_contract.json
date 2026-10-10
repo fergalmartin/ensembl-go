@@ -6149,6 +6149,33 @@
      "title": "StructuralStatsGenerateRequest",
      "type": "object"
     },
+    "StructureCdsSegment": {
+     "description": "One coding segment of the transcript: CDS nucleotide range \u2194 genomic range.",
+     "properties": {
+      "coord_end": {
+       "default": 0,
+       "title": "Coord End",
+       "type": "integer"
+      },
+      "coord_start": {
+       "default": 0,
+       "title": "Coord Start",
+       "type": "integer"
+      },
+      "genomic_end": {
+       "default": 0,
+       "title": "Genomic End",
+       "type": "integer"
+      },
+      "genomic_start": {
+       "default": 0,
+       "title": "Genomic Start",
+       "type": "integer"
+      }
+     },
+     "title": "StructureCdsSegment",
+     "type": "object"
+    },
     "StructureMappingImportRequest": {
      "properties": {
       "path": {
@@ -6280,6 +6307,14 @@
        "default": false,
        "title": "Aligned",
        "type": "boolean"
+      },
+      "cds_segments": {
+       "default": [],
+       "items": {
+        "$ref": "#/components/schemas/StructureCdsSegment"
+       },
+       "title": "Cds Segments",
+       "type": "array"
       },
       "coverage": {
        "default": 0.0,

@@ -473,6 +473,12 @@ function App() {
   )
 
   const configRef = useRef(config)
+  // The backend resolves genome keys against its saved configuration, so a view
+  // that asks about a genome the moment it becomes active has to wait for the
+  // save that told the backend about it. Holds the latest such save; it never
+  // rejects.
+  const genomeConfigSaveRef = useRef(Promise.resolve())
+  const waitForGenomeConfigSave = useCallback(() => genomeConfigSaveRef.current, [])
   const [inactiveSelectedSpecies, setInactiveSelectedSpecies] = useState([])
   const sandboxInactiveSnapshotRef = useRef(null)
   const [dualViewFocus, setDualViewFocus] = useState({ primaryKey: '', secondaryKey: '' })
@@ -2679,20 +2685,23 @@ function App() {
     const refGenomeChanged = newConfig.ref_gff !== prev.ref_gff || newConfig.ref_fasta !== prev.ref_fasta
     const tgtGenomeChanged = newConfig.target_gff !== prev.target_gff || newConfig.target_fasta !== prev.target_fasta
 
-    setConfig(newConfig)
-    configRef.current = newConfig
     // Persist to backend right away — GenomeBrowser fetches data from the backend
     // using the on-disk config, so we must save before reload triggers fetch.
+    // The UI updates without waiting, which means views keyed on the active
+    // genomes remount before the save lands; the save is published first so they
+    // can wait for it (the Feature Explorer's first gene lookup does).
     window.electronAPI?.saveElectronConfig?.(newConfig)
-    try {
-      await fetch(`${API_BASE}/api/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newConfig)
-      })
-    } catch (e) {
+    const save = fetch(`${API_BASE}/api/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConfig)
+    }).then(() => {}, (e) => {
       console.error('Failed to save genome config:', e)
-    }
+    })
+    genomeConfigSaveRef.current = save
+    setConfig(newConfig)
+    configRef.current = newConfig
+    await save
     savedConfigRef.current = { ...newConfig }
 
     // Trigger browser reloads when ref/target genome selection changes
@@ -4604,6 +4613,7 @@ function App() {
         unalignedGenomeCount,
         userConfig,
         usingFallbackScreenshot,
+        waitForGenomeConfigSave,
     })
   )
 }

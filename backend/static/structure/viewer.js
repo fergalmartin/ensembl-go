@@ -47,6 +47,23 @@
     }
   }
 
+  /* Shift + wheel scrolls the page, as it does over the other views' tracks,
+     rather than zooming the model. Mol* would take it as a zoom, so it is
+     stopped here in the capture phase and the deltas are handed to the panel,
+     which owns the page. Latched for the rest of the gesture, so letting go of
+     Shift partway through a swipe (or its coasting tail) does not turn it into
+     a zoom; the panel's own gesture window is the same 180 ms. */
+  var SHIFT_SCROLL_IDLE_MS = 180
+  var shiftScrollUntil = 0
+  window.addEventListener('wheel', function (event) {
+    var now = event.timeStamp || Date.now()
+    if (!event.shiftKey && now > shiftScrollUntil) return
+    shiftScrollUntil = now + SHIFT_SCROLL_IDLE_MS
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    emit('pageScroll', { deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode })
+  }, { capture: true, passive: false })
+
   function reply(id, ok, payload, error) {
     if (!id) return
     try {
@@ -204,7 +221,12 @@
        (`representation: 'spacefill'`), which would give variants their own
        geometry. It is not used: the component is created — 307 atoms, no error
        — but contributes no pixels to the render, so the marks would silently
-       not appear. Overpaint is the mechanism that demonstrably draws. */
+       not appear. Overpaint is the mechanism that demonstrably draws.
+
+       A segment may also carry `opacity`, and the payload `nonSelectedOpacity`
+       for every residue no segment lists. Opacity 0 is how a filter hides
+       residues outright: pdbe-molstar turns it into a transparency layer, which
+       clearSelection drops again along with the colours. */
     colorSegments: function (payload) {
       var segments = (payload && payload.segments) || []
       var overlays = (payload && payload.overlays) || []
@@ -218,6 +240,7 @@
           color: segment.color,
         }
         if (segment.tooltip) entry.tooltip = String(segment.tooltip)
+        if (typeof segment.opacity === 'number') entry.opacity = segment.opacity
         return entry
       })
 
@@ -235,10 +258,14 @@
         return entry.start_residue_number > 0 && entry.end_residue_number >= entry.start_residue_number
       })
 
-      return viewer.visual.select({
+      var params = {
         data: data,
         nonSelectedColor: (payload && payload.nonSelectedColor) || null,
-      }).then(function () {
+      }
+      if (payload && typeof payload.nonSelectedOpacity === 'number') {
+        params.nonSelectedOpacity = payload.nonSelectedOpacity
+      }
+      return viewer.visual.select(params).then(function () {
         return { colored: data.length }
       })
     },

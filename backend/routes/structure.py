@@ -90,6 +90,14 @@ class StructureResidueSegment(BaseModel):
     genomic_end: Optional[int] = None
 
 
+class StructureCdsSegment(BaseModel):
+    """One coding segment of the transcript: CDS nucleotide range ↔ genomic range."""
+    coord_start: int = 0           # 1-based position in the transcript's CDS
+    coord_end: int = 0
+    genomic_start: int = 0
+    genomic_end: int = 0
+
+
 class StructureResidueMapRequest(BaseModel):
     genome: str = "reference"
     transcript_id: str = ""
@@ -111,6 +119,9 @@ class StructureResidueMapResponse(BaseModel):
     unmapped_residues: int = 0
     strand: str = "+"
     segments: List[StructureResidueSegment] = []
+    # The layout the segments were projected through, so the panel can place
+    # every base of a codon — a run's genomic_start/end only give its first.
+    cds_segments: List[StructureCdsSegment] = []
     warnings: List[str] = []
 
 
@@ -813,6 +824,15 @@ async def structure_residue_map(payload: StructureResidueMapRequest):
                     genomic_end=item.genomic_end,
                 )
                 for item in residue_map.segments
+            ],
+            cds_segments=[
+                StructureCdsSegment(
+                    coord_start=int(item.get("coord_start") or 0),
+                    coord_end=int(item.get("coord_end") or 0),
+                    genomic_start=int(item.get("genomic_start") or 0),
+                    genomic_end=int(item.get("genomic_end") or 0),
+                )
+                for item in segments
             ],
             warnings=residue_map.warnings,
         )

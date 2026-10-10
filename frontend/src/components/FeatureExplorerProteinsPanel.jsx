@@ -56,6 +56,12 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
+// A pan start held inside 1..the row's last start, or the longest row's when linked.
+function clampPanStart(limits, txId, value, linked) {
+  const max = linked ? limits.linked : (limits.byId[txId] ?? Infinity)
+  return clamp(Math.round(Number(value) || 1), 1, max)
+}
+
 // ── Protein property computation ──────────────────────────────────────────────
 
 // Average amino acid molecular weights (monoisotopic, Da)
@@ -565,6 +571,48 @@ export default function FeatureExplorerProteinsPanel({
     return () => ro.disconnect()
   }, [])
 
+  // How far each row may pan: until its last residue sits at the right edge, or
+  // in aligned mode its last alignment column (every column holds a residue
+  // from at least one row). A row still loading has no known end yet (null).
+  const panLimits = useMemo(() => {
+    const byId = {}
+    let longest = 1
+    let longestId = activeCodingIds[0] || ''
+    let allKnown = true
+    for (const txId of activeCodingIds) {
+      let length = null
+      if (isAligned && alignmentData) {
+        length = alignmentData.totalColumns
+      } else {
+        const cached = cacheRef.current.get(`${resolvedGene?.id || ''}|${txId}`)
+        if (cached?.status === 'ok') length = Number(cached.coordMax) || cached.fullSequence.length
+        else if (cached) length = 1
+      }
+      if (length == null) {
+        byId[txId] = null
+        allKnown = false
+        continue
+      }
+      const maxStart = Math.max(1, length - aasPerWindow + 1)
+      byId[txId] = maxStart
+      if (maxStart > longest) {
+        longest = maxStart
+        longestId = txId
+      }
+    }
+    // Linked rows run to the end of the longest, padding the shorter ones. Until
+    // every row has loaded the longest is unknown, so linked panning is left open.
+    return { byId, longest, longestId, linked: allKnown ? longest : Infinity }
+  }, [activeCodingIds, isAligned, alignmentData, aasPerWindow, resolvedGene?.id, cacheVersion]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const panLimitsRef = useRef(panLimits)
+  panLimitsRef.current = panLimits
+
+  // Read from the ref so pan updaters always clamp against the current lengths.
+  const clampStart = useCallback((txId, value, linked) => (
+    clampPanStart(panLimitsRef.current, txId, value, linked)
+  ), [])
+
   // Per-row window start (1-based position, either AA or alignment column)
   const rowWindowById = useMemo(() => {
     const out = {}
@@ -572,33 +620,34 @@ export default function FeatureExplorerProteinsPanel({
       const start = lockPanAcrossRows
         ? (Number(panState.globalStart) > 0 ? Number(panState.globalStart) : 1)
         : (Number(panState.rowStarts?.[txId]) > 0 ? Number(panState.rowStarts?.[txId]) : 1)
-      out[txId] = { start: Math.max(1, Math.round(start)) }
+      out[txId] = { start: clampPanStart(panLimits, txId, start, lockPanAcrossRows) }
     }
     return out
-  }, [panState, lockPanAcrossRows, activeCodingIds])
+  }, [panState, lockPanAcrossRows, activeCodingIds, panLimits])
 
   const setStart = useCallback((txId, nextStartRaw) => {
-    const nextStart = Math.max(1, Math.round(Number(nextStartRaw || 1)))
     setPanState((prev) => {
-      if (lockPanAcrossRows) return { ...prev, globalStart: nextStart }
-      return { ...prev, rowStarts: { ...prev.rowStarts, [txId]: nextStart } }
+      if (lockPanAcrossRows) return { ...prev, globalStart: clampStart(txId, nextStartRaw, true) }
+      return { ...prev, rowStarts: { ...prev.rowStarts, [txId]: clampStart(txId, nextStartRaw, false) } }
     })
-  }, [lockPanAcrossRows])
+  }, [lockPanAcrossRows, clampStart])
 
+  // Moves are taken from the clamped position, so a row that has hit its end
+  // starts back the moment the pan reverses rather than after unwinding overshoot.
   const setStartAll = useCallback((delta) => {
     setPanState((prev) => {
       if (lockPanAcrossRows) {
-        const current = Number(prev.globalStart) > 0 ? Number(prev.globalStart) : 1
-        return { ...prev, globalStart: Math.max(1, current + delta) }
+        const current = clampStart('', prev.globalStart, true)
+        return { ...prev, globalStart: clampStart('', current + delta, true) }
       }
       const newRowStarts = {}
       for (const txId of activeCodingIds) {
-        const current = Number(prev.rowStarts?.[txId]) > 0 ? Number(prev.rowStarts?.[txId]) : 1
-        newRowStarts[txId] = Math.max(1, current + delta)
+        const current = clampStart(txId, prev.rowStarts?.[txId], false)
+        newRowStarts[txId] = clampStart(txId, current + delta, false)
       }
       return { ...prev, rowStarts: { ...prev.rowStarts, ...newRowStarts } }
     })
-  }, [lockPanAcrossRows, activeCodingIds])
+  }, [lockPanAcrossRows, activeCodingIds, clampStart])
 
   // Wheel handler
   useEffect(() => {
@@ -822,37 +871,26 @@ export default function FeatureExplorerProteinsPanel({
     return out
   }, [codingDisplayIds, resolvedGene?.id, cacheVersion]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Scrollbar model — uses alignment totalColumns when aligned
+  // Scrollbar model. It follows the longest row, so its full travel reaches the
+  // end of every sequence; shorter rows stop at their own ends along the way.
   const panScrollModel = useMemo(() => {
-    const anchorId = activeCodingIds[0] || ''
+    const anchorId = panLimits.longestId
     if (!anchorId) return { minStart: 1, maxStart: 1, currentStart: 1, disabled: true }
-    let coordMax
-    if (isAligned && alignmentData) {
-      coordMax = alignmentData.totalColumns
-    } else {
-      const cached = cacheRef.current.get(`${resolvedGene?.id || ''}|${anchorId}`)
-      coordMax = Number(cached?.coordMax || 1)
-    }
-    const maxStart = Math.max(1, coordMax - aasPerWindow + 1)
+    const maxStart = panLimits.longest
     const currentStart = clamp(rowWindowById[anchorId]?.start || 1, 1, maxStart)
     return { minStart: 1, maxStart, currentStart, disabled: maxStart <= 1 }
-  }, [activeCodingIds, rowWindowById, aasPerWindow, resolvedGene?.id, cacheVersion, isAligned, alignmentData]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [panLimits, rowWindowById])
 
   const handleBottomScrollbarPan = useCallback((nextStartRaw) => {
-    const nextStart = Math.max(1, Math.round(Number(nextStartRaw || 1)))
-    const anchorId = activeCodingIds[0] || ''
+    const anchorId = panLimits.longestId
     if (!anchorId) return
-    const delta = nextStart - (rowWindowById[anchorId]?.start || 1)
-    setPanState((prev) => {
-      if (lockPanAcrossRows) return { ...prev, globalStart: nextStart }
-      const nextRows = { ...prev.rowStarts }
-      for (const txId of activeCodingIds) {
-        const current = Number(prev.rowStarts?.[txId]) > 0 ? Number(prev.rowStarts?.[txId]) : 1
-        nextRows[txId] = Math.max(1, current + delta)
-      }
-      return { ...prev, rowStarts: nextRows }
-    })
-  }, [activeCodingIds, rowWindowById, lockPanAcrossRows])
+    if (lockPanAcrossRows) {
+      setPanState((prev) => ({ ...prev, globalStart: clampStart(anchorId, nextStartRaw, true) }))
+      return
+    }
+    const nextStart = Math.max(1, Math.round(Number(nextStartRaw || 1)))
+    setStartAll(nextStart - (rowWindowById[anchorId]?.start || 1))
+  }, [panLimits.longestId, rowWindowById, lockPanAcrossRows, clampStart, setStartAll])
 
   const handleRowPanMouseDown = useCallback((event, txId) => {
     if (event.button !== 0) return

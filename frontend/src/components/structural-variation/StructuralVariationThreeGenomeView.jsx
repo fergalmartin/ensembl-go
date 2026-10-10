@@ -5,6 +5,9 @@ import useDelayedFlag from '../../hooks/useDelayedFlag.js'
 import { beginWheelGesture, findNearestScrollable, markWheelHandled, readWheelEvent, resolveDragAxis, resolveWheelAction } from '../../utils/browsingControls.js'
 import { resolveSvFeatureTrackGenomeIds, resolveSvFeatureWindowChrom } from '../../utils/svFeatureTrackIdentity.js'
 import { createSvRequestError, isRetryableSvRequestError, shouldStartSvRequest } from '../../utils/svRequestRetry.js'
+import { findScrollHost } from '../../utils/browserScrollRail.js'
+import { cycleBottomSpacer } from '../../utils/genomeWheel.js'
+import BrowserScrollRail from '../BrowserScrollRail'
 import StructuralVariationFeatureBand from '../StructuralVariationFeatureBand'
 import { buildBrowserGeneSeedKey, buildBrowserViewportSeedKey, resolveAnchorRegionSeed, shouldSeedFromBrowser, shouldSeedFromBrowserViewport } from '../svViewportSeeding.js'
 import { StructuralVariationRibbonOverlay } from './StructuralVariationRibbonOverlay'
@@ -15,6 +18,10 @@ import { CenterAlignmentIcon, SelectionZoomIcon } from './svIcons'
 import { getSvDataTracksForSide, getSvSignalTracksForSide } from './svTracks.js'
 import { buildCenteredTargetWindow, buildChromWindow, buildWindowForAnchorRegion, centerWindowOnRange, constrainWindowToZoomLimits, deriveAutoTargetWindowFromBuffer, getResolvedChromSize, getSvRegionKey, getWindowKey, normalizeSvChromToken, panWindowByPixels, quantizeCeil, quantizeFloor, svBlocksToFeatureBandAlignments, svBufferMatchesAlignment, svBufferMatchesRefWindow, transformOuterWindowFromReferenceChange, withWindowChrom, zoomWindowAround } from './svWindows.js'
 import { useBrowsingControls } from './useSvBrowsingControls.js'
+
+// Room left above a genome band parked at the top by the scroll rail, so its
+// pill does not sit flush against the app's top bar.
+const SV_RAIL_ANCHOR_GAP = 8
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export function StructuralVariationThreeGenomeView({
@@ -673,9 +680,13 @@ export function StructuralVariationThreeGenomeView({
     [bottomChromSize],
   )
 
-  useEffect(() => { displayRefWindowRef.current = displayRefWindow }, [displayRefWindow])
-  useEffect(() => { displayTopWindowRef.current = displayTopWindow }, [displayTopWindow])
-  useEffect(() => { displayBottomWindowRef.current = displayBottomWindow }, [displayBottomWindow])
+  // While a preview frame is pending, the refs already hold the windows the
+  // gesture has reached and the rendered values are a step behind. Copying the
+  // render over them would hand the next wheel event an older window to zoom
+  // from, and the labels would jump back before catching up.
+  useEffect(() => { if (!previewFrameRef.current) displayRefWindowRef.current = displayRefWindow }, [displayRefWindow])
+  useEffect(() => { if (!previewFrameRef.current) displayTopWindowRef.current = displayTopWindow }, [displayTopWindow])
+  useEffect(() => { if (!previewFrameRef.current) displayBottomWindowRef.current = displayBottomWindow }, [displayBottomWindow])
   useEffect(() => { refChromSizeRef.current = refChromSize }, [refChromSize])
   useEffect(() => { topChromSizeRef.current = topChromSize }, [topChromSize])
   useEffect(() => { bottomChromSizeRef.current = bottomChromSize }, [bottomChromSize])
@@ -895,15 +906,27 @@ export function StructuralVariationThreeGenomeView({
     el.altEnd = bottomWindow?.end ?? 0
   }, [refAssembly, bottomAssembly, alignmentPanelHeight, svLoadingMode, alignmentRegionLength, bottomRegionLength, getLowerRuntimeEndpoints, browsingControls])
 
+  // These re-run whenever the sync callbacks change, and those change mid-gesture
+  // (a buffer landing moves alignmentRegionLength). Syncing to the committed
+  // window then drew the ribbons a step behind the preview on screen — with two
+  // ribbons, a visible left/right flicker on every zoom. Sync to what is shown.
   useEffect(() => {
-    syncUpperAlignmentViewport(viewRefWindow, baseTopWindow)
-    const frame = requestAnimationFrame(() => syncUpperAlignmentViewport(viewRefWindow, baseTopWindow))
+    const sync = () => syncUpperAlignmentViewport(
+      displayRefWindowRef.current || viewRefWindow,
+      displayTopWindowRef.current || baseTopWindow,
+    )
+    sync()
+    const frame = requestAnimationFrame(sync)
     return () => cancelAnimationFrame(frame)
   }, [syncUpperAlignmentViewport, viewRefWindow, baseTopWindow])
 
   useEffect(() => {
-    syncLowerAlignmentViewport(viewRefWindow, baseBottomWindow)
-    const frame = requestAnimationFrame(() => syncLowerAlignmentViewport(viewRefWindow, baseBottomWindow))
+    const sync = () => syncLowerAlignmentViewport(
+      displayRefWindowRef.current || viewRefWindow,
+      displayBottomWindowRef.current || baseBottomWindow,
+    )
+    sync()
+    const frame = requestAnimationFrame(sync)
     return () => cancelAnimationFrame(frame)
   }, [syncLowerAlignmentViewport, viewRefWindow, baseBottomWindow])
 
@@ -1476,6 +1499,73 @@ export function StructuralVariationThreeGenomeView({
     && baseTopWindow?.chrom
   )
   const hasLowerSection = Boolean(selectedBottomAlignmentId)
+
+  // The genome browser's scroll rail, down the left gutter: one dot per genome
+  // band in the order they stack, each in its genome's colour, and pressing a
+  // dot parks that band at the top of the page.
+  const railHostRef = useRef(null)
+  const scrollRailStops = useMemo(() => [
+    { key: 'top', label: tgtPillLabel || 'Secondary genome', color: topGenomeColor },
+    { key: 'reference', label: refPillLabel || 'Primary genome', color: referenceGenomeColor },
+    ...(hasLowerSection ? [{ key: 'bottom', label: thirdPillLabel || 'Third genome', color: bottomGenomeColor }] : []),
+  ].map((stop) => ({ ...stop, tourId: stop.key })), [
+    tgtPillLabel, refPillLabel, thirdPillLabel, topGenomeColor, referenceGenomeColor, bottomGenomeColor, hasLowerSection,
+  ])
+  const resolveRailAnchor = useCallback((host, key) => (
+    host?.querySelector(`[data-sv-rail-stop="${key}"]`) || null
+  ), [])
+  const jumpToBand = useCallback((key) => {
+    const host = railHostRef.current
+    const anchor = resolveRailAnchor(host, key)
+    const scroller = host ? findScrollHost(host) : null
+    if (!anchor || !scroller) return
+    const offset = anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+    scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + offset - SV_RAIL_ANCHOR_GAP), behavior: 'smooth' })
+  }, [resolveRailAnchor])
+
+  // The last band has too little page under it to be scrolled to the top, so a
+  // jump to it stopped short and the rail's ring landed somewhere else. As in the
+  // genome browser, the missing distance is kept as empty page below the view.
+  const [railBottomSpacer, setRailBottomSpacer] = useState(0)
+  const railSpacerRef = useRef(null)
+  const lastRailStopKey = scrollRailStops[scrollRailStops.length - 1]?.key || ''
+  const hasView = Boolean(viewRefWindow)
+  useEffect(() => {
+    const host = railHostRef.current
+    if (!host || !hasView || !lastRailStopKey) {
+      setRailBottomSpacer(0)
+      return undefined
+    }
+    const measure = () => {
+      const scroller = findScrollHost(host)
+      const anchor = resolveRailAnchor(host, lastRailStopKey)
+      if (!scroller || !anchor) return
+      const anchorOffset = anchor.getBoundingClientRect().top
+        - scroller.getBoundingClientRect().top + scroller.scrollTop - SV_RAIL_ANCHOR_GAP
+      // Everything is read from the page now, including the spacer as it is
+      // actually drawn. Reading inside a state updater instead measured a page
+      // that had not caught up with the last update, and the spacer ran away.
+      const next = cycleBottomSpacer({
+        viewport: scroller.clientHeight,
+        scrollHeight: scroller.scrollHeight,
+        anchorOffset,
+        spacer: railSpacerRef.current?.getBoundingClientRect().height || 0,
+      })
+      // Sub-pixel shrinkage is ignored so a rounding wobble cannot keep the
+      // observer firing on its own output.
+      setRailBottomSpacer((prev) => (next > prev || prev - next > 1 ? next : prev))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
+    const scroller = findScrollHost(host)
+    if (scroller) observer.observe(scroller)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [hasView, lastRailStopKey, resolveRailAnchor])
   const canRenderLowerRibbon = Boolean(
     canRenderUpperRibbon
     && thirdSpecies
@@ -1504,12 +1594,28 @@ export function StructuralVariationThreeGenomeView({
   ]
 
   return (
+    <>
     <div
+      ref={railHostRef}
       className={`rounded-xl ${themeClasses.panel} overflow-visible flex flex-col`}
       style={{
         minHeight: refSpecies && tgtSpecies && thirdSpecies && viewRefWindow ? 'calc(100vh - 180px)' : undefined,
       }}
     >
+      {/* Portalled to the page, so it floats in the app's left-hand padding. */}
+      <BrowserScrollRail
+        panels={scrollRailStops}
+        hostRef={railHostRef}
+        onJump={jumpToBand}
+        isActive={Boolean(viewRefWindow)}
+        isLight={isLight}
+        resolveAnchor={resolveRailAnchor}
+        anchorGap={SV_RAIL_ANCHOR_GAP}
+        ariaLabel="Structural variation position"
+        tourId="sv-scroll-rail"
+        stopTourPrefix="sv-scroll-rail-genome-"
+        balanced
+      />
       <div className={`px-3 py-2 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'} flex items-center gap-2`}>
         <div className={`w-[300px] max-w-[34vw] shrink-0 truncate text-xs ${themeClasses.muted}`}>
           {viewRefWindow
@@ -1627,7 +1733,7 @@ export function StructuralVariationThreeGenomeView({
           <div className="flex-1 flex items-center justify-center text-sm opacity-70">Loading…</div>
         ) : (
           <div ref={interactiveAreaRef} className="relative">
-            <div ref={topFeatureBandRef} className="w-full flex-none touch-none" onPointerDown={(event) => handleFeatureBandPointerDown('top', event)}>
+            <div ref={topFeatureBandRef} data-sv-rail-stop="top" className="w-full flex-none touch-none" onPointerDown={(event) => handleFeatureBandPointerDown('top', event)}>
               <StructuralVariationFeatureBand
                 theme={theme}
                 position="top"
@@ -1714,7 +1820,7 @@ export function StructuralVariationThreeGenomeView({
               />
             )}
 
-            <div ref={middleFeatureBandRef} className="w-full flex-none touch-none" onPointerDown={(event) => handleFeatureBandPointerDown('reference', event)}>
+            <div ref={middleFeatureBandRef} data-sv-rail-stop="reference" className="w-full flex-none touch-none" onPointerDown={(event) => handleFeatureBandPointerDown('reference', event)}>
               <StructuralVariationFeatureBand
                 theme={theme}
                 position="top"
@@ -1795,7 +1901,7 @@ export function StructuralVariationThreeGenomeView({
             )}
 
             {hasLowerSection && (
-            <div ref={bottomFeatureBandRef} className="w-full flex-none touch-none mb-4" onPointerDown={(event) => handleFeatureBandPointerDown('bottom', event)}>
+            <div ref={bottomFeatureBandRef} data-sv-rail-stop="bottom" className="w-full flex-none touch-none mb-4" onPointerDown={(event) => handleFeatureBandPointerDown('bottom', event)}>
               <StructuralVariationFeatureBand
                 theme={theme}
                 position="bottom"
@@ -1881,5 +1987,10 @@ export function StructuralVariationThreeGenomeView({
         {!upperBufferLoading && !lowerBufferLoading && <span className="opacity-70">Structural variation (three-genome test mode)</span>}
       </div>
     </div>
+    {/* Empty page under the view, so the last genome band can be scrolled up
+        to the top like the others. Outside the panel, so the panel does not
+        grow; always mounted, so its drawn height can be measured. */}
+    <div ref={railSpacerRef} className="w-full flex-none" style={{ height: railBottomSpacer }} aria-hidden="true" />
+    </>
   )
 }

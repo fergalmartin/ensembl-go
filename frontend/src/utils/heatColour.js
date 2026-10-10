@@ -5,7 +5,7 @@
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 const lerp = (a, b, t) => a + ((b - a) * t)
 
-function hexToRgb(hex) {
+export function hexToRgb(hex) {
   const clean = String(hex || '').replace('#', '')
   if (clean.length !== 6) return { r: 127, g: 127, b: 127 }
   const n = Number.parseInt(clean, 16)

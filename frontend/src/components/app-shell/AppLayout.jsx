@@ -256,6 +256,7 @@ export function renderAppLayout(ctx) {
         unalignedGenomeCount,
         userConfig,
         usingFallbackScreenshot,
+        waitForGenomeConfigSave,
     } = ctx
     return (
 <div className={`h-screen flex flex-col ${themeStyles.bg} ${themeStyles.text}`}>
@@ -882,6 +883,7 @@ export function renderAppLayout(ctx) {
               genomes={featureExplorerAvailableGenomes}
               focusGeneByGenome={focusGeneByGenome}
               onSelectGenome={handleFeatureExplorerGenomeSelect}
+              waitForGenomeConfigSave={waitForGenomeConfigSave}
               screenshotMode={currentView === 'feature_explorer' ? screenshotMode : false}
               onScreenshotModeChange={setScreenshotMode}
               onScreenshotAvailabilityChange={handleScreenshotAvailabilityChange}

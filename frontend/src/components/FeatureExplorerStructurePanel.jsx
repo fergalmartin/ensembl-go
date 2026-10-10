@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LOCKED_ICON_PATH } from '../utils/lockIcons'
 import { API_BASE } from '../backendRuntime'
 import { genomeKeysMatch } from '../utils/genomeIdentity'
+import { WHEEL_GESTURE_IDLE_MS, beginWheelGesture, findNearestScrollable, normalizeWheelDelta, readWheelEvent } from '../utils/browsingControls'
 import {
   createStructureViewerBridge,
   structureModelUrl,
@@ -14,19 +15,24 @@ import {
   UNMAPPED_COLOR,
   VARIANT_IMPACT_COLORS,
   VARIANT_IMPACT_LABELS,
+  buildFrequencyPaint,
   buildPaintSegments,
   buildVariantOverlays,
   exonAtResidue,
+  frequencyColor,
   formatRange,
   mutedColor,
+  residueTranscriptCounts,
   rgbCss,
   summariseExons,
   summariseVariantImpacts,
 } from './structureExonMapping'
+import { HEAT_STOPS } from '../utils/heatColour.js'
 import FeatureSectionHeader, { FeatureSubHeading, featureSectionClass } from './FeatureSection'
 
 const COLOR_MODES = [
   { key: 'exons', label: 'Exons', title: 'Colour the model by which coding exon contributes each residue' },
+  { key: 'frequency', label: 'Frequency', title: 'Colour each residue by the share of coding transcripts whose CDS includes it' },
   { key: 'plddt', label: 'Confidence', title: "Colour by AlphaFold's pLDDT per-residue confidence" },
   { key: 'none', label: 'Plain', title: 'No overlay' },
 ]
@@ -37,6 +43,8 @@ const SOURCE_LABELS = {
   xref: 'genome xref',
   uniprot_api: 'UniProt',
 }
+
+const HEAT_GRADIENT = `linear-gradient(90deg, ${HEAT_STOPS.map((stop) => `${stop.color} ${stop.t * 100}%`).join(', ')})`
 
 // Matches the lock in the transcript panel, so the two mean the same thing.
 
@@ -97,7 +105,17 @@ export default function FeatureExplorerStructurePanel({
   const [mappingStatus, setMappingStatus] = useState(null)
   const [viewerReady, setViewerReady] = useState(false)
   const [spinning, setSpinning] = useState(false)
-  const [openSections, setOpenSections] = useState({ exons: true, variants: false })
+  const [openSections, setOpenSections] = useState({ frequency: true, exons: true, variants: false })
+  // Transcript frequency: which coding transcripts are counted, and the
+  // percentage window a residue must fall in to stay drawn.
+  const [frequencyScope, setFrequencyScope] = useState('active') // active | all
+  // One threshold, read as a floor ("at least") or a ceiling ("at most").
+  const [frequencyFilter, setFrequencyFilter] = useState({ mode: 'min', value: 0 })
+  const frequencyRange = useMemo(() => (
+    frequencyFilter.mode === 'min'
+      ? { min: frequencyFilter.value, max: 100 }
+      : { min: 0, max: frequencyFilter.value }
+  ), [frequencyFilter])
 
   const [probe, setProbe] = useState(null)
   const [probing, setProbing] = useState(false)
@@ -121,6 +139,7 @@ export default function FeatureExplorerStructurePanel({
   // command from being sent.
   const inFlightKeyRef = useRef('')
   const probeKeyRef = useRef('')
+  const probeTokenRef = useRef(0)
 
   // Only coding transcripts have anything to show here.
   const codingIds = useMemo(() => (
@@ -193,7 +212,9 @@ export default function FeatureExplorerStructurePanel({
     setLockedExons(new Set())
     setProbe(null)
     setVariantData(null)
+    setProbing(false)
     probeKeyRef.current = ''
+    probeTokenRef.current += 1
   }, [resolvedGene?.id])
 
   // ── Viewer bridge ─────────────────────────────────────────────────────────
@@ -210,6 +231,16 @@ export default function FeatureExplorerStructurePanel({
     }
     if (type === 'residueClick') {
       setClickedResidue(Number(payload?.residue) || null)
+      return
+    }
+    if (type === 'pageScroll') {
+      // Shift + wheel over the model, handed out by the viewer. macOS turns a
+      // shifted vertical swipe into a horizontal one, so whichever axis
+      // carries the gesture scrolls the page.
+      const { dx, dy } = normalizeWheelDelta(payload, { pageHeight: window.innerHeight })
+      const amount = Math.abs(dy) >= Math.abs(dx) ? dy : dx
+      const scroller = findNearestScrollable(frameRef.current)
+      if (scroller && amount) scroller.scrollTop += amount
     }
   }, [])
 
@@ -237,6 +268,70 @@ export default function FeatureExplorerStructurePanel({
     if (!viewerReady) return
     bridgeRef.current?.setTheme(isLight ? 'light' : 'dark').catch(() => {})
   }, [isLight, viewerReady])
+
+  // ── Scrolling past the model ──────────────────────────────────────────────
+  // Mol* lives in an iframe, so the page never sees a wheel event once the
+  // pointer is over the model: scrolling the page down past it turned into a
+  // zoom the moment the model slid under a stationary cursor. As in the
+  // transcript track, a gesture that began elsewhere stays a page scroll for as
+  // long as it continues. While one is in flight a transparent shield covers the
+  // frame and takes the wheel in its place; it drops as soon as the gesture
+  // ends, a new one starts over the model, or the pointer itself moves.
+  const viewerBoxRef = useRef(null)
+  const shieldRef = useRef(null)
+  const [scrollShield, setScrollShield] = useState(false)
+  const scrollShieldRef = useRef(false)
+  const wheelGestureRef = useRef(null)
+  const shieldTimerRef = useRef(0)
+
+  const setShield = useCallback((on) => {
+    clearTimeout(shieldTimerRef.current)
+    if (scrollShieldRef.current === on) return
+    scrollShieldRef.current = on
+    setScrollShield(on)
+  }, [])
+
+  useEffect(() => {
+    if (collapsed) return undefined
+    // Bookkeeping only, so it stays passive: whether to cancel an event is
+    // decided by the shield's own listener, which runs after this one.
+    const onWindowWheel = (event) => {
+      const box = viewerBoxRef.current
+      if (!box) return
+      const wheel = readWheelEvent(event, { pageHeight: window.innerHeight })
+      const previous = wheelGestureRef.current
+      const gesture = beginWheelGesture(previous, wheel, wheel.ts || performance.now())
+      const overModel = box.contains(event.target)
+      const source = gesture.continues
+        ? (previous?.source || 'outside')
+        : (overModel ? 'model' : 'outside')
+      wheelGestureRef.current = { ...gesture, source }
+      if (source !== 'outside') return
+      setShield(true)
+      // Coasting events arrive well inside this window, so it only lapses once
+      // the fling has actually stopped.
+      shieldTimerRef.current = setTimeout(() => setShield(false), WHEEL_GESTURE_IDLE_MS + 60)
+    }
+    window.addEventListener('wheel', onWindowWheel, { passive: true, capture: true })
+    return () => {
+      window.removeEventListener('wheel', onWindowWheel, { capture: true })
+      clearTimeout(shieldTimerRef.current)
+    }
+  }, [collapsed, setShield])
+
+  useEffect(() => {
+    const shield = shieldRef.current
+    if (!shield) return undefined
+    // A gesture that starts on the shield was aimed at the model: it lowers the
+    // shield and that one event is dropped rather than scrolling the page.
+    const onShieldWheel = (event) => {
+      if (wheelGestureRef.current?.source !== 'model') return
+      event.preventDefault()
+      setShield(false)
+    }
+    shield.addEventListener('wheel', onShieldWheel, { passive: false })
+    return () => shield.removeEventListener('wheel', onShieldWheel)
+  }, [setShield, collapsed])
 
   // ── Resolve, load, map ────────────────────────────────────────────────────
 
@@ -316,13 +411,19 @@ export default function FeatureExplorerStructurePanel({
   // Probe every coding transcript once per gene, alongside the load above rather
   // than in front of it: the first structure should appear without waiting on a
   // dozen accession lookups.
+  //
+  // A token decides which reply counts, not effect cleanup: the key check skips
+  // a repeat run for the same transcripts, so a cleanup that cancelled the
+  // first run would leave nobody to receive its answer — which is what
+  // StrictMode's double-invoke did, leaving "Checking transcripts…" up forever.
   useEffect(() => {
     if (collapsed || codingIds.length === 0) return
     const key = `${sequenceGenome}|${codingIds.join(',')}`
     if (key === probeKeyRef.current) return
     probeKeyRef.current = key
 
-    let cancelled = false
+    const token = (probeTokenRef.current += 1)
+    const current = () => token === probeTokenRef.current
     setProbing(true)
     fetch(`${API_BASE}/api/structure/transcripts`, {
       method: 'POST',
@@ -330,11 +431,9 @@ export default function FeatureExplorerStructurePanel({
       body: JSON.stringify({ genome: sequenceGenome || 'reference', transcript_ids: codingIds }),
     })
       .then((response) => (response.ok ? response.json() : null))
-      .then((data) => { if (!cancelled && data) setProbe(data) })
-      .catch(() => { if (!cancelled) setProbe({ mode: 'canonical_only', entries: [], message: '' }) })
-      .finally(() => { if (!cancelled) setProbing(false) })
-
-    return () => { cancelled = true }
+      .then((data) => { if (current() && data) setProbe(data) })
+      .catch(() => { if (current()) setProbe({ mode: 'canonical_only', entries: [], message: '' }) })
+      .finally(() => { if (current()) setProbing(false) })
   }, [collapsed, sequenceGenome, codingIds])
 
   const exonSummary = useMemo(() => summariseExons(residueMap?.segments), [residueMap])
@@ -429,6 +528,31 @@ export default function FeatureExplorerStructurePanel({
     })
   }, [colorMode, residueMap, exonSummary, mode, lockedExons, variantsShown])
 
+  // The coding transcripts the frequency colouring counts over. Only worked out
+  // while that mode is on: it walks every codon against every transcript.
+  const frequencyTranscripts = useMemo(() => {
+    if (colorMode !== 'frequency') return []
+    return codingIds
+      .filter((id) => frequencyScope === 'all' || activeTranscriptIds.has(id))
+      .map((id) => transcriptById.get(id))
+      .filter(Boolean)
+  }, [colorMode, codingIds, frequencyScope, activeTranscriptIds, transcriptById])
+
+  const residueCounts = useMemo(() => (
+    colorMode === 'frequency' ? residueTranscriptCounts(residueMap, frequencyTranscripts) : []
+  ), [colorMode, residueMap, frequencyTranscripts])
+
+  const frequencyTotal = frequencyTranscripts.length
+  const frequencyFiltered = frequencyRange.min > 0 || frequencyRange.max < 100
+
+  const frequencyPaint = useMemo(() => (
+    buildFrequencyPaint(residueCounts, frequencyTotal, mode, {
+      minPercent: frequencyRange.min,
+      maxPercent: frequencyRange.max,
+      dim: variantsShown,
+    })
+  ), [residueCounts, frequencyTotal, mode, frequencyRange, variantsShown])
+
   const overlays = useMemo(() => {
     if (!variantsShown) return []
     const bounds = model ? { start: model.sequence_start, end: model.sequence_end } : null
@@ -449,7 +573,20 @@ export default function FeatureExplorerStructurePanel({
       }).catch(() => {})
       return
     }
-    if (colorMode === 'none' && plainSegments.length) {
+    if (colorMode === 'frequency' && frequencyTotal > 0 && frequencyPaint.segments.length) {
+      // Residues the transcript does not reach have no count at all, so a
+      // filter hides them along with everything outside its window.
+      bridge.colorSegments({
+        segments: frequencyPaint.segments,
+        overlays,
+        nonSelectedColor: UNMAPPED_COLOR[mode],
+        ...(frequencyFiltered ? { nonSelectedOpacity: 0 } : {}),
+      }).catch(() => {})
+      return
+    }
+    // Frequency with nothing to count (no active coding transcripts) falls back
+    // to the plain colour rather than to Confidence, which would read as data.
+    if ((colorMode === 'none' || colorMode === 'frequency') && plainSegments.length) {
       // A single flat colour across the whole chain. Clearing would restore the
       // AlphaFold preset instead, which is what Confidence already shows.
       bridge.colorSegments({
@@ -468,7 +605,7 @@ export default function FeatureExplorerStructurePanel({
     }
     // Clearing restores the AlphaFold preset, which is the pLDDT colouring.
     bridge.clearColors().catch(() => {})
-  }, [loadState, viewerReady, colorMode, paintSegments, plainSegments, overlays, mode])
+  }, [loadState, viewerReady, colorMode, paintSegments, frequencyPaint, frequencyTotal, frequencyFiltered, plainSegments, overlays, mode])
 
   // ── Screenshot ────────────────────────────────────────────────────────────
   // The Feature Explorer captures panels by serialising the DOM into an SVG
@@ -577,6 +714,32 @@ export default function FeatureExplorerStructurePanel({
     : allVariants.filter((variant) => variant.model_residue === clickedResidue)
   const lockedList = exonSummary.filter((exon) => lockedExons.has(exon.exonIndex))
   const truncated = (variantData?.tracks || []).some((track) => track.truncated)
+  const clickedCount = clickedResidue == null
+    ? null
+    : residueCounts.find((entry) => entry.residue === clickedResidue) || null
+  const activeCodingCount = codingIds.filter((id) => activeTranscriptIds.has(id)).length
+  // The threshold as a transcript count, so the percentage reads as a number.
+  const frequencyEdge = frequencyFilter.mode === 'min'
+    ? `${Math.ceil((frequencyFilter.value * frequencyTotal) / 100)}+`
+    : `≤ ${Math.floor((frequencyFilter.value * frequencyTotal) / 100)}`
+  const neutralFrequency = (filterMode) => (filterMode === 'min' ? 0 : 100)
+  // Switching keeps the threshold, except one that filtered nothing: "at least
+  // 0%" turned round would be "at most 0%", which hides the whole model.
+  const setFrequencyMode = (nextMode) => setFrequencyFilter((prev) => (
+    prev.mode === nextMode
+      ? prev
+      : {
+        mode: nextMode,
+        value: prev.value === neutralFrequency(prev.mode) ? neutralFrequency(nextMode) : prev.value,
+      }
+  ))
+  // The viewer and everything that acts on it only appear once there is a model
+  // to show. Re-resolving over a model already on screen keeps it there, so
+  // trying another accession does not collapse and regrow the panel.
+  const showViewer = loadState === 'loading'
+    || loadState === 'ready'
+    || (loadState === 'resolving' && Boolean(model))
+  const searchingFirst = !showViewer && loadState !== 'error' && Boolean(transcriptId)
 
   return (
     <div ref={containerRef} className={featureSectionClass(isLight)}>
@@ -609,50 +772,56 @@ export default function FeatureExplorerStructurePanel({
               })}
             </select>
 
-            <div className="flex items-center gap-1">
-              {COLOR_MODES.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => setColorMode(item.key)}
-                  disabled={item.key === 'exons' && !residueMap?.segments?.length}
-                  className={`px-2.5 py-1 rounded text-[11px] font-semibold border ${colorMode === item.key ? btnActive : btnInactive} disabled:opacity-40 disabled:cursor-not-allowed`}
-                  title={item.title}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+            {showViewer && (<>
+              <div className="flex items-center gap-1">
+                {COLOR_MODES.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setColorMode(item.key)}
+                    disabled={
+                      (item.key === 'exons' && !residueMap?.segments?.length)
+                      || (item.key === 'frequency' && !residueMap?.cds_segments?.length)
+                    }
+                    className={`px-2.5 py-1 rounded text-[11px] font-semibold border ${colorMode === item.key ? btnActive : btnInactive} disabled:opacity-40 disabled:cursor-not-allowed`}
+                    title={item.title}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
 
-            <button
-              type="button"
-              onClick={() => bridgeRef.current?.reset().catch(() => {})}
-              disabled={loadState !== 'ready'}
-              className={`px-2.5 py-1 rounded text-[11px] font-semibold border ${btnInactive} disabled:opacity-40 disabled:cursor-not-allowed`}
-              title="Reset the camera"
-            >
-              Reset view
-            </button>
+              <button
+                type="button"
+                onClick={() => bridgeRef.current?.reset().catch(() => {})}
+                disabled={loadState !== 'ready'}
+                className={`px-2.5 py-1 rounded text-[11px] font-semibold border ${btnInactive} disabled:opacity-40 disabled:cursor-not-allowed`}
+                title="Reset the camera"
+              >
+                Reset view
+              </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                const next = !spinning
-                setSpinning(next)
-                bridgeRef.current?.spin(next).catch(() => setSpinning(!next))
-              }}
-              disabled={loadState !== 'ready'}
-              className={`px-2.5 py-1 rounded text-[11px] font-semibold border ${spinning ? btnActive : btnInactive} disabled:opacity-40 disabled:cursor-not-allowed`}
-              title={spinning ? 'Stop rotating the model' : 'Rotate the model continuously'}
-            >
-              Spin
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !spinning
+                  setSpinning(next)
+                  bridgeRef.current?.spin(next).catch(() => setSpinning(!next))
+                }}
+                disabled={loadState !== 'ready'}
+                className={`px-2.5 py-1 rounded text-[11px] font-semibold border ${spinning ? btnActive : btnInactive} disabled:opacity-40 disabled:cursor-not-allowed`}
+                title={spinning ? 'Stop rotating the model' : 'Rotate the model continuously'}
+              >
+                Spin
+              </button>
+            </>)}
 
-            {probing && <span className={`text-[11px] ${mutedClass}`}>Checking transcripts…</span>}
+            {searchingFirst && <span className={`text-[11px] ${mutedClass}`}>Finding a structure…</span>}
+            {probing && !searchingFirst && <span className={`text-[11px] ${mutedClass}`}>Checking transcripts…</span>}
           </div>
 
           {/* ── Provenance ──────────────────────────────────────────────── */}
-          {model && (
+          {showViewer && model && (
             <div className={`text-[11px] ${mutedClass} flex flex-wrap items-center gap-x-3 gap-y-1`}>
               <span className={`font-mono ${bodyTextClass}`}>{resolution.uniprot_accession}</span>
               <span>via {SOURCE_LABELS[resolution.source] || resolution.source}</span>
@@ -687,264 +856,422 @@ export default function FeatureExplorerStructurePanel({
           )}
 
           {/* ── Viewer and side column ──────────────────────────────────── */}
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0,1fr) 260px' }}>
-            <div className={`relative rounded-lg overflow-hidden ${isLight ? 'bg-gray-50' : 'bg-gray-900/40'}`} style={{ height: 420 }}>
-              {/* allow-same-origin keeps the frame on the backend's origin rather
-                  than an opaque one. It needs that for two reasons: its own CSP
-                  restricts it to connect-src 'self', which matches nothing from an
-                  opaque origin, and postMessage from an opaque origin arrives as
-                  "null", which the bridge cannot distinguish from any other
-                  sandboxed frame. It is safe here precisely because that origin is
-                  not the app's: the pairing is only dangerous when the framed page
-                  is same-origin with its embedder and could clear its own sandbox.
-                  Everything else stays denied — no popups, no top-level navigation,
-                  no forms, no downloads. */}
-              <iframe
-                ref={frameRef}
-                title="Protein structure viewer"
-                src={structureViewerUrl()}
-                sandbox="allow-scripts allow-same-origin"
-                className="w-full h-full block border-0"
-                onLoad={() => bridgeRef.current?.attach(frameRef.current)}
-              />
-              {(loadState === 'resolving' || loadState === 'loading') && (
-                <div className={`absolute inset-0 flex items-center justify-center text-[12px] ${mutedClass} ${isLight ? 'bg-white/70' : 'bg-gray-900/70'}`}>
-                  {loadState === 'resolving' ? 'Finding a structure…' : 'Loading structure…'}
-                </div>
-              )}
-            </div>
-
-            <div className="min-w-0 space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
-              <StructureSection
-                title="Coding exons"
-                badge={exonSummary.length || null}
-                open={openSections.exons}
-                onToggle={() => toggleSection('exons')}
-                isLight={isLight}
-                actions={lockedExons.size > 0 ? (
-                  <div className="flex items-center gap-1 pr-1.5">
-                    <button
-                      type="button"
-                      className={miniButtonClass}
-                      onClick={() => focusRanges(lockedList)}
-                      title="Frame the locked exons"
-                    >
-                      Focus
-                    </button>
-                    <button
-                      type="button"
-                      className={miniButtonClass}
-                      onClick={() => setLockedExons(new Set())}
-                      title="Unlock every exon"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                ) : null}
-              >
-                {exonSummary.length === 0 ? (
-                  <div className={`text-[11px] ${mutedClass}`}>
-                    {loadState === 'ready' ? 'No exon mapping available.' : '—'}
-                  </div>
-                ) : (
-                  // The list scrolls inside the section rather than pushing the
-                  // sections below it off the column: a transcript with thirty
-                  // coding exons would otherwise hide the Variants header
-                  // entirely, and nothing would suggest it was there.
-                  <div className="space-y-0.5 max-h-[210px] overflow-y-auto pr-1">
-                    {exonSummary.map((exon, position) => {
-                      const locked = lockedExons.has(exon.exonIndex)
-                      const base = palette[position % palette.length]
-                      // The swatch mutes exactly as the model does, so the list
-                      // and the structure never disagree about what is emphasised.
-                      const dimmed = (lockedExons.size > 0 && !locked) || (variantsShown && !locked)
-                      return (
-                        <div
-                          key={exon.exonIndex}
-                          onMouseEnter={() => handleExonHover(exon)}
-                          onMouseLeave={() => handleExonHover(null)}
-                          className={`flex items-center gap-1.5 rounded transition-colors ${
-                            hoveredExon === exon.exonIndex ? (isLight ? 'bg-gray-100' : 'bg-gray-700/70') : ''
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => toggleExonLock(exon)}
-                            className="flex-1 min-w-0 flex items-center gap-2 px-1.5 py-1 text-left text-[11px]"
-                            title={`${locked ? 'Unlock' : 'Lock'} exon ${position + 1} · residues ${formatRange(exon.modelStart, exon.modelEnd)}${exon.genomicStart ? ` · ${exon.genomicStart.toLocaleString()}–${(exon.genomicEnd || exon.genomicStart).toLocaleString()}` : ''}`}
-                          >
-                            <span
-                              className="w-2.5 h-2.5 rounded-sm shrink-0"
-                              style={{ backgroundColor: rgbCss(dimmed ? mutedColor(base, mode) : base) }}
-                              aria-hidden="true"
-                            />
-                            <span className={`shrink-0 tabular-nums ${bodyTextClass}`}>{position + 1}</span>
-                            <span className={`truncate tabular-nums ${mutedClass}`}>
-                              aa {formatRange(exon.aaStart, exon.aaEnd)}
-                            </span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => focusRanges([exon])}
-                            className={`shrink-0 px-1 py-1 ${mutedClass} hover:${isLight ? 'text-gray-800' : 'text-gray-100'}`}
-                            title={`Frame exon ${position + 1}`}
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                              <circle cx="12" cy="12" r="7" />
-                              <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
-                            </svg>
-                          </button>
-                          <span className="shrink-0 w-4 flex items-center justify-center">
-                            {locked && (
-                              <svg
-                                width="12"
-                                height="12"
-                                viewBox="0 0 24 24"
-                                fill="currentColor"
-                                style={{ color: isLight ? '#0099ff' : '#60a5fa' }}
-                                aria-label={`Exon ${position + 1} locked`}
-                                role="img"
-                              >
-                                <path d={LOCKED_ICON_PATH} />
-                              </svg>
-                            )}
-                          </span>
-                        </div>
-                      )
-                    })}
+          {/* Hidden rather than unmounted: the iframe has to load before any
+              lookup starts, and Mol* sizes its canvas from the frame, so it is
+              laid out at full size and clipped to nothing until there is a
+              model to show. */}
+          <div
+            aria-hidden={!showViewer}
+            style={showViewer ? undefined : { height: 0, margin: 0, overflow: 'hidden', visibility: 'hidden' }}
+          >
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0,1fr) 260px' }}>
+              <div ref={viewerBoxRef} className={`relative rounded-lg overflow-hidden ${isLight ? 'bg-gray-50' : 'bg-gray-900/40'}`} style={{ height: 420 }}>
+                {/* allow-same-origin keeps the frame on the backend's origin rather
+                    than an opaque one. It needs that for two reasons: its own CSP
+                    restricts it to connect-src 'self', which matches nothing from an
+                    opaque origin, and postMessage from an opaque origin arrives as
+                    "null", which the bridge cannot distinguish from any other
+                    sandboxed frame. It is safe here precisely because that origin is
+                    not the app's: the pairing is only dangerous when the framed page
+                    is same-origin with its embedder and could clear its own sandbox.
+                    Everything else stays denied — no popups, no top-level navigation,
+                    no forms, no downloads. */}
+                <iframe
+                  ref={frameRef}
+                  title="Protein structure viewer"
+                  src={structureViewerUrl()}
+                  sandbox="allow-scripts allow-same-origin"
+                  className="w-full h-full block border-0"
+                  onLoad={() => bridgeRef.current?.attach(frameRef.current)}
+                />
+                {(loadState === 'resolving' || loadState === 'loading') && (
+                  <div className={`absolute inset-0 flex items-center justify-center text-[12px] ${mutedClass} ${isLight ? 'bg-white/70' : 'bg-gray-900/70'}`}>
+                    {loadState === 'resolving' ? 'Finding a structure…' : 'Loading structure…'}
                   </div>
                 )}
-              </StructureSection>
+                {/* Chrome fires a zero-movement mousemove when the page scrolls
+                    under the cursor, so only a real move hands the model back. */}
+                <div
+                  ref={shieldRef}
+                  aria-hidden="true"
+                  className="absolute inset-0"
+                  style={{ pointerEvents: scrollShield ? 'auto' : 'none' }}
+                  onPointerMove={(event) => { if (event.movementX || event.movementY) setShield(false) }}
+                  onPointerDown={() => setShield(false)}
+                />
+              </div>
 
-              {vcfTracks.length > 0 && (
-                <StructureSection
-                  title="Variants"
-                  badge={
-                    hiddenImpacts.size > 0 && allVariants.length
-                      ? `${shownVariants.length}/${allVariants.length}`
-                      : (allVariants.length || null)
-                  }
-                  open={openSections.variants}
-                  onToggle={() => toggleSection('variants')}
-                  isLight={isLight}
-                >
-                  <div className="space-y-1.5">
-                    <label className={`flex items-center gap-1.5 text-[11px] ${bodyTextClass}`}>
-                      <input
-                        type="checkbox"
-                        checked={selectedTrackIds.size === vcfTracks.length && vcfTracks.length > 0}
-                        onChange={toggleAllTracks}
-                      />
-                      <span>All variants</span>
-                    </label>
-                    {vcfTracks.map((track) => {
-                      const result = (variantData?.tracks || []).find((item) => item.track_id === track.id)
-                      return (
-                        <label key={track.id} className={`flex items-center gap-1.5 text-[11px] ${bodyTextClass}`}>
-                          <input
-                            type="checkbox"
-                            checked={selectedTrackIds.has(track.id)}
-                            onChange={() => toggleTrack(track.id)}
-                          />
-                          <span className="truncate" title={track.label || track.id}>{track.label || track.id}</span>
-                          {result && (
-                            <span className={`shrink-0 tabular-nums ${mutedClass}`}>
-                              {result.status === 'ok' ? result.variants.length : '!'}
-                            </span>
-                          )}
-                        </label>
-                      )
-                    })}
+              <div className="min-w-0 space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
+                {colorMode === 'frequency' && (
+                  <StructureSection
+                    title="Transcript frequency"
+                    badge={frequencyFiltered && residueCounts.length ? `${frequencyPaint.shown}/${residueCounts.length}` : null}
+                    open={openSections.frequency}
+                    onToggle={() => toggleSection('frequency')}
+                    isLight={isLight}
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center gap-1" role="group" aria-label="Transcripts counted">
+                        {[
+                          { key: 'active', label: 'Active', count: activeCodingCount, title: 'Count only the active coding transcripts' },
+                          { key: 'all', label: 'All', count: codingIds.length, title: 'Count every coding transcript of the gene' },
+                        ].map((item) => (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => setFrequencyScope(item.key)}
+                            aria-pressed={frequencyScope === item.key}
+                            className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${frequencyScope === item.key ? btnActive : btnInactive}`}
+                            title={item.title}
+                          >
+                            {item.label} <span className="tabular-nums opacity-70">{item.count}</span>
+                          </button>
+                        ))}
+                      </div>
 
-                    {variantsLoading && <div className={`text-[11px] ${mutedClass}`}>Reading variants…</div>}
-
-                    {(variantData?.tracks || [])
-                      .filter((track) => track.status !== 'ok')
-                      .map((track) => (
-                        <div key={track.track_id} className={`text-[11px] ${isLight ? 'text-amber-700' : 'text-amber-300'}`}>
-                          {track.label || track.track_id}: {track.message}
+                      {frequencyTotal === 0 ? (
+                        <div className={`text-[11px] ${mutedClass}`}>
+                          No active coding transcripts to count. Activate some, or count all of them.
                         </div>
-                      ))}
+                      ) : (
+                        <>
+                          {/* The ramp, with what the filter hides shaded over. */}
+                          <div>
+                            <div className="relative h-2.5 rounded overflow-hidden" style={{ background: HEAT_GRADIENT }}>
+                              <div
+                                className={`absolute inset-y-0 left-0 ${isLight ? 'bg-white/75' : 'bg-gray-900/75'}`}
+                                style={{ width: `${frequencyRange.min}%` }}
+                              />
+                              <div
+                                className={`absolute inset-y-0 right-0 ${isLight ? 'bg-white/75' : 'bg-gray-900/75'}`}
+                                style={{ width: `${100 - frequencyRange.max}%` }}
+                              />
+                            </div>
+                            <div className={`mt-0.5 flex justify-between text-[10px] tabular-nums ${mutedClass}`}>
+                              <span>0%</span>
+                              <span>{frequencyTotal} transcript{frequencyTotal === 1 ? '' : 's'}</span>
+                              <span>100%</span>
+                            </div>
+                          </div>
 
-                    {impactSummary.length > 0 && (
-                      <div className={`pt-1.5 border-t ${headerBorderClass} space-y-0.5`}>
-                        {impactSummary.map((entry) => {
-                          const hidden = hiddenImpacts.has(entry.impact)
-                          return (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1" role="group" aria-label="Filter direction">
+                                {[
+                                  { key: 'min', label: 'At least', title: 'Show residues in at least this share of transcripts' },
+                                  { key: 'max', label: 'At most', title: 'Show residues in at most this share of transcripts' },
+                                ].map((item) => (
+                                  <button
+                                    key={item.key}
+                                    type="button"
+                                    onClick={() => setFrequencyMode(item.key)}
+                                    aria-pressed={frequencyFilter.mode === item.key}
+                                    className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${frequencyFilter.mode === item.key ? btnActive : btnInactive}`}
+                                    title={item.title}
+                                  >
+                                    {item.label}
+                                  </button>
+                                ))}
+                              </div>
+                              <span className={`text-[11px] tabular-nums ${bodyTextClass}`}>
+                                {frequencyFilter.value}%
+                                <span className={`ml-1 ${mutedClass}`}>({frequencyEdge} of {frequencyTotal})</span>
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={frequencyFilter.value}
+                              onChange={(event) => {
+                                const value = Math.max(0, Math.min(100, Math.round(Number(event.target.value) || 0)))
+                                setFrequencyFilter((prev) => ({ ...prev, value }))
+                              }}
+                              className="w-full h-2 cursor-pointer"
+                              aria-label={`${frequencyFilter.mode === 'min' ? 'At least' : 'At most'} this percentage of transcripts`}
+                            />
+                          </div>
+
+                          <div className={`flex items-center justify-between gap-2 text-[11px] ${mutedClass}`}>
+                            <span className="tabular-nums">
+                              {frequencyFiltered
+                                ? `Showing ${frequencyPaint.shown} of ${residueCounts.length} residues`
+                                : `${residueCounts.length} residues`}
+                            </span>
+                            {frequencyFiltered && (
+                              <button
+                                type="button"
+                                className={miniButtonClass}
+                                onClick={() => setFrequencyFilter((prev) => ({ ...prev, value: neutralFrequency(prev.mode) }))}
+                                title="Show every residue again"
+                              >
+                                Show all
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </StructureSection>
+                )}
+
+                <StructureSection
+                  title="Coding exons"
+                  badge={exonSummary.length || null}
+                  open={openSections.exons}
+                  onToggle={() => toggleSection('exons')}
+                  isLight={isLight}
+                  actions={lockedExons.size > 0 ? (
+                    <div className="flex items-center gap-1 pr-1.5">
+                      <button
+                        type="button"
+                        className={miniButtonClass}
+                        onClick={() => focusRanges(lockedList)}
+                        title="Frame the locked exons"
+                      >
+                        Focus
+                      </button>
+                      <button
+                        type="button"
+                        className={miniButtonClass}
+                        onClick={() => setLockedExons(new Set())}
+                        title="Unlock every exon"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  ) : null}
+                >
+                  {exonSummary.length === 0 ? (
+                    <div className={`text-[11px] ${mutedClass}`}>
+                      {loadState === 'ready' ? 'No exon mapping available.' : '—'}
+                    </div>
+                  ) : (
+                    // The list scrolls inside the section rather than pushing the
+                    // sections below it off the column: a transcript with thirty
+                    // coding exons would otherwise hide the Variants header
+                    // entirely, and nothing would suggest it was there.
+                    <div className="space-y-0.5 max-h-[210px] overflow-y-auto pr-1">
+                      {exonSummary.map((exon, position) => {
+                        const locked = lockedExons.has(exon.exonIndex)
+                        const base = palette[position % palette.length]
+                        // The swatch mutes exactly as the model does, so the list
+                        // and the structure never disagree about what is emphasised.
+                        const dimmed = (lockedExons.size > 0 && !locked) || (variantsShown && !locked)
+                        return (
+                          <div
+                            key={exon.exonIndex}
+                            onMouseEnter={() => handleExonHover(exon)}
+                            onMouseLeave={() => handleExonHover(null)}
+                            className={`flex items-center gap-1.5 rounded transition-colors ${
+                              hoveredExon === exon.exonIndex ? (isLight ? 'bg-gray-100' : 'bg-gray-700/70') : ''
+                            }`}
+                          >
                             <button
-                              key={entry.impact}
                               type="button"
-                              onClick={() => toggleImpact(entry.impact)}
-                              className={`w-full flex items-center gap-2 px-0.5 py-0.5 rounded text-left text-[11px] ${bodyTextClass} ${hidden ? 'opacity-40' : ''} ${isLight ? 'hover:bg-gray-100' : 'hover:bg-gray-700/60'}`}
-                              title={`${hidden ? 'Show' : 'Hide'} ${VARIANT_IMPACT_LABELS[entry.impact].toLowerCase()} variants`}
+                              onClick={() => toggleExonLock(exon)}
+                              className="flex-1 min-w-0 flex items-center gap-2 px-1.5 py-1 text-left text-[11px]"
+                              title={`${locked ? 'Unlock' : 'Lock'} exon ${position + 1} · residues ${formatRange(exon.modelStart, exon.modelEnd)}${exon.genomicStart ? ` · ${exon.genomicStart.toLocaleString()}–${(exon.genomicEnd || exon.genomicStart).toLocaleString()}` : ''}`}
                             >
                               <span
-                                className="w-2.5 h-2.5 rounded-full shrink-0"
-                                style={{
-                                  backgroundColor: hidden ? 'transparent' : rgbCss(variantPalette[entry.impact]),
-                                  border: `1.5px solid ${rgbCss(variantPalette[entry.impact])}`,
-                                }}
+                                className="w-2.5 h-2.5 rounded-sm shrink-0"
+                                style={{ backgroundColor: rgbCss(dimmed ? mutedColor(base, mode) : base) }}
                                 aria-hidden="true"
                               />
-                              <span className="truncate">{VARIANT_IMPACT_LABELS[entry.impact]}</span>
-                              <span className={`ml-auto tabular-nums ${mutedClass}`}>{entry.count}</span>
+                              <span className={`shrink-0 tabular-nums ${bodyTextClass}`}>{position + 1}</span>
+                              <span className={`truncate tabular-nums ${mutedClass}`}>
+                                aa {formatRange(exon.aaStart, exon.aaEnd)}
+                              </span>
                             </button>
-                          )
-                        })}
-                      </div>
-                    )}
-
-                    {truncated && (
-                      <div className={`text-[11px] ${mutedClass}`}>
-                        Showing the first variants only — the coding region holds more than the viewer plots.
-                      </div>
-                    )}
-
-                    {variantsShown && (
-                      <div className={`text-[10px] ${mutedClass}`}>
-                        Marks span one residue either side so a single variant stays visible;
-                        consequences are computed from the codon, not read from a CSQ or ANN field.
-                      </div>
-                    )}
-                  </div>
-                </StructureSection>
-              )}
-
-              {clickedResidue != null && (
-                <div className={`rounded-md px-2 py-1.5 text-[11px] ${isLight ? 'bg-gray-50' : 'bg-gray-900/40'} ${mutedClass}`}>
-                  <div className={bodyTextClass}>Residue {clickedResidue}</div>
-                  {clickedExon
-                    ? <div>Exon {exonSummary.indexOf(clickedExon) + 1}</div>
-                    : <div>Outside the mapped region</div>}
-                  {clickedVariants.map((variant) => (
-                    <div key={`${variant.track_id}-${variant.pos}-${variant.alt}`} className="truncate">
-                      {variant.chrom}:{variant.pos.toLocaleString()} {variant.ref}&gt;{variant.alt}
-                      {' · '}{CONSEQUENCE_LABELS[variant.consequence] || variant.consequence}
+                            <button
+                              type="button"
+                              onClick={() => focusRanges([exon])}
+                              className={`shrink-0 px-1 py-1 ${mutedClass} hover:${isLight ? 'text-gray-800' : 'text-gray-100'}`}
+                              title={`Frame exon ${position + 1}`}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                <circle cx="12" cy="12" r="7" />
+                                <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+                              </svg>
+                            </button>
+                            <span className="shrink-0 w-4 flex items-center justify-center">
+                              {locked && (
+                                <svg
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 24 24"
+                                  fill="currentColor"
+                                  style={{ color: isLight ? '#0099ff' : '#60a5fa' }}
+                                  aria-label={`Exon ${position + 1} locked`}
+                                  role="img"
+                                >
+                                  <path d={LOCKED_ICON_PATH} />
+                                </svg>
+                              )}
+                            </span>
+                          </div>
+                        )
+                      })}
                     </div>
-                  ))}
-                </div>
-              )}
+                  )}
+                </StructureSection>
+
+                {vcfTracks.length > 0 && (
+                  <StructureSection
+                    title="Variants"
+                    badge={
+                      hiddenImpacts.size > 0 && allVariants.length
+                        ? `${shownVariants.length}/${allVariants.length}`
+                        : (allVariants.length || null)
+                    }
+                    open={openSections.variants}
+                    onToggle={() => toggleSection('variants')}
+                    isLight={isLight}
+                  >
+                    <div className="space-y-1.5">
+                      <label className={`flex items-center gap-1.5 text-[11px] ${bodyTextClass}`}>
+                        <input
+                          type="checkbox"
+                          checked={selectedTrackIds.size === vcfTracks.length && vcfTracks.length > 0}
+                          onChange={toggleAllTracks}
+                        />
+                        <span>All variants</span>
+                      </label>
+                      {vcfTracks.map((track) => {
+                        const result = (variantData?.tracks || []).find((item) => item.track_id === track.id)
+                        return (
+                          <label key={track.id} className={`flex items-center gap-1.5 text-[11px] ${bodyTextClass}`}>
+                            <input
+                              type="checkbox"
+                              checked={selectedTrackIds.has(track.id)}
+                              onChange={() => toggleTrack(track.id)}
+                            />
+                            <span className="truncate" title={track.label || track.id}>{track.label || track.id}</span>
+                            {result && (
+                              <span className={`shrink-0 tabular-nums ${mutedClass}`}>
+                                {result.status === 'ok' ? result.variants.length : '!'}
+                              </span>
+                            )}
+                          </label>
+                        )
+                      })}
+
+                      {variantsLoading && <div className={`text-[11px] ${mutedClass}`}>Reading variants…</div>}
+
+                      {(variantData?.tracks || [])
+                        .filter((track) => track.status !== 'ok')
+                        .map((track) => (
+                          <div key={track.track_id} className={`text-[11px] ${isLight ? 'text-amber-700' : 'text-amber-300'}`}>
+                            {track.label || track.track_id}: {track.message}
+                          </div>
+                        ))}
+
+                      {impactSummary.length > 0 && (
+                        <div className={`pt-1.5 border-t ${headerBorderClass} space-y-0.5`}>
+                          {impactSummary.map((entry) => {
+                            const hidden = hiddenImpacts.has(entry.impact)
+                            return (
+                              <button
+                                key={entry.impact}
+                                type="button"
+                                onClick={() => toggleImpact(entry.impact)}
+                                className={`w-full flex items-center gap-2 px-0.5 py-0.5 rounded text-left text-[11px] ${bodyTextClass} ${hidden ? 'opacity-40' : ''} ${isLight ? 'hover:bg-gray-100' : 'hover:bg-gray-700/60'}`}
+                                title={`${hidden ? 'Show' : 'Hide'} ${VARIANT_IMPACT_LABELS[entry.impact].toLowerCase()} variants`}
+                              >
+                                <span
+                                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                                  style={{
+                                    backgroundColor: hidden ? 'transparent' : rgbCss(variantPalette[entry.impact]),
+                                    border: `1.5px solid ${rgbCss(variantPalette[entry.impact])}`,
+                                  }}
+                                  aria-hidden="true"
+                                />
+                                <span className="truncate">{VARIANT_IMPACT_LABELS[entry.impact]}</span>
+                                <span className={`ml-auto tabular-nums ${mutedClass}`}>{entry.count}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      {truncated && (
+                        <div className={`text-[11px] ${mutedClass}`}>
+                          Showing the first variants only — the coding region holds more than the viewer plots.
+                        </div>
+                      )}
+
+                      {variantsShown && (
+                        <div className={`text-[10px] ${mutedClass}`}>
+                          Marks span one residue either side so a single variant stays visible;
+                          consequences are computed from the codon, not read from a CSQ or ANN field.
+                        </div>
+                      )}
+                    </div>
+                  </StructureSection>
+                )}
+
+                {clickedResidue != null && (
+                  <div className={`rounded-md px-2 py-1.5 text-[11px] ${isLight ? 'bg-gray-50' : 'bg-gray-900/40'} ${mutedClass}`}>
+                    <div className={bodyTextClass}>Residue {clickedResidue}</div>
+                    {clickedExon
+                      ? <div>Exon {exonSummary.indexOf(clickedExon) + 1}</div>
+                      : <div>Outside the mapped region</div>}
+                    {clickedCount && frequencyTotal > 0 && (
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="w-2.5 h-2.5 rounded-sm shrink-0"
+                          style={{ backgroundColor: rgbCss(frequencyColor(clickedCount.count, frequencyTotal)) }}
+                          aria-hidden="true"
+                        />
+                        In {clickedCount.count} of {frequencyTotal} transcripts
+                        {' '}({Math.round((clickedCount.count / frequencyTotal) * 100)}%)
+                      </div>
+                    )}
+                    {clickedVariants.map((variant) => (
+                      <div key={`${variant.track_id}-${variant.pos}-${variant.alt}`} className="truncate">
+                        {variant.chrom}:{variant.pos.toLocaleString()} {variant.ref}&gt;{variant.alt}
+                        {' · '}{CONSEQUENCE_LABELS[variant.consequence] || variant.consequence}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
           {/* ── Manual accession and mapping file ───────────────────────── */}
           <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="text"
-              value={accessionDraft}
-              onChange={(event) => setAccessionDraft(event.target.value)}
-              placeholder="UniProt accession"
-              className={`px-2 py-1 rounded text-[11px] border font-mono w-40 ${inputClass}`}
-              title="Load a specific AlphaFold model instead of the one found automatically"
-            />
-            <button
-              type="button"
-              onClick={() => runResolve(accessionDraft.trim())}
-              disabled={!accessionDraft.trim()}
-              className={`px-2.5 py-1 rounded text-[11px] font-semibold border ${btnInactive} disabled:opacity-40 disabled:cursor-not-allowed`}
+            <form
+              className="flex items-center gap-1"
+              onSubmit={(event) => {
+                event.preventDefault()
+                const accession = accessionDraft.trim()
+                if (accession) runResolve(accession)
+              }}
             >
-              Use accession
-            </button>
+              <input
+                type="text"
+                value={accessionDraft}
+                onChange={(event) => setAccessionDraft(event.target.value)}
+                placeholder="UniProt accession"
+                aria-label="UniProt accession"
+                className={`px-2 py-1 rounded text-[11px] border font-mono w-40 ${inputClass}`}
+                title="Load a specific AlphaFold model instead of the one found automatically"
+              />
+              <button
+                type="submit"
+                disabled={!accessionDraft.trim()}
+                className={`w-[26px] h-[26px] rounded flex items-center justify-center text-white transition-opacity hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed ${isLight ? 'bg-[#0077cc]' : 'bg-[#0284c7]'}`}
+                aria-label="Load structure for this accession"
+                title="Load the AlphaFold model for this accession"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+              </button>
+            </form>
             {accessionDraft && (
               <button
                 type="button"
@@ -961,13 +1288,13 @@ export default function FeatureExplorerStructurePanel({
             </span>
           </div>
 
-          <div className={`text-[10px] ${mutedClass}`}>
+          {showViewer && <div className={`text-[10px] ${mutedClass}`}>
             Structure predictions from{' '}
             {model?.afdb_url
               ? <a href={model.afdb_url} target="_blank" rel="noreferrer" className="underline">AlphaFold DB</a>
               : 'AlphaFold DB'}
             {' '}(CC BY 4.0), rendered with Mol* / PDBe Mol*.
-          </div>
+          </div>}
         </div>
       )}
     </div>

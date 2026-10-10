@@ -1,3 +1,5 @@
+import { heatColorFromFraction, hexToRgb } from '../utils/heatColour.js'
+
 // Turning the backend's residue map into something the 3D viewer can paint.
 //
 // Exons alternate between two hues rather than each taking its own colour: a
@@ -305,4 +307,126 @@ export function exonAtResidue(exonSummary, residue) {
   return (exonSummary || []).find(
     (exon) => residue >= exon.modelStart && residue <= exon.modelEnd,
   ) || null
+}
+
+// ── Transcript frequency ─────────────────────────────────────────────────────
+
+/**
+ * Genomic position of each base of amino acid `aa`'s codon.
+ *
+ * Mirrors aa_to_genomic in backend/protein_structure.py base by base, through
+ * the same CDS layout the residue map was projected with. A base no segment
+ * covers — the partial codon a truncated CDS ends on — is left out.
+ */
+function codonBases(cdsSegments, minus, aa) {
+  const bases = []
+  for (let k = 0; k < 3; k += 1) {
+    const nt = ((aa - 1) * 3) + 1 + k
+    for (const segment of cdsSegments) {
+      const start = Number(segment.coord_start)
+      const end = Number(segment.coord_end)
+      if (!(start > 0) || end < start || nt < start || nt > end) continue
+      const offset = nt - start
+      bases.push(minus ? Number(segment.genomic_end) - offset : Number(segment.genomic_start) + offset)
+      break
+    }
+  }
+  return bases
+}
+
+function cdsIntervals(transcript) {
+  return (Array.isArray(transcript?.cds_list) ? transcript.cds_list : [])
+    .map((cds) => ({
+      start: Math.min(Number(cds?.start), Number(cds?.end)),
+      end: Math.max(Number(cds?.start), Number(cds?.end)),
+    }))
+    .filter((iv) => Number.isFinite(iv.start) && Number.isFinite(iv.end))
+}
+
+/**
+ * How many of `transcripts` code for each model residue.
+ *
+ * A transcript counts when its CDS takes in every base of the residue's codon —
+ * the coding-sequence counterpart of what the exon heatmap counts per base.
+ * Reading frame is not compared, so a stretch another transcript reads in a
+ * different frame still counts as shared sequence.
+ *
+ * Returns one entry per mapped residue, in model order.
+ */
+export function residueTranscriptCounts(residueMap, transcripts) {
+  const cdsSegments = residueMap?.cds_segments || []
+  if (!residueMap?.segments?.length || !cdsSegments.length) return []
+  const minus = String(residueMap.strand || '+') === '-'
+  const sets = (transcripts || []).map(cdsIntervals).filter((ivs) => ivs.length > 0)
+
+  const out = []
+  for (const segment of residueMap.segments) {
+    for (let aa = segment.aa_start; aa <= segment.aa_end; aa += 1) {
+      const bases = codonBases(cdsSegments, minus, aa)
+      if (bases.length === 0) continue
+      let count = 0
+      for (const intervals of sets) {
+        if (bases.every((pos) => intervals.some((iv) => pos >= iv.start && pos <= iv.end))) count += 1
+      }
+      out.push({ residue: segment.model_start + (aa - segment.aa_start), aa, count })
+    }
+  }
+  return out.sort((a, b) => a.residue - b.residue)
+}
+
+/** Whether `count` of `total` falls inside a percentage window, ends included. */
+export function frequencyInRange(count, total, minPercent, maxPercent) {
+  if (!(total > 0)) return false
+  // Compared as integers so 1 of 3 sits at exactly 33⅓%, not a rounded neighbour.
+  return count * 100 >= minPercent * total && count * 100 <= maxPercent * total
+}
+
+export function frequencyColor(count, total) {
+  return hexToRgb(heatColorFromFraction(total > 0 ? count / total : 0))
+}
+
+/**
+ * Viewer-ready ranges for the transcript-frequency overlay.
+ *
+ * Contiguous residues with the same count share one range. Residues outside
+ * the percentage window are painted at opacity 0, which hides them rather than
+ * greying them: the filter is for seeing only the shared (or only the
+ * isoform-specific) part of the fold. `dim` mutes the layer under a variant
+ * overlay, exactly as it does for exons.
+ */
+export function buildFrequencyPaint(counts, total, theme, options = {}) {
+  const { minPercent = 0, maxPercent = 100, dim = false } = options
+  const mode = theme === 'light' ? 'light' : 'dark'
+  const filtered = minPercent > 0 || maxPercent < 100
+  const segments = []
+  let shown = 0
+  let current = null
+  for (const entry of counts || []) {
+    const visible = frequencyInRange(entry.count, total, minPercent, maxPercent)
+    if (visible) shown += 1
+    if (current && entry.residue === current.end + 1 && entry.count === current.count && visible === current.visible) {
+      current.end = entry.residue
+      continue
+    }
+    current = { start: entry.residue, end: entry.residue, count: entry.count, visible }
+    segments.push(current)
+  }
+  return {
+    shown,
+    segments: segments.map((run) => {
+      const base = frequencyColor(run.count, total)
+      const percent = total > 0 ? Math.round((run.count / total) * 100) : 0
+      const painted = {
+        start: run.start,
+        end: run.end,
+        color: dim ? mutedColor(base, mode) : base,
+        tooltip: `In ${run.count} of ${total} transcript${total === 1 ? '' : 's'} (${percent}%)`,
+      }
+      // Under a filter every run states its opacity. The panel hides unlisted
+      // residues with a whole-chain layer, and pdbe-molstar lays that layer
+      // first: a visible run without its own opacity would stay hidden under it.
+      if (filtered) painted.opacity = run.visible ? 1 : 0
+      return painted
+    }),
+  }
 }

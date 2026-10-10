@@ -136,6 +136,10 @@ export default function FeatureExplorerView({
   onScreenshotModeChange = null,
   onScreenshotAvailabilityChange = null,
   screenshotToggleButtonRef = null,
+  // Resolves once the backend has saved the genome configuration. This view
+  // remounts per genome and looks its gene up straight away, which after a
+  // playlist switch would otherwise reach the backend before it knows the genome.
+  waitForGenomeConfigSave = null,
 }) {
   const isLight = theme === 'light'
   const palette = BROWSER_COLORS[isLight ? 'light' : 'dark']
@@ -315,6 +319,7 @@ export default function FeatureExplorerView({
     setLoading(true)
     setError('')
     try {
+      if (typeof waitForGenomeConfigSave === 'function') await waitForGenomeConfigSave()
       const res = await fetch(`${API_BASE}/api/resolve_id?genome=${encodeURIComponent(activeGenomeKey)}&query=${encodeURIComponent(q)}`)
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data?.detail || 'Failed to resolve gene in selected genome.')
@@ -342,7 +347,7 @@ export default function FeatureExplorerView({
     } finally {
       setLoading(false)
     }
-  }, [activeGenomeKey, applyDefaultTranscriptActivity, hasGenome, onFocusGene])
+  }, [activeGenomeKey, applyDefaultTranscriptActivity, hasGenome, onFocusGene, waitForGenomeConfigSave])
 
   useEffect(() => {
     if (!hasGenome) return
