@@ -71,8 +71,7 @@ export function registerTutorialViewport(ctx) {
             // Deliberately not "press the Focus this window button": that control focuses
             // whatever the window happens to be showing, so a step wanting a particular
             // region would have to travel there first and then be moved back — a journey
-            // and a correction, which is exactly what docs/TUTORIALS.md says a tutorial
-            // must not do. This leaves the view alone; the step's own `browserView`
+            // and an unnecessary correction. This leaves the view alone; the step's own `browserView`
             // arrival puts it where the card describes, in one move.
             setLocationFocus: (range) => {
                 if (!range) {

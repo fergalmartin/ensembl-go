@@ -28,8 +28,8 @@ export function PlaylistMembershipModal({ isOpen, theme, genomes, addOnly = fals
                     .map((playlist) => playlist.id)
         )
         setSelectedIds(nextSelected)
-        // A tutorial step that expects the form already filled in says so; see the dialog
-        // arrival in docs/TUTORIALS.md. It fills what is empty rather than replacing what
+        // A tutorial step can prefill the form through its dialog arrival.
+        // It fills what is empty rather than replacing what
         // is there: a reader who wrote their own description keeps it when the next step
         // re-establishes the dialog. Everywhere else this is the ordinary empty form.
         setNewPlaylistName((current) => (preset ? (String(current || '').trim() ? current : String(preset.name || '')) : ''))

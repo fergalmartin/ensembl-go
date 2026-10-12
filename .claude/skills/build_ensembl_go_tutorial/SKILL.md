@@ -16,12 +16,12 @@ test suite.
 Read these, in this order. They are long; read them properly rather than grepping, because
 almost every rule in them was a bug first.
 
-1. `docs/TUTORIALS.md` — the spec. Architecture, the step schema, `arrive`/`action`/`undo`,
-   card placement, signals, the sandbox, and "Things that are not guessable from the code".
-2. `docs/tutorial-builder-genome-playlists-handoff.md` — the handoff. §0 is the current
-   state; §4–§8 are the traps; §11 is the verification route and commands; §12 is the
-   working-tree cautions. **Honour §12: no `git reset --hard`, no `git clean`.**
-3. Any other `docs/*-handoff.md` or `docs/*-plan.md` naming a tutorial.
+1. `references/step-schema.md` and `frontend/src/utils/tutorialDocument.js` — the portable
+   fields, validation and runtime mapping. `frontend/src/utils/tutorialModel.js` defines
+   the runtime rules, including `arrive`, actions, undo, signals and preconditions.
+2. `references/builder.md` and `references/sandbox-lifecycle.md` — authoring and sandbox
+   behaviour. **Protect local work: no `git reset --hard`, no `git clean`.**
+3. `references/verification.md` and `references/motion.md` — verification and movement.
 4. The shipped tutorials themselves, as data, not as prose:
    - `frontend/src/tutorials/documents/getting-started.tutorial.json` (20 steps)
    - `frontend/src/tutorials/documents/browser-in-depth.tutorial.json` (46)
@@ -42,9 +42,8 @@ definition on disk may be newer than any document describes.
 
 ## Phase 1 — Read the brief
 
-The user supplies a document or a block of text describing the tutorial they want.
-`docs/multi-genome-tutorial-plan.md` is a worked example of the genre: scope, the data it
-runs on, a card-by-card walkthrough table, suggested wording, and the runtime work needed.
+The user supplies a document or a block of text describing the tutorial they want:
+its scope, the data it runs on, the walkthrough, suggested wording, and any runtime work.
 
 If no brief has been given, **ask for it** before designing anything — this skill builds
 what was asked for, and a tutorial invented from the app's feature list is not that.
@@ -406,19 +405,13 @@ for the first time.
 
 Not optional, and the last thing to do rather than the first:
 
-1. **`docs/TUTORIALS.md` — the spec.** Add any new mechanism, field, target, signal or
-   precondition, in the section it belongs to. Write up anything the next person would
-   otherwise rediscover, with the reason, in the document's own voice.
-2. **`docs/tutorial-builder-genome-playlists-handoff.md` — the handoff.** Add a dated section
-   for this tutorial: what it teaches, how many steps, what was built for it, what the sweeps
-   measured, what is still open, and any operational caution about the working tree.
-3. **The builder documentation.** Every builder capability the tutorial used or added must be
-   described so an author can find it without reading JSX — which editor section it lives in,
-   what it writes into the document, and why it exists. Keep the builder sections of
-   `docs/TUTORIALS.md` ("The visual tutorial builder") and the handoff current with the code;
-   if the builder has grown enough to deserve its own document, say so and split it out.
-4. **This skill.** If you learned something that will apply to the next tutorial, add it here
-   or to a reference file.
+1. **The references in this skill.** Describe new fields, targets, signals, preconditions
+   and runtime constraints in the relevant reference, including why they are needed.
+2. **The builder reference.** Describe added capabilities in `references/builder.md`:
+   which editor section they live in, what they write into the document, and why they exist.
+3. **The completion report.** State what the tutorial teaches, how many steps it has,
+   what was built for it, what verification measured, and anything still open.
+4. **This skill.** Add lessons that will apply to the next tutorial here or to a reference.
 
 ## References in this skill
 

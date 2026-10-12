@@ -2,7 +2,7 @@
 //
 // Adding one means writing the definition beside this file and adding it here. The test
 // suite validates whatever this exports, so a new tutorial gets its typos caught
-// without anyone writing a test for it. See docs/TUTORIALS.md.
+// without anyone writing a test for it.
 
 import gettingStarted from './gettingStarted.js'
 import browserInDepth from './browserInDepth.js'

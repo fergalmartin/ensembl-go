@@ -1340,7 +1340,7 @@ def serialize_sv_key_value_config(config: Dict[str, Any], base_dir: Optional[Pat
                     line = f"{key} = {json.dumps(value, ensure_ascii=False)}"
             encoded.append(line)
         records.append('\n'.join(encoded))
-    header = "# Ensembl Go structural-variation alignments\n# key = value; --- separates records. See docs/STRUCTURAL_VARIATION.md.\n\n"
+    header = "# Ensembl Go structural-variation alignments\n# key = value; --- separates records.\n\n"
     return header + '\n\n---\n\n'.join(records) + '\n'
 
 

@@ -1,7 +1,7 @@
 # The portable step schema
 
-`docs/TUTORIALS.md` is the authority and explains *why* each field exists. This is the
-working reference: what to write, in portable-document spelling, and what it becomes.
+This is the working reference for portable-document fields and their runtime mapping.
+The current validation and mapping live in `frontend/src/utils/tutorialDocument.js`.
 
 A document is `{ format: 'ensembl-go-tutorial', schemaVersion: 1, id, revision, title,
 blurb, estimatedMinutes, usesDemoGenome, completionBody, author, createdAt, updatedAt,
@@ -10,7 +10,7 @@ settings?, datasets, defaultArrive?, steps }`. `validateTutorialDocument` reject
 absolute local paths anywhere in it.
 
 `materializeTutorialDocument` converts a document into the runtime shape. The mapping is
-worth knowing because the runtime names are what `docs/TUTORIALS.md` mostly uses:
+worth knowing when reading the runtime code:
 
 | Portable | Runtime | Notes |
 | --- | --- | --- |

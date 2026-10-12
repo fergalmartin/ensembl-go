@@ -185,7 +185,7 @@ const cardButton = (label) => `
  *  records the same step several times over and drifts out of step with the document.
  *
  *  So: wait for the id to change, then wait for it to stop preparing, then confirm it has
- *  stayed — the protocol `docs/TUTORIALS.md` sets out. A step that never moves is reported
+ *  stayed. A step that never moves is reported
  *  as such rather than silently mistaken for the next one. */
 const waitForStepChange = (fromStepId, timeoutMs) => `
   const deadline = Date.now() + ${timeoutMs}

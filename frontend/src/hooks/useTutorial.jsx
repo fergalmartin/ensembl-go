@@ -105,7 +105,7 @@ import { snapshotGenomeForPlaylist } from '../utils/playlistGenomes'
 // click is visible rather than magical. Autoplay is the same thing on a timer. Doing it
 // by hand satisfies the step just the same.
 //
-// The rules live in utils/tutorialModel.js. See docs/TUTORIALS.md.
+// The rules live in utils/tutorialModel.js.
 
 const PROGRESS_STORAGE_KEY = 'ensembl.tutorial.progress.v1'
 
@@ -1248,7 +1248,7 @@ export function TutorialProvider({ children }) {
     // of focus and takes that drawer with it. Set through the panel's own handler rather
     // than by pressing "Focus this window": that control focuses whatever the window
     // happens to be showing, so a step wanting a named region would have to travel there
-    // and be moved back, which is the move-plus-correction docs/TUTORIALS.md rules out.
+    // and be moved back, creating an unnecessary jump and correction.
     if (wanted.locationFocus !== undefined) {
       const target = wanted.locationFocus === 'none' ? null : wanted.locationFocus
       // Waited for, not merely called. A cold jump arrives here with the slice genome

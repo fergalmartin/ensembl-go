@@ -1163,8 +1163,8 @@ export default function TutorialOverlay() {
       <div
         ref={cardRef}
         // Named so a CDP probe can find the card, its spotlight and the dimming without
-        // matching on inline styles. docs/TUTORIALS.md explains why walking a tutorial in
-        // a real browser is not optional: the unit tests cannot see a card that covers
+        // matching on inline styles. Walking a tutorial in a real browser catches
+        // things the unit tests cannot see: a card that covers
         // what it describes, or a Next that advances twice.
         data-tutorial-card={step.id}
         // Read by the height measurement above: a card wearing its editing chrome must not

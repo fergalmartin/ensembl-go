@@ -9,7 +9,7 @@ import { DEMO_SCIENTIFIC_NAME, DEMO_SPECIES_KEY } from './demoGenome.js'
 //
 // Steps that only point something out set `interactive: false`, so a stray click cannot
 // derail the run. Steps that depend on earlier ones declare it with `ensure`, so skipping
-// ahead still works. See docs/TUTORIALS.md.
+// ahead still works.
 
 const SECTION = Object.freeze({
   setup: 'Intro',

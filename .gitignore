@@ -70,7 +70,7 @@ backend/debug_backend.txt
 #                                the genome browser tutorial. Built by
 #                                scripts/build_grch38_slice.py.
 #
-# Regenerate and commit rather than editing by hand. See docs/TUTORIALS.md.
+# Regenerate and commit rather than editing by hand.
 backend/data/*.fa
 backend/data/*.fai
 backend/data/*.gff3
@@ -105,13 +105,8 @@ test-data/
 .claude/*
 !.claude/skills/
 #
-# These three are the deliberate asymmetry with the snapshot: untracked here, but
-# included there. They are working documents that exist in no other copy, so a
-# recovery archive without them loses them for good. The genome-links table was
-# tracked until it was moved here; no script regenerates it, so the snapshot names
-# it explicitly rather than sweeping all of outputs/, which is scratch.
-docs/browsing-controls-handoff.md
-docs/tutorial-builder-genome-playlists-handoff.md
+# The genome-links table is untracked but included in recovery snapshots. No script
+# regenerates it, so the snapshot names it explicitly rather than copying all of
+# outputs/, which is scratch.
 outputs/
 #outputs/alignment-explorer-genome-links/44_mammals_epo_release115_genome_links.tsv
-

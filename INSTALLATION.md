@@ -193,9 +193,6 @@ The output directory owns the application catalogue and cached data under its
 `local_data` directory. Keep using the same output directory if you want saved
 genomes, playlists, tracks, and registered SV alignments to remain available.
 
-For the extra files and registration steps used by the SV view, see
-[Structural-variation view and alignment registration](./docs/STRUCTURAL_VARIATION.md).
-
 ## Verify the installation
 
 For the backend test suite, install the test-only `pytest` and `httpx` packages

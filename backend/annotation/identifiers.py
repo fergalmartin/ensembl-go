@@ -1,6 +1,6 @@
 """Audit and mint stable Ensembl-style identifiers.
 
-Two modes, chosen by the user at import (docs/CUSTOM_GENOMES.md §3.6):
+Two modes, chosen by the user at import:
 
 ``keep``
     Use the identifiers already in the file. :func:`audit_identifiers` reports

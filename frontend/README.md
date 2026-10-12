@@ -31,9 +31,6 @@ npm --prefix frontend run dev
 `npm run dev` starts Vite, and `npm run build` creates the production frontend
 bundle. No additional language toolchain is required.
 
-The user-facing SV file formats and alignment-registration steps are documented
-in [../docs/STRUCTURAL_VARIATION.md](../docs/STRUCTURAL_VARIATION.md).
-
 ## Checks before packaging
 
 Run these before packaging:

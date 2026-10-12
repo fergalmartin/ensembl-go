@@ -47,7 +47,7 @@ import {
 // slider, so there is nothing for a tutorial to click. Those steps stay interactive, so
 // the user can drag and scroll the real track, and Next drives the browser's own animated
 // move for them — unless they have already moved it themselves, which `skipIfMoved`
-// leaves alone. See docs/TUTORIALS.md.
+// leaves alone.
 
 // Every step that lights up the whole track puts its card here: above the panel, clear of
 // whatever the tracks are doing. Pinned, so it stays put as they grow and shrink.

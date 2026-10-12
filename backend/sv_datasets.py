@@ -47,8 +47,8 @@ from sv_config import (
 
 # Local fixtures used while developing the structural-variation view. Distributions leave
 # ENSEMBL_GO_SV_TEST_DATA_DIR unset, in which case the built-in datasets below are not
-# offered at all; real datasets are registered through the SV view instead (see
-# docs/STRUCTURAL_VARIATION.md). Point the variable at a directory of .bigChain.bb and
+# offered at all; real datasets are registered through the SV view instead.
+# Point the variable at a directory of .bigChain.bb and
 # mapping TSVs to re-enable them.
 _SV_TEST_DATA_DIR_SETTING = os.environ.get("ENSEMBL_GO_SV_TEST_DATA_DIR", "").strip()
 

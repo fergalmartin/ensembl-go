@@ -3050,7 +3050,7 @@ export default function GenomeSelectorView({
 
             {statusMessage && (
                 // Marked so a tutorial step whose target this lands on can wait for it;
-                // see `notifications-clear` in docs/TUTORIALS.md. It sits above the app
+                // the `notifications-clear` precondition handles this. It sits above the app
                 // but below the tutorial overlay, so it half-covers a highlight and
                 // cannot be dismissed by the reader.
                 <div data-tutorial-notification="true" className={`fixed top-24 right-4 sm:right-6 z-50 rounded-lg px-6 py-4 shadow-lg border backdrop-blur-sm max-w-[calc(100vw-32px)] sm:max-w-md break-words ${statusMessage.isError

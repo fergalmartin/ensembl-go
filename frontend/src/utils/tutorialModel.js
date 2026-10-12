@@ -7,7 +7,7 @@
 // `hooks/useTutorial.jsx` is left holding nothing but wiring, and so the awkward cases
 // can be tested under `node --test` without a renderer.
 //
-// See docs/TUTORIALS.md for how to write one.
+// Portable tutorial documents are validated and materialised in tutorialDocument.js.
 
 export const STEP_PLACEMENTS = Object.freeze(['top', 'bottom', 'left', 'right', 'center'])
 
@@ -614,7 +614,7 @@ export const UNDO_TYPES = Object.freeze([
 ])
 
 /** Named states the runtime knows how to bring about before a step runs, so that
- *  skipping steps cannot strand a later one. See docs/TUTORIALS.md. */
+ *  skipping steps cannot strand a later one. */
 export const PRECONDITIONS = Object.freeze([
   'demo-genome-installed',
   'demo-genome-active',
@@ -834,8 +834,7 @@ export function anchorSelector(anchor) {
   return ''
 }
 
-/** Every `data-tour-id` a tutorial depends on. Feeds both the definition tests and the
- *  anchor inventory in docs/TUTORIALS.md. */
+/** Every `data-tour-id` a tutorial depends on, used by the definition tests. */
 export function tutorialAnchorIds(tutorial) {
   const ids = new Set()
   const collect = (anchor) => {

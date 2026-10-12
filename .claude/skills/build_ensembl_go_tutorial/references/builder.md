@@ -164,8 +164,8 @@ Keep to the shape it already has:
 - **Say what it does not do** in the copy, the way **Scrollable regions** says that scrolling
   is passed through without highlighting.
 - **Participate in Undo.** Dataset attach/detach does; new operations should too.
-- **Add a test** in `frontend/tests/tutorialBuilder.test.js`, and document it in
-  `docs/TUTORIALS.md` under "The visual tutorial builder" and in the handoff.
+- **Add a test** in `frontend/tests/tutorialBuilder.test.js`, and describe the new
+  capability in this reference.
 
 ## Promotion
 

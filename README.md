@@ -39,17 +39,8 @@ not to stop it aborts the launch without changing that process.
 
 ## Documentation
 
+- [User guides for every view](./docs/README.md)
 - [Installation and first run](./INSTALLATION.md)
-- [Development and packaging](./DEVELOPMENT.md)
-- [Security model and release checks](./SECURITY.md)
-- [Custom genomes and annotation](./docs/CUSTOM_GENOMES.md)
-- [Sequence view](./docs/SEQUENCE_VIEW.md)
-- [Protein translation](./docs/PROTEIN_TRANSLATION.md)
-- [Homology searches](./docs/HOMOLOGIES.md)
-- [Alignment Explorer](./docs/ALIGNMENT_EXPLORER.md)
-- [Find pattern engine](./docs/MOTIF_ENGINE.md)
-- [Achievements](./docs/ACHIEVEMENTS.md)
-- [Structural-variation view and alignment registration](./docs/STRUCTURAL_VARIATION.md)
 - [Structural-variation alignment config template](./docs/examples/sv-alignments.template.cfg)
 - [Release packaging, including initial Linux builds](./electron/RELEASE.md)
 - [Windows/WSL test checklist](./electron/WINDOWS_TEST_CHECKLIST.md)

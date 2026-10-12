@@ -96,7 +96,7 @@ export default {
       capabilities: ['spotlight', 'activate'], safety: 'read',
     },
     // The playlist dialog. A step can only reach these once something has opened it, which
-    // is what the `selectorDialog` arrival is for; see docs/TUTORIALS.md.
+    // is what the `selectorDialog` arrival is for.
     {
       id: 'selector.playlistDialog', anchor: 'playlist-membership-dialog', label: 'Playlist dialog', kind: 'dialog',
       capabilities: ['spotlight'], safety: 'read',
