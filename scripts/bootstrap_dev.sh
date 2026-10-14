@@ -169,12 +169,12 @@ Start the application in development mode with:
 The species catalogue is downloaded from Ensembl the first time the backend
 starts, so the download view may briefly show "Fetching species catalogue".
 
-To verify the installation:
+To run the test suites (pytest and httpx are only needed for the tests):
 
     source .venv/bin/activate
+    python -m pip install pytest httpx
     python -m pytest backend/tests -q
-    npm --prefix frontend test
-    npm --prefix frontend run build
+    TZ=UTC npm --prefix frontend test
 EOF
 
 if [[ "$WITH_PACKAGING" -eq 0 ]]; then

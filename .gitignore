@@ -41,6 +41,7 @@ electron/dist/
 electron/dist_backend/
 electron/build_backend/
 electron/build_log*.txt
+dist-linux/
 # Staged MAFFT bundle, rebuilt by `npm run prepare:mafft`. Everything else under
 # electron/build/ (icons, entitlements) is source and must stay tracked.
 electron/build/mafft_bin/

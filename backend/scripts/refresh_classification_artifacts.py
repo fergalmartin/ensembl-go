@@ -37,7 +37,7 @@ for _path in (str(BACKEND_DIR), str(SCRIPT_DIR)):
 from check_classification_coverage import _int_or_zero, _species_taxids  # noqa: E402
 from generate_taxonomy_classification import _audit_catalog, _build_artifact  # noqa: E402
 
-CATALOG_URL = "https://ftp.ebi.ac.uk/pub/ensemblorganisms/species.new_ftp_structure.json"
+CATALOG_URL = "https://ftp.ebi.ac.uk/pub/ensemblorganisms/species.json"
 TAXDUMP_URL = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz"
 TAXDUMP_MD5_URL = TAXDUMP_URL + ".md5"
 TAXONOMY_ARTIFACT = BACKEND_DIR / "data" / "taxonomy_classification.json"

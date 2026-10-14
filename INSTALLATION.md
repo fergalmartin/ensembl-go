@@ -1,150 +1,174 @@
 # Installation and first run
 
-This guide covers running Ensembl Go from a source checkout. macOS is the
-currently tested desktop platform. A Debian package build has been reported on
-Ubuntu 24.04 through Docker for `linux/amd64`, with a catalogue URL adjustment;
-Linux desktop installation and launch still need validation. A Linux AppImage or
-`.deb`, once built, contains the frontend and backend; its users do not need
-Node.js or Python. The same is true of the packaged macOS application. The
-packaged Windows application runs its UI in Windows and its backend inside
-WSL 2; see [Windows installation](#windows-installation).
+Ensembl Go runs from a source checkout. There are no prebuilt downloads at
+present.
 
-If you are using a packaged build, skip the source-development sections below.
-On macOS, install the application package. On Linux, run the AppImage or install
-the `.deb` supplied by the builder, then follow the [Linux first-test
-checks](./electron/RELEASE.md#validate-artifacts-before-sharing). On Windows,
-follow the steps below.
+- [Platform support](#platform-support)
+- [Prerequisites](#prerequisites)
+- [Install and run](#install-and-run)
+- [Optional dependency: MAFFT](#optional-dependency-mafft)
+- [First run](#first-run)
+- [Windows](#windows)
+- [Developer notes](#developer-notes)
 
-## Windows installation
+## Platform support
 
-Prerequisites:
+**macOS** is the supported, tested platform.
 
-- Windows with WSL 2 and an Ubuntu or Debian distro. See Microsoft's [WSL
-  installation guide](https://learn.microsoft.com/en-us/windows/wsl/install).
-- The Ensembl Go Windows installer. Windows Python and MAFFT are not required.
+**Linux is experimental.** The same source setup runs on Debian and Ubuntu once
+a few extra system packages are installed, but installation and application
+features have not been fully tested, and your system may need steps not listed
+here. Run the application in a graphical desktop session. If something fails,
+keep the terminal output and note your distribution, its version, and your CPU
+architecture.
 
-There is no published installer download yet. To build one from a cloned repo,
-follow [Build a Windows installer](#build-a-windows-installer).
+**Windows is in development** and has no supported installation route yet; see
+[Windows](#windows).
 
-Install and launch Ensembl Go in Windows. It prepares its backend and virtual
-environment inside the distro's default Linux user's home directory. For
-first-run help, optional MAFFT setup, and troubleshooting, see the [Windows
-checklist](./electron/WINDOWS_TEST_CHECKLIST.md).
+## Prerequisites
 
-For best performance, keep large genome data in the WSL filesystem. Windows
-drive files can be opened through WSL paths such as `/mnt/c/Users/...`.
+Every platform needs:
 
-## Source-development prerequisites
-
-These are for developers running or packaging the source code:
-
-- Node.js `20.19` or newer and npm;
+- Node.js `20.19` or newer, including npm (Node 22 LTS is recommended);
 - Python `3.9` or newer.
 
-For source development on Debian or Ubuntu, install `lsof` and `netcat-openbsd`
-as well. The development launcher uses their `lsof` and `nc` commands:
+Check them with `node --version` and `python3 --version`. A Linux
+distribution's default packages may be older than these minimums; if so,
+install Node.js from the [Node.js download page](https://nodejs.org/en/download).
+
+**macOS** needs nothing else.
+
+**Linux (Debian or Ubuntu)** also needs Python's virtual-environment and build
+support, and the `lsof` and `nc` commands used by the launcher:
 
 ```bash
-sudo apt install lsof netcat-openbsd
+sudo apt update
+sudo apt install python3 python3-venv python3-pip python3-dev \
+  build-essential ca-certificates lsof netcat-openbsd
 ```
 
-Check `node --version` and `python3 --version` before bootstrapping. The versions
-provided by a distribution's default packages may be older than the minimums
-above; use a newer installation of either tool if needed.
+On other distributions, install the equivalent packages.
 
-## Optional dependency: MAFFT
+## Install and run
 
-MAFFT enables Feature Alignment of genic regions from two or more genomes, with
-gene annotation overlaid on the aligned sequence. It is not needed for genome
-browsing, downloads, statistics, or the Structural Variation view.
-
-On macOS, install it with Homebrew if you want that functionality:
-
-```bash
-brew install mafft
-```
-
-On Ubuntu or Debian, including Linux desktops and WSL:
-
-```bash
-sudo apt install mafft
-```
-
-## Install the source dependencies
-
-From the repository root:
+Clone or download the source repository and open a terminal in its root
+directory (the one containing `backend`, `frontend`, and `electron`). Then run:
 
 ```bash
 ./scripts/bootstrap_dev.sh
-```
-
-This checks the Python and Node.js versions, creates `.venv`, installs the backend
-requirements into it, and runs `npm ci` for both `frontend` and `electron`. It is
-safe to re-run; an existing virtual environment is reused rather than rebuilt. Add
-`--with-packaging` to also install PyInstaller, which is needed to build a
-distributable package but not to run the application.
-
-Interactive runs also offer to refresh the species grouping data used by the
-Download view. The committed copy works, but may not cover newly added species.
-A refresh may download about 76 MB from NCBI. Use `--with-grouping` or
-`--no-grouping` to choose in advance, including for non-interactive runs.
-
-To do the same by hand instead:
-
-```bash
-python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r backend/requirements.txt
-
-npm --prefix frontend ci
-npm --prefix electron ci
+./run_ensembl_go.sh
 ```
 
-`npm ci` uses the committed lockfiles. Use `npm install` only when intentionally
-updating dependencies.
+`bootstrap_dev.sh` checks the Python and Node.js versions, creates a Python
+virtual environment in `.venv`, installs the Python and JavaScript dependencies,
+and downloads the Electron runtime (about 100 MB). It is safe to re-run: an
+existing `.venv` is reused.
 
-Current Electron versions no longer download their runtime binary during `npm ci`,
-so a manual install leaves that to the first launch, which then pauses to fetch
-roughly 100 MB. `bootstrap_dev.sh` fetches it up front instead. To do that by hand:
+It also offers to refresh the species grouping data used by the Download view.
+The copy in the repository works, but may not group recently added species. The
+refresh downloads about 76 MB from NCBI. Pass `--with-grouping` or
+`--no-grouping` to answer in advance.
 
-```bash
-(cd electron && node node_modules/electron/install.js)
-```
+`run_ensembl_go.sh` starts the backend, the frontend, and the desktop window.
+Keep the terminal open while you use the application; closing the window stops
+everything the launcher started.
 
-The backend runtime versions are pinned through
-`backend/constraints.txt`. Developers creating a release package also need
-PyInstaller; it is not needed to run a packaged application:
-
-```bash
-python -m pip install -r backend/requirements-build.txt
-```
-
-## Run the desktop application in development
-
-Activate the Python environment, then start the backend, Vite, and Electron:
+On later runs, only the last two commands are needed:
 
 ```bash
 source .venv/bin/activate
 ./run_ensembl_go.sh
 ```
 
-The development backend listens on `127.0.0.1:8000`, and Electron loads Vite
-from `http://127.0.0.1:5173`. If either port already has a listening process,
-the launcher shows its details and asks whether to stop it or abort. It handles
-the two ports separately and never stops a process without confirmation.
+The launcher uses ports 8000 and 5173. If either is already in use, it shows
+the process using it and asks whether to stop that process or abort. It never
+stops a process without asking.
 
-`run_ensembl_go.sh` also starts Electron and stops only the development
-processes it started when Electron exits. It expects the standard macOS/Linux
-utilities `lsof` and `nc`.
+## Optional dependency: MAFFT
 
-This fixed-port behaviour applies only to source development. Packaged macOS
-and Linux applications do not stop an existing process or ask the user to manage
-ports. Their managed backend prefers port 8000 and automatically selects another
-free loopback port if 8000 is unavailable. Electron passes that selected
-address to the frontend internally.
+MAFFT is needed wherever Ensembl Go computes a new alignment: mainly Feature
+Alignment, which aligns genic regions from two or more genomes and overlays
+their annotation, and Gene Trees when you request a new sequence alignment.
+Genome browsing, downloads, statistics, and the Structural Variation view do not
+need it.
 
-For browser-only development, use two terminals:
+On macOS, with Homebrew:
+
+```bash
+brew install mafft
+```
+
+On Debian or Ubuntu:
+
+```bash
+sudo apt install mafft
+```
+
+## First run
+
+The first time the backend starts, it downloads the species catalogue from
+Ensembl. The Download view shows "Fetching species catalogue" until it is ready,
+then fills the list automatically; local genomes remain available meanwhile.
+Later starts use a cached copy and refresh it in the background once it is more
+than a day old.
+
+Then:
+
+1. Open **Configuration** and choose an output directory.
+2. Open **Download** and download the assemblies you want to inspect.
+3. Optionally, add custom tracks in **Track Manager**.
+
+For downloaded genomes, Ensembl Go fetches and registers the sequence and
+annotation files and builds the indexes the views need. You only handle FASTA,
+GFF3, or index files yourself when importing your own assembly or
+troubleshooting an incomplete download.
+
+The output directory holds the catalogue of your local genomes and their data
+under `local_data`. Keep using the same output directory to keep your genomes,
+playlists, tracks, and registered SV alignments.
+
+Installing dependencies, fetching the catalogue, and downloading genomes need
+internet access. Downloaded genomes can then be explored offline. The
+[user guides](./docs/README.md) explain each view.
+
+## Windows
+
+Windows is not supported yet. The setup and launch scripts above need a Unix
+shell, so a source checkout does not run directly on Windows.
+
+An experimental Windows build exists: a Windows desktop application whose
+backend runs inside WSL 2 (Ubuntu or Debian). There is no published installer,
+so trying it means building one yourself on Windows; see
+[Windows packaging](./electron/RELEASE.md#windows) in the packaging guide.
+
+## Developer notes
+
+Nothing in this section is needed to use Ensembl Go.
+
+### Installing dependencies by hand
+
+`bootstrap_dev.sh` is equivalent to:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r backend/requirements.txt
+npm --prefix frontend ci
+npm --prefix electron ci
+(cd electron && node node_modules/electron/install.js)
+```
+
+`npm ci` installs exactly what the committed lockfiles specify; use
+`npm install` only when intentionally changing dependencies. The last command
+fetches the Electron runtime, which `npm ci` no longer does; without it, the
+first launch pauses to download it. Backend package versions are pinned through
+`backend/constraints.txt`.
+
+### Browser-only development
+
+To work without Electron, run the backend and Vite in two terminals:
 
 ```bash
 # Terminal 1
@@ -158,120 +182,34 @@ python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 npm --prefix frontend run dev
 ```
 
-Open `http://127.0.0.1:5173`. A browser-only backend launched this way does not
-require the per-launch API token used by Electron.
+Open `http://127.0.0.1:5173`. A backend started this way does not require the
+per-launch API token that Electron uses.
 
-## First run: the species catalogue
+### Running the tests
 
-The backend fetches the downloadable-species catalogue from Ensembl at startup.
-The Download view shows "Fetching species catalogue" until it is ready, then
-fills the list automatically. Local genomes remain available while it loads.
-
-The catalogue is cached under the application's cache directory. Later starts
-load that copy and refresh it in the background when it is more than a day old.
-Empty or incomplete copies are discarded and fetched again.
-
-Distribution builds do not bundle the species catalogue, so their first run
-needs access to `ftp.ebi.ac.uk`. Source and offline runs can use a complete
-catalogue placed under `cluster_test_data/`, or selected through
-`ENSEMBL_LOCAL_SPECIES_JSON`.
-
-## First-run data setup
-
-For the normal downloaded-genome workflow, the user-facing setup is short:
-
-1. Open Configuration and choose an output directory.
-2. Open Download and download the assemblies you want to inspect.
-3. Add optional custom tracks through Track Manager.
-
-For genomes obtained through Download, Ensembl Go handles the supporting data
-setup by default: it downloads and registers the sequence and annotation files
-and prepares the indexes used by the views. You only need to manage FASTA,
-GFF3, or index files yourself when importing an assembly manually or
-troubleshooting an incomplete download.
-
-The output directory owns the application catalogue and cached data under its
-`local_data` directory. Keep using the same output directory if you want saved
-genomes, playlists, tracks, and registered SV alignments to remain available.
-
-## Verify the installation
-
-For the backend test suite, install the test-only `pytest` and `httpx` packages
-in the active virtual environment. They are not needed to run the application:
+The backend tests need `pytest` and `httpx`, which the application does not:
 
 ```bash
+source .venv/bin/activate
 python -m pip install pytest httpx
-```
-
-Then run:
-
-```bash
 python -m pytest backend/tests -q
 TZ=UTC npm --prefix frontend test
 npm --prefix frontend run lint
 npm --prefix frontend run build
 ```
 
-The frontend build can report a large-bundle warning. That warning is not a
-build failure. Lint errors are failures; lint warnings currently track existing
-cleanup work. `TZ=UTC` avoids two screenshot filename tests that currently
-assume UTC even though the application formats timestamps in local time.
+`TZ=UTC` is needed because two screenshot-filename tests assume UTC, although the
+application formats timestamps in local time. The frontend build may warn about
+bundle size, and lint may report warnings; only lint errors are failures.
 
-## Packaging
+### Local species catalogue
 
-### Build a Windows installer
+To start from a local catalogue instead of downloading one, place a complete
+`species.json` in `cluster_test_data/` at the repository root, or point
+`ENSEMBL_LOCAL_SPECIES_JSON` at one.
 
-On Windows, install [Node.js](https://nodejs.org/en/download) 20.19 or newer
-(including npm). Open PowerShell in the cloned repo's root and run:
+### Building packages
 
-```powershell
-npm --prefix frontend ci
-npm --prefix electron ci
-npm --prefix electron run dist:win:dir
-cd electron
-node ./node_modules/electron-builder/cli.js --win nsis
-```
-
-The installer is `electron/dist/Ensembl Go-<version>-win-x64.exe`, relative to
-the repo root. Run it, then launch Ensembl Go from the Start Menu. Follow the
-[Windows prerequisites](#windows-installation) before launching; Windows Python
-and MAFFT are not needed to build this installer. Downloads require internet access.
-
-This local build uses the species classification data already in the repo. For
-release builds that refresh it, see [Windows packaging](./electron/RELEASE.md#windows-packaging).
-
-### macOS and Linux packages
-
-For an unsigned local macOS package:
-
-```bash
-npm --prefix electron run dist:mac:unsigned
-```
-
-For an initial Linux package (AppImage and deb), run on a Linux build host:
-
-```bash
-npm --prefix electron run dist:linux
-```
-
-Each platform must be packaged on itself. The macOS and Linux backends are native
-PyInstaller executables, so they cannot be cross-built, and the packaging scripts
-stop with an explanation rather than producing an artifact containing a backend for
-the wrong platform. On Linux the build host's glibc also sets the minimum version
-the package will run on, so build on the oldest distribution you want to support.
-The Linux package still needs a clean-machine installation and launch test before
-it is shared more broadly.
-
-To include multiple-alignment support, MAFFT must be available on `PATH`, or
-`MAFFT_BUNDLE_ROOT` must point to an installation containing `bin/mafft` and
-`libexec/mafft` (or `lib/mafft`). To package the rest of the application without
-that optional functionality:
-
-```bash
-SKIP_MAFFT_BUNDLE=1 npm --prefix electron run dist:mac:unsigned
-# On Linux:
-SKIP_MAFFT_BUNDLE=1 npm --prefix electron run dist:linux
-```
-
-Signed and notarized macOS releases, and the full Linux and Windows packaging
-procedures, are described in [electron/RELEASE.md](./electron/RELEASE.md).
+Building a macOS app, a Linux AppImage or `.deb`, or a Windows installer is
+covered in [electron/RELEASE.md](./electron/RELEASE.md). None of these is needed
+to run from source.

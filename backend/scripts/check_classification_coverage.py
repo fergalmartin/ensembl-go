@@ -28,7 +28,7 @@ from typing import Any, Dict, Set
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_ARTIFACT = BACKEND_DIR / "data" / "taxonomy_classification.json"
-LIVE_CATALOG_URL = "https://ftp.ebi.ac.uk/pub/ensemblorganisms/species.new_ftp_structure.json"
+LIVE_CATALOG_URL = "https://ftp.ebi.ac.uk/pub/ensemblorganisms/species.json"
 
 
 def _int_or_zero(value: Any) -> int:

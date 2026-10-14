@@ -622,7 +622,11 @@ async function prepareNativeWslBackend(windowsRootPath, distro) {
   }
 
   const fingerprint = fingerprintBackendSource(path.join(windowsRootPath, 'backend'));
-  const nativeRoot = path.posix.join(home, '.local', 'share', 'ensembl-go', 'backend', fingerprint);
+  const wslAppRoot = path.posix.join(home, '.local', 'share', 'ensembl-go');
+  const nativeRoot = path.posix.join(wslAppRoot, 'backend', fingerprint);
+  // Config and caches live outside the per-version backend copy, so they survive
+  // a backend change the way Electron's userData does on the native platforms.
+  const userDataDir = path.posix.join(wslAppRoot, 'user-data');
   const markerPath = path.posix.join(nativeRoot, '.source-ready');
   const backendMainPath = path.posix.join(nativeRoot, 'backend', 'main.py');
   const ready = await runWslShell(
@@ -644,7 +648,7 @@ async function prepareNativeWslBackend(windowsRootPath, distro) {
       throw new Error((staged.stderr || staged.stdout || staged.error?.message || 'Could not copy the backend into WSL.').trim());
     }
   }
-  return nativeRoot;
+  return { backendRoot: nativeRoot, userDataDir };
 }
 
 function parseWslListOutput(output) {
@@ -770,7 +774,16 @@ function resolveWslPythonCommand(linuxRootPath) {
   return '';
 }
 
-function createWindowsSetupCommands(linuxRootPath, pythonCommand, uvAvailable = false) {
+// Shared by the managed launch and the copyable manual command, so both start the
+// backend with the same token and the same persistent data directory.
+function getWslBackendEnvAssignments(userDataDir) {
+  return [
+    `ENSEMBL_LOCAL_API_TOKEN=${quoteForPosixShell(LOCAL_API_TOKEN)}`,
+    `ENSEMBL_GO_USER_DATA_DIR=${quoteForPosixShell(userDataDir)}`,
+  ].join(' ');
+}
+
+function createWindowsSetupCommands(linuxRootPath, userDataDir, pythonCommand, uvAvailable = false) {
   if (!linuxRootPath) {
     return {};
   }
@@ -793,7 +806,7 @@ function createWindowsSetupCommands(linuxRootPath, pythonCommand, uvAvailable = 
     installMafft: 'sudo apt install -y mafft',
     installWithUv,
     installWithPython,
-    startBackend: `ENSEMBL_LOCAL_API_TOKEN=${quoteForPosixShell(LOCAL_API_TOKEN)} ${quoteForPosixShell(pythonCommand)} ${quoteForPosixShell(backendMain)} --host ${BACKEND_HOST} --port ${BACKEND_PORT}`,
+    startBackend: `${getWslBackendEnvAssignments(userDataDir)} ${quoteForPosixShell(pythonCommand)} ${quoteForPosixShell(backendMain)} --host ${BACKEND_HOST} --port ${BACKEND_PORT}`,
   };
 }
 
@@ -865,9 +878,13 @@ async function collectWindowsDiagnostics(health = { ok: false, statusCode: null,
   }
 
   let backendLinuxRoot = '';
+  let backendUserDataDir = '';
   if (diagnostics.wsl.ok && distroInfo.ok) {
     try {
-      backendLinuxRoot = await prepareNativeWslBackend(backendWindowsRoot, distroInfo.value);
+      ({ backendRoot: backendLinuxRoot, userDataDir: backendUserDataDir } = await prepareNativeWslBackend(
+        backendWindowsRoot,
+        distroInfo.value,
+      ));
       diagnostics.backendSource = {
         ok: true,
         windowsPath: backendWindowsRoot,
@@ -896,7 +913,12 @@ async function collectWindowsDiagnostics(health = { ok: false, statusCode: null,
   const uvCheck = diagnostics.wsl.ok && distroInfo.ok
     ? await runWslShell('command -v uv >/dev/null 2>&1', distroInfo.value, 15000)
     : null;
-  const setupCommands = createWindowsSetupCommands(backendLinuxRoot, pythonCommand, uvCheck?.status === 0);
+  const setupCommands = createWindowsSetupCommands(
+    backendLinuxRoot,
+    backendUserDataDir,
+    pythonCommand,
+    uvCheck?.status === 0,
+  );
 
   if (diagnostics.wsl.ok && distroInfo.ok) {
     const pythonCheck = pythonCommand.includes('/')
@@ -962,7 +984,7 @@ async function collectWindowsDiagnostics(health = { ok: false, statusCode: null,
 
   const launchCommandLine = backendLinuxRoot
     ? [
-        'ENSEMBL_LOCAL_API_TOKEN=' + quoteForPosixShell(LOCAL_API_TOKEN),
+        getWslBackendEnvAssignments(backendUserDataDir),
         'exec',
         quoteForPosixShell(pythonCommand),
         quoteForPosixShell(path.posix.join(backendLinuxRoot, 'backend', 'main.py')),

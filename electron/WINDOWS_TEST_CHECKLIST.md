@@ -1,61 +1,39 @@
 # Windows Test Checklist
 
-Use this on a real Windows machine. The supported Windows path is:
+Use this on a real Windows machine to test the experimental Windows build. How
+that build works, and how to produce it, is in
+[RELEASE.md](./RELEASE.md#windows). In short:
 
 - native Electron app on Windows
 - backend running in a virtual environment inside Ubuntu or Debian WSL 2
 - frontend and backend talking over `http://127.0.0.1:8000`
 
-## 1) Build machine setup
+## 1) Build
 
-- Install Node.js and npm on Windows.
-- Install a WSL 2 distro such as Ubuntu or Debian; verify its version with `wsl -l -v`.
-- Open a fresh PowerShell in the repo.
-- Ensure frontend and Electron dependencies are installed:
+Build the unpacked app and the installer as described in
+[RELEASE.md](./RELEASE.md#build), using `npm ci` for the dependencies.
+`dist:win:dir` needs no Windows Python; `dist:win` needs one for the species
+grouping refresh.
 
-```powershell
-npm --prefix frontend install
-npm --prefix electron install
-```
+After `npm run dist:win:dir`, check:
 
-Host-side Python is not required for `dist:win`.
+- `electron\dist\win-unpacked\Ensembl Go.exe` exists.
+- `electron\build_backend\windows\backend_source\backend\main.py` exists.
+- `electron\dist\win-unpacked\resources\backend_source\backend\main.py` exists.
+- No `alignment_server.exe` is expected for the Windows target.
 
-## 2) Fast smoke build
+After `npm run dist:win`, check:
 
-Run the unpacked Windows build first:
+- `electron\dist\Ensembl Go-<version>-win-x64.exe` exists.
+- `electron\dist\Ensembl Go-<version>-win-x64.zip` exists.
 
-```powershell
-cd electron
-npm run dist:win:dir
-```
+## 2) First launch and setup screen
 
-Check:
+Install a WSL 2 distro such as Ubuntu or Debian, and verify its version with
+`wsl -l -v`. Then launch either:
 
-- `electron\\dist\\win-unpacked\\Ensembl Go.exe` exists.
-- `electron\\build_backend\\windows\\backend_source\\backend\\main.py` exists.
-- `electron\\dist\\win-unpacked\\resources\\backend_source\\backend\\main.py` exists after packaging.
-- No `alignment_server.exe` is expected for the Windows target anymore.
-
-## 3) Installer build
-
-Build the installer artifacts:
-
-```powershell
-cd electron
-npm run dist:win
-```
-
-Check:
-
-- `electron\\dist\\Ensembl Go-<version>-win-x64.exe` exists.
-- `electron\\dist\\Ensembl Go-<version>-win-x64.zip` exists.
-
-## 4) First launch and setup screen
-
-Launch either:
-
-- `electron\\dist\\win-unpacked\\Ensembl Go.exe`, or
-- install the NSIS `.exe` and launch from the Start Menu/Desktop shortcut.
+- `electron\dist\win-unpacked\Ensembl Go.exe`, or
+- the NSIS `.exe` installer, then the app from the Start Menu/Desktop shortcut.
 
 Verify:
 
@@ -71,7 +49,7 @@ Verify:
 - The backend files and `.venv` are under `~/.local/share/ensembl-go/backend/<source-hash>/backend/` in WSL, not under `/mnt/c`.
 - If automatic setup fails, the screen keeps the error and offers selectable `uv` (when detected) and Python venv commands. The system Python package command appears only with the Python venv option.
 
-## 5) WSL dependency setup
+## 3) WSL dependency setup
 
 If automatic setup fails, open Ubuntu or Debian WSL 2, select one setup method,
 and use its commands.
@@ -100,7 +78,7 @@ sudo apt install -y mafft
 The exact backend path should come from the app's setup screen. It is based on the bundled source contents and remains in the distro's native filesystem.
 If you already manage your own WSL virtual environment, you can keep doing that by setting `ENSEMBL_LOCAL_WSL_PYTHON` before launching the app.
 
-## 6) Retry flow
+## 4) Retry flow
 
 After running the WSL commands:
 
@@ -113,7 +91,7 @@ Verify:
 - Restarting the app re-attaches cleanly if the backend is already healthy.
 - `/api/health` remains reachable without a token, while other `/api/*` calls use the per-launch token shown in the generated manual backend command.
 
-## 7) Runtime smoke test
+## 5) Runtime smoke test
 
 After the backend is connected, verify:
 
@@ -121,9 +99,10 @@ After the backend is connected, verify:
 - The home screen renders correctly.
 - The genome/file browser works using WSL-visible paths.
 - Windows-hosted files can be reached through `/mnt/c/...`.
-- Cache files appear under `%LOCALAPPDATA%\\AlignmentViewer\\cache`.
+- Configuration and cache files appear under `~/.local/share/ensembl-go/user-data/cache` in WSL, not inside the `backend/<source-hash>/` directory.
+- After installing a build with a changed backend, the chosen output directory and other settings are still in place.
 
-## 8) Feature Alignment test
+## 6) Feature Alignment test
 
 Verify:
 
@@ -133,7 +112,7 @@ Verify:
   still allows the backend to launch.
 - If the backend is manually launched, use the setup screen's full command so `ENSEMBL_LOCAL_API_TOKEN` matches the Electron session.
 
-## 9) Installer polish checks
+## 7) Installer polish checks
 
 If you installed the NSIS artifact, verify:
 
@@ -144,13 +123,13 @@ If you installed the NSIS artifact, verify:
 - App icon displays correctly in Start Menu and taskbar.
 - Uninstall entry appears as `Ensembl Go`.
 
-## 10) Uninstall behavior
+## 8) Uninstall behavior
 
 - Uninstall the app from Windows Settings or the uninstaller.
 - Confirm the app binaries are removed.
-- Confirm user cache under `%LOCALAPPDATA%\\AlignmentViewer\\cache` is preserved unless you intentionally delete it.
+- Confirm `~/.local/share/ensembl-go/` in WSL, holding the backend copies and `user-data`, remains. The Windows uninstaller does not remove it; delete it by hand if needed.
 
-## 11) Regression notes to capture
+## 9) Regression notes to capture
 
 If anything fails, note:
 

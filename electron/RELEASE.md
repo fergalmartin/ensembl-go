@@ -1,109 +1,150 @@
-# Release packaging
+# Building packages
 
-Use this when creating distributable artifacts for other users. Sections 0-3 cover
-macOS; Windows and Linux have their own sections at the end.
+This guide is for maintainers and testers who build installable packages. People
+using Ensembl Go run it from source; see [INSTALLATION.md](../INSTALLATION.md).
+No packages are currently distributed, so every target below exists for testing.
 
-Backend packaging differs by platform:
+| Target | Command | Status | Backend shipped as | Build on |
+| --- | --- | --- | --- | --- |
+| Linux AppImage and `.deb` | `npm run dist:linux` | Experimental | PyInstaller executable | Linux, or a Linux container |
+| Windows installer and zip | `npm run dist:win` | Experimental | Python source, run in WSL 2 | Windows |
+| macOS app, unsigned | `npm run dist:mac:unsigned` | Local testing only | PyInstaller executable | macOS |
+| macOS app, signed and notarized | `npm run dist` | Not currently used | PyInstaller executable | macOS |
 
-| Target  | Backend shipped as                               | Must be built on |
-| ------- | ------------------------------------------------ | ---------------- |
-| macOS   | native PyInstaller executable in app resources   | macOS            |
-| Linux   | native PyInstaller executable in app resources   | Linux            |
-| Windows | Python source tree, run through WSL at first use | Windows          |
+PyInstaller produces an executable for the machine it runs on, so macOS and Linux
+packages must be built on the platform they target; `check-backend-prereqs.js`
+rejects a mismatched target. Output goes to `electron/dist` for every target.
 
-PyInstaller produces a native executable for the build host.
-`check-backend-prereqs.js` rejects macOS or Linux targets that do not match it.
+- [Before building (all targets)](#before-building-all-targets)
+- [After building (all targets)](#after-building-all-targets)
+- [Linux](#linux)
+- [Windows](#windows)
+- [macOS](#macos)
 
-## 0) Release preflight
+## Before building (all targets)
 
-Run from a clean source checkout before packaging:
+### Build environment
+
+On macOS or Linux, start from the source setup in
+[INSTALLATION.md](../INSTALLATION.md), adding the packaging dependencies
+(PyInstaller):
 
 ```bash
-npm --prefix frontend ci
-npm --prefix electron ci
-python3 -m pip install -r backend/requirements.txt
-python3 -m pip install pytest httpx
-python3 -m pytest backend/tests -q
-python3 -m compileall -q backend
+./scripts/bootstrap_dev.sh --with-packaging
+source .venv/bin/activate
+```
+
+Keep the virtual environment active while building: the build scripts find
+PyInstaller and the backend dependencies through the active `python3`. Windows
+uses a different setup; see [Windows](#windows).
+
+### Release checks
+
+From a clean checkout, with the virtual environment active:
+
+```bash
+python -m pip install pytest httpx
+python -m pytest backend/tests -q
+python -m compileall -q backend
 TZ=UTC npm --prefix frontend test
 npm --prefix frontend run lint
 npm --prefix frontend run build
 npm --prefix frontend audit --omit=dev
 npm --prefix electron audit --omit=dev
-python3 backend/scripts/check_classification_coverage.py
+python backend/scripts/check_classification_coverage.py
 ```
 
-Expected notes:
-
-- Frontend build may warn about the large main bundle; that is a performance
-  backlog item, not a release blocker.
-- Frontend lint may report warnings; packaging should stop only on lint errors.
-- The backend dependency set is constrained by `backend/constraints.txt`.
-- `TZ=UTC` matches the screenshot filename tests' assumptions.
+The frontend build may warn about the large main bundle; that is a performance
+backlog item, not a blocker. Lint warnings do not block packaging; lint errors
+do. `TZ=UTC` matches the screenshot-filename tests' assumptions.
 
 ### Species grouping artifacts
 
 The Download view uses `backend/data/taxonomy_classification.json` to group
 species by NCBI lineage. Species missing from that file fall back to name
-heuristics, which can place them in less specific groups.
+heuristics, which can place them in less specific groups. The catalogue is
+downloaded at runtime and gains new species, so refresh the classification data
+before building.
 
-The catalogue is downloaded at runtime and gains new species, so refresh the
-classification data before releasing.
-
-`dist:mac:release`, `dist:win` and `dist:linux` run
-`npm run refresh:classification` before packaging. It:
+`dist`, `dist:win` and `dist:linux` run `npm run refresh:classification` before
+packaging. It:
 
 1. Downloads the current catalogue and measures classification coverage.
-2. Stops if the uncovered share is at most 1%.
-3. Otherwise downloads the NCBI taxdump (about 76 MB), regenerates taxonomy
-   classification and refreshes `project_classification.json`.
+2. Stops if at most 1% of species are uncovered.
+3. Otherwise downloads the NCBI taxdump (about 76 MB), regenerates the taxonomy
+   classification, and refreshes `project_classification.json`.
 
 To run it by hand, or to see where things stand without building:
 
 ```bash
 npm --prefix electron run refresh:classification          # refresh if needed
 python backend/scripts/check_classification_coverage.py   # report only, changes nothing
-```
-
-Useful arguments, passed through the npm script after `--`:
-
-```bash
 npm --prefix electron run refresh:classification -- --force
 npm --prefix electron run refresh:classification -- --max-uncovered-percent 0.5
 ```
 
 The taxdump is cached under `backend/cache/build/`. NCBI rebuilds it daily, so the
-cache only helps for repeated builds on the same day; it is safe to delete.
+cache only helps repeated builds on the same day; it is safe to delete. The
+underlying generators, `backend/scripts/generate_taxonomy_classification.py` and
+`generate_project_classification.py`, can be run directly to point at a specific
+catalogue or taxdump; both take `--audit-only` to report without writing.
+`check-backend-prereqs.js` fails the build if either artifact is missing.
 
-The underlying generators, `backend/scripts/generate_taxonomy_classification.py` and
-`generate_project_classification.py`, can still be run directly if you need to point at
-a specific catalogue or taxdump. Both take `--audit-only` to report without writing.
-
-`check-backend-prereqs.js` additionally fails the build if either artifact is missing,
-since a package without them mis-groups a large share of the catalogue.
-
-### Reading the npm audit output
+### Dependency audit
 
 Use `npm audit --omit=dev` for production npm dependencies, and review the full
 audit separately for build tools such as Vite, Rollup, ESLint and
-electron-builder. An audit result describes the dependencies and advisory data
-checked at that time; rerun it for each release.
+electron-builder. Rerun the audit for each build you share. Review dependency
+changes before applying fixes: `npm audit fix --force` can change the major
+version of Electron or the packager.
 
-Review dependency changes before applying fixes. `npm audit fix --force` can
-change major versions of Electron or the packager during a release.
-
-Electron is a dev dependency, but its runtime binary ships with the application.
-The production audit excludes it, so check the runtime separately:
+Electron is a dev dependency, but its runtime ships with the application and the
+production audit excludes it. Check it separately:
 
 ```bash
 npm --prefix electron run check:electron-runtime
 ```
 
-`check:electron-runtime` compares the bundled version with the support window
-configured in `scripts/check-electron-runtime.js`. It runs in `--strict` mode
-and fails release builds when the runtime falls outside that window.
+This compares the bundled version with the support window configured in
+`scripts/check-electron-runtime.js`, and fails the `dist*` builds that run it when
+the runtime falls outside that window.
 
-Desktop security smoke checks:
+### MAFFT bundling
+
+macOS and Linux packages bundle MAFFT from `PATH` by default, so Feature
+Alignment works without a separate install. To bundle a specific installation,
+point at its root, which must contain `bin/mafft` and either `libexec/mafft` or
+`lib/mafft`. To package without MAFFT, set `SKIP_MAFFT_BUNDLE=1`:
+
+```bash
+export MAFFT_BUNDLE_ROOT=/absolute/path/to/mafft/install/root   # bundle this installation
+SKIP_MAFFT_BUNDLE=1 npm run dist:linux                          # or package without MAFFT
+```
+
+Homebrew's `mafft` on macOS and the Debian/Ubuntu `mafft` package (`/usr/bin/mafft`
+with helpers in `/usr/lib/mafft`) are both recognised. Windows packages never
+bundle MAFFT; users install it inside WSL.
+
+## After building (all targets)
+
+### Smoke test
+
+Launch the package, on a clean machine other than the build host where the
+platform allows, and check:
+
+- The Home screen renders.
+- Backend status reaches ready. This is the check that fails if the backend was
+  not bundled or does not match the machine.
+- File selection works.
+- The species catalogue loads, and a genome can be downloaded and opened.
+- If MAFFT is bundled, Feature Alignment succeeds with at least three genomes and
+  displays their annotation overlays.
+- Screenshot/export save writes the expected file extension.
+
+Packaged applications do not use the source launcher's fixed ports. Their managed
+backend prefers port 8000 and picks another free loopback port if 8000 is taken.
+
+### Security checks
 
 - The backend binds to `127.0.0.1` by default.
 - `/api/health` responds without a token.
@@ -114,287 +155,274 @@ Desktop security smoke checks:
 - Managed-genome deletion rejects paths outside `output_dir/local_data`.
 - Manual-genome removal preserves source files and checks generated-file ownership.
 
-## 1) Configure Apple signing + notarization
+## Linux
 
-### Code signing certificate
-Install a `Developer ID Application` certificate in your login keychain.
+**Linux packages are experimental. Installation, launch, and application
+features have not been fully tested on Linux desktops, and these steps may need
+more for your system.**
 
-Check:
+Packages contain a native Electron shell and a native PyInstaller backend; people
+installing them do not need Python, Node.js, or Docker. The targets are
+`AppImage` and `deb`.
 
-```bash
-security find-identity -v -p codesigning
-```
+### Build host
 
-You should see at least one identity containing `Developer ID Application`.
+The build environment's glibc sets the oldest system the package will run on, so
+build on the oldest distribution you intend to support; a package built on current
+Fedora can fail to start on an older Ubuntu release with a loader error. Choose a
+baseline that also has the required Python and Node.js versions.
+`verify-linux-backend.js` prints the glibc version it built against; record it
+with the test results. Building on an older baseline helps, but Electron and the
+backend's native dependencies (`pysam`, `pyBigWig`) still need testing on each
+intended distribution.
 
-### Notarization credentials
-Set one of these credential sets before building:
+The architecture follows the build host: an x86-64 host produces an x86-64
+package, an arm64 host an arm64 one. Do not pass an explicit `--x64`/`--arm64`
+that disagrees with the host, or the Electron shell and the PyInstaller backend
+will not match.
 
-API key method:
+### Build directly on Linux
 
-```bash
-export APPLE_API_KEY_PATH=/absolute/path/AuthKey_XXXX.p8
-export APPLE_API_KEY_ID=XXXX
-export APPLE_API_ISSUER=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-```
-
-or Apple ID method:
-
-```bash
-export APPLE_ID=you@example.com
-export APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
-export APPLE_TEAM_ID=ABCDE12345
-```
-
-## 2) Build distributable artifacts
+On Debian or Ubuntu, install the [Linux prerequisites](../INSTALLATION.md#prerequisites)
+plus the `.deb` packaging tools, set up the [build environment](#build-environment),
+and build:
 
 ```bash
+sudo apt install dpkg fakeroot
+sudo apt install mafft      # optional; bundled when present
+./scripts/bootstrap_dev.sh --with-packaging
+source .venv/bin/activate
 cd electron
-npm run dist
+npm run dist:linux
 ```
 
-This command:
-- runs a preflight check for signing/notarization
-- bundles MAFFT into app resources by default, enabling multiple genic-region
-  alignments with annotation overlays
-- builds signed/notarized `dmg` and `zip`
+This runs the release preflight and prebuild, verifies that the produced backend
+is an ELF binary matching the host architecture, then builds the AppImage and
+`.deb`. For a faster unpacked build to check first, use `npm run dist:linux:dir`.
 
-If MAFFT is not on PATH, point to an installation root (must contain `bin/mafft` and `libexec/mafft`):
+### Build in Docker (Debian 12, amd64)
+
+The repository's [Dockerfile](../Dockerfile.linux-amd64) builds inside Debian 12
+(Bookworm) with Node.js 22, Python 3.11, the native build tools, and MAFFT.
+Dependencies are installed inside the container; host virtual environments,
+`node_modules`, and previous builds are excluded by the adjacent
+`Dockerfile.linux-amd64.dockerignore`.
+
+Use Docker with Linux containers. On an ARM host such as an Apple Silicon Mac,
+the Docker environment must support x86-64 emulation, and emulated builds are
+slower; see [Docker's platform guidance](https://docs.docker.com/build/building/multi-platform/).
+With Colima on macOS, an x86-64 VM provides that:
 
 ```bash
-export MAFFT_BUNDLE_ROOT=/absolute/path/to/mafft/install/root
-npm run dist
+colima start amd64 --arch x86_64 --vm-type=qemu --cpu 6 --memory 12 --disk 80
+docker context use colima-amd64
 ```
 
-MAFFT is optional for the rest of the application. To package without
-multiple-alignment support:
+Docker Desktop users can use their existing Linux-container context instead.
+
+From the repository root, build the image, then run the packaging command and
+copy its artifacts into `dist-linux` on the host:
 
 ```bash
-SKIP_MAFFT_BUNDLE=1 npm run dist
+docker build --platform linux/amd64 \
+  -f Dockerfile.linux-amd64 \
+  -t ensembl-go-linux-amd64-builder .
+
+mkdir -p dist-linux
+docker run --rm --platform linux/amd64 \
+  -v "$PWD/dist-linux:/output" \
+  ensembl-go-linux-amd64-builder \
+  bash -c 'npm run dist:linux && cp -r --no-preserve=ownership dist/. /output/'
 ```
 
-Output folder:
+The image contains a copy of the checkout, so rebuild it after source changes.
+Use an empty output directory for each build to avoid mixing old and new
+artifacts. Do not mount your checkout over `/opt/ensembl-go`: that would hide the
+container's installed dependencies.
 
-`electron/dist`
+The output includes `Ensembl Go-<version>-linux-x86_64.AppImage`,
+`ensembl-go_<version>_amd64.deb`, and `linux-unpacked/`. On a native Linux Docker
+host the exported files may be owned by root. Building in Docker does not test the
+graphical application; install the result on an x86-64 Linux desktop.
 
-## 3) Validate artifacts before sharing
+Record the source commit (`git rev-parse HEAD` on the host), builder image ID,
+Python and Node.js versions, and glibc version with the artifacts; the base image
+tag and downloaded dependencies can change, so the Dockerfile alone does not pin
+every input:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 "dist/mac-arm64/Ensembl Go.app"
-spctl -a -t exec -vv "dist/mac-arm64/Ensembl Go.app"
-xcrun stapler validate "dist/Ensembl Go-1.0.0-mac-arm64.dmg"
+docker image inspect ensembl-go-linux-amd64-builder --format '{{.Id}}'
+docker run --rm --platform linux/amd64 ensembl-go-linux-amd64-builder \
+  bash -c 'python --version; node --version; npm --version; getconf GNU_LIBC_VERSION'
 ```
 
-Launch the app once from the generated DMG/ZIP and smoke test:
+### Using a different catalogue URL
 
-- Home screen renders.
-- Backend status reaches ready.
-- File selection works.
-- If MAFFT is bundled, Feature Alignment succeeds with at least three genomes
-  and displays their annotation overlays.
-- Screenshot/export save writes the expected file extension.
+Packaging needs internet access for the species catalogue and, when grouping
+needs regenerating, the NCBI taxonomy data. The build-time refresh uses
+`https://ftp.ebi.ac.uk/pub/ensemblorganisms/species.json`. A checkout that still
+fails with a 404 for `species.new_ftp_structure.json` predates that URL; update it
+(and rebuild the Docker image) before retrying.
 
-## Unsigned local packaging (not for distribution)
+To use another endpoint, pass `--catalog-url` to the refresh, then run the
+remaining steps yourself so `dist:linux` does not repeat the refresh with the
+default URL. For Docker, first open a shell at the repository root inside the
+container:
+
+```bash
+docker run --rm -it --platform linux/amd64 \
+  -v "$PWD/dist-linux:/output" -w /opt/ensembl-go \
+  ensembl-go-linux-amd64-builder bash
+```
+
+Then, from the repository root:
+
+```bash
+npm --prefix electron run check:electron-runtime
+npm --prefix electron run refresh:classification -- --catalog-url <url>
+npm --prefix electron run prebuild:linux
+npm --prefix electron run verify:linux-backend
+(cd electron && node node_modules/electron-builder/cli.js --linux AppImage deb)
+```
+
+In Docker, copy the artifacts out with
+`cp -r --no-preserve=ownership electron/dist/. /output/` before exiting. The
+running application's catalogue URL is separate: it already tries both catalogue
+URLs and accepts `ENSEMBL_LOCAL_SPECIES_JSON_URL`, which does not affect the
+build-time refresh.
+
+### Installing a test build
+
+There is no code signing on Linux. Use a desktop with a graphical session and a
+package matching its CPU architecture. Replace the version and architecture in
+these examples with your package's filename.
+
+On Debian or Ubuntu, install the `.deb` with `apt` so its declared system
+dependencies are installed too, then launch it from a terminal or the
+application menu:
+
+```bash
+sudo apt update
+sudo apt install ./ensembl-go_1.0.0_amd64.deb
+ensembl-go
+```
+
+Or make the AppImage executable and run it. Its filename contains a space
+(it follows the `${productName}` naming of the other platforms), so keep the
+quotes:
+
+```bash
+chmod +x "Ensembl Go-1.0.0-linux-x86_64.AppImage"
+./"Ensembl Go-1.0.0-linux-x86_64.AppImage"
+```
+
+If the AppImage reports a FUSE error, follow the
+[AppImage FUSE instructions](https://docs.appimage.org/user-guide/troubleshooting/fuse.html)
+or use the `.deb`. If the package was built without MAFFT, install it with
+`sudo apt install mafft`.
+
+Run the [smoke test](#smoke-test), and also check that an output directory outside
+`$HOME` is writable. Record the distribution and version, architecture, package
+filename, source commit, and any startup errors with the results.
+
+### Known Linux specifics
+
+- The backend is a PyInstaller `--onefile` build, so it unpacks to a temporary
+  directory on each launch. On hardened systems that mount `/tmp` with `noexec`
+  it will fail to start; set `TMPDIR` to an exec-capable path. Switching to
+  `--onedir` would remove the caveat and start faster, at the cost of a larger
+  resource tree.
+- Electron needs a working Chromium sandbox. Requirements vary with the
+  distribution's user-namespace policy and the package format. If launch reports
+  a sandbox error, keep the error for troubleshooting rather than disabling the
+  sandbox as a normal installation step.
+- `snap` is deliberately not a target. Its confinement interferes with launching
+  the bundled backend and with reaching output directories outside the snap's own
+  writable area.
+- User data goes to `~/.config/Ensembl Go`, which Electron passes to the backend.
+  The backend's own fallback, used only when that variable is absent, is
+  `~/.ensembl_go`.
+
+## Windows
+
+**The Windows build is experimental.**
+
+The Windows package is a native Electron shell whose backend runs in a Python
+virtual environment inside an Ubuntu or Debian WSL 2 distro, over localhost HTTP.
+It does not ship a native backend executable. Instead it bundles the backend
+source, copies it into the distro's native filesystem under
+`~/.local/share/ensembl-go/backend/<source-hash>/`, and launches it through
+`wsl.exe`. A changed backend gets a new directory.
+
+### Build
+
+On a Windows machine, install Node.js `20.19` or newer. `dist:win` also needs a
+Windows Python 3 (`py -3`, `python`, or `ENSEMBL_LOCAL_PYTHON`) for the
+[species grouping refresh](#species-grouping-artifacts); `dist:win:dir` does not.
+From PowerShell at the repository root:
+
+```powershell
+npm --prefix frontend ci
+npm --prefix electron ci
+cd electron
+npm run dist:win:dir
+npm run dist:win
+```
+
+`dist:win:dir` is a faster unpacked build (`dist\win-unpacked\Ensembl Go.exe`)
+for a first check. `dist:win` produces the NSIS installer and zip,
+`dist\Ensembl Go-<version>-win-x64.exe` and `.zip`.
+
+### Installing a test build
+
+The test machine needs WSL 2 with an Ubuntu or Debian distro; see Microsoft's
+[WSL installation guide](https://learn.microsoft.com/en-us/windows/wsl/install).
+Windows Python and MAFFT are not needed.
+
+Install and launch Ensembl Go. On first launch it copies its backend into the
+distro's default user's home directory and, when `uv` is available in WSL,
+creates the backend's virtual environment automatically, showing progress first.
+If setup fails, the setup screen offers copyable `uv` and Python venv commands.
+The `uv` route can download Python 3.12 itself; the venv route needs `python3`
+and `python3-venv` in WSL. Nothing is installed into the Windows host or the WSL
+system Python. MAFFT is optional: install it inside WSL with
+`sudo apt install mafft`.
+
+Data paths inside the app must be WSL-visible Linux paths, such as `/mnt/c/...`
+for Windows drives. Keep large genome datasets in the WSL filesystem for best
+performance.
+
+The backend keeps its configuration and caches in
+`~/.local/share/ensembl-go/user-data` in WSL, outside the per-version backend
+directories, so they carry over when the bundled backend changes. Uninstalling
+from Windows leaves everything under `~/.local/share/ensembl-go/` in place.
+
+Work through [WINDOWS_TEST_CHECKLIST.md](./WINDOWS_TEST_CHECKLIST.md) for the
+setup screen, retry flow, and installer checks.
+
+## macOS
+
+### Unsigned local build
+
+With the [build environment](#build-environment) active:
 
 ```bash
 cd electron
 npm run dist:mac:unsigned
 ```
 
-## Windows packaging
+This builds an unsigned DMG and zip, bundling MAFFT as described under
+[MAFFT bundling](#mafft-bundling). It skips the Electron runtime check and the
+species grouping refresh that the other `dist` commands run, so run those first
+if you need them. The result is not signed or notarized, so use it for local
+testing, not distribution.
 
-The supported Windows target is now:
+### Signed and notarized release (not currently used)
 
-- native Electron shell on Windows
-- Python backend running in a virtual environment inside Ubuntu or Debian WSL 2 over localhost HTTP
-
-This means the Windows package no longer builds or ships a native backend executable. Instead it bundles the backend source tree, copies it into the distro's native filesystem under `~/.local/share/ensembl-go/backend/<source-hash>/`, and launches it through `wsl.exe` at runtime. A new source hash gets a new directory when the bundled backend changes.
-
-From a Windows build machine:
-
-```powershell
-cd electron
-npm run dist:win
-```
-
-For a faster first pass before generating the installer:
-
-```powershell
-cd electron
-npm run dist:win:dir
-```
-
-Notes:
-
-- Host-side Python is no longer required for `dist:win`.
-- MAFFT is optional and is not bundled into the Windows package. Install it
-  inside WSL only for multiple genic-region alignments with annotation
-  overlays.
-- The packaged Windows app automatically creates or refreshes `backend/.venv` in the native WSL backend directory when `uv` is detected and the environment is missing or incomplete. It shows setup progress before launching the backend.
-- If automatic setup fails, the setup screen offers copyable `uv` and Python venv commands. The `uv` command can use or download Python 3.12 without a system Python installation; the fallback needs `python3` and `python3-venv` in WSL. No Python packages are installed into the Windows host or the WSL system Python.
-- Windows data paths inside the app must be WSL-visible Linux paths such as `/mnt/c/...`. Keep large genome datasets in the native WSL filesystem for best performance.
-- A practical validation checklist lives in `WINDOWS_TEST_CHECKLIST.md`.
-
-## Linux packaging
-
-The initial Linux implementation mirrors macOS: a native Electron shell plus a
-native PyInstaller backend bundled into app resources. There is no WSL step and
-no host Python requirement for end users. This build path has not yet been
-validated by Linux desktop testers; treat the artifacts as early test builds
-until both install and launch checks below succeed on clean machines.
-
-Targets produced are `AppImage` and `deb`.
-
-### Reported build
-
-A tester reported building `ensembl-go_1.0.0_amd64.deb` on Ubuntu 24.04 through
-Docker for `linux/amd64`, after changing a catalogue FTP URL. This confirms a
-successful Debian package build with that adjustment. The report does not yet
-establish a successful desktop installation or launch, an AppImage build, or
-compatibility with other distributions or architectures.
-
-To make this build reproducible, record the source commit, Dockerfile or container
-image and commands, Python and Node.js versions, and the original and replacement
-catalogue URLs. Then run the clean-machine checks below on the resulting package.
-
-Catalogue settings are separate at runtime and during packaging. The application
-accepts `ENSEMBL_LOCAL_SPECIES_JSON_URL`; the build-time classification refresh
-accepts `--catalog-url` through `npm run refresh:classification -- --catalog-url URL`.
-The distribution command runs its own classification refresh, so a separate refresh
-with an override does not change the URL used by the subsequent distribution build.
-Identify which step required the tester's change before modifying the defaults.
-
-### Build host
-
-Because the backend is a native executable, **the Linux package must be built on
-Linux**, including inside a Linux Docker container. The build environment's glibc
-sets the floor for what the package will run on.
-Build on the oldest distribution you intend to support; a package built on current
-Fedora can fail to start on an older Ubuntu release with a loader error. Choose
-a baseline that also has the required Python and Node.js versions available.
-`verify-linux-backend.js` prints the glibc version it built against so you can
-record it with the test results.
-
-Electron itself is not the binding constraint here. The bundled Electron 43 binaries
-require at most `GLIBC_2.25` on both x86-64 and arm64, which every currently supported
-distribution satisfies. The floor is set by the PyInstaller backend and its native
-wheels (`pysam`, `pyBigWig`), so the build host is what decides compatibility.
-
-The architecture follows the build host. Build on x86-64 for a conventional desktop
-package; an arm64 host produces an arm64 package, with the backend and shell matching.
-Do not pass an explicit `--x64`/`--arm64` that disagrees with the host, or the Electron
-shell and the PyInstaller backend will not match.
-
-For a container build, install and build Python, native dependencies, Node.js and
-the application inside the same target-architecture container. The container's
-distribution and architecture are the build baseline. See
-[electron-builder's Docker guidance](https://www.electron.build/v26/docs/features/multi-platform-build/)
-for its packaging support; Ensembl Go also needs its native backend build steps.
-
-### Prerequisites
-
-Install Node.js and npm before running these commands. Python must be at least
-3.9 and Node.js at least 20.19; the distribution's default `nodejs` package may
-not meet that requirement. Check the versions you will use:
-
-```bash
-sudo apt install python3 python3-venv python3-pip
-python3 --version
-node --version
-npm --version
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r backend/requirements-build.txt
-
-npm --prefix frontend ci
-npm --prefix electron ci
-```
-
-For source development with `run_ensembl_go.sh`, also install `lsof` and
-`netcat-openbsd` as described in `INSTALLATION.md`.
-
-Optional, for multiple genic-region alignments:
-
-```bash
-sudo apt install mafft
-```
-
-### Build
-
-```bash
-cd electron
-npm run dist:linux
-```
-
-This runs the same preflight and prebuild sequence as the other targets, verifies the
-produced backend is an ELF binary matching the host architecture, then builds the
-AppImage and deb. Output lands in `electron/dist`.
-
-For a faster unpacked pass before generating installers:
-
-```bash
-cd electron
-npm run dist:linux:dir
-```
-
-MAFFT is picked up from `PATH` and bundled by default. As on macOS, point at an
-installation root explicitly, or skip it:
-
-```bash
-export MAFFT_BUNDLE_ROOT=/absolute/path/to/mafft/install/root   # contains bin/mafft and lib/mafft
-SKIP_MAFFT_BUNDLE=1 npm run dist:linux                          # package without it
-```
-
-On Debian and Ubuntu the packaged `mafft` lays out as `/usr/bin/mafft` with its helper
-binaries in `/usr/lib/mafft`, which the bundler already recognises.
-
-### Validate artifacts before sharing
-
-There is no code signing step on Linux. For this initial implementation, smoke
-test both artifacts on a clean machine that is not the build host before asking
-others to try them:
-
-```bash
-cd electron
-appimage="$(echo dist/*.AppImage)"
-chmod +x "$appimage"
-"$appimage"
-
-sudo apt install "$PWD/$(echo dist/*.deb)"
-ensembl-go
-```
-
-The AppImage keeps the `${productName}` naming used by the other platforms, so its
-filename contains a space; quote it. The deb is named to Debian convention
-(`ensembl-go_<version>_<arch>.deb`) because `apt` and `dpkg` are handled more easily
-without one.
-
-Then check:
-
-- Home screen renders.
-- Backend status reaches ready. This is the important one: it is what fails if the
-  backend was not bundled or does not match the host.
-- File selection works, and a chosen output directory outside `$HOME` is writable.
-- If MAFFT is bundled, Feature Alignment succeeds with at least three genomes
-  and displays their annotation overlays.
-- Screenshot/export save writes the expected file extension.
-
-Record the distribution version, architecture, and any startup errors alongside
-the results. These first tests will establish which Linux systems the packages
-actually work on.
-
-### Known Linux specifics
-
-- The backend is a PyInstaller `--onefile` build, so it unpacks to a temporary
-  directory on each launch. On hardened systems that mount `/tmp` with `noexec` it will
-  fail to start; those users can set `TMPDIR` to an exec-capable path. Switching to
-  `--onedir` would remove the caveat and start faster, at the cost of a larger and less
-  tidy resource tree.
-- Electron's `chrome-sandbox` helper needs to be setuid root. The AppImage runtime and
-  the deb's post-install script both handle this. A plain unpacked tarball does not,
-  which is why one is not produced.
-- `snap` is deliberately not a target. Its confinement interferes with launching the
-  bundled backend and with reaching user-chosen output directories outside the snap's
-  own writable area.
-- User data goes to `~/.config/Ensembl Go`, which Electron passes to the backend. The
-  backend's own fallback, used only when that variable is absent, is `~/.ensembl_go`.
+`npm run dist` (`dist:mac:release`) builds a signed, notarized DMG and zip.
+Its preflight, `scripts/check-macos-release-prereqs.js`, stops unless a
+`Developer ID Application` certificate is in the keychain and notarization
+credentials are set: `APPLE_API_KEY_PATH`, `APPLE_API_KEY_ID` and
+`APPLE_API_ISSUER`; or `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and
+`APPLE_TEAM_ID`; or a notarytool keychain profile (`APPLE_KEYCHAIN` and
+`APPLE_KEYCHAIN_PROFILE`).
