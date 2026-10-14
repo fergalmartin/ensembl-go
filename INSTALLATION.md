@@ -1,8 +1,9 @@
 # Installation and first run
 
 This guide covers running Ensembl Go from a source checkout. macOS is the
-currently tested desktop platform. Linux installation and packaging are an
-initial implementation awaiting tests on Linux desktops. A Linux AppImage or
+currently tested desktop platform. A Debian package build has been reported on
+Ubuntu 24.04 through Docker for `linux/amd64`, with a catalogue URL adjustment;
+Linux desktop installation and launch still need validation. A Linux AppImage or
 `.deb`, once built, contains the frontend and backend; its users do not need
 Node.js or Python. The same is true of the packaged macOS application. The
 packaged Windows application runs its UI in Windows and its backend inside

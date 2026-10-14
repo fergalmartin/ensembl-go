@@ -407,6 +407,57 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.put('/api/gene-trees/workspace', json={'layers': 'nope'}).status_code, 400)
         self.assertEqual(self.client.put('/api/gene-trees/workspace', content=b'{bad').status_code, 400)
 
+    def test_saved_leaf_links_follow_downloads_and_removal(self):
+        human = self.fixture.genomes.pop(0)
+        saved = {'leaves': [
+            {'collection_id': 'missing', 'leaf': {'label': 'human', 'species': 'Homo sapiens', 'gene_id': 'ENSG00000139618'}},
+            {'leaf': {'label': 'absent', 'species': 'Homo sapiens', 'gene_id': 'ENSG00000999999'}},
+        ]}
+        before = self.client.post('/api/gene-trees/resolve-links', json=saved).json()
+        self.assertEqual(before['links']['0']['status'], 'unresolved')
+        self.fixture.genomes.append(human)
+        after = self.client.post('/api/gene-trees/resolve-links', json=saved).json()
+        self.assertEqual(after['links']['0']['status'], 'linked')
+        self.assertEqual(after['links']['0']['gene']['id'], 'ENSG00000139618')
+        self.assertEqual(after['links']['1']['status'], 'genome')
+        index = human.pop('index_path')
+        unindexed = self.client.post('/api/gene-trees/resolve-links', json=saved).json()
+        self.assertEqual(unindexed['links']['0']['status'], 'no_index')
+        human['index_path'] = index
+        self.fixture.genomes.remove(human)
+        removed = self.client.post('/api/gene-trees/resolve-links', json=saved).json()
+        self.assertEqual(removed['links']['0']['status'], 'unresolved')
+
+    def test_saved_leaf_links_use_each_source_collections_mapping(self):
+        first = self.import_and_wait(content='(Hsap_BRCA2,Other);')['collection_id']
+        second = self.import_and_wait(content='(Hsap_BRCA2,Other);')['collection_id']
+        self.client.put(f'/api/gene-trees/datasets/{first}/mapping', json={
+            'species_map': {'Hsap': 'GCA_000001405.29'}})
+        self.client.post(f'/api/gene-trees/datasets/{second}/links', json={'entries': [
+            {'label': 'Hsap_BRCA2', 'assembly': 'GCA_000001635.9', 'gene_id': 'ENSMUSG00000041147'}]})
+        leaf = {'label': 'Hsap_BRCA2', 'species': 'Hsap', 'symbol': 'BRCA2'}
+        response = self.client.post('/api/gene-trees/resolve-links', json={'leaves': [
+            {'collection_id': first, 'leaf': leaf}, {'collection_id': second, 'leaf': leaf}]}).json()
+        self.assertEqual(response['links']['0']['assembly'], 'GCA_000001405.29')
+        self.assertEqual(response['links']['0']['via'], 'species_map')
+        self.assertEqual(response['links']['1']['assembly'], 'GCA_000001635.9')
+        self.assertEqual(response['links']['1']['matched_by'], 'manual')
+
+    def test_saved_leaf_proteins_settle_without_recreating_the_subtree(self):
+        payload = {'leaves': [{'leaf': {'label': 'protein', 'species': 'Homo sapiens',
+                                      'protein_id': 'ENSP00000369497'}}]}
+        first = self.client.post('/api/gene-trees/resolve-links', json=payload).json()
+        self.assertIn(first['links']['0']['status'], ('pending', 'linked'))
+        self.router.linker.proteins.wait()
+        settled = self.client.post('/api/gene-trees/resolve-links', json=payload).json()
+        self.assertFalse(settled['pending'])
+        self.assertEqual(settled['links']['0']['gene']['id'], 'ENSG00000139618')
+
+    def test_saved_leaf_link_requests_are_bounded(self):
+        response = self.client.post('/api/gene-trees/resolve-links', json={
+            'leaves': [{'leaf': {'label': 'A'}}] * 1001})
+        self.assertEqual(response.status_code, 422)
+
     def test_bad_input_is_reported_not_stored(self):
         status = self.import_and_wait(content='((A,B);', name='broken')
         self.assertEqual(status['status'], 'failed')

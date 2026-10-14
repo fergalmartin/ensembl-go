@@ -245,10 +245,30 @@ until both install and launch checks below succeed on clean machines.
 
 Targets produced are `AppImage` and `deb`.
 
+### Reported build
+
+A tester reported building `ensembl-go_1.0.0_amd64.deb` on Ubuntu 24.04 through
+Docker for `linux/amd64`, after changing a catalogue FTP URL. This confirms a
+successful Debian package build with that adjustment. The report does not yet
+establish a successful desktop installation or launch, an AppImage build, or
+compatibility with other distributions or architectures.
+
+To make this build reproducible, record the source commit, Dockerfile or container
+image and commands, Python and Node.js versions, and the original and replacement
+catalogue URLs. Then run the clean-machine checks below on the resulting package.
+
+Catalogue settings are separate at runtime and during packaging. The application
+accepts `ENSEMBL_LOCAL_SPECIES_JSON_URL`; the build-time classification refresh
+accepts `--catalog-url` through `npm run refresh:classification -- --catalog-url URL`.
+The distribution command runs its own classification refresh, so a separate refresh
+with an override does not change the URL used by the subsequent distribution build.
+Identify which step required the tester's change before modifying the defaults.
+
 ### Build host
 
 Because the backend is a native executable, **the Linux package must be built on
-Linux**, and the build host's glibc sets the floor for what the package will run on.
+Linux**, including inside a Linux Docker container. The build environment's glibc
+sets the floor for what the package will run on.
 Build on the oldest distribution you intend to support; a package built on current
 Fedora can fail to start on an older Ubuntu release with a loader error. Choose
 a baseline that also has the required Python and Node.js versions available.
@@ -264,6 +284,12 @@ The architecture follows the build host. Build on x86-64 for a conventional desk
 package; an arm64 host produces an arm64 package, with the backend and shell matching.
 Do not pass an explicit `--x64`/`--arm64` that disagrees with the host, or the Electron
 shell and the PyInstaller backend will not match.
+
+For a container build, install and build Python, native dependencies, Node.js and
+the application inside the same target-architecture container. The container's
+distribution and architecture are the build baseline. See
+[electron-builder's Docker guidance](https://www.electron.build/v26/docs/features/multi-platform-build/)
+for its packaging support; Ensembl Go also needs its native backend build steps.
 
 ### Prerequisites
 

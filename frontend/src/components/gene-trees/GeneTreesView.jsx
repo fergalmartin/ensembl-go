@@ -10,6 +10,8 @@ import { DataViewMenu, NodesButton, ToolButton } from './ToolGroup.jsx'
 import { FAMILY_PALETTE, FLANK_CHOICES, NEIGHBOUR_PALETTE, NEIGHBOURHOOD_FLANK, buildMatcher, groupColours, pairRows, sharedGroups, useNeighbourhoods } from './neighbourhoodData.js'
 import { LAYER_TOOLS, TOOLS } from './tools.js'
 import useWorkspace from './useWorkspace.js'
+import useLayerLinks from './useLayerLinks.js'
+import { localGenomeLinkKey } from './leafLinks.js'
 import {
   activeLayer, addFragments, addLayer, carryPicks, createFragment, duplicateLayer, forestStats, forestTree, layerStats, mergeLayers,
   removeLayer, replaceFragment, updateLayer,
@@ -338,8 +340,10 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   }, [])
 
   // What is showing: the Original tree, or the active layer drawn as one forest.
+  const genomeLinkKey = localGenomeLinkKey(genomes, config?.output_dir)
+  const { resolveLink, layerLinks, error: layerLinkError } = useLayerLinks(ws.layers, genomeLinkKey, collections)
   const layer = activeLayer(ws)
-  const forest = useMemo(() => (layer ? forestTree(layer) : null), [layer])
+  const forest = useMemo(() => (layer ? forestTree(layer, resolveLink) : null), [layer, resolveLink])
   const display = layer ? forest : treeData
   // A layer tool only means something in a layer: anywhere else the canvas explores.
   const activeTool = !layer && LAYER_TOOLS.some(t => t.id === tool) ? 'explore' : tool
@@ -444,17 +448,23 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     return () => { cancelled = true }
   }, [incoming, onIncomingConsumed, openTree])
 
-  // Protein maps are built in the background: ask again until the links settle.
+  // Refresh an already-open Original when genomes change, and while protein maps build.
   useEffect(() => {
-    if (!treeData?.links_pending || !current) return undefined
-    const timer = setTimeout(async () => {
+    if (!current) return undefined
+    const controller = new AbortController()
+    let timer
+    const refresh = async () => {
       try {
-        const data = await api(`/datasets/${current.collectionId}/trees/${encodeURIComponent(current.treeId)}`)
+        const data = await api(`/datasets/${current.collectionId}/trees/${encodeURIComponent(current.treeId)}`, undefined, controller.signal)
+        if (controller.signal.aborted) return
         setTreeData(prev => (prev && prev.tree_id === data.tree_id ? { ...prev, links: data.links, link_summary: data.link_summary, links_pending: data.links_pending } : prev))
+        if (data.links_pending) timer = setTimeout(refresh, 1500)
+        else if (data.link_summary?.no_index) timer = setTimeout(refresh, 30000)
       } catch { /* the next open will retry */ }
-    }, 1500)
-    return () => clearTimeout(timer)
-  }, [treeData, current])
+    }
+    refresh()
+    return () => { controller.abort(); clearTimeout(timer) }
+  }, [current, genomeLinkKey])
 
   useEffect(() => {
     if (current && origView && !layer) saveViewState(current.collectionId, current.treeId, origView, focusLeaf)
@@ -615,7 +625,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   const resolveColor = useMemo(() => genomeColorResolver(config), [config])
   const genomeColors = useMemo(() => {
     const map = new Map()
-    for (const link of Object.values(links)) {
+    for (const link of [...Object.values(links), ...layerLinks.values()]) {
       if (link?.status !== 'linked') continue
       for (const candidate of [link, ...(link.candidates || [])]) {
         if (!candidate.assembly || map.has(candidate.assembly)) continue
@@ -625,7 +635,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
       }
     }
     return map
-  }, [links, topBarGenomes, genomes, resolveColor])
+  }, [links, layerLinks, topBarGenomes, genomes, resolveColor])
 
   const focusNode = index && focusLeaf >= 0 ? index.nodes[focusLeaf] : null
   const focusLink = focusLeaf >= 0 ? links[focusLeaf] : null
@@ -1414,7 +1424,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
   const paintPreview = useCallback((ctx, id, width, height) => {
     ctx.fillStyle = palette.bg
     ctx.fillRect(0, 0, width, height)
-    const source = id === 'original' ? treeData : forestTree(ws.layers.find(l => l.id === id))
+    const source = id === 'original' ? treeData : forestTree(ws.layers.find(l => l.id === id), resolveLink)
     if (!source?.nodes?.length || source.nodes.length < 2) return
     const idx = indexTree(source)
     const previewView = id === 'original' ? (origView || emptyViewState()) : (layerViews[id] || emptyViewState())
@@ -1427,7 +1437,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     const t = { k, kx: k, x: pad - b.minX * k + (width - pad * 2 - bw * k) / 2, y: pad - b.minY * k + (height - pad * 2 - bh * k) / 2 }
     paintTree(ctx, { layout: lay, index: idx, t, width, height, palette, links: source.links || {}, topbarAssemblies, genomeColors,
       labelCache: cache, noClear: true })
-  }, [palette, treeData, ws.layers, origView, layerViews, layoutName, phylogram, shape, alignLeaves, flipH, topbarAssemblies, genomeColors])
+  }, [palette, treeData, ws.layers, resolveLink, origView, layerViews, layoutName, phylogram, shape, alignLeaves, flipH, topbarAssemblies, genomeColors])
 
   // The focus bar's ✕, as the genome browser's: no gene in focus, here or in any layer.
   const clearFocus = () => {
@@ -1902,6 +1912,7 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
       })() : null}
       {notice ? <div className="gt-notice"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Dismiss">×</button></div> : null}
       {error ? <div className="gt-notice error"><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss">×</button></div> : null}
+      {layerLinkError ? <div className="gt-notice error"><span>{layerLinkError}</span></div> : null}
 
       <div className="gt-body">
         <div className="gt-main">
@@ -2283,4 +2294,3 @@ export default function GeneTreesView({ theme = 'dark', config, genomes = [], to
     </div>
   )
 }
-

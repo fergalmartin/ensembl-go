@@ -36,6 +36,7 @@ MAX_INLINE_BYTES = 50 * 1024 * 1024
 MAX_NEIGHBOURHOOD_GENES = 500
 MAX_ALIGNMENT_GENES = 1000
 MAX_WORKSPACE_BYTES = 10 * 1024 * 1024
+MAX_LINK_LEAVES = 1000
 LEGACY_FILENAME = 'gene_trees.sqlite'
 
 
@@ -66,6 +67,15 @@ class LinksUpdate(BaseModel):
     entries: List[Dict[str, Any]] = Field(default_factory=list)
     content: Optional[str] = None
     replace: bool = False
+
+
+class LeafLinkRequest(BaseModel):
+    collection_id: Optional[str] = None
+    leaf: Dict[str, Any]
+
+
+class ResolveLinksRequest(BaseModel):
+    leaves: List[LeafLinkRequest] = Field(default_factory=list, max_length=MAX_LINK_LEAVES)
 
 
 def _check_pattern(pattern: Optional[str]) -> Optional[str]:
@@ -409,6 +419,27 @@ def create_router(library_path_provider: Callable[[], Path], genomes_provider: C
         return PlainTextResponse(model.to_newick(nodes, 0, nhx=format == 'nhx') + '\n', media_type='text/plain')
 
     # ── the subtree-layer workspace ──
+
+    @router.post('/resolve-links')
+    def resolve_links(payload: ResolveLinksRequest):
+        """Resolve saved leaves against today's genomes, using each leaf's source mapping.
+
+        Grafted leaves can come from another collection. Missing collections still
+        allow automatic species/identifier matching from the saved leaf metadata.
+        Links are derived data; the saved subtree and its edit history are untouched.
+        """
+        groups: Dict[Optional[str], List[Dict[str, Any]]] = {}
+        for i, entry in enumerate(payload.leaves):
+            groups.setdefault(entry.collection_id, []).append({'id': i, 'leaf': entry.leaf})
+        links = {}
+        pending = False
+        for collection_id, nodes in groups.items():
+            collection = store().collection(collection_id) if collection_id else None
+            result = linker.link_tree(nodes, collection['species_map'] if collection else None,
+                                      collection['links'] if collection else None)
+            links.update(result['links'])
+            pending = pending or result['pending']
+        return {'links': links, 'pending': pending}
 
     # ── data beside the leaves ──
 

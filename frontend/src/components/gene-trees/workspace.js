@@ -182,9 +182,9 @@ export function validateWorkspace(saved) {
  * A layer as one tree the existing layout and painter can draw: an invisible root
  * (`virtual: true`) holding each fragment. Node ids are renumbered; `fragmentOf` maps a
  * drawn node back to [fragment index, node id within the fragment], and `links` carries
- * each leaf's captured link to a local genome.
+ * each leaf's live link to a local genome (or its captured link without a resolver).
  */
-export function forestTree(layer) {
+export function forestTree(layer, resolveLink = node => node.link) {
   const nodes = [{ id: 0, parent: -1, children: [], virtual: true, branch_length: null, event: null, taxon: null, leaf: null }]
   const fragmentOf = new Map()
   const links = {}
@@ -200,7 +200,10 @@ export function forestTree(layer) {
         fragPos: node.parent === -1 && fragment.pos ? fragment.pos : undefined,
       })
       fragmentOf.set(id, [f, node.id])
-      if (node.link) links[id] = node.link
+      if (node.leaf) {
+        const link = resolveLink(node, fragment.source)
+        if (link) links[id] = link
+      }
     }
     nodes[0].children.push(base)
   })

@@ -3,10 +3,11 @@
 Ensembl Go is a version of the Ensembl platform that runs locally on a desktop or
 laptop. It supports browsing and analysing genomes and annotations, downloading
 Ensembl data for offline use, and adding custom genomes, annotations, and tracks.
-macOS is the currently tested desktop platform. An initial Linux implementation
-can be built from source as an AppImage or `.deb`, but it has not yet been tested
-on Linux desktops. Linux users are welcome to help with that first round of
-installation testing. Windows support is still in development.
+macOS is the currently tested desktop platform. Linux packages can be built from
+source as an AppImage or `.deb`. A tester has reported building the Debian package
+on Ubuntu 24.04 through Docker for `linux/amd64`, with a catalogue URL adjustment.
+Linux desktop installation and launch still need validation. Windows support is
+still in development.
 
 ## Install and run
 
